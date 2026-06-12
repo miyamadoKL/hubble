@@ -13,7 +13,7 @@
 
 Hubble は **Hono 製の BFF（server）+ React 製の web** からなる単一プロセスのアプリです。
 `STATIC_DIR` に web のビルド成果物を指すと、server が静的ファイル配信も担うため、
-プロセスは 1 つで完結します。永続化は SQLite、データソースは Trino のみです。
+プロセスは 1 つで完結します。永続化は SQLite（既定）または PostgreSQL（[§9.4](#94-postgresql-バックエンド)）、データソースは Trino のみです。
 
 ```
                 認証ヘッダ付与            技術アカウント Basic auth
