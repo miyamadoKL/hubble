@@ -9,6 +9,9 @@ import { EstimateService } from './query/estimateService';
 import { NotebookRepository } from './store/notebooks';
 import { SavedQueryRepository } from './store/savedQueries';
 import { HistoryRepository } from './store/history';
+import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
+import { StatementValidator } from './schedule/validator';
+import { Scheduler } from './schedule/scheduler';
 import { backfillOwners } from './db/backfill';
 
 /** All long-lived services the HTTP layer depends on. */
@@ -23,6 +26,14 @@ export interface Services {
   notebooks: NotebookRepository;
   savedQueries: SavedQueryRepository;
   history: HistoryRepository;
+  /** Schedule CRUD store (Query Scheduling feature). */
+  schedules: ScheduleRepository;
+  /** Schedule-run store (Query Scheduling feature). */
+  scheduleRuns: ScheduleRunRepository;
+  /** Statement validator (EXPLAIN VALIDATE) used by the schedule routes. */
+  scheduleValidator: StatementValidator;
+  /** In-process query scheduler (Query Scheduling feature). */
+  scheduler: Scheduler;
   shutdown: () => Promise<void>;
 }
 
@@ -33,6 +44,10 @@ export interface BuildServicesOptions {
   sleepImpl?: (ms: number) => Promise<void>;
   /** Injectable clock for tests (TTL/sweep). */
   now?: () => number;
+  /** Injectable scheduler retry backoff sleep (tests). */
+  schedulerSleep?: (ms: number) => Promise<void>;
+  /** Injectable scheduler tick timer (tests). */
+  schedulerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
 }
 
 /** Construct the full service graph from config + an open database. */
@@ -105,6 +120,40 @@ export async function buildServices(
     options.now,
   );
 
+  // Query Scheduling: a dedicated client tagged with the scheduled source. The
+  // per-run `X-Trino-User` is set from the schedule owner at execution time.
+  const scheduledClient = new TrinoClient({
+    baseUrl: config.trino.baseUrl,
+    username: config.trino.username,
+    password: config.trino.password,
+    user: config.trino.user,
+    source: config.trino.scheduledSource,
+    fetchImpl: options.fetchImpl,
+    sleepImpl: options.sleepImpl,
+  });
+
+  const schedules = new ScheduleRepository(db);
+  const scheduleRuns = new ScheduleRunRepository(db, config.scheduler.runsRetention);
+  const scheduleValidator = new StatementValidator(scheduledClient, config.trino.scheduledSource);
+  const scheduler = new Scheduler({
+    schedules,
+    runs: scheduleRuns,
+    client: scheduledClient,
+    validator: scheduleValidator,
+    estimate,
+    config: {
+      enabled: config.scheduler.enabled,
+      tickSeconds: config.scheduler.tickSeconds,
+      maxConcurrent: config.scheduler.maxConcurrent,
+      runsRetention: config.scheduler.runsRetention,
+      guardMode: config.guard.mode,
+    },
+    source: config.trino.scheduledSource,
+    now: options.now,
+    sleep: options.schedulerSleep,
+    setTimer: options.schedulerSetTimer,
+  });
+
   return {
     config,
     trino,
@@ -115,7 +164,12 @@ export async function buildServices(
     notebooks,
     savedQueries,
     history,
+    schedules,
+    scheduleRuns,
+    scheduleValidator,
+    scheduler,
     shutdown: async () => {
+      await scheduler.stop();
       await registry.shutdown();
       await db.close();
     },

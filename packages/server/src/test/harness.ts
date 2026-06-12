@@ -26,6 +26,8 @@ export async function createTestContext(
     sleepImpl?: (ms: number) => Promise<void>;
     /** Override the peer address the auth middleware sees (proxy-mode tests). */
     remoteAddress?: RemoteAddressFn;
+    /** Start the in-process scheduler tick loop (default: false, API only). */
+    startScheduler?: boolean;
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
@@ -37,13 +39,22 @@ export async function createTestContext(
     query: { ...baseConfig.query, ...options.configOverrides?.query },
     metadata: { ...baseConfig.metadata, ...options.configOverrides?.metadata },
     defaults: { ...baseConfig.defaults, ...options.configOverrides?.defaults },
+    guard: { ...baseConfig.guard, ...options.configOverrides?.guard },
+    scheduler: {
+      ...baseConfig.scheduler,
+      // Default: tick loop off so route/CRUD tests are deterministic.
+      enabled: options.startScheduler ?? false,
+      ...options.configOverrides?.scheduler,
+    },
   };
 
   const db = await openMemoryDatabase();
   const services = await buildServices(config, db, {
     fetchImpl: fake.fetch,
     sleepImpl: options.sleepImpl ?? (() => Promise.resolve()),
+    schedulerSleep: () => Promise.resolve(),
   });
+  await services.scheduler.start();
   const app = createApp({ services, remoteAddress: options.remoteAddress });
   return { app, services, fake };
 }

@@ -52,6 +52,8 @@ export interface ServerConfig {
     source: string;
     /** `X-Trino-Source` for metadata queries. */
     metadataSource: string;
+    /** `X-Trino-Source` for scheduled runs (Query Scheduling feature). */
+    scheduledSource: string;
   };
   defaults: {
     catalog?: string;
@@ -89,6 +91,17 @@ export interface ServerConfig {
     /** Cluster throughput estimate for `estimatedSeconds` (0 = no prediction). */
     bytesPerSecond: number;
   };
+  /** Query Scheduling configuration (Query Scheduling feature). */
+  scheduler: {
+    /** When false, the API stays live but the tick loop never starts. */
+    enabled: boolean;
+    /** Seconds between due-schedule scans. */
+    tickSeconds: number;
+    /** Max schedules running concurrently across the scheduler. */
+    maxConcurrent: number;
+    /** Per-schedule cap on retained `schedule_runs` rows (older are pruned). */
+    runsRetention: number;
+  };
   version: string;
 }
 
@@ -118,6 +131,16 @@ function envInt(env: Env, key: string, fallback: number): number {
 function envOptional(env: Env, key: string): string | undefined {
   const v = env[key];
   return v === undefined || v === '' ? undefined : v;
+}
+
+/** Parse a boolean env var. Accepts true/1/yes/on and false/0/no/off (any case). */
+function envBool(env: Env, key: string, fallback: boolean): boolean {
+  const v = env[key];
+  if (v === undefined || v === '') return fallback;
+  const normalized = v.trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  throw new Error(`Invalid boolean for env var ${key}: ${JSON.stringify(v)}`);
 }
 
 function envEnum<T extends string>(env: Env, key: string, allowed: readonly T[], fallback: T): T {
@@ -180,6 +203,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       user: envStr(env, 'TRINO_USER', 'admin'),
       source: envStr(env, 'TRINO_SOURCE', 'hubble'),
       metadataSource: envStr(env, 'TRINO_METADATA_SOURCE', 'hubble-metadata'),
+      scheduledSource: envStr(env, 'TRINO_SCHEDULED_SOURCE', 'hubble-scheduled'),
     },
     defaults: {
       catalog: envOptional(env, 'DEFAULT_CATALOG'),
@@ -213,6 +237,12 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       estimateTimeoutMs: envInt(env, 'QUERY_GUARD_ESTIMATE_TIMEOUT_MS', 3000),
       cacheTtlSeconds: envInt(env, 'QUERY_GUARD_CACHE_TTL_SECONDS', 30),
       bytesPerSecond: envInt(env, 'QUERY_GUARD_BYTES_PER_SECOND', 0),
+    },
+    scheduler: {
+      enabled: envBool(env, 'SCHEDULER_ENABLED', true),
+      tickSeconds: envInt(env, 'SCHEDULER_TICK_SECONDS', 15),
+      maxConcurrent: envInt(env, 'SCHEDULER_MAX_CONCURRENT', 2),
+      runsRetention: envInt(env, 'SCHEDULER_RUNS_RETENTION', 50),
     },
     version: envStr(env, 'APP_VERSION', '0.1.0'),
   };

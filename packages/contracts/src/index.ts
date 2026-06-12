@@ -13,4 +13,5 @@ export * from './events';
 export * from './notebook';
 export * from './savedQuery';
 export * from './history';
+export * from './schedule';
 export * from './routes';

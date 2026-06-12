@@ -74,6 +74,8 @@ Cell { id, kind: 'sql' | 'markdown', source, name?, collapsed?, resultMeta? /* �
 Variable { name, value, meta: { type: 'text'|'number'|'date'|'datetime-local'|'checkbox'|'select', options?: {label,value}[], placeholder? } }
 QueryHistoryEntry { id, statement(先頭2000字), catalog, schema, trinoQueryId, state, rowCount, elapsedMs, errorMessage?, notebookId?, cellId?, submittedAt }
 SavedQuery { id, name, description, statement, catalog?, schema?, isFavorite, createdAt, updatedAt }
+Schedule { id, owner, name, statement, catalog?, schema?, cron, enabled, retryMaxAttempts, retryBackoffSeconds, retryBackoffMultiplier, createdAt, updatedAt }
+ScheduleRun { id, scheduleId, owner, status: 'running'|'success'|'failed'|'aborted'|'blocked', attempt, trinoQueryId?, errorType?, errorMessage?, rowCount?, elapsedMs?, scheduledFor, startedAt, finishedAt? }
 ```
 
 - 実行中の結果データ (rows) は server メモリ + SSE。SQLite には**結果の要約のみ**保存 (前回の query_result_pages テーブル肥大を回避)
@@ -179,6 +181,13 @@ GET    /api/notebooks?query=              # 一覧+検索 / POST 作成
 GET|PUT|DELETE /api/notebooks/:id
 GET    /api/saved-queries?query= / POST / PUT|DELETE /api/saved-queries/:id
 GET    /api/history?offset&limit&state=
+POST   /api/schedules                    # 作成 → 201 { id, ... }
+GET    /api/schedules                    # 一覧（所有者スコープ）
+GET    /api/schedules/:id
+PATCH  /api/schedules/:id               # 更新（enabled / cron / リトライポリシー等）
+DELETE /api/schedules/:id
+POST   /api/schedules/:id/run           # 手動実行（即時 fire）
+GET    /api/schedules/:id/runs          # 実行履歴一覧（直近 SCHEDULER_RUNS_RETENTION 件）
 ```
 
 `MetadataResponse<T> = { items: T[], source: 'cache'|'live', stale: boolean, lastUpdatedAt }` (前回契約踏襲)。

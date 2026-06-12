@@ -39,6 +39,7 @@
 - **コマンドパレット**（Ctrl/Cmd+K）、充実したキーボードショートカット、そして SQL を
   `--` 見出しでカードに分割する読み取り専用の**プレゼンテーションモード**。
 - **Query Guard** — 実行前に `EXPLAIN (TYPE IO)` でスキャン量を推定し、管理者設定の上限を超えるクエリを警告またはブロック。Trino に不慣れなユーザーによる巨大クエリを防ぎます。
+- **クエリスケジューラー** — 保存した SQL を cron で自動実行。登録・更新時と実行直前に Trino の `EXPLAIN (TYPE VALIDATE)` で構文・意味エラーを検証し、接続障害時は幾何バックオフで自動リトライします。
 
 ## アーキテクチャ
 
@@ -113,6 +114,11 @@ pnpm --filter @hubble/web dev
 | `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000`                   | EXPLAIN のタイムアウト（ミリ秒）                                                                |
 | `QUERY_GUARD_CACHE_TTL_SECONDS`   | `30`                     | 推定結果キャッシュの TTL（秒）                                                                  |
 | `QUERY_GUARD_BYTES_PER_SECOND`    | `0`（目安なし）          | クラスタースループット目安（バイト/秒）。0 より大きい値を設定すると UI に所要時間の目安を表示   |
+| `SCHEDULER_ENABLED`               | `true`                   | `false` にするとスケジューラーの tick ループを停止（API は生きたまま）                          |
+| `SCHEDULER_TICK_SECONDS`          | `15`                     | due なスケジュールをスキャンする間隔（秒）                                                      |
+| `SCHEDULER_MAX_CONCURRENT`        | `2`                      | スケジューラー全体で同時実行できる数の上限                                                      |
+| `SCHEDULER_RUNS_RETENTION`        | `50`                     | スケジュールごとに保持する実行履歴の上限件数（古い行は自動プルーン）                            |
+| `TRINO_SCHEDULED_SOURCE`          | `hubble-scheduled`       | スケジュール実行の `X-Trino-Source`                                                             |
 
 ## ドキュメント
 

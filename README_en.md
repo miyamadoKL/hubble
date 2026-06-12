@@ -39,6 +39,9 @@ charts — rebuilt as a modern, single-language TypeScript app.
   **presentation mode** that splits SQL on `--` headings into cards.
 - **Query Guard** — estimates scan cost via `EXPLAIN (TYPE IO)` before execution
   and warns or blocks queries that exceed admin-configured limits.
+- **Query Scheduler** — runs saved SQL on a cron schedule. Validates syntax and
+  semantics with Trino's `EXPLAIN (TYPE VALIDATE)` at registration and before each
+  run; retries on connection failures with geometric back-off.
 
 ## Architecture
 
@@ -113,6 +116,11 @@ Then open <http://localhost:5173>. (`pnpm dev` runs both in parallel.)
 | `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000` | EXPLAIN timeout in ms; exceeded = estimation unavailable |
 | `QUERY_GUARD_CACHE_TTL_SECONDS` | `30` | Estimate-result cache TTL in seconds |
 | `QUERY_GUARD_BYTES_PER_SECOND` | `0` (no hint) | Cluster throughput estimate (bytes/s); when > 0 the UI shows estimated duration |
+| `SCHEDULER_ENABLED` | `true` | Set to `false` to stop the scheduler tick loop (API stays live) |
+| `SCHEDULER_TICK_SECONDS` | `15` | Interval in seconds between due-schedule scans |
+| `SCHEDULER_MAX_CONCURRENT` | `2` | Max schedules running concurrently across the scheduler |
+| `SCHEDULER_RUNS_RETENTION` | `50` | Per-schedule cap on retained run-history rows (older rows are pruned) |
+| `TRINO_SCHEDULED_SOURCE` | `hubble-scheduled` | `X-Trino-Source` sent for scheduled runs |
 
 ## Documentation
 
