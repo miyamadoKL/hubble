@@ -1,4 +1,10 @@
-import { appConfigSchema, type AppConfig, type AuthMode } from '@hubble/contracts';
+import {
+  appConfigSchema,
+  type AppConfig,
+  type AuthMode,
+  type GuardMode,
+  type GuardOnUnknown,
+} from '@hubble/contracts';
 
 /** How a proxy-supplied principal is derived from SSO headers (design.md §11). */
 export type UserMapping = 'email-localpart' | 'email' | 'user';
@@ -57,6 +63,23 @@ export interface ServerConfig {
   metadata: {
     /** TTL for metadata cache entries, in seconds. */
     ttlSeconds: number;
+  };
+  /** Query Guard configuration (Query Guard feature). */
+  guard: {
+    /** `off` disables the feature entirely (no estimation). */
+    mode: GuardMode;
+    /** Scan-bytes limit (0 = no limit). */
+    maxScanBytes: number;
+    /** Scan-rows limit (0 = no limit). */
+    maxScanRows: number;
+    /** How to treat a query whose scan cost cannot be estimated. */
+    onUnknown: GuardOnUnknown;
+    /** EXPLAIN timeout in ms; exceeded => estimation unavailable. */
+    estimateTimeoutMs: number;
+    /** Estimate-result cache TTL, in seconds. */
+    cacheTtlSeconds: number;
+    /** Cluster throughput estimate for `estimatedSeconds` (0 = no prediction). */
+    bytesPerSecond: number;
   };
   version: string;
 }
@@ -143,6 +166,20 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
     metadata: {
       ttlSeconds: envInt(env, 'METADATA_TTL_SECONDS', 300),
     },
+    guard: {
+      mode: envEnum(env, 'QUERY_GUARD_MODE', ['off', 'warn', 'enforce'] as const, 'warn'),
+      maxScanBytes: envInt(env, 'QUERY_GUARD_MAX_SCAN_BYTES', 0),
+      maxScanRows: envInt(env, 'QUERY_GUARD_MAX_SCAN_ROWS', 0),
+      onUnknown: envEnum(
+        env,
+        'QUERY_GUARD_ON_UNKNOWN',
+        ['allow', 'warn', 'block'] as const,
+        'warn',
+      ),
+      estimateTimeoutMs: envInt(env, 'QUERY_GUARD_ESTIMATE_TIMEOUT_MS', 3000),
+      cacheTtlSeconds: envInt(env, 'QUERY_GUARD_CACHE_TTL_SECONDS', 30),
+      bytesPerSecond: envInt(env, 'QUERY_GUARD_BYTES_PER_SECOND', 0),
+    },
     version: envStr(env, 'APP_VERSION', '0.1.0'),
   };
 }
@@ -163,6 +200,13 @@ export function toAppConfig(config: ServerConfig): AppConfig {
       limit: config.defaults.limit,
     },
     authMode: config.auth.mode,
+    guard: {
+      mode: config.guard.mode,
+      maxScanBytes: config.guard.maxScanBytes,
+      maxScanRows: config.guard.maxScanRows,
+      onUnknown: config.guard.onUnknown,
+      bytesPerSecond: config.guard.bytesPerSecond,
+    },
     version: config.version,
   });
 }

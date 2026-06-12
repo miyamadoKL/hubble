@@ -4,21 +4,28 @@
 // callers. Run-all and save policy live here so every entry point behaves the
 // same.
 
+import { useNotebookStore, persistSavedNotebook, substituteVariables } from '.';
 import {
-  useNotebookStore,
-  persistSavedNotebook,
-  substituteVariables,
-} from '.';
-import { allUnits, executionActions, isCellRunning, useExecutionStore } from '../execution';
+  allUnits,
+  executionActions,
+  getCellBlock,
+  isCellRunning,
+  useExecutionStore,
+} from '../execution';
 import type { ExecutionContext, ExecutionUnit } from '../execution';
 import { getActiveEditor } from '../editor/activeEditor';
 import { toast } from '../components/common/Toast';
 
+/** Toast + return true when a cell is blocked by Query Guard (UX guard). */
+function refuseIfBlocked(cellId: string): boolean {
+  const block = getCellBlock(cellId);
+  if (!block) return false;
+  toast.error('Blocked by Query Guard', block.reasons[0] ?? 'This query exceeds the scan limit.');
+  return true;
+}
+
 /** Resolve variables for a notebook's cell, or null if any are missing. */
-function resolveCellUnits(
-  source: string,
-  values: Record<string, string>,
-): ExecutionUnit[] | null {
+function resolveCellUnits(source: string, values: Record<string, string>): ExecutionUnit[] | null {
   const resolved: ExecutionUnit[] = [];
   for (const u of allUnits(source)) {
     const { text, missing } = substituteVariables(u.text, values);
@@ -55,6 +62,8 @@ export async function runAllCells(
   const sqlCells = notebook.cells.filter((c) => c.kind === 'sql');
 
   for (const cell of sqlCells) {
+    // Query Guard: a blocked cell halts the notebook run (same as a failure).
+    if (refuseIfBlocked(cell.id)) return;
     const units = resolveCellUnits(cell.source, values);
     if (units === null) return; // missing variable — abort the whole run
     if (units.length === 0) continue;
@@ -84,6 +93,8 @@ export function runActiveSqlCell(
     (focusedCellId && notebook.cells.find((c) => c.id === focusedCellId && c.kind === 'sql')) ||
     notebook.cells.find((c) => c.kind === 'sql');
   if (!cell || cell.kind !== 'sql') return;
+  // Query Guard: refuse a blocked active cell (the toast explains why).
+  if (refuseIfBlocked(cell.id)) return;
 
   const values: Record<string, string> = {};
   for (const v of notebook.variables) values[v.name] = v.value;

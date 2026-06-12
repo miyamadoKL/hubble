@@ -1,11 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type * as monaco from 'monaco-editor';
 import type { CellResultMeta } from '@hubble/contracts';
 import { SqlEditor } from '../../editor/SqlEditor';
 import { CellToolbar } from './CellToolbar';
 import { StatsStrip } from './StatsStrip';
+import { EstimateStrip } from './EstimateStrip';
 import { ResultPane } from './ResultPane';
 import { LastRunStrip } from './LastRunStrip';
+import { parseStatement } from '../../trino-lang';
+import { useDebouncedValue } from '../../hooks/useDebouncedValue';
+import { useEstimate } from '../../hooks/useEstimate';
+import { useGuardConfig } from '../../hooks/useConfig';
+import {
+  computeLiveEstimateTarget,
+  estimatePresentation,
+  setCellBlocked,
+  clearCellBlock,
+} from '../../execution';
 import {
   applyStatementGutter,
   clearExecutionMarkers,
@@ -24,10 +35,7 @@ import {
   type ExecutionContext,
   type ExecutionUnit,
 } from '../../execution';
-import {
-  createQuery,
-  fetchQueryRows,
-} from '../../execution/api';
+import { createQuery, fetchQueryRows } from '../../execution/api';
 import { subscribeQueryEvents } from '../../execution/sse';
 import { setActiveEditor, clearActiveEditor } from '../../editor/activeEditor';
 
@@ -60,6 +68,8 @@ interface SqlCellProps {
    * unit with substituted text, or null to abort the run (missing variables).
    */
   resolveUnit: (unit: ExecutionUnit) => ExecutionUnit | null;
+  /** Notebook variable values (name → value) for live-estimate substitution. */
+  variableValues: Record<string, string>;
   /** Cell-chrome handlers (collapse / move / delete / rename / grip). */
   chrome: SqlCellChrome;
 }
@@ -76,6 +86,9 @@ export interface SqlCellChrome {
   dragHandleProps?: React.HTMLAttributes<HTMLSpanElement>;
 }
 
+/** Debounce after editing stops before fetching a live estimate (Query Guard). */
+const ESTIMATE_DEBOUNCE_MS = 600;
+
 export function SqlCell({
   cellId,
   source,
@@ -87,11 +100,19 @@ export function SqlCell({
   context,
   defaultLimit,
   resolveUnit,
+  variableValues,
   chrome,
 }: SqlCellProps) {
+  const guard = useGuardConfig();
   const [autoLimit, setAutoLimit] = useState(true);
   const [limit, setLimit] = useState(defaultLimit);
   const [caretOffset, setCaretOffset] = useState(0);
+  // The current selection span (anchor/active), tracked so the live estimate
+  // targets the exact unit Ctrl/Cmd+Enter would run (selection → caret stmt).
+  const [selection, setSelection] = useState<{ anchor: number; active: number }>({
+    anchor: 0,
+    active: 0,
+  });
 
   // EXPLAIN runs as a side query (not stored per-cell, to keep the cell record
   // about the main result). We manage its lifecycle locally.
@@ -162,12 +183,73 @@ export function SqlCell({
 
   const runOpts = { autoLimit, limit };
 
+  // ---- Query Guard live estimate (Query Guard feature) ----------------------
+  // Debounce edits/caret moves ~600ms, then estimate the statement the run unit
+  // would send — but only when the cell parses clean, all variables resolve, and
+  // the guard is on. The resolved statement is byte-identical to the run path's,
+  // so it hits the server's estimate cache and the run-time block is consistent.
+  const debouncedSource = useDebouncedValue(source, ESTIMATE_DEBOUNCE_MS);
+  const debouncedSelection = useDebouncedValue(selection, ESTIMATE_DEBOUNCE_MS);
+
+  const target = useMemo(
+    () =>
+      computeLiveEstimateTarget({
+        source: debouncedSource,
+        selection: debouncedSelection,
+        variableValues,
+        autoLimit,
+        limit,
+        guardMode: guard.mode,
+        parsesClean: (sql) =>
+          parseStatement(sql, context.catalog, context.schema).markers.length === 0,
+      }),
+    [
+      debouncedSource,
+      debouncedSelection,
+      variableValues,
+      autoLimit,
+      limit,
+      guard.mode,
+      context.catalog,
+      context.schema,
+    ],
+  );
+
+  const estimateStatement = target.estimate ? target.statement : null;
+  const estimateQuery = useEstimate({
+    statement: estimateStatement,
+    catalog: context.catalog,
+    schema: context.schema,
+  });
+
+  // Derive the strip presentation; only show it when we actually estimated.
+  const presentation = useMemo(() => {
+    if (!target.estimate || !estimateQuery.data) {
+      return { visible: false } as ReturnType<typeof estimatePresentation>;
+    }
+    return estimatePresentation(estimateQuery.data);
+  }, [target.estimate, estimateQuery.data]);
+
+  // Publish the block to the registry so run-all / palette / shortcuts honor it.
+  const blocked = presentation.visible && presentation.blocked;
+  useEffect(() => {
+    setCellBlocked(cellId, blocked ? { reasons: presentation.reasons } : undefined);
+  }, [cellId, blocked, presentation.reasons]);
+  useEffect(() => () => clearCellBlock(cellId), [cellId]);
+
   // `handleReady` runs once on editor mount, so its event handlers must read the
   // latest context / run options / resolver through a ref rather than the
   // captured-at-mount closure. The ref is updated in an effect, never in render.
   const runConfigRef = useRef({ context, runOpts, resolveUnit });
   useEffect(() => {
     runConfigRef.current = { context, runOpts, resolveUnit };
+  });
+
+  // The editor-mounted run handlers (gutter click, Ctrl/Cmd+Enter) must see the
+  // current block state too, so mirror it into a ref.
+  const blockedRef = useRef(blocked);
+  useEffect(() => {
+    blockedRef.current = blocked;
   });
 
   /** Run a single unit after variable substitution (null = aborted). */
@@ -183,24 +265,39 @@ export function SqlCell({
       .map((u) => cfg.resolveUnit(u))
       .filter((u): u is ExecutionUnit => u !== null);
     if (resolved.length === 0) return;
-    if (resolved.length === 1) executionActions().runUnit(cellId, resolved[0]!, cfg.context, cfg.runOpts);
+    if (resolved.length === 1)
+      executionActions().runUnit(cellId, resolved[0]!, cfg.context, cfg.runOpts);
     else void executionActions().runUnits(cellId, resolved, cfg.context, cfg.runOpts);
   };
 
-  const handleReady = (
-    editor: monaco.editor.IStandaloneCodeEditor,
-    monacoNs: typeof monaco,
-  ) => {
+  const handleReady = (editor: monaco.editor.IStandaloneCodeEditor, monacoNs: typeof monaco) => {
     editorRef.current = editor;
     monacoRef.current = monacoNs;
     gutterRef.current = editor.createDecorationsCollection([]);
 
     const model = editor.getModel();
-    setCaretOffset(model ? model.getOffsetAt(editor.getPosition() ?? { lineNumber: 1, column: 1 }) : 0);
+    setCaretOffset(
+      model ? model.getOffsetAt(editor.getPosition() ?? { lineNumber: 1, column: 1 }) : 0,
+    );
 
     editor.onDidChangeCursorPosition((e) => {
       const m = editor.getModel();
       if (m) setCaretOffset(m.getOffsetAt(e.position));
+    });
+
+    // Track the selection span so the live estimate mirrors the run unit
+    // (a non-empty selection runs that text; otherwise the caret statement).
+    editor.onDidChangeCursorSelection((e) => {
+      const m = editor.getModel();
+      if (!m) return;
+      const sel = e.selection;
+      setSelection({
+        anchor: m.getOffsetAt({
+          lineNumber: sel.selectionStartLineNumber,
+          column: sel.selectionStartColumn,
+        }),
+        active: m.getOffsetAt({ lineNumber: sel.positionLineNumber, column: sel.positionColumn }),
+      });
     });
 
     editor.onDidFocusEditorText(() => {
@@ -223,11 +320,17 @@ export function SqlCell({
 
   // Ctrl/Cmd+Enter: selection → that text; else statement under the caret.
   const handleExecute = (editor: monaco.editor.IStandaloneCodeEditor) => {
+    // Query Guard: the run unit is blocked — the server would 422, so don't even
+    // start (the strip shows why). enforce is still the real wall.
+    if (blockedRef.current) return;
     const model = editor.getModel();
     if (!model) return;
     const sel = editor.getSelection();
     const anchor = sel
-      ? model.getOffsetAt({ lineNumber: sel.selectionStartLineNumber, column: sel.selectionStartColumn })
+      ? model.getOffsetAt({
+          lineNumber: sel.selectionStartLineNumber,
+          column: sel.selectionStartColumn,
+        })
       : 0;
     const active = sel
       ? model.getOffsetAt({ lineNumber: sel.positionLineNumber, column: sel.positionColumn })
@@ -239,6 +342,9 @@ export function SqlCell({
 
   // Toolbar "run cell" → every statement, sequentially.
   const runWholeCell = () => {
+    // Query Guard: the caret statement is blocked — disable the whole-cell run
+    // too (the button is also visually disabled). enforce is the real wall.
+    if (blocked) return;
     const units = allUnits(source);
     if (units.length === 0) return;
     if (units.length === 1) runOne(units[0]!);
@@ -305,6 +411,8 @@ export function SqlCell({
         onRename={chrome.onRename}
         onRun={runWholeCell}
         onCancel={cancel}
+        runDisabled={blocked}
+        runDisabledReason={blocked ? presentation.reasons[0] : undefined}
         onToggleAutoLimit={() => setAutoLimit((v) => !v)}
         onLimitChange={setLimit}
         onMoveUp={chrome.onMoveUp}
@@ -323,6 +431,11 @@ export function SqlCell({
               ariaLabel={`SQL cell ${name ?? ''}`}
             />
           </div>
+          {presentation.visible && (
+            <div className="border-b border-border-subtle bg-surface-raised">
+              <EstimateStrip presentation={presentation} loading={estimateQuery.isFetching} />
+            </div>
+          )}
           {exec ? (
             <>
               <StatsStrip

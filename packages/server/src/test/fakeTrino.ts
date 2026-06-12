@@ -31,6 +31,8 @@ export interface FakeScenario {
     message: string;
     errorName?: string;
     errorCode?: number;
+    /** e.g. `USER_ERROR` — used by Query Guard to classify the failure. */
+    errorType?: string;
     errorLocation?: { lineNumber: number; columnNumber: number };
   };
   /** Sequence of pages after the initial QUEUED POST response. */

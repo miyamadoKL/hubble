@@ -19,3 +19,7 @@ data:
   # Initial catalog/schema for new notebooks.
   DEFAULT_CATALOG: tpch
   DEFAULT_SCHEMA: tiny
+  # Query Guard: estimate scan cost before execution (see docs/operations.md §8.6).
+  # QUERY_GUARD_MODE: warn            # off | warn (default) | enforce
+  # QUERY_GUARD_MAX_SCAN_BYTES: '0'   # e.g. '107374182400' for 100 GB
+  # QUERY_GUARD_MAX_SCAN_ROWS: '0'    # e.g. '1000000000' for 1 B rows

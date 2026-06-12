@@ -188,6 +188,13 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 | `AUTH_SSO_HEADER_USER` | `x-forwarded-user` | SSO ユーザー名ヘッダ名（小文字比較） |
 | `AUTH_SSO_HEADER_EMAIL` | `x-forwarded-email` | SSO メールヘッダ名（小文字比較） |
 | `AUTH_USER_MAPPING` | `email-localpart` | principal の導出方法（`email-localpart` / `email` / `user`） |
+| `QUERY_GUARD_MODE` | `warn` | Query Guard の動作モード（`off`=無効 / `warn`=推定表示のみ・ブロックしない / `enforce`=上限超過時にサーバーが実行を拒否。HTTP 422, code `QUERY_BLOCKED`） |
+| `QUERY_GUARD_MAX_SCAN_BYTES` | `0`（無制限） | スキャンバイト数の上限。0 は無制限 |
+| `QUERY_GUARD_MAX_SCAN_ROWS` | `0`（無制限） | スキャン行数の上限。0 は無制限 |
+| `QUERY_GUARD_ON_UNKNOWN` | `warn` | 統計が無く推定できないときの扱い（`allow` / `warn` / `block`） |
+| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000` | EXPLAIN タイムアウト（ミリ秒）。超過時は推定不能扱い |
+| `QUERY_GUARD_CACHE_TTL_SECONDS` | `30` | 推定結果キャッシュの TTL（秒） |
+| `QUERY_GUARD_BYTES_PER_SECOND` | `0`（目安なし） | クラスタースループットの目安（バイト/秒）。0 以外を設定すると UI に「所要時間目安 = 推定スキャンバイト ÷ この値」を表示 |
 
 不正な整数・列挙値（例 `AUTH_MODE=foo`）は起動時にエラーで停止します。
 
@@ -482,6 +489,55 @@ LIMIT 50;
 `source = 'hubble-metadata'` のクエリが `global.metadata` に入り、重いクエリ実行中でも
 `queued_time_ms` が長時間伸びないことを確認します。
 
+### 8.6 Hubble 側の事前ガード（Query Guard）
+
+§8.4 の Trino ハード上限は**実行開始後**に効く最終防壁です。Query Guard は
+**実行前**に `EXPLAIN (TYPE IO, FORMAT JSON)` でスキャン量を推定し、上限超過を
+ユーザーに知らせる（または実行を拒否する）ソフトな防壁です。EXPLAIN はコーディネーター
+のみで完結するため、追加の worker 資源を消費しません（実測 ~240ms）。
+
+#### 仕組み
+
+1. ユーザーがセル内での入力を止めてから 600ms 後、UI が `POST /api/queries/estimate`
+   を発行します（構文エラーがなく変数が解決できる場合のみ）。
+2. server が Trino に `EXPLAIN (TYPE IO, FORMAT JSON)` を投げ、各入力テーブルの
+   `outputSizeInBytes` / `outputRowCount` を集計してスキャン量を推定します。
+3. 推定結果と管理者設定の上限を照合し、判定（allow / warn / block）をセル下部の
+   ストリップに表示します（行数・バイト数・所要時間目安・判定）。
+4. `enforce` モードで block 判定のクエリは、実行ボタンが無効化されます。
+   `POST /api/queries` を直接呼んでも HTTP 422 / `QUERY_BLOCKED` を返します。
+
+#### モードの使い分け
+
+| `QUERY_GUARD_MODE` | 挙動 |
+|---|---|
+| `off` | 推定を一切行わない |
+| `warn`（既定） | 推定結果と警告を UI に表示するが、実行はブロックしない |
+| `enforce` | 上限超過クエリの実行をサーバーレベルで拒否（HTTP 422） |
+
+導入初期は `warn` で運用し、ユーザーの反応を見てから `enforce` に切り替えるのを
+推奨します。
+
+#### `QUERY_GUARD_ON_UNKNOWN` の設計判断
+
+統計未取得の hive テーブルや `information_schema` などは EXPLAIN でスキャン量が
+推定できず「不明」になります。`block` にすると統計のないテーブルへのクエリが
+すべて通らなくなるため、既定は `warn`（表示のみ）としています。
+統計収集済みコネクタ（tpch / Iceberg）のみを使う環境では `block` も選択肢です。
+
+#### §8.4 との役割分担
+
+| 防壁 | タイミング | 動作 |
+|---|---|---|
+| Query Guard | 実行前（推定） | ユーザーへの早期警告 / ソフトブロック |
+| Trino ハード上限（§8.4） | 実行中 | 統計不正確でもクエリを強制終了 |
+
+両方の設定を推奨します。Guard は推定精度に依存しますが§8.4 は実測値で確実に機能します。
+
+> **注意**: 推定精度はコネクタの統計品質に依存します。ANALYZE 未実行のテーブルや
+> `system` / `information_schema` などは不明扱いになります。また所要時間の目安
+>（`QUERY_GUARD_BYTES_PER_SECOND` 設定時）は概算であり、実際の実行時間とは乖離します。
+
 ---
 
 ## 9. データ管理（SQLite）
@@ -557,6 +613,7 @@ owner を `TRINO_USER` で埋めます**（`backfillOwners`、冪等）。
 | **DB ロック / busy** | 複数の server プロセスが同じ `DB_PATH` を開いていないか確認（単一プロセス前提）。WAL の `-wal`/`-shm` 残骸はプロセス停止後に統合される |
 | **静的配信されない** | 起動ログに `serving static web app from …` が出ているか、`STATIC_DIR` が `index.html` を含むディレクトリ（= `web build` 済み）を指しているかを確認 |
 | **メタデータが古い / 詰まる** | Data パネルの更新ボタンか `POST /api/metadata/refresh`。詰まりは [§8](#8-trino-resource-group-分離メタデータ取得詰まり対策) の resource group 分離で緩和 |
+| **クエリが `QUERY_BLOCKED` で実行できない** | `QUERY_GUARD_MODE=enforce` のとき、スキャン推定値が上限（`QUERY_GUARD_MAX_SCAN_BYTES` / `QUERY_GUARD_MAX_SCAN_ROWS`）を超過するとブロックされます。`GET /api/config` の `guard` ブロックで現在の設定値を確認し、上限の引き上げ・`mode=warn` への変更・LIMIT 追加などで対処してください |
 
 ログは systemd 運用なら `journalctl -u hubble -f` で確認できます。
 

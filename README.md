@@ -38,6 +38,7 @@
   サンプル行付きのテーブル詳細ポップオーバー、notebook / saved-query / 履歴の各パネル。
 - **コマンドパレット**（Ctrl/Cmd+K）、充実したキーボードショートカット、そして SQL を
   `--` 見出しでカードに分割する読み取り専用の**プレゼンテーションモード**。
+- **Query Guard** — 実行前に `EXPLAIN (TYPE IO)` でスキャン量を推定し、管理者設定の上限を超えるクエリを警告またはブロック。Trino に不慣れなユーザーによる巨大クエリを防ぎます。
 
 ## アーキテクチャ
 
@@ -84,26 +85,33 @@ pnpm --filter @hubble/web dev
 
 ### 環境変数（server）
 
-| 変数                    | 既定値                   | 説明                                                                                           |
-| ----------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `PORT`                  | `8080`                   | BFF が待ち受ける HTTP ポート                                                                   |
-| `DB_PATH`               | `./data/hubble.db`    | SQLite データベースファイル                                                                    |
-| `STATIC_DIR`            | —                        | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う |
-| `TRINO_BASE_URL`        | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL                                                             |
-| `TRINO_USER`            | `admin`                  | `X-Trino-User` として送る値                                                                    |
-| `TRINO_USERNAME`        | `admin`                  | Basic 認証のユーザー名                                                                         |
-| `TRINO_PASSWORD`        | ``（空）                 | Basic 認証のパスワード                                                                         |
-| `TRINO_SOURCE`          | `hubble`                 | ユーザークエリ向けの `X-Trino-Source`                                                          |
-| `TRINO_METADATA_SOURCE` | `hubble-metadata`        | メタデータクエリ向けの `X-Trino-Source`                                                        |
-| `DEFAULT_CATALOG`       | —                        | 新規 notebook の初期カタログ                                                                   |
-| `DEFAULT_SCHEMA`        | —                        | 新規 notebook の初期スキーマ                                                                   |
-| `DEFAULT_LIMIT`         | `5000`                   | `LIMIT` のない `SELECT` に自動付与する `LIMIT`                                                 |
-| `QUERY_MAX_ROWS`        | `100000`                 | クエリごとに server 側でバッファする行数の上限                                                 |
-| `QUERY_CONCURRENCY`     | `5`                      | 同時に追跡するクエリ数の上限                                                                   |
-| `QUERY_TTL_MINUTES`     | `30`                     | 完了したクエリを掃除するまでの保持時間                                                         |
-| `QUERY_OVERFLOW_MODE`   | `truncate`               | `QUERY_MAX_ROWS` 超過時の挙動（`truncate` または `cancel`）                                    |
-| `METADATA_TTL_SECONDS`  | `300`                    | メタデータキャッシュの TTL                                                                     |
-| `APP_VERSION`           | `0.1.0`                  | `GET /api/config` が返すバージョン                                                             |
+| 変数                              | 既定値                   | 説明                                                                                            |
+| --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `PORT`                            | `8080`                   | BFF が待ち受ける HTTP ポート                                                                    |
+| `DB_PATH`                         | `./data/hubble.db`       | SQLite データベースファイル                                                                     |
+| `STATIC_DIR`                      | —                        | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う  |
+| `TRINO_BASE_URL`                  | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL                                                              |
+| `TRINO_USER`                      | `admin`                  | `X-Trino-User` として送る値                                                                     |
+| `TRINO_USERNAME`                  | `admin`                  | Basic 認証のユーザー名                                                                          |
+| `TRINO_PASSWORD`                  | ``（空）                 | Basic 認証のパスワード                                                                          |
+| `TRINO_SOURCE`                    | `hubble`                 | ユーザークエリ向けの `X-Trino-Source`                                                           |
+| `TRINO_METADATA_SOURCE`           | `hubble-metadata`        | メタデータクエリ向けの `X-Trino-Source`                                                         |
+| `DEFAULT_CATALOG`                 | —                        | 新規 notebook の初期カタログ                                                                    |
+| `DEFAULT_SCHEMA`                  | —                        | 新規 notebook の初期スキーマ                                                                    |
+| `DEFAULT_LIMIT`                   | `5000`                   | `LIMIT` のない `SELECT` に自動付与する `LIMIT`                                                  |
+| `QUERY_MAX_ROWS`                  | `100000`                 | クエリごとに server 側でバッファする行数の上限                                                  |
+| `QUERY_CONCURRENCY`               | `5`                      | 同時に追跡するクエリ数の上限                                                                    |
+| `QUERY_TTL_MINUTES`               | `30`                     | 完了したクエリを掃除するまでの保持時間                                                          |
+| `QUERY_OVERFLOW_MODE`             | `truncate`               | `QUERY_MAX_ROWS` 超過時の挙動（`truncate` または `cancel`）                                     |
+| `METADATA_TTL_SECONDS`            | `300`                    | メタデータキャッシュの TTL                                                                      |
+| `APP_VERSION`                     | `0.1.0`                  | `GET /api/config` が返すバージョン                                                              |
+| `QUERY_GUARD_MODE`                | `warn`                   | Query Guard モード（`off`=無効 / `warn`=推定表示のみ / `enforce`=上限超過時に HTTP 422 で拒否） |
+| `QUERY_GUARD_MAX_SCAN_BYTES`      | `0`（無制限）            | スキャンバイト数の上限（0 = 無制限）                                                            |
+| `QUERY_GUARD_MAX_SCAN_ROWS`       | `0`（無制限）            | スキャン行数の上限（0 = 無制限）                                                                |
+| `QUERY_GUARD_ON_UNKNOWN`          | `warn`                   | 統計が無く推定不能なときの扱い（`allow` / `warn` / `block`）                                    |
+| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000`                   | EXPLAIN のタイムアウト（ミリ秒）                                                                |
+| `QUERY_GUARD_CACHE_TTL_SECONDS`   | `30`                     | 推定結果キャッシュの TTL（秒）                                                                  |
+| `QUERY_GUARD_BYTES_PER_SECOND`    | `0`（目安なし）          | クラスタースループット目安（バイト/秒）。0 より大きい値を設定すると UI に所要時間の目安を表示   |
 
 ## ドキュメント
 

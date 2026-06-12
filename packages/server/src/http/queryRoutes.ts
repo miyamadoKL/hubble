@@ -4,12 +4,17 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { stream } from 'hono/streaming';
 import type { StreamingApi } from 'hono/utils/stream';
-import { createQueryRequestSchema, type QueryRowsPage } from '@hubble/contracts';
+import {
+  createQueryRequestSchema,
+  estimateRequestSchema,
+  type QueryRowsPage,
+} from '@hubble/contracts';
 import type { Services } from '../services';
 import type { TrinoRequestContext } from '../trino/types';
 import type { OverflowMode } from '../query/execution';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
+import { disabledEstimate, guardLimitsSnapshot } from '../query/guard';
 import { intParam, parseJsonBody } from './validate';
 import { buildReplayEvents, encodeSseEvent, SSE_KEEPALIVE } from '../query/sse';
 import { streamQueryCsv } from '../query/csv';
@@ -23,18 +28,56 @@ const KEEPALIVE_INTERVAL_MS = 15_000;
 export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables }> {
   const app = new Hono<{ Variables: AuthVariables }>();
 
+  // POST /api/queries/estimate — Query Guard scan-cost estimate (no execution).
+  app.post('/estimate', async (c) => {
+    const body = await parseJsonBody(c, estimateRequestSchema);
+    // mode=off: never touch Trino; return a `disabled` estimate immediately.
+    if (services.config.guard.mode === 'off') {
+      return c.json(disabledEstimate());
+    }
+    const principal = c.var.principal;
+    const result = await services.estimate.estimate({
+      statement: body.statement,
+      catalog: body.catalog ?? services.config.defaults.catalog,
+      schema: body.schema ?? services.config.defaults.schema,
+      principal: principal.user,
+    });
+    return c.json(result);
+  });
+
   // POST /api/queries — accept and start; respond 202 with the queryId.
   app.post('/', async (c) => {
     const body = await parseJsonBody(c, createQueryRequestSchema);
     const principal = c.var.principal;
+    const catalog = body.catalog ?? services.config.defaults.catalog;
+    const schema = body.schema ?? services.config.defaults.schema;
     const ctx: TrinoRequestContext = {
-      catalog: body.catalog ?? services.config.defaults.catalog,
-      schema: body.schema ?? services.config.defaults.schema,
+      catalog,
+      schema,
       source: body.source,
       // Impersonate the authenticated principal for this user query (design.md §11).
       user: principal.user,
       sessionProperties: body.sessionProperties,
     };
+
+    // Query Guard enforce: estimate (reusing a fresh cached estimate from a
+    // just-prior /estimate call so this is usually a no-op) and block before
+    // any execution when the verdict says so.
+    if (services.config.guard.mode === 'enforce') {
+      const estimate = await services.estimate.estimate({
+        statement: body.statement,
+        catalog,
+        schema,
+        principal: principal.user,
+      });
+      if (estimate.verdict.decision === 'block') {
+        throw AppError.queryBlocked(estimate.verdict.reasons[0] ?? 'Query blocked by Query Guard', {
+          estimate,
+          limits: guardLimitsSnapshot(services.config),
+        });
+      }
+    }
+
     const overflowMode: OverflowMode | undefined =
       body.maxRows !== undefined ? services.config.query.overflowMode : undefined;
     const exec = services.queries.submit({
