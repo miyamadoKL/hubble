@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Column } from '@hue-fable/contracts';
+import type { Column } from '@hubble/contracts';
 import {
   fetchCatalogs,
   fetchSchemas,

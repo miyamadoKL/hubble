@@ -13,7 +13,7 @@
  *
  * Prereqs (start these first):
  *   - server: PORT=8081 TRINO_BASE_URL=http://localhost:30080 (P2a, live Trino)
- *   - web:    pnpm --filter @hue-fable/web dev   (vite :5173)
+ *   - web:    pnpm --filter @hubble/web dev   (vite :5173)
  *
  * Run: node e2e/screenshots-p3b.mjs
  */
@@ -34,7 +34,7 @@ async function setTheme(page, mode) {
     /* eslint-disable no-undef */
     document.documentElement.setAttribute('data-theme', m);
     window.localStorage.setItem(
-      'hue-fable-ui',
+      'hubble-ui',
       JSON.stringify({
         state: { theme: m, sidebarTab: 'data', sidebarWidth: 288, sidebarCollapsed: false },
         version: 0,

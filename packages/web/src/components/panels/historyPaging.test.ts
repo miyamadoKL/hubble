@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import type { QueryHistoryEntry } from '@hue-fable/contracts';
+import type { QueryHistoryEntry } from '@hubble/contracts';
 import {
   historyPagingReducer,
   initialPagingState,

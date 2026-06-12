@@ -22,7 +22,7 @@
 // directly by vitest.
 
 import { CharStream, CommonTokenStream, Token } from 'antlr4ng';
-import type { Variable, VariableMeta, VariableType } from '@hue-fable/contracts';
+import type { Variable, VariableMeta, VariableType } from '@hubble/contracts';
 import { SqlBaseLexer } from '../trino-lang/generated/SqlBaseLexer.js';
 
 /** A single placeholder occurrence parsed from the source. */

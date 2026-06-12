@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { Cell } from '@hue-fable/contracts';
+import type { Cell } from '@hubble/contracts';
 import { CellFrame, type CellStatus } from './CellFrame';
 import { CellToolbar } from './CellToolbar';
 import { CellInsert } from './CellInsert';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { QueryEvent, QuerySnapshot, QueryRowsPage } from '@hue-fable/contracts';
+import type { QueryEvent, QuerySnapshot, QueryRowsPage } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 

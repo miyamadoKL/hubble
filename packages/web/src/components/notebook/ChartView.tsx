@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { QueryColumn } from '@hue-fable/contracts';
+import type { QueryColumn } from '@hubble/contracts';
 import type { EChartsType } from 'echarts/core';
 import { loadECharts } from '../../chart/echartsLoader';
 import { buildChartOption, readChartTheme, type ChartConfig } from '../../chart';

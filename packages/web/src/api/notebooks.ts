@@ -12,7 +12,7 @@ import {
   type Notebook,
   type NotebookListItem,
   type UpdateNotebookRequest,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import { apiFetch } from './client';
 
 /** `GET /api/notebooks` returns a bare array of list items (server: storeRoutes). */

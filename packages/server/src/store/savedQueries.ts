@@ -3,8 +3,8 @@ import type {
   CreateSavedQueryRequest,
   SavedQuery,
   UpdateSavedQueryRequest,
-} from '@hue-fable/contracts';
-import { savedQuerySchema } from '@hue-fable/contracts';
+} from '@hubble/contracts';
+import { savedQuerySchema } from '@hubble/contracts';
 import { newId } from '../util/id';
 import { likeParam } from './notebooks';
 

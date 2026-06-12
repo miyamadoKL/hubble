@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { getConnInfo } from '@hono/node-server/conninfo';
-import { UNAUTHENTICATED } from '@hue-fable/contracts';
+import { UNAUTHENTICATED } from '@hubble/contracts';
 import type { AuthConfig } from '../config';
 import { AppError } from '../errors';
 import { PrincipalResolver, type Principal } from './principal';

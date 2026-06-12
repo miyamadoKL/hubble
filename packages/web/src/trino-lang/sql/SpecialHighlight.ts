@@ -1,5 +1,5 @@
 // Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Substantially adapted for hue_fable: the original imported monaco-editor and
+// Substantially adapted for hubble: the original imported monaco-editor and
 // the singleton SchemaProvider directly to build a decoration with an inline
 // hover string. To keep the language layer editor-agnostic and DI-friendly,
 // this now emits a plain descriptor (range + class + resolved TableReference);

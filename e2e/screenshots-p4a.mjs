@@ -14,7 +14,7 @@
  *
  * Prereqs (start these first):
  *   - server: PORT=8081 (live Trino at :30080)
- *   - web:    pnpm --filter @hue-fable/web dev
+ *   - web:    pnpm --filter @hubble/web dev
  *
  * Run: node e2e/screenshots-p4a.mjs [baseURL]
  */
@@ -35,7 +35,7 @@ async function resetWorkspace(page, mode = 'light') {
     /* eslint-disable no-undef */
     document.documentElement.setAttribute('data-theme', m);
     window.localStorage.setItem(
-      'hue-fable-ui',
+      'hubble-ui',
       JSON.stringify({
         state: { theme: m, sidebarTab: 'data', sidebarWidth: 288, sidebarCollapsed: false },
         version: 0,
@@ -43,7 +43,7 @@ async function resetWorkspace(page, mode = 'light') {
     );
     // Clear any restored workspace / drafts so each run starts clean.
     for (const key of Object.keys(window.localStorage)) {
-      if (key.startsWith('hue-fable-draft:') || key === 'hue-fable-workspace') {
+      if (key.startsWith('hubble-draft:') || key === 'hubble-workspace') {
         window.localStorage.removeItem(key);
       }
     }

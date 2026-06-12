@@ -3,7 +3,7 @@ import { openDatabase } from '../db';
 import { loadServerConfig } from '../config';
 import { buildServices } from '../services';
 import { createApp } from '../app';
-import type { QuerySnapshot } from '@hue-fable/contracts';
+import type { QuerySnapshot } from '@hubble/contracts';
 
 /**
  * Integration tests against a real Trino. Skipped unless RUN_TRINO_IT=1.

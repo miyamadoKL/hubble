@@ -1,4 +1,4 @@
-// Part of the hue_fable trino-lang fork (see repo-root NOTICE for the
+// Part of the hubble trino-lang fork (see repo-root NOTICE for the
 // trino-query-ui Apache-2.0 attribution covering the surrounding modules).
 //
 // MetadataSource replaces the forked singleton `SchemaProvider`, which issued

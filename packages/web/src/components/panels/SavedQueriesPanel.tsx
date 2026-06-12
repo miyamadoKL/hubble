@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { SavedQuery } from '@hue-fable/contracts';
+import type { SavedQuery } from '@hubble/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookMarked, FilePlus2, Star, TextCursorInput, Trash2 } from 'lucide-react';
 import {

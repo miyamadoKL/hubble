@@ -5,7 +5,7 @@ import {
   queryStateSchema,
   updateNotebookRequestSchema,
   updateSavedQueryRequestSchema,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import type { Services } from '../services';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';

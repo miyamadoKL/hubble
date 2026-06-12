@@ -37,7 +37,7 @@ multi-stage の流れ：
 
 1. **deps** — `pnpm install --frozen-lockfile` で全 workspace を解決。
 2. **builder** — `pnpm --filter web build` で `packages/web/dist` を生成。
-3. **prod-deps** — `pnpm install --prod --filter "@hue-fable/server..."` で server と
+3. **prod-deps** — `pnpm install --prod --filter "@hubble/server..."` で server と
    contracts の本番依存のみに pruning（`better-sqlite3` のネイティブ addon を含む）。
 4. **runtime** — server / contracts の **TS ソース**（tsx で直接実行）、web の dist、
    本番 `node_modules` を配置。非 root（`node`）で実行。
@@ -47,7 +47,7 @@ multi-stage の流れ：
 | 変数         | 既定（イメージ）         |
 | ------------ | ------------------------ |
 | `STATIC_DIR` | `/app/packages/web/dist` |
-| `DB_PATH`    | `/data/hue_fable.db`     |
+| `DB_PATH`    | `/data/hubble.db`     |
 | `PORT`       | `8080`                   |
 
 `/data` は `VOLUME` 化されており、SQLite（`notebooks` / `saved_queries` / `query_history`）が

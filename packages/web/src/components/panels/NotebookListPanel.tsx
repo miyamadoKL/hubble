@@ -1,4 +1,4 @@
-import type { NotebookListItem } from '@hue-fable/contracts';
+import type { NotebookListItem } from '@hubble/contracts';
 import { FileCode2, NotebookPen } from 'lucide-react';
 import { EmptyState } from '../common/EmptyState';
 import { formatRelativeTime } from '../../utils/format';

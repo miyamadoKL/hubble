@@ -1,4 +1,4 @@
-import type { QueryEvent } from '@hue-fable/contracts';
+import type { QueryEvent } from '@hubble/contracts';
 import type { QueryExecution } from './execution';
 
 /** Serialize a `QueryEvent` as an SSE frame (`event:` + `data:` + blank line). */

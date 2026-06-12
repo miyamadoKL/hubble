@@ -1,4 +1,4 @@
-import type { ApiErrorDetail } from '@hue-fable/contracts';
+import type { ApiErrorDetail } from '@hubble/contracts';
 import type { TrinoError } from './trino/types';
 
 /**

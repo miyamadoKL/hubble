@@ -74,10 +74,10 @@ pnpm install
 
 # Terminal 1 — the BFF (Hono) on :8080
 PORT=8080 TRINO_BASE_URL=http://localhost:30080 \
-  pnpm --filter @hue-fable/server dev
+  pnpm --filter @hubble/server dev
 
 # Terminal 2 — the web app (Vite) on :5173, proxying /api → :8080
-pnpm --filter @hue-fable/web dev
+pnpm --filter @hubble/web dev
 ```
 
 そのうえで <http://localhost:5173> を開きます。（`pnpm dev` で両方を並行起動できます。）
@@ -87,7 +87,7 @@ pnpm --filter @hue-fable/web dev
 | 変数                    | 既定値                   | 説明                                                                                           |
 | ----------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
 | `PORT`                  | `8080`                   | BFF が待ち受ける HTTP ポート                                                                   |
-| `DB_PATH`               | `./data/hue_fable.db`    | SQLite データベースファイル                                                                    |
+| `DB_PATH`               | `./data/hubble.db`    | SQLite データベースファイル                                                                    |
 | `STATIC_DIR`            | —                        | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う |
 | `TRINO_BASE_URL`        | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL                                                             |
 | `TRINO_USER`            | `admin`                  | `X-Trino-User` として送る値                                                                    |
@@ -121,7 +121,7 @@ pnpm --filter web build
 
 # End-to-end against a live Trino (tpch). Starts the server (in-memory DB) + web
 # automatically; needs a reachable Trino on :30080.
-pnpm --filter @hue-fable/e2e test
+pnpm --filter @hubble/e2e test
 ```
 
 E2E スイート（editor / execution / results / notebook / panels / chart / app にわたる

@@ -1,4 +1,4 @@
-Fable SQL Workbench (hue_fable)
+Hubble SQL Workbench (hubble)
 ================================
 
 This product includes software forked from third-party projects. The relevant
@@ -33,7 +33,7 @@ Each forked source file carries an inline provenance comment at its head.
 A copy of the Apache License, Version 2.0 may be obtained at:
   http://www.apache.org/licenses/LICENSE-2.0
 
-Modifications by the hue_fable project:
+Modifications by the hubble project:
   - The original singleton `SchemaProvider` (which issued queries directly
     against Trino) was removed. Metadata is now supplied through a dependency-
     injected `MetadataSource` interface (see packages/web/src/trino-lang/sql/).

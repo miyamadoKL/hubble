@@ -1,5 +1,5 @@
 // Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted for hue_fable: removed the singleton SchemaProvider side-effects (the
+// Adapted for hubble: removed the singleton SchemaProvider side-effects (the
 // original called SchemaProvider.getTableIfCached during the walk to warm a
 // global cache). Cache warming is now driven explicitly by the analyzer layer
 // from the table references this listener exposes. Also typed the visitor

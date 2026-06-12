@@ -11,7 +11,7 @@ vi.mock('./api', () => ({
   downloadCsvUrl: vi.fn(),
 }));
 
-import type { QueryEvent } from '@hue-fable/contracts';
+import type { QueryEvent } from '@hubble/contracts';
 import {
   useExecutionStore,
   __setEventSourceFactory,

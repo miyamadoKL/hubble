@@ -4,8 +4,8 @@ import type {
   Notebook,
   NotebookListItem,
   UpdateNotebookRequest,
-} from '@hue-fable/contracts';
-import { notebookSchema } from '@hue-fable/contracts';
+} from '@hubble/contracts';
+import { notebookSchema } from '@hubble/contracts';
 import { newId } from '../util/id';
 
 interface NotebookRow {

@@ -4,7 +4,7 @@ import type {
   SampleRowsResponse,
   SchemaItem,
   TableItem,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import type { TrinoClient } from '../trino/client';
 import { runToCompletion } from '../trino/runner';
 import type { TrinoColumn, TrinoRequestContext } from '../trino/types';

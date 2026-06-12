@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { appConfigSchema, apiRoutes } from '@hue-fable/contracts';
+import { appConfigSchema, apiRoutes } from '@hubble/contracts';
 import { createTestContext } from './test/harness';
 
 describe('GET /api/healthz', () => {

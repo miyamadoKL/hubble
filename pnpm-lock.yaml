@@ -72,7 +72,7 @@ importers:
       '@hono/node-server':
         specifier: 2.0.4
         version: 2.0.4(hono@4.12.25)
-      '@hue-fable/contracts':
+      '@hubble/contracts':
         specifier: workspace:*
         version: link:../contracts
       better-sqlite3:
@@ -124,7 +124,7 @@ importers:
       '@fontsource/ibm-plex-sans-jp':
         specifier: 5.2.8
         version: 5.2.8
-      '@hue-fable/contracts':
+      '@hubble/contracts':
         specifier: workspace:*
         version: link:../contracts
       '@tanstack/react-query':

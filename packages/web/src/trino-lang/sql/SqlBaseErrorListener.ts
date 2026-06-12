@@ -1,5 +1,5 @@
 // Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted for hue_fable: typed against antlr4ng's BaseErrorListener (the
+// Adapted for hubble: typed against antlr4ng's BaseErrorListener (the
 // original used `any` throughout and a magic `severity: 8`). Emits
 // editor-agnostic marker objects (1-based line/column, matching Monaco) so the
 // language layer stays free of any monaco-editor import.

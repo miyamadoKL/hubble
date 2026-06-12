@@ -53,7 +53,7 @@ jobs:
       #
       # Intentionally NOT run here (both need a real Trino instance):
       #   - RUN_TRINO_IT=1 pnpm --filter server test  (server integration tests)
-      #   - pnpm --filter @hue-fable/e2e test          (Playwright e2e)
+      #   - pnpm --filter @hubble/e2e test          (Playwright e2e)
       - name: Test
         run: pnpm test
 

@@ -9,7 +9,7 @@
 //
 // renders as two titled cards. Pure + testable; the component renders the result.
 
-import type { Notebook } from '@hue-fable/contracts';
+import type { Notebook } from '@hubble/contracts';
 
 export interface PresentationCard {
   /** Heading text from the `--` comment that opened the card, or null. */

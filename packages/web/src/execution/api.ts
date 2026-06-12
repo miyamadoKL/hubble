@@ -11,7 +11,7 @@ import {
   type CreateQueryResponse,
   type QuerySnapshot,
   type QueryRowsPage,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import { apiFetch, apiRoutes } from '../api/client';
 
 /** `POST /api/queries` → 202 `{ queryId }`. */

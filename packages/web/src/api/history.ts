@@ -7,7 +7,7 @@ import {
   type HistoryResponse,
   type QueryState,
   apiRoutes,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import { apiFetch } from './client';
 
 /** Default page size for the history panel (design.md §5: ページング 50 件). */

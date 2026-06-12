@@ -13,7 +13,7 @@
  *
  * Prereqs (start these first):
  *   - server: PORT=8081 TRINO_BASE_URL=http://localhost:30080 (live Trino)
- *   - web:    pnpm --filter @hue-fable/web dev   (vite :5173)
+ *   - web:    pnpm --filter @hubble/web dev   (vite :5173)
  *
  * Run: node e2e/screenshots-p4b.mjs [baseURL]
  */
@@ -36,7 +36,7 @@ async function resetWorkspace(page, mode = 'light', sidebarTab = 'data') {
       /* eslint-disable no-undef */
       document.documentElement.setAttribute('data-theme', m);
       window.localStorage.setItem(
-        'hue-fable-ui',
+        'hubble-ui',
         JSON.stringify({
           state: { theme: m, sidebarTab: tab, sidebarWidth: 320, sidebarCollapsed: false },
           version: 0,
@@ -44,11 +44,11 @@ async function resetWorkspace(page, mode = 'light', sidebarTab = 'data') {
       );
       // Seed a recent context so the selector + new notebooks default to tpch.tiny.
       window.localStorage.setItem(
-        'hue-fable-recent-contexts',
+        'hubble-recent-contexts',
         JSON.stringify([{ catalog: 'tpch', schema: 'tiny' }]),
       );
       for (const key of Object.keys(window.localStorage)) {
-        if (key.startsWith('hue-fable-draft:') || key === 'hue-fable-workspace') {
+        if (key.startsWith('hubble-draft:') || key === 'hubble-workspace') {
           window.localStorage.removeItem(key);
         }
       }

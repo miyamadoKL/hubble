@@ -26,7 +26,7 @@ import type {
   Notebook,
   NotebookContext,
   Variable,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import { uid } from '../utils/id';
 import { detectVariables, reconcileVariables } from './variables';
 import { readRecentContexts } from './recentContexts';
@@ -50,8 +50,8 @@ export const AUTOSAVE_DEBOUNCE_MS = 2000;
 
 // ---- localStorage keys ------------------------------------------------------
 
-const WORKSPACE_KEY = 'hue-fable-workspace'; // open tab ids + active id
-const DRAFT_PREFIX = 'hue-fable-draft:'; // per-draft notebook snapshot
+const WORKSPACE_KEY = 'hubble-workspace'; // open tab ids + active id
+const DRAFT_PREFIX = 'hubble-draft:'; // per-draft notebook snapshot
 
 // ---- Open-notebook record ---------------------------------------------------
 

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { HistoryResponse, QueryHistoryEntry, QueryState } from '@hue-fable/contracts';
-import { queryHistoryEntrySchema } from '@hue-fable/contracts';
+import type { HistoryResponse, QueryHistoryEntry, QueryState } from '@hubble/contracts';
+import { queryHistoryEntrySchema } from '@hubble/contracts';
 
 interface HistoryRow {
   id: string;

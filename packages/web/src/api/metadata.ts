@@ -16,7 +16,7 @@ import {
   type TablesResponse,
   type TableDetail,
   type SampleRowsResponse,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import type { QueryClient } from '@tanstack/react-query';
 import { apiFetch } from './client';
 import type { MetadataSource, MetadataTable } from '../trino-lang';

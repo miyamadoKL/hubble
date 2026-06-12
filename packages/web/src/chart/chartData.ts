@@ -6,7 +6,7 @@
 // option assembly lives in `chartOptions.ts`, and the theme (token colors / font)
 // in `chartTheme.ts`.
 
-import type { QueryColumn } from '@hue-fable/contracts';
+import type { QueryColumn } from '@hubble/contracts';
 import type { ResultRow } from '../execution';
 
 /** The five chart kinds we support (design.md §5). */

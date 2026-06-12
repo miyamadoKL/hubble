@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { stream } from 'hono/streaming';
 import type { StreamingApi } from 'hono/utils/stream';
-import { createQueryRequestSchema, type QueryRowsPage } from '@hue-fable/contracts';
+import { createQueryRequestSchema, type QueryRowsPage } from '@hubble/contracts';
 import type { Services } from '../services';
 import type { TrinoRequestContext } from '../trino/types';
 import type { OverflowMode } from '../query/execution';

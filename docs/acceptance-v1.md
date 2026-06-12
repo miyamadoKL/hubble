@@ -1,4 +1,4 @@
-# Fable SQL Workbench — v1 Acceptance Audit
+# Hubble SQL Workbench — v1 Acceptance Audit
 
 > Status: **PASS** — every v1 checklist item from `docs/design.md` §5 is verified,
 > either by an automated Playwright E2E test (real Trino, `tpch`) or by a
@@ -8,7 +8,7 @@
 ## How this was verified
 
 - **E2E**: an assertion in the Playwright suite under `e2e/tests/` against a live
-  Trino 479 (`tpch.tiny` / `tpch.sf1`). Run with `pnpm --filter @hue-fable/e2e test`.
+  Trino 479 (`tpch.tiny` / `tpch.sf1`). Run with `pnpm --filter @hubble/e2e test`.
   35 tests, all green; the server runs with an in-memory SQLite and
   `QUERY_MAX_ROWS=10000`.
 - **Manual (Playwright)**: exercised by driving the real UI through the same dev

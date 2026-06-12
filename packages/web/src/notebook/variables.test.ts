@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import type { Variable } from '@hue-fable/contracts';
+import type { Variable } from '@hubble/contracts';
 import {
   detectVariables,
   inferType,

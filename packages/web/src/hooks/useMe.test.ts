@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { UNAUTHENTICATED } from '@hue-fable/contracts';
+import { UNAUTHENTICATED } from '@hubble/contracts';
 import { ApiClientError } from '../api/client';
 import { isUnauthenticated } from './useMe';
 

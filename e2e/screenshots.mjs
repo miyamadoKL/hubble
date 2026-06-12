@@ -56,7 +56,7 @@ async function main() {
 
   // 1. Build (ensures the captured app matches `pnpm --filter web build`).
   console.log('› Building web app…');
-  await run('pnpm', ['--filter', '@hue-fable/web', 'build'], { cwd: repoRoot });
+  await run('pnpm', ['--filter', '@hubble/web', 'build'], { cwd: repoRoot });
 
   // 2. Serve the production build.
   console.log('› Starting vite preview…');
@@ -85,7 +85,7 @@ async function main() {
         /* eslint-disable no-undef */
         document.documentElement.setAttribute('data-theme', m);
         window.localStorage.setItem(
-          'hue-fable-ui',
+          'hubble-ui',
           JSON.stringify({
             state: { theme: m, sidebarTab: 'data', sidebarWidth: 288, sidebarCollapsed: false },
             version: 0,

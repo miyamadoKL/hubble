@@ -1,5 +1,5 @@
 // Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted for hue_fable: dropped the direct Trino-client sample-value fetch
+// Adapted for hubble: dropped the direct Trino-client sample-value fetch
 // (the original coupled this value object to AsyncTrinoClient). Sampling now
 // flows through the DI'd MetadataSource / the contracts-based API client.
 

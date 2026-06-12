@@ -4,7 +4,7 @@ import {
   notebookListItemSchema,
   savedQuerySchema,
   historyResponseSchema,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 

@@ -1,5 +1,5 @@
 import { CircleCheck, CircleX, History, Play } from 'lucide-react';
-import type { CellResultMeta } from '@hue-fable/contracts';
+import type { CellResultMeta } from '@hubble/contracts';
 import { formatDuration, formatInt, formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
 
