@@ -1,0 +1,61 @@
+name: CI
+
+# Run on PRs targeting main and on pushes to main.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel superseded runs for the same ref (e.g. when a PR is force-pushed).
+# Pushes to main are never cancelled so every merged commit gets a full run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: typecheck / lint / test / build
+    runs-on: ubuntu-latest
+    # Install + four tasks (typecheck, lint, test, build) on a JS monorepo;
+    # 15 min is comfortably above the expected runtime while still failing fast on hangs.
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # corepack pins pnpm to the version in package.json's "packageManager"
+      # field (pnpm@11.6.0), so the CLI version always matches the repo.
+      - name: Enable corepack (pnpm 11.6.0 via packageManager)
+        run: corepack enable
+
+      # Node 24 to satisfy "engines": { "node": ">=24" }.
+      # cache: pnpm caches the pnpm store keyed on pnpm-lock.yaml.
+      - name: Setup Node 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Steps are kept separate so a failure points at the exact task.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint (eslint + ast-grep)
+        run: pnpm lint
+
+      # Unit tests for contracts, server and web. These use a fake Trino, so no
+      # external services are required.
+      #
+      # Intentionally NOT run here (both need a real Trino instance):
+      #   - RUN_TRINO_IT=1 pnpm --filter server test  (server integration tests)
+      #   - pnpm --filter @hue-fable/e2e test          (Playwright e2e)
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

@@ -1,0 +1,42 @@
+Fable SQL Workbench (hue_fable)
+================================
+
+This product includes software forked from third-party projects. The relevant
+portions retain their original licenses and copyright notices as noted below.
+
+
+trino-query-ui
+--------------
+Licensed under the Apache License, Version 2.0.
+
+The following assets under packages/web/src/trino-lang/ are forked from the
+trino-query-ui project (which itself derives its grammar from Trino, also
+Apache-2.0):
+
+  - SqlBase.g4                          (Trino SQL grammar)
+  - generated/SqlBaseLexer.ts           (antlr4ng-generated lexer)
+  - generated/SqlBaseParser.ts          (antlr4ng-generated parser)
+  - generated/SqlBaseListener.ts        (antlr4ng-generated listener)
+  - generated/SqlBaseVisitor.ts         (antlr4ng-generated visitor)
+  - sql/TokenMap.ts                     (token-type → highlight-scope map)
+  - sql/SqlBaseErrorListener.ts         (syntax-error collector)
+  - sql/NamedQuery.ts                   (CTE / aliased-relation descriptor)
+  - sql/StatementDescriptor.ts          (per-statement table reference)
+  - sql/SqlBaseListenerImpl.ts          (decoration / table-reference listener; adapted)
+  - sql/SpecialHighlight.ts             (table-name decoration; adapted)
+  - schema/Catalog.ts, Schema.ts, Table.ts, Column.ts, TableReference.ts
+                                        (metadata value objects; decoupled from
+                                         the singleton SchemaProvider during fork)
+
+Each forked source file carries an inline provenance comment at its head.
+
+A copy of the Apache License, Version 2.0 may be obtained at:
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Modifications by the hue_fable project:
+  - The original singleton `SchemaProvider` (which issued queries directly
+    against Trino) was removed. Metadata is now supplied through a dependency-
+    injected `MetadataSource` interface (see packages/web/src/trino-lang/sql/).
+  - `QueryEditorPane` (a 950-line React monolith) was NOT forked; its editor
+    behaviour was re-implemented as discrete Monaco providers under
+    packages/web/src/editor/.

@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+  - 'e2e'
+
+# Allow these dependencies to run their (native) build scripts.
+allowBuilds:
+  '@ast-grep/cli': true
+  better-sqlite3: true
+  esbuild: true

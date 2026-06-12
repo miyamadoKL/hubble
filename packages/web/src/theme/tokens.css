@@ -1,0 +1,193 @@
+/*
+ * Fable design tokens (design.md §6) — the single source of truth for color,
+ * spacing, radius, shadow and typography. CSS variables are the contract;
+ * raw hex literals are forbidden in components (enforced by ast-grep).
+ *
+ * Tone: "refined data instrument". Light = "warm paper", Dark = "midnight
+ * instrument". Single amber/copper accent. No purple gradients.
+ *
+ * Theme is switched via the `data-theme` attribute on <html>:
+ *   light: default
+ *   dark:  [data-theme="dark"]
+ */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* ---- Surface hierarchy (warm paper) ---- */
+  --color-surface-base: #faf9f7; /* app background */
+  --color-surface-raised: #ffffff; /* cards, editor */
+  --color-surface-sunken: #f2f0ec; /* wells, result grid body */
+  --color-surface-overlay: #ffffff; /* popovers, command palette */
+  --color-surface-inset: #ece9e3; /* gutters, inactive tabs */
+
+  /* ---- Ink hierarchy (navy-leaning) ---- */
+  --color-ink-strong: #1c2330; /* headings, primary text */
+  --color-ink-base: #2b3444; /* body text */
+  --color-ink-muted: #5a6477; /* secondary text */
+  --color-ink-subtle: #8b93a3; /* tertiary / placeholder */
+  --color-ink-inverse: #f7f6f3; /* text on accent / dark fills */
+
+  /* ---- Borders ---- */
+  --color-border-strong: #cdc8bf;
+  --color-border-base: #ddd8cf;
+  --color-border-subtle: #e8e4dc;
+
+  /* ---- Accent (amber / copper) ---- */
+  --color-accent: #b56a28; /* copper */
+  --color-accent-hover: #9d5a1f;
+  --color-accent-active: #864c19;
+  --color-accent-soft: #f5e7d6; /* tinted background */
+  --color-accent-contrast: #ffffff; /* text on accent */
+
+  /* ---- Semantic ---- */
+  --color-success: #2f7d52;
+  --color-success-soft: #e2f0e7;
+  --color-error: #b3402f;
+  --color-error-soft: #f6e2de;
+  --color-warning: #a9760f;
+  --color-warning-soft: #f6ecd6;
+  --color-running: #2f6dab; /* in-flight query state */
+  --color-running-soft: #e0eaf4;
+
+  /* ---- Focus ring ---- */
+  --color-focus-ring: #b56a28;
+
+  /* ---- Chart series (ECharts; derived at runtime via getComputedStyle) ----
+     A restrained, instrument-grade palette led by the copper accent and walking
+     through ink-leaning teals/plums so series stay legible on warm paper. */
+  --chart-1: #b56a28; /* copper accent */
+  --chart-2: #2f6dab; /* steel blue */
+  --chart-3: #2f7d52; /* green */
+  --chart-4: #8a4b8f; /* plum */
+  --chart-5: #c08a2e; /* amber */
+  --chart-6: #4a7c8c; /* slate teal */
+
+  /* ---- Syntax (static SQL highlighter; Monaco theme derives from these in P3a) ---- */
+  --syntax-plain: #2b3444;
+  --syntax-keyword: #8a4b8f; /* muted plum — distinct from copper accent */
+  --syntax-function: #2f6dab; /* steel blue */
+  --syntax-string: #2f7d52; /* green */
+  --syntax-number: #b56a28; /* copper, numerics echo the accent */
+  --syntax-comment: #8b93a3; /* subtle ink */
+  --syntax-operator: #5a6477; /* muted ink */
+
+  /* ---- Shadows ---- */
+  --shadow-sm: 0 1px 2px rgb(28 35 48 / 0.06);
+  --shadow-md: 0 4px 12px rgb(28 35 48 / 0.1);
+  --shadow-lg: 0 12px 32px rgb(28 35 48 / 0.16);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* ---- Surface hierarchy (midnight instrument) ---- */
+  --color-surface-base: #11151c;
+  --color-surface-raised: #181d26;
+  --color-surface-sunken: #0c0f15;
+  --color-surface-overlay: #1d2330;
+  --color-surface-inset: #232a37;
+
+  /* ---- Ink hierarchy ---- */
+  --color-ink-strong: #f1f3f7;
+  --color-ink-base: #d6dae2;
+  --color-ink-muted: #98a1b1;
+  --color-ink-subtle: #6c7689;
+  --color-ink-inverse: #14181f;
+
+  /* ---- Borders ---- */
+  --color-border-strong: #353d4c;
+  --color-border-base: #2a313d;
+  --color-border-subtle: #20262f;
+
+  /* ---- Accent (amber, brighter for dark) ---- */
+  --color-accent: #d98a3d;
+  --color-accent-hover: #e89c4f;
+  --color-accent-active: #c2772c;
+  --color-accent-soft: #33271a;
+  --color-accent-contrast: #14181f;
+
+  /* ---- Semantic ---- */
+  --color-success: #5cb585;
+  --color-success-soft: #16271e;
+  --color-error: #e3705e;
+  --color-error-soft: #2c1a18;
+  --color-warning: #e0a942;
+  --color-warning-soft: #2a2114;
+  --color-running: #5e9bd6;
+  --color-running-soft: #15212e;
+
+  /* ---- Focus ring ---- */
+  --color-focus-ring: #d98a3d;
+
+  /* ---- Chart series (midnight; brighter so they read on dark surfaces) ---- */
+  --chart-1: #d98a3d; /* copper accent */
+  --chart-2: #6fa8dc; /* steel blue */
+  --chart-3: #7fc79b; /* green */
+  --chart-4: #c98ace; /* plum */
+  --chart-5: #e0a942; /* amber */
+  --chart-6: #79b4c4; /* slate teal */
+
+  /* ---- Syntax (midnight) ---- */
+  --syntax-plain: #d6dae2;
+  --syntax-keyword: #c98ace; /* plum, brightened for dark */
+  --syntax-function: #6fa8dc; /* steel blue */
+  --syntax-string: #7fc79b; /* green */
+  --syntax-number: #e0a942; /* amber */
+  --syntax-comment: #6c7689; /* subtle ink */
+  --syntax-operator: #98a1b1; /* muted ink */
+
+  /* ---- Shadows ---- */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.6);
+}
+
+/* ---- Theme-independent scales ---- */
+:root {
+  /* Spacing: strict 4px grid */
+  --space-0: 0;
+  --space-1: 0.25rem; /* 4px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+  --space-10: 2.5rem; /* 40px */
+  --space-12: 3rem; /* 48px */
+
+  /* Radius */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-sans: 'IBM Plex Sans', 'IBM Plex Sans JP', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* Font size scale */
+  --text-2xs: 0.6875rem; /* 11px — dense grid / stats */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.8125rem; /* 13px — default UI */
+  --text-base: 0.875rem; /* 14px */
+  --text-md: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.375rem; /* 22px — logo */
+
+  /* Line heights */
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+
+  /* Component density */
+  --row-height-dense: 28px; /* result grid / tree rows (design.md §6) */
+  --control-height: 32px;
+
+  /* Motion */
+  --motion-fast: 150ms; /* fade/slide for progress + cell results only */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}

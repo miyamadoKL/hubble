@@ -1,0 +1,89 @@
+/*
+ * Editor-only styles: inline decorations for table-name highlights emitted by
+ * the language layer (registerTrinoLanguage applies `trino-qualifiedName` /
+ * `trino-relationReference` classes). Colors come from design tokens — no raw
+ * hex — so they track the active theme. The Monaco editor chrome itself is
+ * themed via defineTheme (editor/theme.ts).
+ */
+
+.trino-qualifiedName {
+  color: var(--syntax-function);
+  text-decoration: underline dotted var(--color-border-strong);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.trino-relationReference {
+  color: var(--color-accent);
+  font-style: italic;
+}
+
+/*
+ * Per-statement execution status glyphs in the editor glyph margin
+ * (design.md §5 ガター). All colors come from design tokens so they track the
+ * active theme. The whole glyph is clickable (the cell wires the glyph-margin
+ * mouse-down to run that statement).
+ */
+.trino-gutter-idle,
+.trino-gutter-active,
+.trino-gutter-executing,
+.trino-gutter-done,
+.trino-gutter-failed {
+  cursor: pointer;
+}
+
+.trino-gutter-idle::before,
+.trino-gutter-active::before,
+.trino-gutter-done::before,
+.trino-gutter-failed::before {
+  content: '';
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin: 6px auto;
+  border-radius: 9999px;
+}
+
+/* idle: a hollow ring that fills on hover, hinting "click to run". */
+.trino-gutter-idle::before {
+  border: 1.5px solid var(--color-border-strong);
+}
+.trino-gutter-idle:hover::before {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+/* active (caret is inside this statement): accent dot. */
+.trino-gutter-active::before {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+/* done: success dot. */
+.trino-gutter-done::before {
+  background: var(--color-success);
+}
+
+/* failed: error dot. */
+.trino-gutter-failed::before {
+  background: var(--color-error);
+}
+
+/* executing: a spinning ring in the running color. */
+.trino-gutter-executing::before {
+  content: '';
+  display: block;
+  width: 9px;
+  height: 9px;
+  margin: 5.5px auto;
+  border-radius: 9999px;
+  border: 1.5px solid var(--color-running-soft);
+  border-top-color: var(--color-running);
+  animation: trino-gutter-spin 0.7s linear infinite;
+}
+
+@keyframes trino-gutter-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

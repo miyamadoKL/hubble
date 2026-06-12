@@ -1,0 +1,33 @@
+{
+  "name": "hue_fable",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fable SQL Workbench — a Trino-focused query editor inspired by Hue's Notebook.",
+  "type": "module",
+  "packageManager": "pnpm@11.6.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./packages/server\" --filter \"./packages/web\" dev",
+    "build": "pnpm --filter \"./packages/contracts\" build && pnpm --filter \"./packages/server\" build && pnpm --filter \"./packages/web\" build",
+    "typecheck": "pnpm -r --filter \"./packages/*\" --filter \"./e2e\" typecheck",
+    "lint": "eslint . && pnpm lint:ast",
+    "lint:ast": "node scripts/ast-grep.mjs scan",
+    "lint:ast:test": "node scripts/ast-grep.mjs test --skip-snapshot-tests",
+    "test": "pnpm -r --filter \"./packages/contracts\" --filter \"./packages/server\" --filter \"./packages/web\" test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@ast-grep/cli": "0.43.0",
+    "@eslint/js": "10.0.1",
+    "eslint": "10.4.1",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.6.0",
+    "prettier": "3.8.4",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.61.0"
+  }
+}
