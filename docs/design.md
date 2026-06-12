@@ -162,14 +162,15 @@ Hue 利用者が迷わない構成、見た目はモダンに再設計:
 
 ```
 GET    /api/healthz
-GET    /api/config                        # { trino: {url, user}, defaults: {catalog?, schema?, limit}, version }
+GET    /api/config                        # { trino: {url, user}, defaults: {catalog?, schema?, limit}, authMode, guard: {mode, maxScanBytes, maxScanRows, onUnknown, bytesPerSecond}, version }
 GET    /api/catalogs                      # MetadataResponse<Catalog>
 GET    /api/catalogs/:c/schemas
 GET    /api/catalogs/:c/schemas/:s/tables
 GET    /api/catalogs/:c/schemas/:s/tables/:t        # columns + 型 + comment
 GET    /api/catalogs/:c/schemas/:s/tables/:t/sample # 10 行サンプル
 POST   /api/metadata/refresh              # {catalog?, schema?}
-POST   /api/queries                       # { statement, catalog?, schema?, sessionProperties?, source?, notebookId?, cellId?, maxRows? } → 202 {queryId}
+POST   /api/queries                       # { statement, catalog?, schema?, sessionProperties?, source?, notebookId?, cellId?, maxRows? } → 202 {queryId}; enforce モード上限超過時は 422 { error: { code: "QUERY_BLOCKED" } }
+POST   /api/queries/estimate              # Query Guard 推定: EstimateRequest → EstimateResult (packages/contracts/src/estimate.ts)
 GET    /api/queries/:id                   # snapshot: state, stats, columns, rowCount, error?, trinoQueryId, infoUri
 GET    /api/queries/:id/events            # SSE: state/stats/columns/rows-chunk/error/done
 GET    /api/queries/:id/rows?offset&limit # ページ取得

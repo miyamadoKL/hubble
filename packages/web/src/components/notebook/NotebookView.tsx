@@ -14,16 +14,13 @@ import { toast } from '../common/Toast';
 import {
   useCellExecution,
   executionActions,
+  getCellBlock,
   isCellRunning,
   allUnits,
   type ExecutionContext,
   type ExecutionUnit,
 } from '../../execution';
-import {
-  useActiveNotebook,
-  useNotebookStore,
-  substituteVariables,
-} from '../../notebook';
+import { useActiveNotebook, useNotebookStore, substituteVariables } from '../../notebook';
 
 /**
  * NotebookView (design.md §6): the active notebook's editable header, variable
@@ -156,8 +153,15 @@ export function NotebookView({ context, defaultLimit }: NotebookViewProps) {
 
       <div className="flex flex-col">
         <CellInsert
-          onAddSql={() => handleAdd('sql', cells.length ? { relativeTo: cells[0]!.id, where: 'above' } : 'end')}
-          onAddMarkdown={() => handleAdd('markdown', cells.length ? { relativeTo: cells[0]!.id, where: 'above' } : 'end')}
+          onAddSql={() =>
+            handleAdd('sql', cells.length ? { relativeTo: cells[0]!.id, where: 'above' } : 'end')
+          }
+          onAddMarkdown={() =>
+            handleAdd(
+              'markdown',
+              cells.length ? { relativeTo: cells[0]!.id, where: 'above' } : 'end',
+            )
+          }
         />
         {cells.map((cell, index) => (
           <div
@@ -181,6 +185,7 @@ export function NotebookView({ context, defaultLimit }: NotebookViewProps) {
               context={cellContext}
               defaultLimit={defaultLimit}
               resolveUnit={resolveUnit}
+              variableValues={variableValues}
               editingMarkdown={editingMarkdownId === cell.id}
               onStartEditMarkdown={() => setEditingMarkdownId(cell.id)}
               onCommitMarkdown={() => setEditingMarkdownId(null)}
@@ -221,10 +226,7 @@ export function NotebookView({ context, defaultLimit }: NotebookViewProps) {
             <Button variant="ghost" onClick={() => setPendingDelete(null)}>
               Cancel
             </Button>
-            <Button
-              variant="danger"
-              onClick={() => pendingDelete && doDelete(pendingDelete.id)}
-            >
+            <Button variant="danger" onClick={() => pendingDelete && doDelete(pendingDelete.id)}>
               Delete cell
             </Button>
           </>
@@ -248,6 +250,12 @@ function runCellById(
   values: Record<string, string>,
 ): void {
   if (cell.kind !== 'sql') return;
+  // Query Guard: refuse a blocked cell (variable panel's Ctrl/Cmd+Enter path).
+  const block = getCellBlock(cell.id);
+  if (block) {
+    toast.error('Blocked by Query Guard', block.reasons[0] ?? 'This query exceeds the scan limit.');
+    return;
+  }
   const opts = { autoLimit: true, limit: defaultLimit };
   const resolved: ExecutionUnit[] = [];
   for (const u of allUnits(cell.source)) {
@@ -361,6 +369,7 @@ function CellRow({
   context,
   defaultLimit,
   resolveUnit,
+  variableValues,
   editingMarkdown,
   onStartEditMarkdown,
   onCommitMarkdown,
@@ -380,6 +389,7 @@ function CellRow({
   context: ExecutionContext;
   defaultLimit: number;
   resolveUnit: (unit: ExecutionUnit) => ExecutionUnit | null;
+  variableValues: Record<string, string>;
   editingMarkdown: boolean;
   onStartEditMarkdown: () => void;
   onCommitMarkdown: () => void;
@@ -437,6 +447,7 @@ function CellRow({
           context={context}
           defaultLimit={defaultLimit}
           resolveUnit={resolveUnit}
+          variableValues={variableValues}
           chrome={chrome}
         />
       ) : (

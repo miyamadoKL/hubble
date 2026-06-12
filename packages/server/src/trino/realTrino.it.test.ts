@@ -3,7 +3,7 @@ import { openDatabase } from '../db';
 import { loadServerConfig } from '../config';
 import { buildServices } from '../services';
 import { createApp } from '../app';
-import type { QuerySnapshot } from '@hubble/contracts';
+import type { EstimateResult, QuerySnapshot } from '@hubble/contracts';
 
 /**
  * Integration tests against a real Trino. Skipped unless RUN_TRINO_IT=1.
@@ -103,6 +103,83 @@ describeIt('real Trino integration', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: { name: string }[]; source: string };
     expect(body.items.map((c) => c.name)).toContain('tpch');
+  });
+
+  it('Query Guard estimate: lineitem full scan reports scanRows and blocks', async () => {
+    const { app } = makeApp({
+      QUERY_GUARD_MODE: 'enforce',
+      QUERY_GUARD_MAX_SCAN_ROWS: '1000000',
+    });
+    const res = await app.request('/api/queries/estimate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: 'SELECT * FROM tpch.sf1.lineitem',
+        catalog: 'tpch',
+        schema: 'sf1',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const result = (await res.json()) as EstimateResult;
+    expect(result.status).toBe('estimated');
+    expect(result.scanRows).toBeGreaterThan(6_000_000);
+    expect(result.scanBytes ?? 0).toBeGreaterThan(0);
+    expect(result.verdict.decision).toBe('block');
+  });
+
+  it('Query Guard estimate: a small table is allowed', async () => {
+    const { app } = makeApp({
+      QUERY_GUARD_MODE: 'enforce',
+      QUERY_GUARD_MAX_SCAN_ROWS: '1000000',
+    });
+    const res = await app.request('/api/queries/estimate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: 'SELECT * FROM tpch.tiny.nation',
+        catalog: 'tpch',
+        schema: 'tiny',
+      }),
+    });
+    const result = (await res.json()) as EstimateResult;
+    expect(result.status).toBe('estimated');
+    expect(result.scanRows).toBe(25);
+    expect(result.verdict.decision).toBe('allow');
+  });
+
+  it('Query Guard estimate: stats-less table is unknown', async () => {
+    const { app } = makeApp({
+      QUERY_GUARD_MODE: 'warn',
+      QUERY_GUARD_MAX_SCAN_ROWS: '10',
+    });
+    const res = await app.request('/api/queries/estimate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ statement: 'SELECT * FROM system.runtime.queries' }),
+    });
+    const result = (await res.json()) as EstimateResult;
+    expect(result.status).toBe('estimated');
+    expect(result.scanRows).toBeNull();
+    expect(result.scanBytes).toBeNull();
+  });
+
+  it('Query Guard enforce: a large run is blocked with QUERY_BLOCKED', async () => {
+    const { app } = makeApp({
+      QUERY_GUARD_MODE: 'enforce',
+      QUERY_GUARD_MAX_SCAN_ROWS: '1000000',
+    });
+    const res = await app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: 'SELECT * FROM tpch.sf1.lineitem',
+        catalog: 'tpch',
+        schema: 'sf1',
+      }),
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('QUERY_BLOCKED');
   });
 
   it('CSV download streams the full result even when the buffer is truncated', async () => {

@@ -30,6 +30,29 @@ export {
   type ExecutionUnit,
   type CaretSelection,
 } from './executionUnit';
+export {
+  estimateQuery,
+  resolveEstimateInput,
+  computeLiveEstimateTarget,
+  estimatePresentation,
+  parseQueryBlocked,
+  isQueryBlocked,
+  type ResolveEstimateInput,
+  type ResolveEstimateResult,
+  type LiveEstimateInput,
+  type LiveEstimateTarget,
+  type LiveEstimateSkip,
+  type EstimatePresentation,
+  type EstimateTone,
+  type QueryBlockedDetails,
+} from './estimate';
+export {
+  setCellBlocked,
+  getCellBlock,
+  isCellBlocked,
+  clearCellBlock,
+  type CellBlock,
+} from './guardRegistry';
 export { downloadCsvUrl, type DownloadFormat } from './api';
 export { copyResultToClipboard, buildTsv, buildHtml } from './clipboard';
 export { offsetToPosition, correctErrorPosition, type SourcePosition } from './errorOffset';

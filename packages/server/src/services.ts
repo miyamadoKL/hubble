@@ -5,6 +5,7 @@ import { MetadataSource } from './metadata/source';
 import { MetadataService } from './metadata/service';
 import { QueryRegistry } from './query/registry';
 import { QueryService } from './query/service';
+import { EstimateService } from './query/estimateService';
 import { NotebookRepository } from './store/notebooks';
 import { SavedQueryRepository } from './store/savedQueries';
 import { HistoryRepository } from './store/history';
@@ -17,6 +18,8 @@ export interface Services {
   metadata: MetadataService;
   queries: QueryService;
   registry: QueryRegistry;
+  /** Query Guard scan-cost estimator (Query Guard feature). */
+  estimate: EstimateService;
   notebooks: NotebookRepository;
   savedQueries: SavedQueryRepository;
   history: HistoryRepository;
@@ -84,12 +87,31 @@ export function buildServices(
 
   const queries = new QueryService({ registry, history });
 
+  // Query Guard estimator: runs EXPLAIN as the user's principal (impersonation
+  // via the ctx.user override on the user client) but tagged with the metadata
+  // source so guard EXPLAINs are distinguishable in Trino.
+  const estimate = new EstimateService(
+    trino,
+    {
+      mode: config.guard.mode,
+      maxScanBytes: config.guard.maxScanBytes,
+      maxScanRows: config.guard.maxScanRows,
+      onUnknown: config.guard.onUnknown,
+      estimateTimeoutMs: config.guard.estimateTimeoutMs,
+      cacheTtlSeconds: config.guard.cacheTtlSeconds,
+      bytesPerSecond: config.guard.bytesPerSecond,
+    },
+    config.trino.metadataSource,
+    options.now,
+  );
+
   return {
     config,
     trino,
     metadata,
     queries,
     registry,
+    estimate,
     notebooks,
     savedQueries,
     history,

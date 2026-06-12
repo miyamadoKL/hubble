@@ -15,6 +15,9 @@ import {
   querySnapshotSchema,
   queryRowsPageSchema,
   createQueryResponseSchema,
+  estimateRequestSchema,
+  estimateResultSchema,
+  guardConfigSchema,
   queryEventSchema,
   variableSchema,
   cellSchema,
@@ -65,6 +68,13 @@ describe('config', () => {
     trino: { url: 'http://127.0.0.1:30080', user: 'admin' },
     defaults: { catalog: 'tpch', schema: 'tiny', limit: 5000 },
     authMode: 'none',
+    guard: {
+      mode: 'warn',
+      maxScanBytes: 0,
+      maxScanRows: 0,
+      onUnknown: 'warn',
+      bytesPerSecond: 0,
+    },
     version: '0.1.0',
   };
 
@@ -106,7 +116,8 @@ describe('auth', () => {
       authMode: 'proxy',
     });
     expect(
-      meResponseSchema.parse({ user: 'alice', email: 'alice@example.com', authMode: 'proxy' }).email,
+      meResponseSchema.parse({ user: 'alice', email: 'alice@example.com', authMode: 'proxy' })
+        .email,
     ).toBe('alice@example.com');
   });
 
@@ -281,6 +292,81 @@ describe('query', () => {
 
   it('parses a CreateQueryResponse', () => {
     expect(createQueryResponseSchema.parse({ queryId: 'q1' })).toEqual({ queryId: 'q1' });
+  });
+});
+
+describe('query guard estimate', () => {
+  it('parses an EstimateRequest', () => {
+    const value = { statement: 'SELECT * FROM nation', catalog: 'tpch', schema: 'tiny' };
+    expect(estimateRequestSchema.parse(value)).toEqual(value);
+  });
+
+  it('rejects an empty statement', () => {
+    expect(estimateRequestSchema.safeParse({ statement: '' }).success).toBe(false);
+  });
+
+  it('parses a full EstimateResult with null estimates', () => {
+    const value = {
+      status: 'unavailable',
+      scanBytes: null,
+      scanRows: null,
+      outputRows: null,
+      outputBytes: null,
+      estimatedSeconds: null,
+      tables: [],
+      verdict: { decision: 'warn', reasons: ['Could not estimate scan cost'] },
+      elapsedMs: 12,
+    };
+    expect(estimateResultSchema.parse(value)).toEqual(value);
+  });
+
+  it('parses an estimated result with per-table numbers', () => {
+    const value = {
+      status: 'estimated',
+      scanBytes: 783988912,
+      scanRows: 6001215,
+      outputRows: 6001215,
+      outputBytes: 783988912,
+      estimatedSeconds: 7.8,
+      tables: [
+        { catalog: 'tpch', schema: 'sf1', table: 'lineitem', rows: 6001215, bytes: 783988912 },
+        { catalog: 'system', schema: 'runtime', table: 'queries', rows: null, bytes: null },
+      ],
+      verdict: { decision: 'block', reasons: ['Estimated scan rows 6,001,215 exceeds limit'] },
+      elapsedMs: 240,
+    };
+    expect(estimateResultSchema.parse(value)).toEqual(value);
+  });
+
+  it('rejects an unknown verdict decision', () => {
+    const value = {
+      status: 'estimated',
+      scanBytes: 0,
+      scanRows: 0,
+      outputRows: 0,
+      outputBytes: 0,
+      estimatedSeconds: null,
+      tables: [],
+      verdict: { decision: 'deny', reasons: [] },
+      elapsedMs: 0,
+    };
+    expect(estimateResultSchema.safeParse(value).success).toBe(false);
+  });
+
+  it('parses a GuardConfig and rejects an unknown mode', () => {
+    const cfg = {
+      mode: 'enforce',
+      maxScanBytes: 1000,
+      maxScanRows: 0,
+      onUnknown: 'block',
+      bytesPerSecond: 0,
+    };
+    expect(guardConfigSchema.parse(cfg)).toEqual(cfg);
+    expect(guardConfigSchema.safeParse({ ...cfg, mode: 'strict' }).success).toBe(false);
+  });
+
+  it('builds the estimate route path', () => {
+    expect(apiRoutes.queryEstimate()).toBe('/api/queries/estimate');
   });
 });
 

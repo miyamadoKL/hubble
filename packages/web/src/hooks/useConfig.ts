@@ -4,7 +4,7 @@
 // cached aggressively.
 
 import { useQuery } from '@tanstack/react-query';
-import type { AppConfig } from '@hubble/contracts';
+import type { AppConfig, GuardConfig } from '@hubble/contracts';
 import { fetchConfig } from '../api/client';
 
 export const configQueryKey = ['config'] as const;
@@ -25,4 +25,19 @@ export function useConfig() {
 export function useDefaultLimit(): number {
   const { data } = useConfig();
   return data?.defaults.limit ?? FALLBACK_LIMIT;
+}
+
+/** Guard config, defaulting to a safe `off` until /api/config resolves. */
+const GUARD_OFF: GuardConfig = {
+  mode: 'off',
+  maxScanBytes: 0,
+  maxScanRows: 0,
+  onUnknown: 'allow',
+  bytesPerSecond: 0,
+};
+
+/** The active Query Guard config (design.md / Query Guard feature). */
+export function useGuardConfig(): GuardConfig {
+  const { data } = useConfig();
+  return data?.guard ?? GUARD_OFF;
 }

@@ -23,6 +23,8 @@ export const apiRoutes = {
 
   // Queries
   queries: () => '/api/queries',
+  /** Query Guard scan estimate (Query Guard feature). */
+  queryEstimate: () => '/api/queries/estimate',
   query: (id: string) => `/api/queries/${enc(id)}`,
   queryEvents: (id: string) => `/api/queries/${enc(id)}/events`,
   queryRows: (id: string) => `/api/queries/${enc(id)}/rows`,

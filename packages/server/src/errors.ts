@@ -32,6 +32,15 @@ export class AppError extends Error {
   static internal(message: string): AppError {
     return new AppError(500, { code: 'INTERNAL', message });
   }
+
+  /**
+   * Query Guard block (Query Guard feature): an estimate exceeded the configured
+   * limits in `enforce` mode. Surfaced as HTTP 422 with the `QUERY_BLOCKED` code;
+   * `details` carries the `EstimateResult` and the active limits for the UI.
+   */
+  static queryBlocked(message: string, details: Record<string, unknown>): AppError {
+    return new AppError(422, { code: 'QUERY_BLOCKED', message, details });
+  }
 }
 
 /** Convert a Trino error payload into a contract `ApiErrorDetail`. */
@@ -51,9 +60,23 @@ export function trinoErrorToDetail(error: TrinoError): ApiErrorDetail {
   return detail;
 }
 
+/**
+ * An `AppError` (HTTP 400 — user/query fault) that also retains the raw Trino
+ * error so callers that need the `errorType` (e.g. Query Guard, to tell a
+ * USER_ERROR apart from an engine fault) can inspect it.
+ */
+export class TrinoQueryError extends AppError {
+  readonly trino: TrinoError;
+  constructor(error: TrinoError) {
+    super(400, trinoErrorToDetail(error));
+    this.name = 'TrinoQueryError';
+    this.trino = error;
+  }
+}
+
 /** Build an `AppError` from a Trino error payload (HTTP 400 — user/query fault). */
 export function trinoError(error: TrinoError): AppError {
-  return new AppError(400, trinoErrorToDetail(error));
+  return new TrinoQueryError(error);
 }
 
 /**

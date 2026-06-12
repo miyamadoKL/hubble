@@ -15,6 +15,11 @@ export const apiErrorDetailSchema = z.object({
   line: z.number().int().positive().optional(),
   /** 1-based source column of a query error, when available. */
   column: z.number().int().positive().optional(),
+  /**
+   * Structured, code-specific payload. Used by `QUERY_BLOCKED` (Query Guard) to
+   * carry `{ estimate, limits }` so the web can render why a query was blocked.
+   */
+  details: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const apiErrorSchema = z.object({

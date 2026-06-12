@@ -8,6 +8,7 @@ export * from './auth';
 export * from './config';
 export * from './metadata';
 export * from './query';
+export * from './estimate';
 export * from './events';
 export * from './notebook';
 export * from './savedQuery';

@@ -35,6 +35,9 @@ interface CellToolbarProps {
   onRename: (name: string) => void;
   onRun?: () => void;
   onCancel?: () => void;
+  /** Query Guard: disable run (block verdict) and explain why in the tooltip. */
+  runDisabled?: boolean;
+  runDisabledReason?: string;
   onToggleAutoLimit?: () => void;
   onLimitChange?: (limit: number) => void;
   onMoveUp?: () => void;
@@ -57,6 +60,8 @@ export function CellToolbar({
   onRename,
   onRun,
   onCancel,
+  runDisabled = false,
+  runDisabledReason,
   onToggleAutoLimit,
   onLimitChange,
   onMoveUp,
@@ -102,9 +107,20 @@ export function CellToolbar({
         {kind === 'sql' && (
           <Tooltip
             label={
-              <span className="flex items-center gap-1.5">
-                {running ? 'Stop' : 'Run cell'} <Kbd keys={['Ctrl', '↵']} />
-              </span>
+              running ? (
+                <span className="flex items-center gap-1.5">
+                  Stop <Kbd keys={['Ctrl', '↵']} />
+                </span>
+              ) : runDisabled ? (
+                // Query Guard block: explain why the run is unavailable.
+                <span className="block max-w-xs whitespace-normal text-left">
+                  {runDisabledReason ?? 'Blocked by Query Guard'}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  Run cell <Kbd keys={['Ctrl', '↵']} />
+                </span>
+              )
             }
           >
             {running ? (
@@ -119,10 +135,11 @@ export function CellToolbar({
             ) : (
               <IconButton
                 icon={Play}
-                label="Run cell"
+                label={runDisabled ? 'Run blocked by Query Guard' : 'Run cell'}
                 variant="accent"
                 size="sm"
                 tooltip={false}
+                disabled={runDisabled}
                 onClick={onRun}
               />
             )}

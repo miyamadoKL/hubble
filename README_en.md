@@ -37,6 +37,8 @@ charts — rebuilt as a modern, single-language TypeScript app.
   popover with sample rows, notebook / saved-query / history panels.
 - **Command palette** (Ctrl/Cmd+K), full keyboard shortcuts, and a read-only
   **presentation mode** that splits SQL on `--` headings into cards.
+- **Query Guard** — estimates scan cost via `EXPLAIN (TYPE IO)` before execution
+  and warns or blocks queries that exceed admin-configured limits.
 
 ## Architecture
 
@@ -103,6 +105,13 @@ Then open <http://localhost:5173>. (`pnpm dev` runs both in parallel.)
 | `QUERY_OVERFLOW_MODE` | `truncate` | `truncate` or `cancel` when over `QUERY_MAX_ROWS` |
 | `METADATA_TTL_SECONDS` | `300` | Metadata cache TTL |
 | `APP_VERSION` | `0.1.0` | Reported by `GET /api/config` |
+| `QUERY_GUARD_MODE` | `warn` | Guard mode: `off` disables, `warn` shows estimate only, `enforce` rejects over-limit queries (HTTP 422, code `QUERY_BLOCKED`) |
+| `QUERY_GUARD_MAX_SCAN_BYTES` | `0` (unlimited) | Scan-bytes limit (0 = no limit) |
+| `QUERY_GUARD_MAX_SCAN_ROWS` | `0` (unlimited) | Scan-rows limit (0 = no limit) |
+| `QUERY_GUARD_ON_UNKNOWN` | `warn` | Action when scan cost cannot be estimated: `allow` / `warn` / `block` |
+| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000` | EXPLAIN timeout in ms; exceeded = estimation unavailable |
+| `QUERY_GUARD_CACHE_TTL_SECONDS` | `30` | Estimate-result cache TTL in seconds |
+| `QUERY_GUARD_BYTES_PER_SECOND` | `0` (no hint) | Cluster throughput estimate (bytes/s); when > 0 the UI shows estimated duration |
 
 ## Documentation
 
