@@ -1,4 +1,3 @@
-import type Database from 'better-sqlite3';
 import type {
   CreateNotebookRequest,
   Notebook,
@@ -6,6 +5,7 @@ import type {
   UpdateNotebookRequest,
 } from '@hubble/contracts';
 import { notebookSchema } from '@hubble/contracts';
+import type { SqlDatabase } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 
 interface NotebookRow {
@@ -24,25 +24,22 @@ interface NotebookRow {
  * see / mutate their own notebooks.
  */
 export class NotebookRepository {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: SqlDatabase) {}
 
-  list(owner: string, query?: string): NotebookListItem[] {
-    const rows = (
+  async list(owner: string, query?: string): Promise<NotebookListItem[]> {
+    const rows =
       query && query.trim() !== ''
-        ? this.db
-            .prepare(
-              `SELECT id, name, description, created_at, updated_at FROM notebooks
-               WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
-               ORDER BY updated_at DESC`,
-            )
-            .all(owner, likeParam(query), likeParam(query))
-        : this.db
-            .prepare(
-              `SELECT id, name, description, created_at, updated_at FROM notebooks
-               WHERE owner = ? ORDER BY updated_at DESC`,
-            )
-            .all(owner)
-    ) as Omit<NotebookRow, 'data'>[];
+        ? await this.db.query<Omit<NotebookRow, 'data'>>(
+            `SELECT id, name, description, created_at, updated_at FROM notebooks
+             WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+             ORDER BY updated_at DESC`,
+            [owner, likeParam(query), likeParam(query)],
+          )
+        : await this.db.query<Omit<NotebookRow, 'data'>>(
+            `SELECT id, name, description, created_at, updated_at FROM notebooks
+             WHERE owner = ? ORDER BY updated_at DESC`,
+            [owner],
+          );
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -52,15 +49,17 @@ export class NotebookRepository {
     }));
   }
 
-  get(owner: string, id: string): Notebook | undefined {
-    const row = this.db
-      .prepare('SELECT * FROM notebooks WHERE id = ? AND owner = ?')
-      .get(id, owner) as NotebookRow | undefined;
+  async get(owner: string, id: string): Promise<Notebook | undefined> {
+    const rows = await this.db.query<NotebookRow>(
+      'SELECT * FROM notebooks WHERE id = ? AND owner = ?',
+      [id, owner],
+    );
+    const row = rows[0];
     if (!row) return undefined;
     return this.rowToNotebook(row);
   }
 
-  create(owner: string, req: CreateNotebookRequest): Notebook {
+  async create(owner: string, req: CreateNotebookRequest): Promise<Notebook> {
     const nowIso = new Date().toISOString();
     const notebook: Notebook = notebookSchema.parse({
       id: newId('nb_'),
@@ -72,25 +71,28 @@ export class NotebookRepository {
       createdAt: nowIso,
       updatedAt: nowIso,
     });
-    this.db
-      .prepare(
-        `INSERT INTO notebooks (id, name, description, data, owner, created_at, updated_at)
-         VALUES (@id, @name, @description, @data, @owner, @created_at, @updated_at)`,
-      )
-      .run({
-        id: notebook.id,
-        name: notebook.name,
-        description: notebook.description,
-        data: JSON.stringify(notebook),
+    await this.db.run(
+      `INSERT INTO notebooks (id, name, description, data, owner, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        notebook.id,
+        notebook.name,
+        notebook.description,
+        JSON.stringify(notebook),
         owner,
-        created_at: notebook.createdAt,
-        updated_at: notebook.updatedAt,
-      });
+        notebook.createdAt,
+        notebook.updatedAt,
+      ],
+    );
     return notebook;
   }
 
-  update(owner: string, id: string, req: UpdateNotebookRequest): Notebook | undefined {
-    const existing = this.get(owner, id);
+  async update(
+    owner: string,
+    id: string,
+    req: UpdateNotebookRequest,
+  ): Promise<Notebook | undefined> {
+    const existing = await this.get(owner, id);
     if (!existing) return undefined;
     const updated: Notebook = notebookSchema.parse({
       ...existing,
@@ -101,25 +103,20 @@ export class NotebookRepository {
       context: req.context,
       updatedAt: new Date().toISOString(),
     });
-    this.db
-      .prepare(
-        `UPDATE notebooks SET name = @name, description = @description, data = @data, updated_at = @updated_at
-         WHERE id = @id AND owner = @owner`,
-      )
-      .run({
-        id,
-        owner,
-        name: updated.name,
-        description: updated.description,
-        data: JSON.stringify(updated),
-        updated_at: updated.updatedAt,
-      });
+    await this.db.run(
+      `UPDATE notebooks SET name = ?, description = ?, data = ?, updated_at = ?
+       WHERE id = ? AND owner = ?`,
+      [updated.name, updated.description, JSON.stringify(updated), updated.updatedAt, id, owner],
+    );
     return updated;
   }
 
-  delete(owner: string, id: string): boolean {
-    const info = this.db.prepare('DELETE FROM notebooks WHERE id = ? AND owner = ?').run(id, owner);
-    return info.changes > 0;
+  async delete(owner: string, id: string): Promise<boolean> {
+    const deleted = await this.db.query<{ id: string }>(
+      'DELETE FROM notebooks WHERE id = ? AND owner = ? RETURNING id',
+      [id, owner],
+    );
+    return deleted.length > 0;
   }
 
   private rowToNotebook(row: NotebookRow): Notebook {

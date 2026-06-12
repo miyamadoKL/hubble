@@ -21,7 +21,7 @@ function nationScenario(rowCount: number): FakeScenario {
 }
 
 async function submit(
-  app: ReturnType<typeof createTestContext>['app'],
+  app: Awaited<ReturnType<typeof createTestContext>>['app'],
   body: Record<string, unknown>,
 ): Promise<string> {
   const res = await app.request('/api/queries', {
@@ -36,7 +36,7 @@ async function submit(
 
 describe('query lifecycle (happy path)', () => {
   it('accepts, runs to FINISHED and buffers all rows', async () => {
-    const ctx = createTestContext({ scenarios: [nationScenario(25)] });
+    const ctx = await createTestContext({ scenarios: [nationScenario(25)] });
     const queryId = await submit(ctx.app, { statement: 'SELECT * FROM nation', catalog: 'tpch' });
 
     await ctx.services.registry.get(queryId)!.settled;
@@ -52,7 +52,7 @@ describe('query lifecycle (happy path)', () => {
   });
 
   it('forwards catalog/schema headers to Trino', async () => {
-    const ctx = createTestContext({ scenarios: [nationScenario(4)] });
+    const ctx = await createTestContext({ scenarios: [nationScenario(4)] });
     const queryId = await submit(ctx.app, {
       statement: 'SELECT * FROM nation',
       catalog: 'tpch',
@@ -78,7 +78,7 @@ describe('polling backoff discipline (C-1)', () => {
       data: [[i, `r${i}`]],
       state: i === 19 ? 'FINISHED' : 'RUNNING',
     }));
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [{ match: 'stream', trinoId: 'stream', pages }],
       sleepImpl: (ms) => {
         sleeps.push(ms);
@@ -108,7 +108,7 @@ describe('polling backoff discipline (C-1)', () => {
       { columns: NATION_COLUMNS, data: [[1, 'a']], state: 'RUNNING' },
       { data: [[2, 'b']], state: 'FINISHED' },
     ];
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [{ match: 'idle', trinoId: 'idle', pages }],
       sleepImpl: (ms) => {
         sleeps.push(ms);
@@ -125,7 +125,7 @@ describe('polling backoff discipline (C-1)', () => {
 
 describe('row paging', () => {
   it('serves pages via offset/limit', async () => {
-    const ctx = createTestContext({ scenarios: [nationScenario(25)] });
+    const ctx = await createTestContext({ scenarios: [nationScenario(25)] });
     const queryId = await submit(ctx.app, { statement: 'SELECT * FROM nation', catalog: 'tpch' });
     await ctx.services.registry.get(queryId)!.settled;
 
@@ -141,7 +141,7 @@ describe('row paging', () => {
 
 describe('maxRows truncate', () => {
   it('stops buffering at maxRows but still finishes', async () => {
-    const ctx = createTestContext({ scenarios: [nationScenario(25)] });
+    const ctx = await createTestContext({ scenarios: [nationScenario(25)] });
     const queryId = await submit(ctx.app, {
       statement: 'SELECT * FROM nation',
       catalog: 'tpch',
@@ -174,7 +174,7 @@ describe('cancellation', () => {
         state: 'RUNNING',
       })),
     };
-    const ctx = createTestContext({ scenarios: [scenario] });
+    const ctx = await createTestContext({ scenarios: [scenario] });
     let release: () => void = () => {};
     ctx.fake.holdAdvance = new Promise<void>((r) => {
       release = r;
@@ -195,7 +195,7 @@ describe('cancellation', () => {
 
 describe('trino error -> failed', () => {
   it('records line/column from a syntax error', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [
         {
           match: 'SELECT FROM',
@@ -219,7 +219,7 @@ describe('trino error -> failed', () => {
 
 describe('set-catalog header reflection', () => {
   it('captures x-trino-set-catalog into session mutations', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [
         {
           match: 'SET CATALOG',
@@ -237,7 +237,7 @@ describe('set-catalog header reflection', () => {
 
 describe('SSE events', () => {
   it('replays state/columns/rows/stats/done and finishes the stream', async () => {
-    const ctx = createTestContext({ scenarios: [nationScenario(6)] });
+    const ctx = await createTestContext({ scenarios: [nationScenario(6)] });
     const queryId = await submit(ctx.app, { statement: 'SELECT * FROM nation', catalog: 'tpch' });
     // Wait for terminal so the SSE stream replays a complete state and ends.
     await ctx.services.registry.get(queryId)!.settled;
@@ -274,7 +274,7 @@ describe('SSE events', () => {
         { data: [[2, 'b']], state: 'FINISHED' },
       ],
     };
-    const ctx = createTestContext({ scenarios: [scenario] });
+    const ctx = await createTestContext({ scenarios: [scenario] });
     // Patch the registry's execution to await the gate between pages is complex;
     // instead connect immediately and read the whole stream until done.
     const queryId = await submit(ctx.app, { statement: 'SELECT * FROM slow' });

@@ -1,5 +1,5 @@
 import type { Hono } from 'hono';
-import { openDatabase } from '../db';
+import { openMemoryDatabase } from '../db';
 import { loadServerConfig, type ServerConfig } from '../config';
 import { buildServices, type Services } from '../services';
 import { createApp } from '../app';
@@ -17,7 +17,7 @@ export interface TestContext {
  * Build a fully-wired app backed by an in-memory SQLite db and a fake Trino.
  * Backoff sleeps resolve immediately so tests run fast.
  */
-export function createTestContext(
+export async function createTestContext(
   options: {
     scenarios?: FakeScenario[];
     configOverrides?: Partial<ServerConfig>;
@@ -27,7 +27,7 @@ export function createTestContext(
     /** Override the peer address the auth middleware sees (proxy-mode tests). */
     remoteAddress?: RemoteAddressFn;
   } = {},
-): TestContext {
+): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
   const baseConfig = loadServerConfig(options.env ?? {});
   const config: ServerConfig = {
@@ -39,8 +39,8 @@ export function createTestContext(
     defaults: { ...baseConfig.defaults, ...options.configOverrides?.defaults },
   };
 
-  const db = openDatabase(':memory:');
-  const services = buildServices(config, db, {
+  const db = await openMemoryDatabase();
+  const services = await buildServices(config, db, {
     fetchImpl: fake.fetch,
     sleepImpl: options.sleepImpl ?? (() => Promise.resolve()),
   });

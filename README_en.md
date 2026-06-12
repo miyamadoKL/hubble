@@ -89,6 +89,7 @@ Then open <http://localhost:5173>. (`pnpm dev` runs both in parallel.)
 |---|---|---|
 | `PORT` | `8080` | HTTP port for the BFF |
 | `DB_PATH` | `./data/hubble.db` | SQLite database file |
+| `DATABASE_URL` | — | `postgres://` connection string; when set, persistence uses PostgreSQL and takes precedence over `DB_PATH` |
 | `STATIC_DIR` | — | Built web app dir (e.g. `packages/web/dist`); serves it + SPA fallback |
 | `TRINO_BASE_URL` | `http://127.0.0.1:30080` | Trino coordinator base URL |
 | `TRINO_USER` | `admin` | Value sent as `X-Trino-User` |

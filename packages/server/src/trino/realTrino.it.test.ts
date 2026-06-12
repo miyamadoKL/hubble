@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { openDatabase } from '../db';
+import { openMemoryDatabase } from '../db';
 import { loadServerConfig } from '../config';
 import { buildServices } from '../services';
 import { createApp } from '../app';
@@ -12,16 +12,16 @@ import type { EstimateResult, QuerySnapshot } from '@hubble/contracts';
 const RUN = process.env.RUN_TRINO_IT === '1';
 const describeIt = RUN ? describe : describe.skip;
 
-function makeApp(env: Record<string, string | undefined> = {}) {
+async function makeApp(env: Record<string, string | undefined> = {}) {
   const config = loadServerConfig({ ...process.env, ...env });
-  const db = openDatabase(':memory:');
-  const services = buildServices(config, db);
+  const db = await openMemoryDatabase();
+  const services = await buildServices(config, db);
   return { app: createApp({ services }), services };
 }
 
 async function runQuery(
-  app: ReturnType<typeof makeApp>['app'],
-  services: ReturnType<typeof makeApp>['services'],
+  app: Awaited<ReturnType<typeof makeApp>>['app'],
+  services: Awaited<ReturnType<typeof makeApp>>['services'],
   body: Record<string, unknown>,
 ): Promise<QuerySnapshot> {
   const res = await app.request('/api/queries', {
@@ -38,7 +38,7 @@ async function runQuery(
 
 describeIt('real Trino integration', () => {
   it('SELECT 1', async () => {
-    const { app, services } = makeApp();
+    const { app, services } = await makeApp();
     const snap = await runQuery(app, services, { statement: 'SELECT 1' });
     expect(snap.state).toBe('finished');
     expect(snap.rowCount).toBe(1);
@@ -47,7 +47,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('SHOW CATALOGS includes tpch', async () => {
-    const { app, services } = makeApp();
+    const { app, services } = await makeApp();
     const snap = await runQuery(app, services, { statement: 'SHOW CATALOGS' });
     expect(snap.state).toBe('finished');
     const rows = (
@@ -59,7 +59,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('tpch.tiny.nation has 25 rows', async () => {
-    const { app, services } = makeApp();
+    const { app, services } = await makeApp();
     const snap = await runQuery(app, services, {
       statement: 'SELECT * FROM nation',
       catalog: 'tpch',
@@ -70,7 +70,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('syntax error reports line/column', async () => {
-    const { app, services } = makeApp();
+    const { app, services } = await makeApp();
     const snap = await runQuery(app, services, { statement: 'SELECT FROM x WHERE' });
     expect(snap.state).toBe('failed');
     expect(snap.error?.trinoErrorName).toBe('SYNTAX_ERROR');
@@ -79,7 +79,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('cancel a running query', async () => {
-    const { app, services } = makeApp();
+    const { app, services } = await makeApp();
     // A query large enough to stay running across at least one poll.
     const res = await app.request('/api/queries', {
       method: 'POST',
@@ -98,7 +98,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('metadata: catalogs endpoint returns live data', async () => {
-    const { app } = makeApp();
+    const { app } = await makeApp();
     const res = await app.request('/api/catalogs');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: { name: string }[]; source: string };
@@ -106,7 +106,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('Query Guard estimate: lineitem full scan reports scanRows and blocks', async () => {
-    const { app } = makeApp({
+    const { app } = await makeApp({
       QUERY_GUARD_MODE: 'enforce',
       QUERY_GUARD_MAX_SCAN_ROWS: '1000000',
     });
@@ -128,7 +128,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('Query Guard estimate: a small table is allowed', async () => {
-    const { app } = makeApp({
+    const { app } = await makeApp({
       QUERY_GUARD_MODE: 'enforce',
       QUERY_GUARD_MAX_SCAN_ROWS: '1000000',
     });
@@ -148,7 +148,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('Query Guard estimate: stats-less table is unknown', async () => {
-    const { app } = makeApp({
+    const { app } = await makeApp({
       QUERY_GUARD_MODE: 'warn',
       QUERY_GUARD_MAX_SCAN_ROWS: '10',
     });
@@ -164,7 +164,7 @@ describeIt('real Trino integration', () => {
   });
 
   it('Query Guard enforce: a large run is blocked with QUERY_BLOCKED', async () => {
-    const { app } = makeApp({
+    const { app } = await makeApp({
       QUERY_GUARD_MODE: 'enforce',
       QUERY_GUARD_MAX_SCAN_ROWS: '1000000',
     });
@@ -185,7 +185,7 @@ describeIt('real Trino integration', () => {
   it('CSV download streams the full result even when the buffer is truncated', async () => {
     // Server buffers only 100 rows, but tpch.tiny.orders has 15000. The download
     // must re-run the statement and emit every row (C-2), not the preview cap.
-    const { app, services } = makeApp({ QUERY_MAX_ROWS: '100' });
+    const { app, services } = await makeApp({ QUERY_MAX_ROWS: '100' });
     const res = await app.request('/api/queries', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

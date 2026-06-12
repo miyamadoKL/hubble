@@ -17,12 +17,13 @@ export interface AppDeps {
 }
 
 /**
- * Build the `Services` graph using an in-memory SQLite db and the default
- * (env-derived) config. Convenience for `index.ts` and a fallback for tests.
+ * Build the `Services` graph using the configured persistence backend and the
+ * default (env-derived) config, applying migrations. Convenience for
+ * `index.ts`.
  */
-export function defaultServices(options: BuildServicesOptions = {}): Services {
+export async function defaultServices(options: BuildServicesOptions = {}): Promise<Services> {
   const config = loadServerConfig();
-  const db = openDatabase(config.dbPath);
+  const db = await openDatabase(config.database);
   return buildServices(config, db, options);
 }
 

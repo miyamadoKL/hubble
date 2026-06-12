@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { SqlDatabase } from './sqlDatabase';
 
 const OWNED_TABLES = ['notebooks', 'saved_queries', 'query_history'] as const;
 
@@ -11,19 +11,21 @@ const OWNED_TABLES = ['notebooks', 'saved_queries', 'query_history'] as const;
  * history become owned by it (the `none`-mode owner). Idempotent: rows already
  * owned are left untouched. Returns the number of rows updated per table.
  */
-export function backfillOwners(
-  db: Database.Database,
+export async function backfillOwners(
+  db: SqlDatabase,
   owner: string,
-): Record<string, number> {
+): Promise<Record<string, number>> {
   const result: Record<string, number> = {};
-  const tx = db.transaction(() => {
+  await db.transaction(async (tx) => {
     for (const table of OWNED_TABLES) {
-      const info = db
-        .prepare(`UPDATE ${table} SET owner = @owner WHERE owner = ''`)
-        .run({ owner });
-      result[table] = info.changes;
+      // RETURNING is supported by both SQLite (3.35+) and PostgreSQL, giving a
+      // dialect-neutral way to count affected rows.
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE ${table} SET owner = ? WHERE owner = '' RETURNING id`,
+        [owner],
+      );
+      result[table] = updated.length;
     }
   });
-  tx();
   return result;
 }

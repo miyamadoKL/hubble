@@ -20,31 +20,31 @@ type App = Hono<{ Variables: AuthVariables }>;
 export function notebookRoutes(services: Services): App {
   const app: App = new Hono<{ Variables: AuthVariables }>();
 
-  app.get('/', (c) => {
+  app.get('/', async (c) => {
     const owner = c.var.principal.user;
-    return c.json(services.notebooks.list(owner, c.req.query('query')));
+    return c.json(await services.notebooks.list(owner, c.req.query('query')));
   });
 
   app.post('/', async (c) => {
     const body = await parseJsonBody(c, createNotebookRequestSchema);
-    return c.json(services.notebooks.create(c.var.principal.user, body), 201);
+    return c.json(await services.notebooks.create(c.var.principal.user, body), 201);
   });
 
-  app.get('/:id', (c) => {
-    const notebook = services.notebooks.get(c.var.principal.user, c.req.param('id'));
+  app.get('/:id', async (c) => {
+    const notebook = await services.notebooks.get(c.var.principal.user, c.req.param('id'));
     if (!notebook) throw AppError.notFound(`Notebook ${c.req.param('id')} not found`);
     return c.json(notebook);
   });
 
   app.put('/:id', async (c) => {
     const body = await parseJsonBody(c, updateNotebookRequestSchema);
-    const updated = services.notebooks.update(c.var.principal.user, c.req.param('id'), body);
+    const updated = await services.notebooks.update(c.var.principal.user, c.req.param('id'), body);
     if (!updated) throw AppError.notFound(`Notebook ${c.req.param('id')} not found`);
     return c.json(updated);
   });
 
-  app.delete('/:id', (c) => {
-    const ok = services.notebooks.delete(c.var.principal.user, c.req.param('id'));
+  app.delete('/:id', async (c) => {
+    const ok = await services.notebooks.delete(c.var.principal.user, c.req.param('id'));
     if (!ok) throw AppError.notFound(`Notebook ${c.req.param('id')} not found`);
     return c.json({ ok: true });
   });
@@ -56,30 +56,34 @@ export function notebookRoutes(services: Services): App {
 export function savedQueryRoutes(services: Services): App {
   const app: App = new Hono<{ Variables: AuthVariables }>();
 
-  app.get('/', (c) => {
-    return c.json(services.savedQueries.list(c.var.principal.user, c.req.query('query')));
+  app.get('/', async (c) => {
+    return c.json(await services.savedQueries.list(c.var.principal.user, c.req.query('query')));
   });
 
   app.post('/', async (c) => {
     const body = await parseJsonBody(c, createSavedQueryRequestSchema);
-    return c.json(services.savedQueries.create(c.var.principal.user, body), 201);
+    return c.json(await services.savedQueries.create(c.var.principal.user, body), 201);
   });
 
-  app.get('/:id', (c) => {
-    const saved = services.savedQueries.get(c.var.principal.user, c.req.param('id'));
+  app.get('/:id', async (c) => {
+    const saved = await services.savedQueries.get(c.var.principal.user, c.req.param('id'));
     if (!saved) throw AppError.notFound(`Saved query ${c.req.param('id')} not found`);
     return c.json(saved);
   });
 
   app.put('/:id', async (c) => {
     const body = await parseJsonBody(c, updateSavedQueryRequestSchema);
-    const updated = services.savedQueries.update(c.var.principal.user, c.req.param('id'), body);
+    const updated = await services.savedQueries.update(
+      c.var.principal.user,
+      c.req.param('id'),
+      body,
+    );
     if (!updated) throw AppError.notFound(`Saved query ${c.req.param('id')} not found`);
     return c.json(updated);
   });
 
-  app.delete('/:id', (c) => {
-    const ok = services.savedQueries.delete(c.var.principal.user, c.req.param('id'));
+  app.delete('/:id', async (c) => {
+    const ok = await services.savedQueries.delete(c.var.principal.user, c.req.param('id'));
     if (!ok) throw AppError.notFound(`Saved query ${c.req.param('id')} not found`);
     return c.json({ ok: true });
   });
@@ -91,14 +95,14 @@ export function savedQueryRoutes(services: Services): App {
 export function historyRoutes(services: Services): App {
   const app: App = new Hono<{ Variables: AuthVariables }>();
 
-  app.get('/', (c) => {
+  app.get('/', async (c) => {
     const stateRaw = c.req.query('state');
     const stateParsed = stateRaw ? queryStateSchema.safeParse(stateRaw) : undefined;
     if (stateRaw && stateParsed && !stateParsed.success) {
       throw AppError.badRequest(`Invalid state filter: ${stateRaw}`, 'VALIDATION_ERROR');
     }
     return c.json(
-      services.history.list(c.var.principal.user, {
+      await services.history.list(c.var.principal.user, {
         offset: intParam(c.req.query('offset'), 0),
         limit: intParam(c.req.query('limit'), 50),
         state: stateParsed?.success ? stateParsed.data : undefined,

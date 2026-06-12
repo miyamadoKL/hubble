@@ -30,7 +30,7 @@ describe('STATIC_DIR serving', () => {
   }
 
   it('serves index.html at the root with a no-cache header', async () => {
-    const { app } = ctx();
+    const { app } = await ctx();
     const res = await app.request('/');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
@@ -39,7 +39,7 @@ describe('STATIC_DIR serving', () => {
   });
 
   it('serves a hashed asset with an immutable cache header', async () => {
-    const { app } = ctx();
+    const { app } = await ctx();
     const res = await app.request('/assets/app-abc123.js');
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
@@ -47,7 +47,7 @@ describe('STATIC_DIR serving', () => {
   });
 
   it('falls back to index.html for an unknown (deep-link) path', async () => {
-    const { app } = ctx();
+    const { app } = await ctx();
     const res = await app.request('/notebooks/some-id');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
@@ -56,14 +56,14 @@ describe('STATIC_DIR serving', () => {
   });
 
   it('does not intercept /api routes (healthz still answers)', async () => {
-    const { app } = ctx();
+    const { app } = await ctx();
     const res = await app.request(apiRoutes.healthz());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'ok' });
   });
 
   it('returns the JSON error envelope for unknown /api routes, not the SPA shell', async () => {
-    const { app } = ctx();
+    const { app } = await ctx();
     const res = await app.request('/api/does-not-exist');
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -71,7 +71,7 @@ describe('STATIC_DIR serving', () => {
   });
 
   it('does not serve anything when STATIC_DIR is unset', async () => {
-    const { app } = createTestContext();
+    const { app } = await createTestContext();
     const res = await app.request('/');
     // No static dir → the catch-all never matches a file, so the root 404s.
     expect(res.status).toBe(404);

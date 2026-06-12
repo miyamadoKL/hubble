@@ -23,10 +23,18 @@ export interface AuthConfig {
   userMapping: UserMapping;
 }
 
+/**
+ * Selected persistence backend (design.md §4). `sqlite` is the historical
+ * default (`DB_PATH`); `postgres` is selected when `DATABASE_URL` is a
+ * `postgres://` / `postgresql://` URL.
+ */
+export type DatabaseConfig = { kind: 'sqlite'; path: string } | { kind: 'postgres'; url: string };
+
 /** Server runtime configuration, derived from environment variables. */
 export interface ServerConfig {
   port: number;
-  dbPath: string;
+  /** Resolved persistence backend (DATABASE_URL takes precedence over DB_PATH). */
+  database: DatabaseConfig;
   /**
    * Directory of the built web app to serve (e.g. `web/dist`). When set, the
    * server serves these static files and falls back to `index.html` for any
@@ -121,10 +129,36 @@ function envEnum<T extends string>(env: Env, key: string, allowed: readonly T[],
   );
 }
 
+/**
+ * Resolve the persistence backend. `DATABASE_URL` (a `postgres://` /
+ * `postgresql://` URL) selects PostgreSQL and takes precedence over `DB_PATH`
+ * (SQLite, the default). An unset/empty `DATABASE_URL` falls back to SQLite. A
+ * `DATABASE_URL` with any other scheme is a startup error.
+ */
+export function resolveDatabaseConfig(env: Env): DatabaseConfig {
+  const url = envOptional(env, 'DATABASE_URL');
+  if (url !== undefined) {
+    let scheme: string;
+    try {
+      scheme = new URL(url).protocol.replace(/:$/, '');
+    } catch {
+      throw new Error(`Invalid DATABASE_URL: ${JSON.stringify(url)} is not a valid URL`);
+    }
+    if (scheme !== 'postgres' && scheme !== 'postgresql') {
+      throw new Error(
+        `Unsupported DATABASE_URL scheme ${JSON.stringify(scheme)}: ` +
+          'only postgres:// / postgresql:// (PostgreSQL) or DB_PATH (SQLite) are supported',
+      );
+    }
+    return { kind: 'postgres', url };
+  }
+  return { kind: 'sqlite', path: envStr(env, 'DB_PATH', './data/hubble.db') };
+}
+
 export function loadServerConfig(env: Env = process.env): ServerConfig {
   return {
     port: envInt(env, 'PORT', 8080),
-    dbPath: envStr(env, 'DB_PATH', './data/hubble.db'),
+    database: resolveDatabaseConfig(env),
     staticDir: envOptional(env, 'STATIC_DIR'),
     auth: {
       mode: envEnum(env, 'AUTH_MODE', ['none', 'proxy'] as const, 'none'),

@@ -1,6 +1,6 @@
-import type Database from 'better-sqlite3';
 import type { HistoryResponse, QueryHistoryEntry, QueryState } from '@hubble/contracts';
 import { queryHistoryEntrySchema } from '@hubble/contracts';
+import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 
 interface HistoryRow {
   id: string;
@@ -45,71 +45,74 @@ const STATEMENT_MAX = 2000;
  * and updated when the query settles (design.md §4).
  */
 export class HistoryRepository {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: SqlDatabase) {}
 
   /** Insert a history row at submission time. */
-  insert(entry: HistoryInsert): void {
-    this.db
-      .prepare(
-        `INSERT INTO query_history (id, statement, catalog, schema, trino_query_id, state, row_count, elapsed_ms, error_message, owner, notebook_id, cell_id, submitted_at)
-         VALUES (@id, @statement, @catalog, @schema, NULL, @state, 0, 0, NULL, @owner, @notebook_id, @cell_id, @submitted_at)`,
-      )
-      .run({
-        id: entry.id,
-        statement: entry.statement.slice(0, STATEMENT_MAX),
-        catalog: entry.catalog ?? null,
-        schema: entry.schema ?? null,
-        state: entry.state,
-        owner: entry.owner,
-        notebook_id: entry.notebookId ?? null,
-        cell_id: entry.cellId ?? null,
-        submitted_at: entry.submittedAt,
-      });
+  async insert(entry: HistoryInsert): Promise<void> {
+    // Literal NULL/0 for the columns set at settle time (trino_query_id,
+    // row_count, elapsed_ms, error_message); the rest are bound positionally.
+    await this.db.run(
+      `INSERT INTO query_history (id, statement, catalog, schema, trino_query_id, state, row_count, elapsed_ms, error_message, owner, notebook_id, cell_id, submitted_at)
+       VALUES (?, ?, ?, ?, NULL, ?, 0, 0, NULL, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        entry.statement.slice(0, STATEMENT_MAX),
+        entry.catalog ?? null,
+        entry.schema ?? null,
+        entry.state,
+        entry.owner,
+        entry.notebookId ?? null,
+        entry.cellId ?? null,
+        entry.submittedAt,
+      ],
+    );
   }
 
   /** Update a history row when the query settles. No-op if the row is gone. */
-  update(id: string, update: HistoryUpdate): void {
-    this.db
-      .prepare(
-        `UPDATE query_history
-         SET state=@state, row_count=@row_count, elapsed_ms=@elapsed_ms,
-             trino_query_id=@trino_query_id, error_message=@error_message
-         WHERE id=@id`,
-      )
-      .run({
+  async update(id: string, update: HistoryUpdate): Promise<void> {
+    await this.db.run(
+      `UPDATE query_history
+       SET state=?, row_count=?, elapsed_ms=?, trino_query_id=?, error_message=?
+       WHERE id=?`,
+      [
+        update.state,
+        update.rowCount,
+        update.elapsedMs,
+        update.trinoQueryId ?? null,
+        update.errorMessage ?? null,
         id,
-        state: update.state,
-        row_count: update.rowCount,
-        elapsed_ms: update.elapsedMs,
-        trino_query_id: update.trinoQueryId ?? null,
-        error_message: update.errorMessage ?? null,
-      });
+      ],
+    );
   }
 
-  get(owner: string, id: string): QueryHistoryEntry | undefined {
-    const row = this.db
-      .prepare('SELECT * FROM query_history WHERE id = ? AND owner = ?')
-      .get(id, owner) as HistoryRow | undefined;
-    return row ? rowToEntry(row) : undefined;
+  async get(owner: string, id: string): Promise<QueryHistoryEntry | undefined> {
+    const rows = await this.db.query<HistoryRow>(
+      'SELECT * FROM query_history WHERE id = ? AND owner = ?',
+      [id, owner],
+    );
+    return rows[0] ? rowToEntry(rows[0]) : undefined;
   }
 
-  list(
+  async list(
     owner: string,
     opts: { offset?: number; limit?: number; state?: QueryState },
-  ): HistoryResponse {
+  ): Promise<HistoryResponse> {
     const offset = Math.max(opts.offset ?? 0, 0);
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
     const where = opts.state ? 'WHERE owner = ? AND state = ?' : 'WHERE owner = ?';
-    const params: unknown[] = opts.state ? [owner, opts.state] : [owner];
+    const params: SqlParam[] = opts.state ? [owner, opts.state] : [owner];
 
-    const total = (
-      this.db.prepare(`SELECT COUNT(*) AS c FROM query_history ${where}`).get(...params) as {
-        c: number;
-      }
-    ).c;
-    const rows = this.db
-      .prepare(`SELECT * FROM query_history ${where} ORDER BY submitted_at DESC LIMIT ? OFFSET ?`)
-      .all(...params, limit, offset) as HistoryRow[];
+    const countRows = await this.db.query<{ c: number | string }>(
+      `SELECT COUNT(*) AS c FROM query_history ${where}`,
+      params,
+    );
+    // PostgreSQL returns COUNT(*) as a bigint string; SQLite returns a number.
+    const total = Number(countRows[0]?.c ?? 0);
+
+    const rows = await this.db.query<HistoryRow>(
+      `SELECT * FROM query_history ${where} ORDER BY submitted_at DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    );
 
     return {
       items: rows.map(rowToEntry),
@@ -125,8 +128,8 @@ function rowToEntry(row: HistoryRow): QueryHistoryEntry {
     id: row.id,
     statement: row.statement,
     state: row.state as QueryState,
-    rowCount: row.row_count,
-    elapsedMs: row.elapsed_ms,
+    rowCount: Number(row.row_count),
+    elapsedMs: Number(row.elapsed_ms),
     submittedAt: row.submitted_at,
   };
   if (row.catalog) entry.catalog = row.catalog;
