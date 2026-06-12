@@ -1,7 +1,5 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted for hubble: dropped the direct Trino-client sample-value fetch
-// (the original coupled this value object to AsyncTrinoClient). Sampling now
-// flows through the DI'd MetadataSource / the contracts-based API client.
+// Sample-value fetch is not implemented here; sampling flows through the DI'd
+// MetadataSource / the contracts-based API client.
 
 /** A single table column: declared type plus optional comment / extra info. */
 class Column {

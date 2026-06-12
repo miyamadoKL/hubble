@@ -1,5 +1,4 @@
-// Part of the hubble trino-lang fork (see repo-root NOTICE for the
-// trino-query-ui Apache-2.0 attribution covering the surrounding modules).
+// Part of the trino-lang module.
 //
 // MetadataSource replaces the forked singleton `SchemaProvider`, which issued
 // SQL directly against Trino. Metadata is now supplied through this DI'd

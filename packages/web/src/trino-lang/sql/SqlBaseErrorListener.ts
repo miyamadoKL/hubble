@@ -1,8 +1,6 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted for hubble: typed against antlr4ng's BaseErrorListener (the
-// original used `any` throughout and a magic `severity: 8`). Emits
-// editor-agnostic marker objects (1-based line/column, matching Monaco) so the
-// language layer stays free of any monaco-editor import.
+// Typed against antlr4ng's BaseErrorListener. Emits editor-agnostic marker
+// objects (1-based line/column, matching Monaco) so the language layer stays
+// free of any monaco-editor import.
 
 import {
   type ATNSimulator,

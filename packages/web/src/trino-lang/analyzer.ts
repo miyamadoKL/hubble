@@ -1,17 +1,14 @@
-// Part of the hubble trino-lang fork. The grammar/lexer/parser and several
-// helpers come from trino-query-ui (Apache-2.0); see repo-root NOTICE.
-//
 // `analyzer.ts` is the synchronous, editor-agnostic heart of the language
-// support. It exposes three pure-ish functions used by the Monaco providers in
+// support. It exposes pure-ish functions used by the Monaco providers in
 // ../editor/ and exercised directly by vitest (no monaco-editor import here):
 //
 //   parseStatement(sql)            -> markers + decoration descriptors
 //   collectCompletions({...})      -> grammar + schema completion candidates
 //
-// Completion follows the hue4trino "phantom cursor" approach (insert a sentinel
-// identifier at the caret, run antlr4-c3 with preferredRules) and folds in the
-// trino-query-ui schema-candidate logic (table names + CTE names + columns of
-// the in-context table) sourced from the synchronous SchemaCache.
+// Completion follows the "phantom cursor" approach: insert a sentinel
+// identifier at the caret, run antlr4-c3 with preferredRules) and fold in
+// schema candidates (table names + CTE names + columns of the in-context
+// table) sourced from the synchronous SchemaCache.
 
 import { CodeCompletionCore } from 'antlr4-c3';
 import { CharStream, CommonTokenStream, Token } from 'antlr4ng';

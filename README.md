@@ -155,11 +155,10 @@ E2E スイート（editor / execution / results / notebook / panels / chart / ap
 
 ## ライセンス
 
-本プロジェクトは [trino-query-ui](https://github.com/) プロジェクトからフォークした
-アセットの上に構築されており、それらは **Apache-2.0** ライセンスです（`packages/web/src/trino-lang/`
-配下にある Trino SQL 文法と ANTLR 生成の lexer/parser）。これらのファイルは元の
-ライセンスを保持し、インラインの来歴コメントを伴います。完全な帰属表示と変更点の一覧は
-[`NOTICE`](NOTICE) にあります。
+`packages/web/src/trino-lang/` 配下の Trino SQL 文法と ANTLR 生成の
+lexer/parser は [Trino](https://github.com/trinodb/trino) プロジェクト由来であり、
+**Apache-2.0** ライセンスです。これらのファイルはインラインの来歴コメントを伴います。
+完全な帰属表示は [`NOTICE`](NOTICE) にあります。
 
 名称とロゴ（「Hubble」）はオリジナルです。Hue、Cloudera、Trino の商標およびロゴは
 使用していません。

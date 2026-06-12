@@ -1,6 +1,3 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted: typed start/end (were `any`).
-
 import type { Token } from 'antlr4ng';
 
 /** Records the primary table referenced by a query specification, with span. */

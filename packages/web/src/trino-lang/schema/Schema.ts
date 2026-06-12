@@ -1,5 +1,3 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-
 import Table from './Table';
 
 /** A schema and the tables/views it contains. */

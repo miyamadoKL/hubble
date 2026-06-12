@@ -1,6 +1,6 @@
 # hubble 設計ドキュメント
 
-> Status: FINAL (v1) — 2026-06-12 確定。調査ソース: hue/ (Notebook 機能棚卸し)、trino-query-ui/ (資産評価)、hue4trino/ (前回の失敗分析)。
+> Status: FINAL (v1) — 2026-06-12 確定。
 
 ## 1. ゴール
 
@@ -8,7 +8,6 @@ cloudera/hue の Notebook 機能を担保しつつ、モダンに作り変えた
 
 - Hue の Notebook 体験 (複数セル、セルごとの実行と結果、変数置換、履歴、保存、スキーマブラウザ、チャート) を Trino 専用に再構築する
 - 名称・ロゴなど商標要素は再現しない (アプリ表示名: **Hubble SQL Workbench**)
-- 前回 (hue4trino) の失敗 = 「デザインシステム不在 + 8,347 行 App.tsx + props drilling で画面が破綻」を構造的に防ぐ
 
 ## 2. 非ゴール (v1)
 
@@ -40,7 +39,7 @@ hubble/
 | server | Hono + @hono/node-server | 薄い BFF。Trino `/v1/statement` プロキシ、SSE、CSV ストリーム |
 | 永続化 | SQLite (better-sqlite3) + 自前 `schema_migrations` | ローカル前提。migration 管理を初日から入れる (前回教訓) |
 | web | React 19 + Vite + Tailwind CSS v4 | デザイントークンを CSS variables で契約化 |
-| エディター | Monaco + antlr4ng + antlr4-c3 | trino-query-ui (Apache-2.0) から fork |
+| エディター | Monaco + antlr4ng + antlr4-c3 | Trino の SQL 文法 (Apache-2.0) に基づく |
 | 状態 | zustand (UI/notebook) + TanStack Query (サーバー状態) | 「60 useState + 70 引数ファサード」の再発防止 |
 | グリッド | TanStack Virtual | 大結果の仮想スクロール (MUI DataGrid は使わない) |
 | チャート | ECharts | bars/lines/timeline/pie/scatter を担保 |
@@ -49,7 +48,7 @@ hubble/
 
 ### Trino 実行フロー (server 内)
 
-前回 Go 実装 (`hue4trino/backend/internal/query/client.go`) のパターンを TypeScript で踏襲:
+次のパターンで実装:
 
 1. `POST /api/queries` → server が Trino `POST /v1/statement` を発行し即座に `{queryId}` を返す (202)
 2. server がバックグラウンドで `nextUri` を追走 (バックオフ 20ms→max 1000ms)、行をメモリページストアに蓄積 (既定上限 100k 行 / 超過時は打ち切らずクエリ続行可否を設定で制御)
@@ -185,9 +184,9 @@ GET    /api/history?offset&limit&state=
 `MetadataResponse<T> = { items: T[], source: 'cache'|'live', stale: boolean, lastUpdatedAt }` (前回契約踏襲)。
 エラー形式は全 API 共通 `{ error: { code, message, trinoErrorName?, line?, column? } }`。
 
-## 8. エディター資産の移植 (trino-query-ui fork)
+## 8. エディター資産 (Trino SQL grammar)
 
-`packages/web/src/trino-lang/` に以下を fork (Apache-2.0、出典コメントと LICENSE/NOTICE を保持):
+`packages/web/src/trino-lang/` に以下を含む (Apache-2.0、出典コメントと LICENSE/NOTICE を保持):
 
 - `SqlBase.g4` + 生成済み `SqlBaseLexer.ts` / `SqlBaseParser.ts` (antlr4ng、再生成スクリプトも移植)
 - `sql/`: SqlBaseListenerImpl, SqlBaseErrorListener, TokenMap, SpecialHighlight, StatementDescriptor, NamedQuery
@@ -196,7 +195,7 @@ GET    /api/history?offset&limit&state=
 改修方針 (調査結論):
 - `SchemaProvider` は **シングルトン廃止、メタデータ取得関数を DI** (`/api/catalogs...` クライアントを注入)。Trino 直結クライアントへの結合を断つ
 - `QueryEditorPane` (950 行モノリス) は移植せず、機能を分解して再実装: tokenizer 登録 / completion provider / hover provider / marker 更新 / formatter をそれぞれ独立モジュール化し `registerTrinoLanguage(monaco, deps)` で一括登録
-- 補完は hue4trino の **ファントムカーソル方式** (`__cursor__` 挿入→ antlr4-c3、preferredRules = qualifiedName/identifier/relationPrimary/expression) を採用し、trino-query-ui のスキーマ候補生成ロジックを合流させる
+- 補完は **ファントムカーソル方式** (`__cursor__` 挿入→ antlr4-c3、preferredRules = qualifiedName/identifier/relationPrimary/expression) を採用し、スキーマ候補生成ロジック (テーブル名 + CTE 名 + カラム) を組み合わせる
 - 競合状態対策: 補完/解析は AbortController + 世代カウンタで古い結果を破棄
 
 ## 9. 実装フェーズ

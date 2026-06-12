@@ -1,6 +1,3 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted: typed `node` (was `any`).
-
 import type { ParserRuleContext } from 'antlr4ng';
 
 /** A named, referenceable relation: a CTE or an aliased subquery/relation. */

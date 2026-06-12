@@ -17,5 +17,5 @@ files:
   - 'packages/web/src/**/*.tsx'
 ignores:
   - 'packages/web/src/theme/**'
-  # Machine-generated ANTLR output (forked from trino-query-ui). Not hand-edited.
+  # Machine-generated ANTLR output (derived from the Trino grammar). Not hand-edited.
   - 'packages/web/src/trino-lang/generated/**'

@@ -1,5 +1,4 @@
-// Public surface of the trino-lang fork (see repo-root NOTICE for the
-// trino-query-ui Apache-2.0 attribution). The editor layer (../editor/) and
+// Public surface of the trino-lang module. The editor layer (../editor/) and
 // tests import from here rather than reaching into individual modules.
 
 export {

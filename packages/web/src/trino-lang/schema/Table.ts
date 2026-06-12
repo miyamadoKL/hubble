@@ -1,5 +1,3 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-
 import Column from './Column';
 
 /** A table (or view) and its resolved column list. */
