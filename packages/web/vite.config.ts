@@ -28,7 +28,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8081',
+        // Follow the BFF port: default 8080, overridden by PORT (e.g. when a
+        // sourced .env moves the server to avoid a local port clash).
+        target: `http://localhost:${process.env.PORT ?? 8080}`,
         changeOrigin: true,
       },
     },

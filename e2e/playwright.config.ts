@@ -15,6 +15,8 @@ import { defineConfig, devices } from '@playwright/test';
  *    without a second server (design.md §5 truncated 警告).
  */
 const WEB_PORT = 5173;
+// The server's production default is 8080. E2E pins to 8081 to avoid
+// conflicts with any process already bound to 8080 on this dev machine.
 const SERVER_PORT = 8081;
 /**
  * A second BFF on a separate port running `AUTH_MODE=proxy` (design.md §11).
@@ -58,6 +60,7 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
       env: {
+        PORT: String(SERVER_PORT),
         DB_PATH: ':memory:',
         QUERY_MAX_ROWS: '10000',
         TRINO_BASE_URL: process.env.TRINO_BASE_URL ?? 'http://127.0.0.1:30080',
@@ -89,6 +92,7 @@ export default defineConfig({
       cwd: '..',
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
+      env: { PORT: String(SERVER_PORT) },
     },
   ],
 });

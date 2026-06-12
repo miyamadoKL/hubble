@@ -71,11 +71,11 @@ and screenshots assume the `tpch` catalog, e.g. a local Trino on `:30080`).
 ```bash
 pnpm install
 
-# Terminal 1 — the BFF (Hono) on :8081
-PORT=8081 TRINO_BASE_URL=http://localhost:30080 \
+# Terminal 1 — the BFF (Hono) on :8080
+PORT=8080 TRINO_BASE_URL=http://localhost:30080 \
   pnpm --filter @hue-fable/server dev
 
-# Terminal 2 — the web app (Vite) on :5173, proxying /api → :8081
+# Terminal 2 — the web app (Vite) on :5173, proxying /api → :8080
 pnpm --filter @hue-fable/web dev
 ```
 
@@ -85,7 +85,7 @@ Then open <http://localhost:5173>. (`pnpm dev` runs both in parallel.)
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `8081` | HTTP port for the BFF |
+| `PORT` | `8080` | HTTP port for the BFF |
 | `DB_PATH` | `./data/hue_fable.db` | SQLite database file |
 | `STATIC_DIR` | — | Built web app dir (e.g. `packages/web/dist`); serves it + SPA fallback |
 | `TRINO_BASE_URL` | `http://127.0.0.1:30080` | Trino coordinator base URL |

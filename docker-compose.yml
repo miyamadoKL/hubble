@@ -1,7 +1,7 @@
 # Hubble SQL Workbench — local / demo stack.
 #
 #   docker compose up --build
-#   → Hubble on http://localhost:8081, backed by a demo Trino (tpch catalog).
+#   → Hubble on http://localhost:8080, backed by a demo Trino (tpch catalog).
 #
 # `hubble` reads optional overrides from a local `.env` (git-ignored). The demo
 # `trino` service ships the tpch catalog so the stack works with no external
@@ -11,8 +11,12 @@ services:
     build: .
     image: hubble:0.1.0
     ports:
-      - '8081:8081'
+      - '8080:8080'
     environment:
+      # Pin the in-container port so it always matches the ports mapping above —
+      # a host-side .env may move the *dev-server* port (e.g. PORT=8081 to dodge
+      # a local clash), but that must not leak into the container via env_file.
+      PORT: '8080'
       # Connect to the demo Trino by service name. Override in .env (env_file
       # below) to target an external coordinator, e.g.
       # TRINO_BASE_URL=https://trino.internal:8443
@@ -37,9 +41,10 @@ services:
   trino:
     image: trinodb/trino:479
     ports:
-      # Exposed for convenience (query Trino directly); Hubble uses the internal
-      # service name, not this published port.
-      - '8080:8080'
+      # Exposed for convenience (query Trino directly at http://localhost:8090);
+      # moved to 8090 on the host because Hubble occupies 8080.
+      # Hubble uses the internal service name, not this published port.
+      - '8090:8080'
     volumes:
       # Demo config: only the tpch catalog is added; everything else uses the
       # official image defaults.

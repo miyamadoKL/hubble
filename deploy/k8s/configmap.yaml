@@ -5,7 +5,7 @@ metadata:
 # Non-secret environment for the server. The full reference (defaults, meaning)
 # is docs/operations.md §4. Secrets (e.g. TRINO_PASSWORD) live in the Secret.
 data:
-  PORT: '8081'
+  PORT: '8080'
   # SQLite path on the mounted PVC (see pvc.yaml / deployment volumeMounts).
   DB_PATH: /data/hue_fable.db
   # The image already sets STATIC_DIR; repeated here for visibility.
