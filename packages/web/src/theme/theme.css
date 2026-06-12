@@ -1,0 +1,164 @@
+/*
+ * Tailwind v4 CSS-first config. Maps design tokens (tokens.css) onto Tailwind
+ * utilities via @theme so components reference `bg-surface-base`,
+ * `text-ink-strong`, `text-accent` etc. — never raw hex.
+ *
+ * Values reference the CSS variables so light/dark switching (data-theme)
+ * flows through automatically.
+ */
+@import 'tailwindcss';
+
+/* Fonts (self-hosted via @fontsource) */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans-jp/400.css';
+@import '@fontsource/ibm-plex-sans-jp/500.css';
+@import '@fontsource/ibm-plex-sans-jp/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+/* Design tokens (CSS variables, light + dark) */
+@import './tokens.css';
+
+/* Enable class-based + attribute-based dark variant: `dark:` applies under
+   [data-theme="dark"]. Tokens already switch via the attribute, so this is
+   for the rare utility that needs an explicit dark override. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme inline {
+  /* Colors */
+  --color-surface-base: var(--color-surface-base);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-sunken: var(--color-surface-sunken);
+  --color-surface-overlay: var(--color-surface-overlay);
+  --color-surface-inset: var(--color-surface-inset);
+
+  --color-ink-strong: var(--color-ink-strong);
+  --color-ink-base: var(--color-ink-base);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-ink-subtle: var(--color-ink-subtle);
+  --color-ink-inverse: var(--color-ink-inverse);
+
+  --color-border-strong: var(--color-border-strong);
+  --color-border-base: var(--color-border-base);
+  --color-border-subtle: var(--color-border-subtle);
+
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-accent-active: var(--color-accent-active);
+  --color-accent-soft: var(--color-accent-soft);
+  --color-accent-contrast: var(--color-accent-contrast);
+
+  --color-success: var(--color-success);
+  --color-success-soft: var(--color-success-soft);
+  --color-error: var(--color-error);
+  --color-error-soft: var(--color-error-soft);
+  --color-warning: var(--color-warning);
+  --color-warning-soft: var(--color-warning-soft);
+  --color-running: var(--color-running);
+  --color-running-soft: var(--color-running-soft);
+
+  /* Fonts */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* Font sizes */
+  --text-2xs: var(--text-2xs);
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  --text-md: var(--text-md);
+  --text-lg: var(--text-lg);
+  --text-xl: var(--text-xl);
+
+  /* Radius */
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+
+  /* Spacing additions (Tailwind keeps its own 4px-based scale; expose named
+     tokens for the dense component sizing) */
+  --spacing-row-dense: var(--row-height-dense);
+  --spacing-control: var(--control-height);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-size: 16px;
+    color: var(--color-ink-base);
+    background-color: var(--color-surface-base);
+  }
+
+  body {
+    margin: 0;
+    line-height: var(--leading-normal);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* Motion: fade/slide only, within the 150ms budget (design.md §6). Used by the
+   command palette, toasts and the cell result reveal. */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

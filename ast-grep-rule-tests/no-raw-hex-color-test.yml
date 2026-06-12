@@ -1,0 +1,12 @@
+id: no-raw-hex-color
+valid:
+  - "const c = 'var(--color-accent)';"
+  - "const label = 'choose a color';"
+  - "const id = 'cell-1234';"
+  - "const url = 'http://example.com/#section';"
+invalid:
+  - "const c = '#fff';"
+  - "const c = '#ffffff';"
+  - "const c = '#1a2b3c';"
+  - "const style = { color: '#abc' };"
+  - 'const c = `#ffffff`;'

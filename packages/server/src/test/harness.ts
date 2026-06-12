@@ -1,0 +1,56 @@
+import type { Hono } from 'hono';
+import { openDatabase } from '../db';
+import { loadServerConfig, type ServerConfig } from '../config';
+import { buildServices, type Services } from '../services';
+import { createApp } from '../app';
+import type { AuthVariables, RemoteAddressFn } from '../auth/middleware';
+import type { FakeScenario } from './fakeTrino';
+import { FakeTrino } from './fakeTrino';
+
+export interface TestContext {
+  app: Hono<{ Variables: AuthVariables }>;
+  services: Services;
+  fake: FakeTrino;
+}
+
+/**
+ * Build a fully-wired app backed by an in-memory SQLite db and a fake Trino.
+ * Backoff sleeps resolve immediately so tests run fast.
+ */
+export function createTestContext(
+  options: {
+    scenarios?: FakeScenario[];
+    configOverrides?: Partial<ServerConfig>;
+    env?: Record<string, string | undefined>;
+    /** Override backoff sleep (e.g. to record requested delays). Defaults to a no-op. */
+    sleepImpl?: (ms: number) => Promise<void>;
+    /** Override the peer address the auth middleware sees (proxy-mode tests). */
+    remoteAddress?: RemoteAddressFn;
+  } = {},
+): TestContext {
+  const fake = new FakeTrino(options.scenarios ?? []);
+  const baseConfig = loadServerConfig(options.env ?? {});
+  const config: ServerConfig = {
+    ...baseConfig,
+    ...options.configOverrides,
+    trino: { ...baseConfig.trino, baseUrl: 'http://trino.test', ...options.configOverrides?.trino },
+    query: { ...baseConfig.query, ...options.configOverrides?.query },
+    metadata: { ...baseConfig.metadata, ...options.configOverrides?.metadata },
+    defaults: { ...baseConfig.defaults, ...options.configOverrides?.defaults },
+  };
+
+  const db = openDatabase(':memory:');
+  const services = buildServices(config, db, {
+    fetchImpl: fake.fetch,
+    sleepImpl: options.sleepImpl ?? (() => Promise.resolve()),
+  });
+  const app = createApp({ services, remoteAddress: options.remoteAddress });
+  return { app, services, fake };
+}
+
+/** Poll until a query reaches a terminal state (test convenience). */
+export async function waitForTerminal(services: Services, queryId: string): Promise<void> {
+  const exec = services.registry.get(queryId);
+  if (!exec) return;
+  await exec.settled;
+}

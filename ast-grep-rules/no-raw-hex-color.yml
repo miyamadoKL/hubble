@@ -1,0 +1,21 @@
+id: no-raw-hex-color
+language: TypeScript
+severity: error
+rule:
+  any:
+    - kind: string_fragment
+    - kind: template_string
+  regex: '#[0-9a-fA-F]{3,8}\b'
+message: >-
+  生の hex カラーリテラルを禁止。色は src/theme/tokens.css の CSS variable
+  (var(--color-...)) を経由する。
+note: |
+  デザイントークンは契約扱い (design.md §6)。コンポーネント内に hex を直書きすると
+  ライト/ダークテーマ切替やトークン一元管理が壊れる。src/theme/ 配下のみ例外。
+files:
+  - 'packages/web/src/**/*.ts'
+  - 'packages/web/src/**/*.tsx'
+ignores:
+  - 'packages/web/src/theme/**'
+  # Machine-generated ANTLR output (forked from trino-query-ui). Not hand-edited.
+  - 'packages/web/src/trino-lang/generated/**'

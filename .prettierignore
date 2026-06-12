@@ -1,0 +1,13 @@
+node_modules
+dist
+build
+coverage
+playwright-report
+test-results
+pnpm-lock.yaml
+
+# Spec is the source of truth — do not reformat.
+docs/design.md
+
+# Machine-generated ANTLR output (forked from trino-query-ui). Not hand-edited.
+packages/web/src/trino-lang/generated

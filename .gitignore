@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Databases (SQLite store lives in the server's data dir; keep the pattern
+# anchored so it doesn't also swallow source dirs named "data", e.g.
+# packages/web/src/components/data/).
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/packages/server/data/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Test / coverage
+coverage/
+playwright-report/
+test-results/
+.playwright/
+
+# Editor / OS
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+# agent infrastructure (not part of the app)
+/.opencode/
+/opencode.json
+/docs/tasks/
+/.claude/

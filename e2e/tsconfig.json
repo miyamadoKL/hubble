@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Specs run Node (Playwright runner) but their `page.evaluate` callbacks run
+    // in the browser, so they reference DOM globals (document, navigator,
+    // Element). DOM is added for type-checking those closures.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "noEmit": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["**/*.ts", "playwright.config.ts"],
+  "exclude": ["node_modules", "playwright-report", "test-results"]
+}
