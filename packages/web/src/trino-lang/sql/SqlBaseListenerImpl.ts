@@ -1,9 +1,6 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted for hubble: removed the singleton SchemaProvider side-effects (the
-// original called SchemaProvider.getTableIfCached during the walk to warm a
-// global cache). Cache warming is now driven explicitly by the analyzer layer
-// from the table references this listener exposes. Also typed the visitor
-// callbacks and `getDescriptors` returns editor-agnostic descriptors.
+// Cache warming is driven explicitly by the analyzer layer from the table
+// references this listener exposes. The visitor callbacks are typed and
+// `getDescriptors` returns editor-agnostic descriptors.
 
 import type { ParserRuleContext } from 'antlr4ng';
 import { SqlBaseListener } from '../generated/SqlBaseListener.js';

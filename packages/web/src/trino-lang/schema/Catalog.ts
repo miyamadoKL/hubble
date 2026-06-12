@@ -1,5 +1,3 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-
 import Schema from './Schema';
 
 /** A catalog (connector) and the schemas discovered within it. */

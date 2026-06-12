@@ -1,6 +1,5 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
 // Maps ANTLR token types to coarse highlight scopes consumed by the Monaco
-// tokenizer. Unchanged from upstream apart from the import path.
+// tokenizer.
 
 import { SqlBaseLexer } from '../generated/SqlBaseLexer.js';
 

@@ -155,12 +155,11 @@ acceptance audit of every v1 checklist item is in
 
 ## Licensing
 
-This project is built on assets forked from the
-[trino-query-ui](https://github.com/) project, which are **Apache-2.0** licensed
-(the Trino SQL grammar and the ANTLR-generated lexer/parser under
-`packages/web/src/trino-lang/`). Those files retain their original license and carry
-inline provenance comments; the full attribution and list of modifications is in
-[`NOTICE`](NOTICE).
+The Trino SQL grammar and the ANTLR-generated lexer/parser under
+`packages/web/src/trino-lang/` derive from the
+[Trino](https://github.com/trinodb/trino) project and are licensed under
+**Apache-2.0**; those files retain inline provenance comments, and the full
+attribution is in [`NOTICE`](NOTICE).
 
 The name and logo ("Hubble") are original; Hue, Cloudera and Trino trademarks and
 logos are not used.

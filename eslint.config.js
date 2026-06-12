@@ -18,7 +18,7 @@ export default tseslint.config(
       '**/*.config.ts',
       // Agent infrastructure, not part of the app (gitignored).
       '.opencode/**',
-      // Machine-generated ANTLR output (forked from trino-query-ui). Excluded
+      // Machine-generated ANTLR output (derived from the Trino grammar). Excluded
       // from lint; it still typechecks via @ts-nocheck. Regenerate with
       // `pnpm --filter @hubble/web gen:grammar`.
       'packages/web/src/trino-lang/generated/**',

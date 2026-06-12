@@ -1,5 +1,4 @@
-// Part of the hubble trino-lang fork (grammar/lexer from trino-query-ui,
-// Apache-2.0; see repo-root NOTICE).
+// Part of the trino-lang module.
 //
 // `splitStatements` cuts a multi-statement source on top-level semicolons,
 // using the ANTLR *lexer* so that semicolons inside string literals or comments

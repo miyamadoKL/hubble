@@ -1,10 +1,7 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Substantially adapted for hubble: the original imported monaco-editor and
-// the singleton SchemaProvider directly to build a decoration with an inline
-// hover string. To keep the language layer editor-agnostic and DI-friendly,
-// this now emits a plain descriptor (range + class + resolved TableReference);
-// the editor layer (registerTrinoLanguage) turns it into a Monaco decoration
-// and resolves hover text through the injected SchemaCache.
+// Emits a plain descriptor (range + class + resolved TableReference) rather
+// than importing monaco-editor or a singleton SchemaProvider directly. The
+// editor layer (registerTrinoLanguage) turns the descriptor into a Monaco
+// decoration and resolves hover text through the injected SchemaCache.
 
 import type { ParserRuleContext } from 'antlr4ng';
 import TableReference from '../schema/TableReference';

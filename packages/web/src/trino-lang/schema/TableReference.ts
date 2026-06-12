@@ -1,8 +1,6 @@
-// Forked from trino-query-ui (Apache-2.0). See repo-root NOTICE.
-// Adapted for hubble: the original held back-references into the singleton
-// SchemaProvider (getCatalog/getSchema/getTable). Those are removed — a
-// TableReference is now a pure name holder. Resolution against live metadata is
-// the caller's job (via the DI'd MetadataSource).
+// TableReference is a pure name holder; it carries no back-references into a
+// SchemaProvider. Resolution against live metadata is the caller's job
+// (via the DI'd MetadataSource).
 
 /** A (possibly partially qualified) reference to a table by name. */
 class TableReference {
