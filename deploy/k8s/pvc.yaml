@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hubble-data
+spec:
+  accessModes:
+    # ReadWriteOnce: a single node mounts the volume. This matches replicas=1 —
+    # the SQLite store must be opened by exactly one server process.
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # Uncomment to pin a StorageClass; otherwise the cluster default is used.
+  # storageClassName: standard

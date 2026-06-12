@@ -106,6 +106,7 @@ Then open <http://localhost:5173>. (`pnpm dev` runs both in parallel.)
 
 - **[User guide](docs/user-guide.md)** (Japanese) — for analysts: the UI, running queries, notebooks, variables, results, charts, download/copy, shortcuts.
 - **[Operations guide](docs/operations.md)** (Japanese) — for operators: single-process deploy with `STATIC_DIR`, env vars, oauth2-proxy + Trino impersonation / resource groups, backups, tuning.
+- **[Deployment guide](docs/deployment.md)** (Japanese) — for operators: Docker image, Docker Compose (with a demo Trino), and Kubernetes (kustomize) deployment.
 
 ## Quality gates
 

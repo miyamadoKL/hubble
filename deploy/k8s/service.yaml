@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: hubble
+spec:
+  # ClusterIP by default. Expose externally via an Ingress, or change the type
+  # to NodePort / LoadBalancer to suit your cluster. Put an SSO proxy
+  # (e.g. oauth2-proxy) in front when AUTH_MODE=proxy (docs/operations.md §7).
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: hubble
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

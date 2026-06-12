@@ -566,4 +566,5 @@ owner を `TRINO_USER` で埋めます**（`backfillOwners`、冪等）。
 
 - 利用者向け操作: [`user-guide.md`](user-guide.md)
 - 設計・API 契約・データモデル: [`design.md`](design.md)
+- Docker / Compose / Kubernetes デプロイ: [`deployment.md`](deployment.md)
 - v1 受け入れチェックリスト: [`acceptance-v1.md`](acceptance-v1.md)

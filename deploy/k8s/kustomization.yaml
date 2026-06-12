@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Sample Kubernetes manifests for Hubble SQL Workbench (single-process image).
+# Render:   kubectl kustomize deploy/k8s
+# Dry-run:  kubectl apply -k deploy/k8s --dry-run=server
+# Apply:    kubectl apply -k deploy/k8s
+#
+# Replace the image with your registry/tag via the `images:` block below
+# (or `kustomize edit set image`). See docs/deployment.md.
+
+namespace: hubble
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+
+# Swap in your built image. `hubble:0.1.0` is a placeholder; override here:
+#   images:
+#     - name: hubble
+#       newName: registry.example.com/hubble
+#       newTag: "0.1.0"
+images:
+  - name: hubble
+    newTag: '0.1.0'
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: hubble
+      app.kubernetes.io/part-of: hubble
+    includeSelectors: false

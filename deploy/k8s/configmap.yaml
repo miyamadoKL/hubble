@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hubble-config
+# Non-secret environment for the server. The full reference (defaults, meaning)
+# is docs/operations.md §4. Secrets (e.g. TRINO_PASSWORD) live in the Secret.
+data:
+  PORT: '8081'
+  # SQLite path on the mounted PVC (see pvc.yaml / deployment volumeMounts).
+  DB_PATH: /data/hue_fable.db
+  # The image already sets STATIC_DIR; repeated here for visibility.
+  STATIC_DIR: /app/packages/web/dist
+  # Point at your Trino coordinator (cluster-internal service or external URL).
+  TRINO_BASE_URL: http://trino.trino.svc.cluster.local:8080
+  TRINO_USER: admin
+  TRINO_USERNAME: admin
+  TRINO_SOURCE: hubble
+  TRINO_METADATA_SOURCE: hubble-metadata
+  # Initial catalog/schema for new notebooks.
+  DEFAULT_CATALOG: tpch
+  DEFAULT_SCHEMA: tiny

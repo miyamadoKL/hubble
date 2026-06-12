@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubble
+spec:
+  # IMPORTANT: replicas MUST stay 1. Hubble persists to a single SQLite file on
+  # a ReadWriteOnce PVC; running two pods would either fail to attach the volume
+  # or corrupt the database. Scale Trino, not Hubble. (docs/operations.md §9)
+  replicas: 1
+  # Recreate (not RollingUpdate): the new pod can only attach the RWO PVC once
+  # the old pod has released it, so they must not run concurrently.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hubble
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hubble
+    spec:
+      securityContext:
+        # Match the image's non-root `node` user (uid/gid 1000) so the pod can
+        # write to the mounted /data volume.
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: hubble
+          image: hubble:0.1.0
+          ports:
+            - name: http
+              containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: hubble-config
+            - secretRef:
+                name: hubble-secret
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: hubble-data
