@@ -1,44 +1,47 @@
 # Hubble SQL Workbench
 
-A Trino-focused query editor that preserves the **Notebook** experience of
-[cloudera/hue](https://github.com/cloudera/hue) — multiple cells, per-cell
-execution and results, variable substitution, schema browsing, history and
-charts — rebuilt as a modern, single-language TypeScript app.
+**日本語** | [English](README_en.md)
 
-![Hubble SQL Workbench — light theme, a join result in the grid](docs/screenshots/final-light.png)
+[cloudera/hue](https://github.com/cloudera/hue) の **Notebook** 体験 — 複数セル、
+セルごとの実行と結果表示、変数の置換、スキーマブラウジング、履歴、チャート — を
+保ちつつ、モダンで単一言語の TypeScript アプリとして作り直した、Trino 特化の
+クエリエディターです。
 
-| Dark theme | GROUP BY → bar chart |
-|---|---|
-| ![Dark theme](docs/screenshots/final-dark.png) | ![Bar chart of a result](docs/screenshots/final-chart.png) |
+![Hubble SQL Workbench — ライトテーマ、JOIN の結果をグリッドに表示](docs/screenshots/final-light.png)
 
-| Variables + execution |
-|---|
-| ![Variable panel driving a parameterised query](docs/screenshots/final-variables.png) |
+| ダークテーマ                                     | GROUP BY → 棒グラフ                                 |
+| ------------------------------------------------ | --------------------------------------------------- |
+| ![ダークテーマ](docs/screenshots/final-dark.png) | ![結果の棒グラフ](docs/screenshots/final-chart.png) |
 
-> Trino-only by design. Authentication, multi-engine support, and Hue's document
-> sharing / scheduling are explicit non-goals for v1 (see `docs/design.md`).
+| 変数 + 実行                                                                             |
+| --------------------------------------------------------------------------------------- |
+| ![パラメーター化されたクエリを駆動する変数パネル](docs/screenshots/final-variables.png) |
 
-## Highlights
+> 設計上 Trino 専用です。認証、複数エンジン対応、Hue のドキュメント共有 /
+> スケジューリングは、v1 では明確に対象外（non-goal）としています（`docs/design.md` を参照）。
 
-- **Notebook model** — SQL + Markdown cells, drag-reorder, per-cell run, run-all,
-  selection / statement-at-caret execution, cancel, live progress.
-- **Monaco editor** with a Trino grammar (ANTLR): syntax highlighting, schema-aware
-  completion (FQN + columns + CTEs), hover, real-time error markers, formatting.
-- **Live results** — virtualized grid (fixed header, 28px rows), column show/hide +
-  search, client-side filter/sort, CSV download (gzip optional), TSV/HTML copy.
-- **Charts** (ECharts) — bars / lines / timeline / pie / scatter, with X/Y (multi-Y),
-  sort, row-limit and scatter group/size controls. Theme + palette derived from the
-  design tokens, so charts follow the light/dark switch.
-- **Variables** — `${name}` / `${name=default}` / `${name=a,b}` / `${name=label(value)}`,
-  type-inferred inputs, comment-aware, resolved at run time.
-- **Assist sidebar** — catalog → schema → table → column tree (lazy), table detail
-  popover with sample rows, notebook / saved-query / history panels.
-- **Command palette** (Ctrl/Cmd+K), full keyboard shortcuts, and a read-only
-  **presentation mode** that splits SQL on `--` headings into cards.
+## 主な機能
 
-## Architecture
+- **Notebook モデル** — SQL + Markdown セル、ドラッグによる並べ替え、セルごとの実行、
+  全実行、選択範囲 / キャレット位置のステートメント実行、キャンセル、進捗のライブ表示。
+- **Monaco エディター**（Trino 文法、ANTLR）: シンタックスハイライト、スキーマを
+  考慮した補完（FQN + カラム + CTE）、ホバー、リアルタイムのエラーマーカー、整形。
+- **ライブ結果** — 仮想化グリッド（固定ヘッダ、28px 行）、カラムの表示 / 非表示 +
+  検索、クライアントサイドのフィルタ / ソート、CSV ダウンロード（gzip は任意）、
+  TSV / HTML でのコピー。
+- **チャート**（ECharts） — 棒 / 折れ線 / タイムライン / 円 / 散布図。X/Y（複数 Y）、
+  ソート、行数上限、散布図のグループ / サイズの各コントロールに対応。テーマとパレットは
+  design token から導出されるため、チャートもライト / ダークの切り替えに追従します。
+- **変数** — `${name}` / `${name=default}` / `${name=a,b}` / `${name=label(value)}`。
+  型を推論した入力欄、コメントを考慮した置換、実行時に解決されます。
+- **アシストサイドバー** — カタログ → スキーマ → テーブル → カラムのツリー（遅延読み込み）、
+  サンプル行付きのテーブル詳細ポップオーバー、notebook / saved-query / 履歴の各パネル。
+- **コマンドパレット**（Ctrl/Cmd+K）、充実したキーボードショートカット、そして SQL を
+  `--` 見出しでカードに分割する読み取り専用の**プレゼンテーションモード**。
 
-A pnpm-workspace monorepo, TypeScript throughout:
+## アーキテクチャ
+
+pnpm workspace の monorepo で、全体を TypeScript で記述しています。
 
 ```
 packages/
@@ -48,23 +51,23 @@ packages/
 e2e/           # Playwright E2E suites (editor / execution / results / notebook / panels / chart / app) against a live Trino (tpch)
 ```
 
-- **Contract-first**: the zod definitions in `packages/contracts` are the source of
-  truth; server and web are re-generatable implementation layers around them.
-- **State**: zustand stores (`ui`, `notebook`, `execution`, chart config) + TanStack
-  Query for server state. Components stay presentational.
-- **Results stay in memory**: rows live in server memory + SSE; SQLite persists only
-  summaries (notebooks, saved queries, history, per-cell `resultMeta`).
-- **Design tokens are a contract**: all color/spacing/typography live in
-  `packages/web/src/theme/tokens.css`; raw hex in components is blocked by an
-  ast-grep lint rule. The Monaco and ECharts themes are derived from these tokens at
-  runtime via `getComputedStyle`, so both follow the theme switch.
+- **コントラクトファースト**: `packages/contracts` の zod 定義が正本（source of truth）で、
+  server と web はその周りに位置する再生成可能な実装層です。
+- **状態管理**: zustand のストア（`ui`、`notebook`、`execution`、チャート設定）+ サーバー
+  状態は TanStack Query。コンポーネントはプレゼンテーションに徹します。
+- **結果はメモリ上に保持**: 行データは server のメモリ + SSE に存在し、SQLite には
+  サマリ（notebooks、saved queries、history、セルごとの `resultMeta`）のみを永続化します。
+- **design token はコントラクト**: 色 / 余白 / タイポグラフィはすべて
+  `packages/web/src/theme/tokens.css` に置かれ、コンポーネント内での生 hex は ast-grep の
+  lint ルールでブロックされます。Monaco と ECharts のテーマは実行時に `getComputedStyle`
+  経由でこれらの token から導出されるため、どちらもテーマ切り替えに追従します。
 
-See `docs/design.md` for the full design, data model and API contract.
+設計・データモデル・API コントラクトの全体は `docs/design.md` を参照してください。
 
-## Getting started
+## はじめに
 
-Prerequisites: **Node ≥ 24**, **pnpm 11**, and a reachable **Trino** (the e2e suite
-and screenshots assume the `tpch` catalog, e.g. a local Trino on `:30080`).
+前提: **Node 24 以上**、**pnpm 11**、そして到達可能な **Trino**（e2e スイートと
+スクリーンショットは `tpch` カタログを前提とします。例: `:30080` で動くローカル Trino）。
 
 ```bash
 pnpm install
@@ -77,38 +80,38 @@ PORT=8081 TRINO_BASE_URL=http://localhost:30080 \
 pnpm --filter @hue-fable/web dev
 ```
 
-Then open <http://localhost:5173>. (`pnpm dev` runs both in parallel.)
+そのうえで <http://localhost:5173> を開きます。（`pnpm dev` で両方を並行起動できます。）
 
-### Environment variables (server)
+### 環境変数（server）
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `8081` | HTTP port for the BFF |
-| `DB_PATH` | `./data/hue_fable.db` | SQLite database file |
-| `STATIC_DIR` | — | Built web app dir (e.g. `packages/web/dist`); serves it + SPA fallback |
-| `TRINO_BASE_URL` | `http://127.0.0.1:30080` | Trino coordinator base URL |
-| `TRINO_USER` | `admin` | Value sent as `X-Trino-User` |
-| `TRINO_USERNAME` | `admin` | Basic-auth username |
-| `TRINO_PASSWORD` | `` (empty) | Basic-auth password |
-| `TRINO_SOURCE` | `hubble` | `X-Trino-Source` for user queries |
-| `TRINO_METADATA_SOURCE` | `hubble-metadata` | `X-Trino-Source` for metadata queries |
-| `DEFAULT_CATALOG` | — | Initial catalog for new notebooks |
-| `DEFAULT_SCHEMA` | — | Initial schema for new notebooks |
-| `DEFAULT_LIMIT` | `5000` | Auto-`LIMIT` appended to `SELECT`s without one |
-| `QUERY_MAX_ROWS` | `100000` | Cap on rows buffered server-side per query |
-| `QUERY_CONCURRENCY` | `5` | Max concurrently-tracked queries |
-| `QUERY_TTL_MINUTES` | `30` | Retention of a finished query before sweep |
-| `QUERY_OVERFLOW_MODE` | `truncate` | `truncate` or `cancel` when over `QUERY_MAX_ROWS` |
-| `METADATA_TTL_SECONDS` | `300` | Metadata cache TTL |
-| `APP_VERSION` | `0.1.0` | Reported by `GET /api/config` |
+| 変数                    | 既定値                   | 説明                                                                                           |
+| ----------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `PORT`                  | `8081`                   | BFF が待ち受ける HTTP ポート                                                                   |
+| `DB_PATH`               | `./data/hue_fable.db`    | SQLite データベースファイル                                                                    |
+| `STATIC_DIR`            | —                        | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う |
+| `TRINO_BASE_URL`        | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL                                                             |
+| `TRINO_USER`            | `admin`                  | `X-Trino-User` として送る値                                                                    |
+| `TRINO_USERNAME`        | `admin`                  | Basic 認証のユーザー名                                                                         |
+| `TRINO_PASSWORD`        | ``（空）                 | Basic 認証のパスワード                                                                         |
+| `TRINO_SOURCE`          | `hubble`                 | ユーザークエリ向けの `X-Trino-Source`                                                          |
+| `TRINO_METADATA_SOURCE` | `hubble-metadata`        | メタデータクエリ向けの `X-Trino-Source`                                                        |
+| `DEFAULT_CATALOG`       | —                        | 新規 notebook の初期カタログ                                                                   |
+| `DEFAULT_SCHEMA`        | —                        | 新規 notebook の初期スキーマ                                                                   |
+| `DEFAULT_LIMIT`         | `5000`                   | `LIMIT` のない `SELECT` に自動付与する `LIMIT`                                                 |
+| `QUERY_MAX_ROWS`        | `100000`                 | クエリごとに server 側でバッファする行数の上限                                                 |
+| `QUERY_CONCURRENCY`     | `5`                      | 同時に追跡するクエリ数の上限                                                                   |
+| `QUERY_TTL_MINUTES`     | `30`                     | 完了したクエリを掃除するまでの保持時間                                                         |
+| `QUERY_OVERFLOW_MODE`   | `truncate`               | `QUERY_MAX_ROWS` 超過時の挙動（`truncate` または `cancel`）                                    |
+| `METADATA_TTL_SECONDS`  | `300`                    | メタデータキャッシュの TTL                                                                     |
+| `APP_VERSION`           | `0.1.0`                  | `GET /api/config` が返すバージョン                                                             |
 
-## Documentation
+## ドキュメント
 
-- **[User guide](docs/user-guide.md)** (Japanese) — for analysts: the UI, running queries, notebooks, variables, results, charts, download/copy, shortcuts.
-- **[Operations guide](docs/operations.md)** (Japanese) — for operators: single-process deploy with `STATIC_DIR`, env vars, oauth2-proxy + Trino impersonation / resource groups, backups, tuning.
-- **[Deployment guide](docs/deployment.md)** (Japanese) — for operators: Docker image, Docker Compose (with a demo Trino), and Kubernetes (kustomize) deployment.
+- **[利用ガイド](docs/user-guide.md)** — 分析者向け: UI、クエリの実行、notebook、変数、結果、チャート、ダウンロード / コピー、ショートカット。
+- **[運用ガイド](docs/operations.md)** — 運用者向け: `STATIC_DIR` を使った単一プロセスのデプロイ、環境変数、oauth2-proxy + Trino の impersonation / resource group、バックアップ、チューニング。
+- **[デプロイガイド](docs/deployment.md)** — 運用者向け: Docker イメージ、Docker Compose（デモ用 Trino 付き）、Kubernetes（kustomize）でのデプロイ。
 
-## Quality gates
+## 品質ゲート
 
 ```bash
 pnpm typecheck   # tsc across contracts / server / web / e2e
@@ -121,34 +124,33 @@ pnpm --filter web build
 pnpm --filter @hue-fable/e2e test
 ```
 
-The E2E suite (35 tests across editor / execution / results / notebook / panels /
-chart / app) runs against a real Trino with deterministic `tpch.tiny` / `tpch.sf1`
-data. It uses an in-memory SQLite (`DB_PATH=:memory:`) so it never touches your own
-notebooks, and `QUERY_MAX_ROWS=10000` to exercise the truncation path. The
-acceptance audit of every v1 checklist item is in
-[`docs/acceptance-v1.md`](docs/acceptance-v1.md).
+E2E スイート（editor / execution / results / notebook / panels / chart / app にわたる
+35 テスト）は、決定的な `tpch.tiny` / `tpch.sf1` データを持つ本物の Trino に対して実行
+します。インメモリの SQLite（`DB_PATH=:memory:`）を使うため自分の notebook には一切
+触れず、`QUERY_MAX_ROWS=10000` で truncation の経路を確認します。v1 チェックリストの
+各項目に対する受け入れ監査は
+[`docs/acceptance-v1.md`](docs/acceptance-v1.md) にあります。
 
-## Keyboard shortcuts
+## キーボードショートカット
 
-| Action | Shortcut |
-|---|---|
-| Run the active cell | Ctrl/Cmd + Enter |
-| Save notebook | Ctrl/Cmd + S |
-| Format SQL | Ctrl/Cmd + I · Ctrl/Cmd + Shift + F |
-| Command palette | Ctrl/Cmd + K |
-| Toggle light / dark theme | Ctrl + Alt + T |
-| Toggle presentation mode | Ctrl/Cmd + Shift + P |
+| 操作                               | ショートカット                      |
+| ---------------------------------- | ----------------------------------- |
+| アクティブセルを実行               | Ctrl/Cmd + Enter                    |
+| Notebook を保存                    | Ctrl/Cmd + S                        |
+| SQL を整形                         | Ctrl/Cmd + I · Ctrl/Cmd + Shift + F |
+| コマンドパレット                   | Ctrl/Cmd + K                        |
+| ライト / ダークテーマの切り替え    | Ctrl + Alt + T                      |
+| プレゼンテーションモードの切り替え | Ctrl/Cmd + Shift + P                |
 
-(Also available from the command palette → "Keyboard shortcuts".)
+（コマンドパレット → 「Keyboard shortcuts」からも利用できます。）
 
-## Licensing
+## ライセンス
 
-This project is built on assets forked from the
-[trino-query-ui](https://github.com/) project, which are **Apache-2.0** licensed
-(the Trino SQL grammar and the ANTLR-generated lexer/parser under
-`packages/web/src/trino-lang/`). Those files retain their original license and carry
-inline provenance comments; the full attribution and list of modifications is in
-[`NOTICE`](NOTICE).
+本プロジェクトは [trino-query-ui](https://github.com/) プロジェクトからフォークした
+アセットの上に構築されており、それらは **Apache-2.0** ライセンスです（`packages/web/src/trino-lang/`
+配下にある Trino SQL 文法と ANTLR 生成の lexer/parser）。これらのファイルは元の
+ライセンスを保持し、インラインの来歴コメントを伴います。完全な帰属表示と変更点の一覧は
+[`NOTICE`](NOTICE) にあります。
 
-The name and logo ("Hubble") are original; Hue, Cloudera and Trino trademarks and
-logos are not used.
+名称とロゴ（「Hubble」）はオリジナルです。Hue、Cloudera、Trino の商標およびロゴは
+使用していません。
