@@ -153,18 +153,28 @@ describe('openDatabase with the real initial migration', () => {
 const describePg = pgEnabled ? describe : describe.skip;
 describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
   const url = process.env.TEST_DATABASE_URL!;
+  // Derive the expected set from the real migrations dir so adding a new
+  // migration file doesn't break these assertions.
+  const allVersions = loadMigrations(MIGRATIONS_DIR).map((m) => m.version);
 
   it('applies the real migrations and is idempotent', async () => {
     // First open applies everything; second open should be a no-op (advisory
     // lock acquired/released cleanly, no duplicate-apply).
     const db1 = await openDatabase({ kind: 'postgres', url });
-    expect(await appliedVersions(db1)).toEqual([1, 2]);
+    expect(await appliedVersions(db1)).toEqual(allVersions);
     await db1.close();
 
     const db2 = await openDatabase({ kind: 'postgres', url });
-    expect(await appliedVersions(db2)).toEqual([1, 2]);
+    expect(await appliedVersions(db2)).toEqual(allVersions);
     expect(await tableNames(db2)).toEqual(
-      expect.arrayContaining(['notebooks', 'saved_queries', 'query_history', 'schema_migrations']),
+      expect.arrayContaining([
+        'notebooks',
+        'saved_queries',
+        'query_history',
+        'schedules',
+        'schedule_runs',
+        'schema_migrations',
+      ]),
     );
     await db2.close();
   });
@@ -176,8 +186,8 @@ describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
       openDatabase({ kind: 'postgres', url }),
       openDatabase({ kind: 'postgres', url }),
     ]);
-    expect(await appliedVersions(a)).toEqual([1, 2]);
-    expect(await appliedVersions(b)).toEqual([1, 2]);
+    expect(await appliedVersions(a)).toEqual(allVersions);
+    expect(await appliedVersions(b)).toEqual(allVersions);
     await a.close();
     await b.close();
   });
