@@ -17,8 +17,10 @@ charts — rebuilt as a modern, single-language TypeScript app.
 |---|
 | ![Variable panel driving a parameterised query](docs/screenshots/final-variables.png) |
 
-> Trino-only by design. Authentication, multi-engine support, and Hue's document
-> sharing / scheduling are explicit non-goals for v1 (see `docs/design.md`).
+> Trino-only by design. Multi-engine support and Hue's document sharing /
+> permissions remain non-goals (see `docs/design.md`). Authentication (SSO via
+> oauth2-proxy + impersonation) and scheduled runs are supported
+> (`docs/operations.md` §7 / §12).
 
 ## Highlights
 
@@ -50,7 +52,7 @@ A pnpm-workspace monorepo, TypeScript throughout:
 ```
 packages/
   contracts/   # zod schemas + types — the API/type contract; server & web depend on it
-  server/      # Hono BFF: Trino /v1/statement proxy, SSE, CSV stream, SQLite persistence
+  server/      # Hono BFF: Trino /v1/statement proxy, SSE, CSV stream, SQLite/PostgreSQL persistence
   web/         # React 19 + Vite + Tailwind v4; Monaco editor; ECharts; zustand + TanStack Query
 e2e/           # Playwright E2E suites (editor / execution / results / notebook / panels / chart / app) against a live Trino (tpch)
 ```
@@ -59,7 +61,7 @@ e2e/           # Playwright E2E suites (editor / execution / results / notebook 
   truth; server and web are re-generatable implementation layers around them.
 - **State**: zustand stores (`ui`, `notebook`, `execution`, chart config) + TanStack
   Query for server state. Components stay presentational.
-- **Results stay in memory**: rows live in server memory + SSE; SQLite persists only
+- **Results stay in memory**: rows live in server memory + SSE; SQLite (or PostgreSQL) persists only
   summaries (notebooks, saved queries, history, per-cell `resultMeta`).
 - **Design tokens are a contract**: all color/spacing/typography live in
   `packages/web/src/theme/tokens.css`; raw hex in components is blocked by an

@@ -12,9 +12,10 @@ cloudera/hue の Notebook 機能を担保しつつ、モダンに作り変えた
 ## 2. 非ゴール (v1)
 
 - ~~マルチユーザー認証 (oauth2-proxy / Google OAuth2)。ローカル/シングルユーザー前提、`X-Trino-User` は設定値~~ → **v1.1 で実装済み (§11)。`AUTH_MODE=none` (既定) が従来のシングルユーザー動作**
-- Trino 以外のエンジン対応、Hue の Document 共有/権限/Gist/スケジュール (Oozie)/HDFS エクスポート
+- Trino 以外のエンジン対応、Hue の Document 共有/権限/Gist/HDFS エクスポート
+- ~~スケジュール実行 (Oozie 相当)~~ → **実装済み (server 内蔵の cron スケジューラー、§7 の /api/schedules)**
 - 地図チャート (map/gradientmap)、Jupyter 相互変換 (Hue 本体にも無い)
-- Helm / 本番配布
+- ~~Helm / 本番配布~~ → **Docker / Compose / kustomize のサンプルを同梱 (docs/deployment.md)。Helm chart は引き続き対象外**
 
 ## 3. アーキテクチャ
 
@@ -37,7 +38,7 @@ hubble/
 |---|---|---|
 | 契約 | zod + TypeScript | API/型を厳密定義、実装層は再生成可能に保つ |
 | server | Hono + @hono/node-server | 薄い BFF。Trino `/v1/statement` プロキシ、SSE、CSV ストリーム |
-| 永続化 | SQLite (better-sqlite3) + 自前 `schema_migrations` | ローカル前提。migration 管理を初日から入れる (前回教訓) |
+| 永続化 | SQLite (better-sqlite3) + 自前 `schema_migrations` / PostgreSQL (DATABASE_URL) | ローカル前提。migration 管理を初日から入れる (前回教訓) |
 | web | React 19 + Vite + Tailwind CSS v4 | デザイントークンを CSS variables で契約化 |
 | エディター | Monaco + antlr4ng + antlr4-c3 | Trino の SQL 文法 (Apache-2.0) に基づく |
 | 状態 | zustand (UI/notebook) + TanStack Query (サーバー状態) | 「60 useState + 70 引数ファサード」の再発防止 |
