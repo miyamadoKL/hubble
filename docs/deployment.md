@@ -48,7 +48,7 @@ multi-stage の流れ：
 | ------------ | ------------------------ |
 | `STATIC_DIR` | `/app/packages/web/dist` |
 | `DB_PATH`    | `/data/hue_fable.db`     |
-| `PORT`       | `8081`                   |
+| `PORT`       | `8080`                   |
 
 `/data` は `VOLUME` 化されており、SQLite（`notebooks` / `saved_queries` / `query_history`）が
 コンテナ再作成をまたいで永続化されます。
@@ -57,7 +57,7 @@ multi-stage の流れ：
 
 ```bash
 docker run --rm \
-  -p 8081:8081 \
+  -p 8080:8080 \
   -v hubble-data:/data \
   -e TRINO_BASE_URL=http://trino.internal:8080 \
   -e TRINO_USER=hubble-svc \
@@ -70,16 +70,16 @@ docker run --rm \
 
 ```bash
 # ヘルスチェック（認証不要）
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8081/api/healthz   # → 200
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/healthz   # → 200
 
 # 公開設定
-curl -s http://localhost:8081/api/config
+curl -s http://localhost:8080/api/config
 
 # カタログ一覧（Trino 疎通確認）
-curl -s http://localhost:8081/api/catalogs
+curl -s http://localhost:8080/api/catalogs
 ```
 
-ブラウザで <http://localhost:8081> を開くと SPA が配信されます（静的配信の挙動は
+ブラウザで <http://localhost:8080> を開くと SPA が配信されます（静的配信の挙動は
 [`operations.md` §3.3](operations.md#33-動作確認curl)）。
 
 ---
@@ -94,7 +94,7 @@ curl -s http://localhost:8081/api/catalogs
 docker compose up --build
 ```
 
-- `hubble` サービス — `Dockerfile` をビルドし `:8081` を公開。SQLite は名前付きボリューム
+- `hubble` サービス — `Dockerfile` をビルドし `:8080` を公開。SQLite は名前付きボリューム
   `hubble-data`（`/data`）に永続化。
 - `trino` サービス — `trinodb/trino` 公式イメージ。`deploy/docker/trino/etc/catalog/tpch.properties`
   で tpch カタログのみ追加（他は公式デフォルト）。公式イメージ組込みの healthcheck により、
@@ -107,8 +107,8 @@ Hubble → Trino はサービス名で接続します（既定 `TRINO_BASE_URL=h
 確認：
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8081/api/healthz   # → 200
-curl -s http://localhost:8081/api/catalogs                                   # tpch を含む
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/healthz   # → 200
+curl -s http://localhost:8080/api/catalogs                                   # tpch を含む
 ```
 
 停止と片付け：
@@ -131,7 +131,7 @@ docker compose down -v        # ボリューム（SQLite データ）も削除
 | `secret.yaml`     | `TRINO_PASSWORD`（**プレースホルダ**。実値に差し替えること）       |
 | `pvc.yaml`        | SQLite 用 PVC（`ReadWriteOnce`、`/data` にマウント）               |
 | `deployment.yaml` | Deployment（**replicas=1**、`/api/healthz` で liveness/readiness） |
-| `service.yaml`    | Service（`ClusterIP`、`:80` → コンテナ `:8081`）                   |
+| `service.yaml`    | Service（`ClusterIP`、`:80` → コンテナ `:8080`）                   |
 
 ### 4.1 レンダリングと検証
 
@@ -174,7 +174,7 @@ kustomize edit set image hubble=registry.example.com/hubble:0.1.0
 ```bash
 kubectl apply -k deploy/k8s
 kubectl -n hubble rollout status deploy/hubble
-kubectl -n hubble port-forward svc/hubble 8081:80   # ローカルから確認する場合
+kubectl -n hubble port-forward svc/hubble 8080:80   # ローカルから確認する場合
 ```
 
 `TRINO_PASSWORD` は `secret.yaml` のプレースホルダを実値に差し替えるか、外部の

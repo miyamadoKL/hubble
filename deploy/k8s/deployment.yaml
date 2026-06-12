@@ -31,7 +31,7 @@ spec:
           image: hubble:0.1.0
           ports:
             - name: http
-              containerPort: 8081
+              containerPort: 8080
           envFrom:
             - configMapRef:
                 name: hubble-config

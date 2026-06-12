@@ -72,11 +72,11 @@ e2e/           # Playwright E2E suites (editor / execution / results / notebook 
 ```bash
 pnpm install
 
-# Terminal 1 — the BFF (Hono) on :8081
-PORT=8081 TRINO_BASE_URL=http://localhost:30080 \
+# Terminal 1 — the BFF (Hono) on :8080
+PORT=8080 TRINO_BASE_URL=http://localhost:30080 \
   pnpm --filter @hue-fable/server dev
 
-# Terminal 2 — the web app (Vite) on :5173, proxying /api → :8081
+# Terminal 2 — the web app (Vite) on :5173, proxying /api → :8080
 pnpm --filter @hue-fable/web dev
 ```
 
@@ -86,7 +86,7 @@ pnpm --filter @hue-fable/web dev
 
 | 変数                    | 既定値                   | 説明                                                                                           |
 | ----------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `PORT`                  | `8081`                   | BFF が待ち受ける HTTP ポート                                                                   |
+| `PORT`                  | `8080`                   | BFF が待ち受ける HTTP ポート                                                                   |
 | `DB_PATH`               | `./data/hue_fable.db`    | SQLite データベースファイル                                                                    |
 | `STATIC_DIR`            | —                        | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う |
 | `TRINO_BASE_URL`        | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL                                                             |

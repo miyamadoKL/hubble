@@ -100,7 +100,7 @@ function envEnum<T extends string>(env: Env, key: string, allowed: readonly T[],
 
 export function loadServerConfig(env: Env = process.env): ServerConfig {
   return {
-    port: envInt(env, 'PORT', 8081),
+    port: envInt(env, 'PORT', 8080),
     dbPath: envStr(env, 'DB_PATH', './data/hue_fable.db'),
     staticDir: envOptional(env, 'STATIC_DIR'),
     auth: {

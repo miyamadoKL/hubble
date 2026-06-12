@@ -8,7 +8,7 @@
 # SPA, so one container is enough. See docs/deployment.md and docs/operations.md.
 #
 # Build:   docker build -t hubble:0.1.0 .
-# Run:     docker run --rm -p 8081:8081 -v hubble-data:/data \
+# Run:     docker run --rm -p 8080:8080 -v hubble-data:/data \
 #            -e TRINO_BASE_URL=http://trino:8080 hubble:0.1.0
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ ENV NODE_ENV=production
 # Single-process defaults: serve the built SPA and persist SQLite under /data.
 ENV STATIC_DIR=/app/packages/web/dist
 ENV DB_PATH=/data/hue_fable.db
-ENV PORT=8081
+ENV PORT=8080
 
 # Workspace metadata (pnpm resolves the workspace graph at runtime for `start`).
 COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -97,7 +97,7 @@ RUN mkdir -p /data && chown -R node:node /data
 VOLUME ["/data"]
 
 USER node
-EXPOSE 8081
+EXPOSE 8080
 
 # `pnpm --filter @hue-fable/server start` would be equivalent, but the corepack
 # shim downloads pnpm on first use (runtime stage has no corepack cache), which

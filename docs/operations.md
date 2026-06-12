@@ -72,7 +72,7 @@ pnpm --filter web build      # → packages/web/dist/ に index.html + ハッシ
 `pnpm --filter @hue-fable/server start` は内部で `tsx src/index.ts` を実行します。
 
 ```bash
-PORT=8081 \
+PORT=8080 \
 DB_PATH=/var/lib/hubble/hue_fable.db \
 STATIC_DIR=/opt/hubble/packages/web/dist \
 TRINO_BASE_URL=http://trino.internal:8080 \
@@ -84,7 +84,7 @@ TRINO_USER=hubble-svc \
 起動ログに次が出れば配信込みで立ち上がっています。
 
 ```
-hubble server listening on http://localhost:8081
+hubble server listening on http://localhost:8080
 serving static web app from /opt/hubble/packages/web/dist
 ```
 
@@ -94,16 +94,16 @@ serving static web app from /opt/hubble/packages/web/dist
 
 ```bash
 # ヘルスチェック（認証不要）
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8081/api/healthz   # → 200
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/api/healthz   # → 200
 
 # SPA シェル（index.html, no-cache）
-curl -s -D - -o /dev/null http://localhost:8081/ | grep -iE "HTTP/|cache-control|content-type"
+curl -s -D - -o /dev/null http://localhost:8080/ | grep -iE "HTTP/|cache-control|content-type"
 #   HTTP/1.1 200 OK
 #   cache-control: no-cache
 #   content-type: text/html; charset=utf-8
 
 # 公開設定（GET /api/config）
-curl -s http://localhost:8081/api/config
+curl -s http://localhost:8080/api/config
 #   {"trino":{...},"defaults":{...},"authMode":"none","version":"0.1.0"}
 ```
 
@@ -134,7 +134,7 @@ Restart=on-failure
 RestartSec=3
 
 # 環境変数（または EnvironmentFile=/etc/hubble.env）
-Environment=PORT=8081
+Environment=PORT=8080
 Environment=DB_PATH=/var/lib/hubble/hue_fable.db
 Environment=STATIC_DIR=/opt/hubble/packages/web/dist
 Environment=TRINO_BASE_URL=http://trino.internal:8080
@@ -154,7 +154,7 @@ sudo systemctl status hubble
 journalctl -u hubble -f
 ```
 
-oauth2-proxy を前段に置く場合は、Hubble を `127.0.0.1:8081`（loopback）に bind し、
+oauth2-proxy を前段に置く場合は、Hubble を `127.0.0.1:8080`（loopback）に bind し、
 proxy をその upstream にするのが安全です（[§7](#7-認証-auth_modeproxy)）。
 
 ---
@@ -165,7 +165,7 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
-| `PORT` | `8081` | BFF の HTTP ポート |
+| `PORT` | `8080` | BFF の HTTP ポート |
 | `DB_PATH` | `./data/hue_fable.db` | SQLite ファイルパス。`:memory:` で揮発（テスト用） |
 | `STATIC_DIR` | （未設定 = 配信しない） | web ビルド成果物のディレクトリ。設定時に静的配信 + SPA フォールバック |
 | `TRINO_BASE_URL` | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL |
@@ -198,7 +198,7 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 開発時は server と web を別プロセスで立ち上げ、Vite が `/api` を server にプロキシします。
 
 ```bash
-pnpm dev   # server(:8081) と web(:5173) を並列起動
+pnpm dev   # server(:8080) と web(:5173) を並列起動
 # → http://localhost:5173
 ```
 
@@ -308,7 +308,7 @@ email_domains = ["example.com"]
 
 # 受け口とアップストリーム（= Hubble server）
 http_address = "0.0.0.0:4180"
-upstreams    = ["http://127.0.0.1:8081/"]
+upstreams    = ["http://127.0.0.1:8080/"]
 
 # 認証情報をアップストリームのヘッダへ渡す（Hubble はここから principal を解決）
 pass_user_headers      = true   # X-Forwarded-User / X-Forwarded-Email
@@ -553,7 +553,7 @@ owner を `TRINO_USER` で埋めます**（`backfillOwners`、冪等）。
 | **Trino 接続失敗 / 5xx** | `TRINO_BASE_URL` の到達性、Basic auth（`TRINO_USERNAME`/`TRINO_PASSWORD`）、HTTPS 要否を確認。`curl -u user:pass <base>/v1/info` で疎通確認 |
 | **401 UNAUTHENTICATED**（proxy） | SSO ヘッダが付いているか、送信元が `AUTH_TRUSTED_PROXY_CIDRS` 内か、`AUTH_USER_MAPPING` と実際のヘッダ（user/email）が整合しているかを確認 |
 | **impersonation 拒否** | Trino のエラーに `Cannot impersonate` 等が出る。`etc/rules.json` の `impersonation` ルールで `original_user`（= `TRINO_USERNAME`）→ `new_user`（principal）が許可されているか確認 |
-| **ポート競合** | `EADDRINUSE`。`PORT` を変更、または `ss -ltnp \| grep :8081` で占有プロセスを確認 |
+| **ポート競合** | `EADDRINUSE`。`PORT` を変更、または `ss -ltnp \| grep :8080` で占有プロセスを確認 |
 | **DB ロック / busy** | 複数の server プロセスが同じ `DB_PATH` を開いていないか確認（単一プロセス前提）。WAL の `-wal`/`-shm` 残骸はプロセス停止後に統合される |
 | **静的配信されない** | 起動ログに `serving static web app from …` が出ているか、`STATIC_DIR` が `index.html` を含むディレクトリ（= `web build` 済み）を指しているかを確認 |
 | **メタデータが古い / 詰まる** | Data パネルの更新ボタンか `POST /api/metadata/refresh`。詰まりは [§8](#8-trino-resource-group-分離メタデータ取得詰まり対策) の resource group 分離で緩和 |
