@@ -4,7 +4,16 @@ import { loadServerConfig } from './config';
 import { staticDirExists } from './http/staticRoutes';
 
 const config = loadServerConfig();
-const services = defaultServices();
+
+// Report the selected persistence backend (DATABASE_URL vs DB_PATH) once at
+// startup, without leaking credentials embedded in a connection string.
+if (config.database.kind === 'postgres') {
+  console.log('hubble persistence backend: postgres (DATABASE_URL)');
+} else {
+  console.log(`hubble persistence backend: sqlite (${config.database.path})`);
+}
+
+const services = await defaultServices();
 const app = createApp({ services });
 
 if (config.staticDir && !staticDirExists(config.staticDir)) {

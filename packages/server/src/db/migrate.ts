@@ -1,6 +1,15 @@
-import type Database from 'better-sqlite3';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { SqlDatabase } from './sqlDatabase';
+
+/** Structural shape of the pg adapter's advisory-lock helper (no import cycle). */
+interface AdvisoryLockable {
+  withAdvisoryLock<T>(key: number, fn: () => Promise<T>): Promise<T>;
+}
+
+function hasAdvisoryLock(db: SqlDatabase): db is SqlDatabase & AdvisoryLockable {
+  return typeof (db as Partial<AdvisoryLockable>).withAdvisoryLock === 'function';
+}
 
 /** A single migration: a numbered SQL file. */
 export interface Migration {
@@ -11,6 +20,12 @@ export interface Migration {
 }
 
 const MIGRATION_FILE_RE = /^(\d+)[._-].*\.sql$/;
+
+/**
+ * A stable 64-bit-ish key for pg_advisory_lock so concurrent server startups
+ * serialize their migrations. Arbitrary constant unique to Hubble migrations.
+ */
+const MIGRATION_ADVISORY_LOCK_KEY = 4_021_980_513;
 
 /** Load migrations from a directory, sorted by their numeric prefix. */
 export function loadMigrations(dir: string): Migration[] {
@@ -38,8 +53,8 @@ export function loadMigrations(dir: string): Migration[] {
   return migrations;
 }
 
-function ensureMigrationsTable(db: Database.Database): void {
-  db.exec(`
+async function ensureMigrationsTable(db: SqlDatabase): Promise<void> {
+  await db.run(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version    INTEGER PRIMARY KEY,
       name       TEXT NOT NULL,
@@ -49,34 +64,44 @@ function ensureMigrationsTable(db: Database.Database): void {
 }
 
 /** Versions already applied, ascending. */
-export function appliedVersions(db: Database.Database): number[] {
-  ensureMigrationsTable(db);
-  const rows = db.prepare('SELECT version FROM schema_migrations ORDER BY version ASC').all() as {
-    version: number;
-  }[];
-  return rows.map((r) => r.version);
+export async function appliedVersions(db: SqlDatabase): Promise<number[]> {
+  await ensureMigrationsTable(db);
+  const rows = await db.query<{ version: number }>(
+    'SELECT version FROM schema_migrations ORDER BY version ASC',
+  );
+  // pg returns INTEGER as a JS number; coerce defensively for both dialects.
+  return rows.map((r) => Number(r.version));
 }
 
 /**
  * Apply all pending migrations in order. Each migration runs inside a
- * transaction together with its `schema_migrations` bookkeeping row.
- * Returns the list of versions newly applied.
+ * transaction together with its `schema_migrations` bookkeeping row. On
+ * PostgreSQL the whole pass is serialized with a session advisory lock so
+ * concurrent startups don't race. Returns the list of versions newly applied.
  */
-export function runMigrations(db: Database.Database, migrations: Migration[]): number[] {
-  ensureMigrationsTable(db);
-  const already = new Set(appliedVersions(db));
-  const insert = db.prepare(
-    'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
-  );
+export async function runMigrations(db: SqlDatabase, migrations: Migration[]): Promise<number[]> {
+  if (db.dialect === 'postgres' && hasAdvisoryLock(db)) {
+    return db.withAdvisoryLock(MIGRATION_ADVISORY_LOCK_KEY, () => applyMigrations(db, migrations));
+  }
+  return applyMigrations(db, migrations);
+}
+
+async function applyMigrations(db: SqlDatabase, migrations: Migration[]): Promise<number[]> {
+  await ensureMigrationsTable(db);
+  const already = new Set(await appliedVersions(db));
 
   const applied: number[] = [];
   for (const migration of migrations) {
     if (already.has(migration.version)) continue;
-    const apply = db.transaction(() => {
-      db.exec(migration.sql);
-      insert.run(migration.version, migration.name, new Date().toISOString());
+    await db.transaction(async (tx) => {
+      // Each migration file may contain multiple statements; run as one script.
+      await tx.exec(migration.sql);
+      await tx.run('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [
+        migration.version,
+        migration.name,
+        new Date().toISOString(),
+      ]);
     });
-    apply();
     applied.push(migration.version);
   }
   return applied;

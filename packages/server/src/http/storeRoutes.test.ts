@@ -23,7 +23,7 @@ function arrayOf<T>(schema: Parser<T>): Parser<T[]> {
 
 describe('notebook CRUD', () => {
   it('creates, lists, gets, updates, searches, and deletes', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const created = await json(
       await ctx.app.request('/api/notebooks', {
         method: 'POST',
@@ -80,7 +80,7 @@ describe('notebook CRUD', () => {
   });
 
   it('rejects invalid create bodies with a 400 envelope', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const res = await ctx.app.request('/api/notebooks', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -94,7 +94,7 @@ describe('notebook CRUD', () => {
 
 describe('saved-query CRUD', () => {
   it('creates, favorites-first ordering, search, update, delete', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     await ctx.app.request('/api/saved-queries', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -153,7 +153,7 @@ const nationScenario: FakeScenario = {
 
 describe('history auto-record', () => {
   it('records on submit and updates state/rowCount/elapsed on settle', async () => {
-    const ctx = createTestContext({ scenarios: [nationScenario] });
+    const ctx = await createTestContext({ scenarios: [nationScenario] });
     const res = await ctx.app.request('/api/queries', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -176,7 +176,7 @@ describe('history auto-record', () => {
   });
 
   it('filters by state and paginates', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [
         nationScenario,
         {

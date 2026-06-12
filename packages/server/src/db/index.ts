@@ -1,24 +1,36 @@
-import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadMigrations, runMigrations } from './migrate';
+import type { SqlDatabase } from './sqlDatabase';
+import { openSqlite } from './sqliteAdapter';
+import { openPostgres } from './postgresAdapter';
+
+export type { SqlDatabase, SqlDialect, SqlParam } from './sqlDatabase';
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** migrations/ lives at the package root (../../migrations from src/db). */
 export const MIGRATIONS_DIR = resolve(here, '../../migrations');
 
+/** Backend selection: a PostgreSQL connection string or a SQLite file path. */
+export type DatabaseSource = { kind: 'postgres'; url: string } | { kind: 'sqlite'; path: string };
+
 /**
- * Open (or create) the SQLite database at `dbPath` and run pending migrations.
- * Pass ':memory:' for tests.
+ * Open the database for `source`, run pending migrations, and return the async
+ * `SqlDatabase`. SQLite is the historical default (file or ':memory:');
+ * PostgreSQL is selected when `DATABASE_URL` is set (see config.ts).
  */
-export function openDatabase(dbPath: string): Database.Database {
-  if (dbPath !== ':memory:') {
-    mkdirSync(dirname(resolve(dbPath)), { recursive: true });
+export async function openDatabase(source: DatabaseSource): Promise<SqlDatabase> {
+  const db = source.kind === 'postgres' ? openPostgres(source.url) : openSqlite(source.path);
+  try {
+    await runMigrations(db, loadMigrations(MIGRATIONS_DIR));
+  } catch (err) {
+    await db.close();
+    throw err;
   }
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  runMigrations(db, loadMigrations(MIGRATIONS_DIR));
   return db;
+}
+
+/** Convenience for tests: an in-memory SQLite database with migrations applied. */
+export function openMemoryDatabase(): Promise<SqlDatabase> {
+  return openDatabase({ kind: 'sqlite', path: ':memory:' });
 }

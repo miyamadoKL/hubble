@@ -82,7 +82,7 @@ const scenarios: FakeScenario[] = [
 
 describe('metadata endpoints', () => {
   it('GET /api/catalogs returns a MetadataResponse<Catalog>', async () => {
-    const ctx = createTestContext({ scenarios });
+    const ctx = await createTestContext({ scenarios });
     const res = await ctx.app.request('/api/catalogs');
     expect(res.status).toBe(200);
     const body = catalogsResponseSchema.parse(await res.json());
@@ -92,7 +92,7 @@ describe('metadata endpoints', () => {
   });
 
   it('GET schemas/tables/table detail/sample', async () => {
-    const ctx = createTestContext({ scenarios });
+    const ctx = await createTestContext({ scenarios });
 
     const schemas = schemasResponseSchema.parse(
       await (await ctx.app.request('/api/catalogs/tpch/schemas')).json(),
@@ -119,7 +119,7 @@ describe('metadata endpoints', () => {
   });
 
   it('serves cache on the second catalogs call', async () => {
-    const ctx = createTestContext({ scenarios });
+    const ctx = await createTestContext({ scenarios });
     await ctx.app.request('/api/catalogs');
     const second = catalogsResponseSchema.parse(
       await (await ctx.app.request('/api/catalogs')).json(),
@@ -128,7 +128,7 @@ describe('metadata endpoints', () => {
   });
 
   it('POST /api/metadata/refresh re-fetches catalogs', async () => {
-    const ctx = createTestContext({ scenarios });
+    const ctx = await createTestContext({ scenarios });
     await ctx.app.request('/api/catalogs');
     const before = ctx.fake.requests.filter((r) => r.method === 'POST').length;
     const res = await ctx.app.request('/api/metadata/refresh', {

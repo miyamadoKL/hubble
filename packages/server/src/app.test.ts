@@ -4,7 +4,7 @@ import { createTestContext } from './test/harness';
 
 describe('GET /api/healthz', () => {
   it('returns ok', async () => {
-    const { app } = createTestContext();
+    const { app } = await createTestContext();
     const res = await app.request(apiRoutes.healthz());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'ok' });
@@ -13,7 +13,7 @@ describe('GET /api/healthz', () => {
 
 describe('GET /api/config', () => {
   it('returns a contract-valid AppConfig with env defaults', async () => {
-    const { app } = createTestContext();
+    const { app } = await createTestContext();
     const res = await app.request(apiRoutes.config());
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -26,7 +26,7 @@ describe('GET /api/config', () => {
 
 describe('unknown /api route', () => {
   it('returns a 404 error envelope', async () => {
-    const { app } = createTestContext();
+    const { app } = await createTestContext();
     const res = await app.request('/api/does-not-exist');
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };

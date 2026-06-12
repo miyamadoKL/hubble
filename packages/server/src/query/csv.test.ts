@@ -53,7 +53,7 @@ function csvScenario(): FakeScenario {
 
 describe('CSV download endpoint', () => {
   it('streams header + RFC4180-quoted rows, no BOM', async () => {
-    const ctx = createTestContext({ scenarios: [csvScenario()] });
+    const ctx = await createTestContext({ scenarios: [csvScenario()] });
     const res = await ctx.app.request('/api/queries', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -76,7 +76,7 @@ describe('CSV download endpoint', () => {
   });
 
   it('gzip-compresses when compression=gzip', async () => {
-    const ctx = createTestContext({ scenarios: [csvScenario()] });
+    const ctx = await createTestContext({ scenarios: [csvScenario()] });
     const res = await ctx.app.request('/api/queries', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -95,7 +95,7 @@ describe('CSV download endpoint', () => {
   });
 
   it('zips a single .csv entry when compression=zip', async () => {
-    const ctx = createTestContext({ scenarios: [csvScenario()] });
+    const ctx = await createTestContext({ scenarios: [csvScenario()] });
     const res = await ctx.app.request('/api/queries', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -131,7 +131,7 @@ describe('CSV full-result re-execution (C-2)', () => {
   it('emits all rows for a truncated execution (not just the buffered preview)', async () => {
     // Buffer is capped at 5 rows, but the full result is 20 rows. The CSV must
     // re-run the statement and stream all 20.
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [manyRowScenario(20)],
       configOverrides: { query: { maxRows: 5 } as never },
     });
@@ -146,7 +146,9 @@ describe('CSV full-result re-execution (C-2)', () => {
     expect(exec.truncated).toBe(true);
     expect(exec.bufferedCount).toBe(5);
 
-    const historyBefore = ctx.services.history.list(ctx.services.config.trino.user, { limit: 500 }).total;
+    const historyBefore = (
+      await ctx.services.history.list(ctx.services.config.trino.user, { limit: 500 })
+    ).total;
 
     const csvRes = await ctx.app.request(`/api/queries/${queryId}/download.csv`);
     const body = await csvRes.text();
@@ -161,11 +163,13 @@ describe('CSV full-result re-execution (C-2)', () => {
       (r) => r.method === 'POST' && r.headers['x-trino-source'] === 'hubble-download',
     );
     expect(reexecPost).toBeDefined();
-    expect(ctx.services.history.list(ctx.services.config.trino.user, { limit: 500 }).total).toBe(historyBefore);
+    expect(
+      (await ctx.services.history.list(ctx.services.config.trino.user, { limit: 500 })).total,
+    ).toBe(historyBefore);
   });
 
   it('cancels the re-execution query (DELETE) when the stream is aborted', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [manyRowScenario(50)],
       configOverrides: { query: { maxRows: 2 } as never },
     });

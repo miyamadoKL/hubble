@@ -55,7 +55,7 @@ const nationCell = ioPlanCell({
 });
 
 async function postEstimate(
-  app: ReturnType<typeof createTestContext>['app'],
+  app: Awaited<ReturnType<typeof createTestContext>>['app'],
   body: Record<string, unknown>,
 ): Promise<{ status: number; json: unknown }> {
   const res = await app.request('/api/queries/estimate', {
@@ -68,7 +68,7 @@ async function postEstimate(
 
 describe('POST /api/queries/estimate', () => {
   it('returns an estimated verdict that blocks in enforce mode', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [explainScenario('lineitem', lineitemCell)],
       configOverrides: {
         guard: {
@@ -96,7 +96,7 @@ describe('POST /api/queries/estimate', () => {
   });
 
   it('allows a small table under the limit', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [explainScenario('nation', nationCell)],
       configOverrides: {
         guard: {
@@ -122,7 +122,7 @@ describe('POST /api/queries/estimate', () => {
   });
 
   it('computes estimatedSeconds when BYTES_PER_SECOND is set', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [explainScenario('lineitem', lineitemCell)],
       configOverrides: {
         guard: {
@@ -146,7 +146,7 @@ describe('POST /api/queries/estimate', () => {
   });
 
   it('returns a disabled estimate without touching Trino when mode=off', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [explainScenario('lineitem', lineitemCell)],
       configOverrides: {
         guard: {
@@ -169,7 +169,7 @@ describe('POST /api/queries/estimate', () => {
   });
 
   it('treats a Trino USER_ERROR as unsupported (allow even under strict limits)', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [
         {
           match: 'does_not_exist',
@@ -203,7 +203,7 @@ describe('POST /api/queries/estimate', () => {
   });
 
   it('tags the guard EXPLAIN with the metadata source and impersonates the principal', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [explainScenario('nation', nationCell)],
       configOverrides: {
         guard: {
@@ -232,7 +232,7 @@ describe('POST /api/queries/estimate', () => {
   });
 
   it('serves a cached estimate on the second call (no extra Trino round-trip)', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [explainScenario('nation', nationCell)],
       configOverrides: {
         guard: {
@@ -264,7 +264,7 @@ describe('POST /api/queries/estimate', () => {
 
 describe('GET /api/config exposes guard settings', () => {
   it('includes the guard block', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       configOverrides: {
         guard: {
           mode: 'enforce',
@@ -299,7 +299,7 @@ describe('GET /api/config exposes guard settings', () => {
 
 describe('run path enforce (QUERY_BLOCKED)', () => {
   it('blocks a run that exceeds the limit in enforce mode', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [
         explainScenario('lineitem', lineitemCell, 'explain'),
         // The actual run scenario (should never be reached when blocked).
@@ -336,7 +336,7 @@ describe('run path enforce (QUERY_BLOCKED)', () => {
   });
 
   it('does not intervene in warn mode (run proceeds)', async () => {
-    const ctx = createTestContext({
+    const ctx = await createTestContext({
       scenarios: [
         explainScenario('lineitem', lineitemCell, 'explain'),
         {

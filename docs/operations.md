@@ -167,6 +167,7 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 |---|---|---|
 | `PORT` | `8080` | BFF の HTTP ポート |
 | `DB_PATH` | `./data/hubble.db` | SQLite ファイルパス。`:memory:` で揮発（テスト用） |
+| `DATABASE_URL` | （未設定 = SQLite を使用） | `postgres://` / `postgresql://` 形式の接続文字列。設定すると永続化バックエンドが PostgreSQL になり `DB_PATH` より優先されます。それ以外のスキームは起動時エラー（[§9.4](#94-postgresql-バックエンド)） |
 | `STATIC_DIR` | （未設定 = 配信しない） | web ビルド成果物のディレクトリ。設定時に静的配信 + SPA フォールバック |
 | `TRINO_BASE_URL` | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL |
 | `TRINO_USER` | `admin` | `X-Trino-User` の値（none モードの実行ユーザー兼所有者、proxy モードのメタデータ実行ユーザー） |
@@ -581,6 +582,33 @@ owner を `TRINO_USER` で埋めます**（`backfillOwners`、冪等）。
 - proxy 切替前に `TRINO_USER` を、移行後も意味のある値（例: 管理者アカウント）にしておくと
   扱いやすいです。
 - 共有（他ユーザーへの公開）は v1.1 では非対応です。
+
+### 9.4 PostgreSQL バックエンド
+
+永続化バックエンドには SQLite のほかに PostgreSQL を選択できます。既定は従来どおり
+SQLite で、完全な後方互換を保ちます。
+
+- **選択方法**: 環境変数 `DATABASE_URL` に `postgres://` または `postgresql://` 形式の
+  接続文字列を設定すると PostgreSQL になります。`DATABASE_URL` が未設定（または空文字）の
+  ときは従来どおり `DB_PATH` の SQLite を使います。両方を設定した場合は `DATABASE_URL` が
+  優先されます。`postgres` / `postgresql` 以外のスキームは起動時にエラーで停止します。
+  どちらのバックエンドを採用したかは起動ログに 1 行出力されます。
+- **接続プール**: 単一プロセス前提のため、プールサイズなどは妥当な既定（最大 5 接続）で
+  固定しており、追加の環境変数はありません。
+- **マイグレーション**: スキーマは SQLite と同じ `packages/server/migrations` を共有し、
+  起動時に自動適用されます（`schema_migrations` で適用管理）。PostgreSQL では複数プロセスの
+  同時起動に備え、マイグレーション適用を advisory lock（`pg_advisory_lock`）で直列化します。
+- **バックアップ**: `pg_dump` を使ってください。
+
+  ```bash
+  pg_dump "$DATABASE_URL" -Fc -f /backup/hubble-$(date +%F).dump
+  # リストアは pg_restore
+  pg_restore -d "$DATABASE_URL" --clean /backup/hubble-YYYY-MM-DD.dump
+  ```
+
+- **SQLite からの移行**: SQLite → PostgreSQL の自動移行ツールは v1 では提供していません。
+  既存データを引き継ぐ場合は手動でのエクスポート／インポートが必要です（保存内容は
+  `notebooks` / `saved_queries` / `query_history` の 3 テーブルのみ）。
 
 ---
 

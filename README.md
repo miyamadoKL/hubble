@@ -89,6 +89,7 @@ pnpm --filter @hubble/web dev
 | --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------- |
 | `PORT`                            | `8080`                   | BFF が待ち受ける HTTP ポート                                                                    |
 | `DB_PATH`                         | `./data/hubble.db`       | SQLite データベースファイル                                                                     |
+| `DATABASE_URL`                    | —                        | `postgres://` 形式の接続文字列。設定すると永続化が PostgreSQL になり `DB_PATH` より優先         |
 | `STATIC_DIR`                      | —                        | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う  |
 | `TRINO_BASE_URL`                  | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL                                                              |
 | `TRINO_USER`                      | `admin`                  | `X-Trino-User` として送る値                                                                     |

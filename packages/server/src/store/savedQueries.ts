@@ -1,10 +1,10 @@
-import type Database from 'better-sqlite3';
 import type {
   CreateSavedQueryRequest,
   SavedQuery,
   UpdateSavedQueryRequest,
 } from '@hubble/contracts';
 import { savedQuerySchema } from '@hubble/contracts';
+import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 import { likeParam } from './notebooks';
 
@@ -25,35 +25,33 @@ interface SavedQueryRow {
  * Every operation is scoped to an `owner` principal (design.md §11).
  */
 export class SavedQueryRepository {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: SqlDatabase) {}
 
-  list(owner: string, query?: string): SavedQuery[] {
-    const rows = (
+  async list(owner: string, query?: string): Promise<SavedQuery[]> {
+    const rows =
       query && query.trim() !== ''
-        ? this.db
-            .prepare(
-              `SELECT * FROM saved_queries
-               WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR statement LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
-               ORDER BY is_favorite DESC, updated_at DESC`,
-            )
-            .all(owner, likeParam(query), likeParam(query), likeParam(query))
-        : this.db
-            .prepare(
-              `SELECT * FROM saved_queries WHERE owner = ? ORDER BY is_favorite DESC, updated_at DESC`,
-            )
-            .all(owner)
-    ) as SavedQueryRow[];
+        ? await this.db.query<SavedQueryRow>(
+            `SELECT * FROM saved_queries
+             WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR statement LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+             ORDER BY is_favorite DESC, updated_at DESC`,
+            [owner, likeParam(query), likeParam(query), likeParam(query)],
+          )
+        : await this.db.query<SavedQueryRow>(
+            `SELECT * FROM saved_queries WHERE owner = ? ORDER BY is_favorite DESC, updated_at DESC`,
+            [owner],
+          );
     return rows.map(rowToSavedQuery);
   }
 
-  get(owner: string, id: string): SavedQuery | undefined {
-    const row = this.db
-      .prepare('SELECT * FROM saved_queries WHERE id = ? AND owner = ?')
-      .get(id, owner) as SavedQueryRow | undefined;
-    return row ? rowToSavedQuery(row) : undefined;
+  async get(owner: string, id: string): Promise<SavedQuery | undefined> {
+    const rows = await this.db.query<SavedQueryRow>(
+      'SELECT * FROM saved_queries WHERE id = ? AND owner = ?',
+      [id, owner],
+    );
+    return rows[0] ? rowToSavedQuery(rows[0]) : undefined;
   }
 
-  create(owner: string, req: CreateSavedQueryRequest): SavedQuery {
+  async create(owner: string, req: CreateSavedQueryRequest): Promise<SavedQuery> {
     const nowIso = new Date().toISOString();
     const saved: SavedQuery = savedQuerySchema.parse({
       id: newId('sq_'),
@@ -66,17 +64,20 @@ export class SavedQueryRepository {
       createdAt: nowIso,
       updatedAt: nowIso,
     });
-    this.db
-      .prepare(
-        `INSERT INTO saved_queries (id, name, description, statement, catalog, schema, is_favorite, owner, created_at, updated_at)
-         VALUES (@id, @name, @description, @statement, @catalog, @schema, @is_favorite, @owner, @created_at, @updated_at)`,
-      )
-      .run(toRow(saved, owner));
+    await this.db.run(
+      `INSERT INTO saved_queries (id, name, description, statement, catalog, schema, is_favorite, owner, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      insertParams(saved, owner),
+    );
     return saved;
   }
 
-  update(owner: string, id: string, req: UpdateSavedQueryRequest): SavedQuery | undefined {
-    const existing = this.get(owner, id);
+  async update(
+    owner: string,
+    id: string,
+    req: UpdateSavedQueryRequest,
+  ): Promise<SavedQuery | undefined> {
+    const existing = await this.get(owner, id);
     if (!existing) return undefined;
     const updated: SavedQuery = savedQuerySchema.parse({
       ...existing,
@@ -88,21 +89,31 @@ export class SavedQueryRepository {
       isFavorite: req.isFavorite,
       updatedAt: new Date().toISOString(),
     });
-    this.db
-      .prepare(
-        `UPDATE saved_queries SET name=@name, description=@description, statement=@statement,
-           catalog=@catalog, schema=@schema, is_favorite=@is_favorite, updated_at=@updated_at
-         WHERE id=@id AND owner=@owner`,
-      )
-      .run(toRow(updated, owner));
+    await this.db.run(
+      `UPDATE saved_queries SET name=?, description=?, statement=?,
+         catalog=?, schema=?, is_favorite=?, updated_at=?
+       WHERE id=? AND owner=?`,
+      [
+        updated.name,
+        updated.description,
+        updated.statement,
+        updated.catalog ?? null,
+        updated.schema ?? null,
+        updated.isFavorite ? 1 : 0,
+        updated.updatedAt,
+        id,
+        owner,
+      ],
+    );
     return updated;
   }
 
-  delete(owner: string, id: string): boolean {
-    return (
-      this.db.prepare('DELETE FROM saved_queries WHERE id = ? AND owner = ?').run(id, owner)
-        .changes > 0
+  async delete(owner: string, id: string): Promise<boolean> {
+    const deleted = await this.db.query<{ id: string }>(
+      'DELETE FROM saved_queries WHERE id = ? AND owner = ? RETURNING id',
+      [id, owner],
     );
+    return deleted.length > 0;
   }
 }
 
@@ -112,7 +123,8 @@ function rowToSavedQuery(row: SavedQueryRow): SavedQuery {
     name: row.name,
     description: row.description,
     statement: row.statement,
-    isFavorite: row.is_favorite !== 0,
+    // SQLite stores 0/1; PostgreSQL's INTEGER column round-trips the same value.
+    isFavorite: Number(row.is_favorite) !== 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -121,17 +133,18 @@ function rowToSavedQuery(row: SavedQueryRow): SavedQuery {
   return savedQuerySchema.parse(q);
 }
 
-function toRow(q: SavedQuery, owner: string): Record<string, unknown> {
-  return {
-    id: q.id,
-    name: q.name,
-    description: q.description,
-    statement: q.statement,
-    catalog: q.catalog ?? null,
-    schema: q.schema ?? null,
-    is_favorite: q.isFavorite ? 1 : 0,
+/** Positional params for the INSERT, matching the column order above. */
+function insertParams(q: SavedQuery, owner: string): SqlParam[] {
+  return [
+    q.id,
+    q.name,
+    q.description,
+    q.statement,
+    q.catalog ?? null,
+    q.schema ?? null,
+    q.isFavorite ? 1 : 0,
     owner,
-    created_at: q.createdAt,
-    updated_at: q.updatedAt,
-  };
+    q.createdAt,
+    q.updatedAt,
+  ];
 }

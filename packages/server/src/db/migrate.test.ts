@@ -1,33 +1,46 @@
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadMigrations, runMigrations, appliedVersions } from './migrate';
-import { openDatabase, MIGRATIONS_DIR } from './index';
+import { openMemoryDatabase, openDatabase, MIGRATIONS_DIR } from './index';
+import { openSqlite } from './sqliteAdapter';
+import type { SqlDatabase } from './sqlDatabase';
+import { pgEnabled } from '../test/dbBackends';
 
-function tableNames(db: Database.Database): string[] {
-  return (
-    db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as {
-      name: string;
-    }[]
-  ).map((r) => r.name);
+async function tableNames(db: SqlDatabase): Promise<string[]> {
+  const rows =
+    db.dialect === 'postgres'
+      ? await db.query<{ name: string }>(
+          "SELECT tablename AS name FROM pg_tables WHERE schemaname = 'public' ORDER BY name",
+        )
+      : await db.query<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+        );
+  return rows.map((r) => r.name);
 }
 
-function withTempMigrations(files: Record<string, string>, fn: (dir: string) => void): void {
+function withTempMigrations(files: Record<string, string>, fn: (dir: string) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), 'hf-mig-'));
-  try {
-    for (const [name, sql] of Object.entries(files)) {
-      writeFileSync(join(dir, name), sql);
+  return (async () => {
+    try {
+      for (const [name, sql] of Object.entries(files)) {
+        writeFileSync(join(dir, name), sql);
+      }
+      await fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-    fn(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  })();
+}
+
+/** A bare in-memory SQLite handle (no migrations applied yet). */
+function freshSqlite(): SqlDatabase {
+  return openSqlite(':memory:');
 }
 
 describe('loadMigrations', () => {
-  it('orders by numeric prefix and ignores non-matching files', () => {
+  it('orders by numeric prefix and ignores non-matching files', () =>
     withTempMigrations(
       {
         '0002_b.sql': 'CREATE TABLE b (id INTEGER);',
@@ -39,100 +52,133 @@ describe('loadMigrations', () => {
         const migrations = loadMigrations(dir);
         expect(migrations.map((m) => m.version)).toEqual([1, 2]);
         expect(migrations.map((m) => m.name)).toEqual(['0001_a.sql', '0002_b.sql']);
+        return Promise.resolve();
       },
-    );
-  });
+    ));
 
-  it('throws on duplicate version numbers', () => {
+  it('throws on duplicate version numbers', () =>
     withTempMigrations({ '0001_a.sql': 'SELECT 1;', '0001_b.sql': 'SELECT 1;' }, (dir) => {
       expect(() => loadMigrations(dir)).toThrow(/Duplicate migration version 1/);
-    });
-  });
+      return Promise.resolve();
+    }));
 });
 
 describe('runMigrations', () => {
-  it('applies pending migrations once and is idempotent', () => {
+  it('applies pending migrations once and is idempotent', () =>
     withTempMigrations(
       {
         '0001_a.sql': 'CREATE TABLE a (id INTEGER PRIMARY KEY);',
         '0002_b.sql': 'CREATE TABLE b (id INTEGER PRIMARY KEY);',
       },
-      (dir) => {
-        const db = new Database(':memory:');
+      async (dir) => {
+        const db = freshSqlite();
         const migrations = loadMigrations(dir);
 
-        const first = runMigrations(db, migrations);
+        const first = await runMigrations(db, migrations);
         expect(first).toEqual([1, 2]);
-        expect(appliedVersions(db)).toEqual([1, 2]);
-        expect(tableNames(db)).toContain('a');
-        expect(tableNames(db)).toContain('b');
+        expect(await appliedVersions(db)).toEqual([1, 2]);
+        expect(await tableNames(db)).toContain('a');
+        expect(await tableNames(db)).toContain('b');
 
         // Re-running applies nothing.
-        const second = runMigrations(db, migrations);
+        const second = await runMigrations(db, migrations);
         expect(second).toEqual([]);
-        expect(appliedVersions(db)).toEqual([1, 2]);
-        db.close();
+        expect(await appliedVersions(db)).toEqual([1, 2]);
+        await db.close();
       },
-    );
-  });
+    ));
 
-  it('applies only newly added migrations on a second pass', () => {
-    const db = new Database(':memory:');
-    withTempMigrations({ '0001_a.sql': 'CREATE TABLE a (id INTEGER);' }, (dir) => {
-      runMigrations(db, loadMigrations(dir));
+  it('applies only newly added migrations on a second pass', async () => {
+    const db = freshSqlite();
+    await withTempMigrations({ '0001_a.sql': 'CREATE TABLE a (id INTEGER);' }, async (dir) => {
+      await runMigrations(db, loadMigrations(dir));
     });
-    expect(appliedVersions(db)).toEqual([1]);
+    expect(await appliedVersions(db)).toEqual([1]);
 
-    withTempMigrations(
+    await withTempMigrations(
       {
         '0001_a.sql': 'CREATE TABLE a (id INTEGER);',
         '0002_c.sql': 'CREATE TABLE c (id INTEGER);',
       },
-      (dir) => {
-        const applied = runMigrations(db, loadMigrations(dir));
+      async (dir) => {
+        const applied = await runMigrations(db, loadMigrations(dir));
         expect(applied).toEqual([2]);
       },
     );
-    expect(appliedVersions(db)).toEqual([1, 2]);
-    expect(tableNames(db)).toContain('c');
-    db.close();
+    expect(await appliedVersions(db)).toEqual([1, 2]);
+    expect(await tableNames(db)).toContain('c');
+    await db.close();
   });
 
-  it('rolls back a failing migration (no partial bookkeeping)', () => {
+  it('rolls back a failing migration (no partial bookkeeping)', () =>
     withTempMigrations(
       {
         '0001_ok.sql': 'CREATE TABLE ok (id INTEGER);',
         '0002_bad.sql': 'CREATE TABLE bad (id INTEGER); THIS IS NOT SQL;',
       },
-      (dir) => {
-        const db = new Database(':memory:');
+      async (dir) => {
+        const db = freshSqlite();
         const migrations = loadMigrations(dir);
-        expect(() => runMigrations(db, migrations)).toThrow();
+        await expect(runMigrations(db, migrations)).rejects.toThrow();
         // Migration 1 committed; migration 2 fully rolled back.
-        expect(appliedVersions(db)).toEqual([1]);
-        expect(tableNames(db)).toContain('ok');
-        expect(tableNames(db)).not.toContain('bad');
-        db.close();
+        expect(await appliedVersions(db)).toEqual([1]);
+        expect(await tableNames(db)).toContain('ok');
+        expect(await tableNames(db)).not.toContain('bad');
+        await db.close();
       },
-    );
-  });
+    ));
 });
 
 describe('openDatabase with the real initial migration', () => {
-  it('creates notebooks / saved_queries / query_history', () => {
-    const db = openDatabase(':memory:');
-    const names = tableNames(db);
+  it('creates notebooks / saved_queries / query_history', async () => {
+    const db = await openMemoryDatabase();
+    const names = await tableNames(db);
     expect(names).toContain('notebooks');
     expect(names).toContain('saved_queries');
     expect(names).toContain('query_history');
     expect(names).toContain('schema_migrations');
-    expect(appliedVersions(db)).toContain(1);
-    db.close();
+    expect(await appliedVersions(db)).toContain(1);
+    await db.close();
   });
 
   it('loads the real migrations directory', () => {
     const migrations = loadMigrations(MIGRATIONS_DIR);
     expect(migrations.length).toBeGreaterThanOrEqual(1);
     expect(migrations[0]!.version).toBe(1);
+  });
+});
+
+// PostgreSQL-only: idempotent migrations + advisory-lock serialization. Gated on
+// TEST_DATABASE_URL so a developer's default `pnpm test` (no pg) stays green.
+const describePg = pgEnabled ? describe : describe.skip;
+describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
+  const url = process.env.TEST_DATABASE_URL!;
+
+  it('applies the real migrations and is idempotent', async () => {
+    // First open applies everything; second open should be a no-op (advisory
+    // lock acquired/released cleanly, no duplicate-apply).
+    const db1 = await openDatabase({ kind: 'postgres', url });
+    expect(await appliedVersions(db1)).toEqual([1, 2]);
+    await db1.close();
+
+    const db2 = await openDatabase({ kind: 'postgres', url });
+    expect(await appliedVersions(db2)).toEqual([1, 2]);
+    expect(await tableNames(db2)).toEqual(
+      expect.arrayContaining(['notebooks', 'saved_queries', 'query_history', 'schema_migrations']),
+    );
+    await db2.close();
+  });
+
+  it('serializes concurrent startup migrations under the advisory lock', async () => {
+    // Two concurrent opens race for the advisory lock; both must converge to the
+    // same applied set with no error and no duplicate rows.
+    const [a, b] = await Promise.all([
+      openDatabase({ kind: 'postgres', url }),
+      openDatabase({ kind: 'postgres', url }),
+    ]);
+    expect(await appliedVersions(a)).toEqual([1, 2]);
+    expect(await appliedVersions(b)).toEqual([1, 2]);
+    await a.close();
+    await b.close();
   });
 });

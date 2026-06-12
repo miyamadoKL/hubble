@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { SqlDatabase } from './db/sqlDatabase';
 import type { ServerConfig } from './config';
 import { TrinoClient } from './trino/client';
 import { MetadataSource } from './metadata/source';
@@ -36,11 +36,11 @@ export interface BuildServicesOptions {
 }
 
 /** Construct the full service graph from config + an open database. */
-export function buildServices(
+export async function buildServices(
   config: ServerConfig,
-  db: Database.Database,
+  db: SqlDatabase,
   options: BuildServicesOptions = {},
-): Services {
+): Promise<Services> {
   const trino = new TrinoClient({
     baseUrl: config.trino.baseUrl,
     username: config.trino.username,
@@ -70,7 +70,7 @@ export function buildServices(
 
   // Backfill empty owners (from migration 0002) with the technical principal so
   // pre-existing rows become owned by the `none`-mode user (design.md §11).
-  backfillOwners(db, config.trino.user);
+  await backfillOwners(db, config.trino.user);
 
   const history = new HistoryRepository(db);
   const notebooks = new NotebookRepository(db);
@@ -115,6 +115,9 @@ export function buildServices(
     notebooks,
     savedQueries,
     history,
-    shutdown: () => registry.shutdown(),
+    shutdown: async () => {
+      await registry.shutdown();
+      await db.close();
+    },
   };
 }
