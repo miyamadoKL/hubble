@@ -1,0 +1,53 @@
+# Hubble SQL Workbench — local / demo stack.
+#
+#   docker compose up --build
+#   → Hubble on http://localhost:8081, backed by a demo Trino (tpch catalog).
+#
+# `hubble` reads optional overrides from a local `.env` (git-ignored). The demo
+# `trino` service ships the tpch catalog so the stack works with no external
+# data source. Point Hubble at your own Trino by setting TRINO_BASE_URL in .env.
+services:
+  hubble:
+    build: .
+    image: hubble:0.1.0
+    ports:
+      - '8081:8081'
+    environment:
+      # Connect to the demo Trino by service name. Override in .env (env_file
+      # below) to target an external coordinator, e.g.
+      # TRINO_BASE_URL=https://trino.internal:8443
+      TRINO_BASE_URL: ${TRINO_BASE_URL:-http://trino:8080}
+      TRINO_USER: ${TRINO_USER:-admin}
+      TRINO_USERNAME: ${TRINO_USERNAME:-admin}
+      DEFAULT_CATALOG: ${DEFAULT_CATALOG:-tpch}
+      DEFAULT_SCHEMA: ${DEFAULT_SCHEMA:-tiny}
+    # Optional: a local .env supplies/overrides any variable (incl. secrets like
+    # TRINO_PASSWORD). The file is git-ignored; absence is tolerated.
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Persist the SQLite store (notebooks / saved queries / history).
+      - hubble-data:/data
+    depends_on:
+      trino:
+        condition: service_healthy
+    restart: unless-stopped
+
+  trino:
+    image: trinodb/trino:479
+    ports:
+      # Exposed for convenience (query Trino directly); Hubble uses the internal
+      # service name, not this published port.
+      - '8080:8080'
+    volumes:
+      # Demo config: only the tpch catalog is added; everything else uses the
+      # official image defaults.
+      - ./deploy/docker/trino/etc/catalog:/etc/trino/catalog:ro
+    # Uses the built-in HEALTHCHECK from the official trinodb/trino image
+    # (/usr/lib/trino/bin/health-check) — no curl dependency required.
+    # depends_on: condition: service_healthy works without any override here.
+    restart: unless-stopped
+
+volumes:
+  hubble-data:

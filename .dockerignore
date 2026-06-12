@@ -1,0 +1,60 @@
+# Keep the build context small and reproducible. The image installs deps from
+# the lockfile and builds the web app inside the builder stage, so host build
+# artifacts and local state must not leak in.
+
+# Dependencies / package manager state (reinstalled in-image)
+**/node_modules
+.pnpm-store
+
+# Build output (web/dist is produced inside the builder stage)
+**/dist
+**/build
+**/*.tsbuildinfo
+
+# Local SQLite data and any *.db files (must never bake into the image)
+/packages/server/data
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+
+# Env files (secrets / machine-local config) — keep the template only
+.env
+.env.*
+!.env.example
+
+# VCS / CI / tooling
+.git
+.gitignore
+.github
+
+# Tests, coverage, e2e (not needed at runtime)
+e2e
+# …but pnpm --frozen-lockfile needs every workspace importer's manifest
+!e2e/package.json
+**/coverage
+**/*.test.ts
+playwright-report
+test-results
+.playwright
+
+# Docs and deploy manifests (not part of the running app)
+docs
+deploy
+README.md
+NOTICE
+LICENSE
+
+# Agent / editor infrastructure
+.claude
+.opencode
+opencode.json
+.vscode
+.idea
+.DS_Store
+*.log
+
+# Docker / compose files themselves
+Dockerfile
+.dockerignore
+docker-compose.yml
