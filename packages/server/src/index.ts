@@ -16,6 +16,16 @@ if (config.database.kind === 'postgres') {
 const services = await defaultServices();
 const app = createApp({ services });
 
+// Start the in-process query scheduler (Query Scheduling feature). This performs
+// crash recovery (aborting orphaned runs) and, unless SCHEDULER_ENABLED=false,
+// starts the tick loop. The API is live regardless of the scheduler state.
+await services.scheduler.start();
+if (config.scheduler.enabled) {
+  console.log(`hubble scheduler enabled (tick every ${config.scheduler.tickSeconds}s)`);
+} else {
+  console.log('hubble scheduler disabled (SCHEDULER_ENABLED=false)');
+}
+
 if (config.staticDir && !staticDirExists(config.staticDir)) {
   console.warn(
     `STATIC_DIR is set to '${config.staticDir}' but that directory was not found. ` +

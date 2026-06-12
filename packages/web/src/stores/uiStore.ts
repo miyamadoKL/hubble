@@ -9,8 +9,8 @@ import { persist } from 'zustand/middleware';
 
 export type ThemeMode = 'light' | 'dark';
 
-/** Sidebar sections (design.md §6). */
-export type SidebarTab = 'data' | 'notebooks' | 'saved' | 'history';
+/** Sidebar sections (design.md §6; Query Scheduling adds 'schedules'). */
+export type SidebarTab = 'data' | 'notebooks' | 'saved' | 'history' | 'schedules';
 
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 520;

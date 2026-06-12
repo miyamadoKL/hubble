@@ -28,6 +28,11 @@ import {
   createSavedQueryRequestSchema,
   queryHistoryEntrySchema,
   historyResponseSchema,
+  scheduleSchema,
+  createScheduleRequestSchema,
+  updateScheduleRequestSchema,
+  retryPolicySchema,
+  cronExpression,
   apiRoutes,
 } from './index';
 
@@ -526,6 +531,94 @@ describe('history', () => {
   it('parses a HistoryResponse', () => {
     const value = { items: [entry], offset: 0, limit: 50, total: 1 };
     expect(historyResponseSchema.parse(value)).toEqual(value);
+  });
+});
+
+describe('schedule', () => {
+  const run = {
+    id: 'run_1',
+    status: 'success',
+    attempt: 1,
+    trinoQueryId: '20260612_x',
+    errorType: null,
+    errorMessage: null,
+    rowCount: 25,
+    elapsedMs: 120,
+    scheduledFor: ISO,
+    startedAt: ISO,
+    finishedAt: ISO,
+  };
+  const schedule = {
+    id: 'sch_1',
+    name: 'nightly',
+    statement: 'SELECT 1',
+    catalog: 'tpch',
+    schema: 'tiny',
+    cron: '0 0 * * *',
+    enabled: true,
+    retry: { maxAttempts: 3, backoffSeconds: 60, backoffMultiplier: 2 },
+    createdAt: ISO,
+    updatedAt: ISO,
+    nextRunAt: ISO,
+    lastRun: run,
+  };
+
+  it('parses a Schedule with a last run', () => {
+    expect(scheduleSchema.parse(schedule)).toEqual(schedule);
+  });
+
+  it('parses a Schedule with null nextRunAt and lastRun', () => {
+    const v = { ...schedule, nextRunAt: null, lastRun: null };
+    expect(scheduleSchema.parse(v)).toEqual(v);
+  });
+
+  it('applies retry policy defaults', () => {
+    expect(retryPolicySchema.parse({})).toEqual({
+      maxAttempts: 3,
+      backoffSeconds: 60,
+      backoffMultiplier: 2,
+    });
+  });
+
+  it('enforces retry policy bounds', () => {
+    expect(retryPolicySchema.safeParse({ maxAttempts: 0 }).success).toBe(false);
+    expect(retryPolicySchema.safeParse({ maxAttempts: 11 }).success).toBe(false);
+    expect(retryPolicySchema.safeParse({ backoffSeconds: 3601 }).success).toBe(false);
+    expect(retryPolicySchema.safeParse({ backoffMultiplier: 0 }).success).toBe(false);
+  });
+
+  it('validates the cron shape (5 fields)', () => {
+    expect(cronExpression.safeParse('* * * * *').success).toBe(true);
+    expect(cronExpression.safeParse('*/5 0 * * 1-5').success).toBe(true);
+    expect(cronExpression.safeParse('* * * *').success).toBe(false); // 4 fields
+    expect(cronExpression.safeParse('* * * * * *').success).toBe(false); // 6 fields
+    expect(cronExpression.safeParse('').success).toBe(false);
+  });
+
+  it('parses a CreateScheduleRequest and rejects an empty statement', () => {
+    expect(
+      createScheduleRequestSchema.safeParse({
+        name: 'x',
+        statement: 'SELECT 1',
+        cron: '* * * * *',
+      }).success,
+    ).toBe(true);
+    expect(
+      createScheduleRequestSchema.safeParse({ name: 'x', statement: '', cron: '* * * * *' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects an empty UpdateScheduleRequest', () => {
+    expect(updateScheduleRequestSchema.safeParse({}).success).toBe(false);
+    expect(updateScheduleRequestSchema.safeParse({ enabled: false }).success).toBe(true);
+  });
+
+  it('builds schedule route paths', () => {
+    expect(apiRoutes.schedules()).toBe('/api/schedules');
+    expect(apiRoutes.schedule('sch_1')).toBe('/api/schedules/sch_1');
+    expect(apiRoutes.scheduleRun('sch_1')).toBe('/api/schedules/sch_1/run');
+    expect(apiRoutes.scheduleRuns('sch_1')).toBe('/api/schedules/sch_1/runs');
   });
 });
 

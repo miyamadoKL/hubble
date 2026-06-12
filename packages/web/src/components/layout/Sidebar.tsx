@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import {
   BookMarked,
+  CalendarClock,
   Database,
   History,
   NotebookText,
@@ -20,6 +21,7 @@ import { SchemaTree } from '../data/SchemaTree';
 import { NotebookListPanel } from '../panels/NotebookListPanel';
 import { SavedQueriesPanel } from '../panels/SavedQueriesPanel';
 import { HistoryPanel } from '../panels/HistoryPanel';
+import { SchedulesPanel } from '../panels/SchedulesPanel';
 import { listNotebooks } from '../../api/notebooks';
 import { getNotebook } from '../../api/notebooks';
 import { useNotebookStore } from '../../notebook';
@@ -42,6 +44,7 @@ const RAIL: RailItem[] = [
   { id: 'notebooks', icon: NotebookText, label: 'Notebooks' },
   { id: 'saved', icon: BookMarked, label: 'Saved' },
   { id: 'history', icon: History, label: 'History' },
+  { id: 'schedules', icon: CalendarClock, label: 'Schedules' },
 ];
 
 const PANEL_TITLE: Record<SidebarTab, string> = {
@@ -49,6 +52,7 @@ const PANEL_TITLE: Record<SidebarTab, string> = {
   notebooks: 'Notebooks',
   saved: 'Saved queries',
   history: 'History',
+  schedules: 'Schedules',
 };
 
 const PANEL_PLACEHOLDER: Record<SidebarTab, string> = {
@@ -56,6 +60,7 @@ const PANEL_PLACEHOLDER: Record<SidebarTab, string> = {
   notebooks: 'Search notebooks…',
   saved: 'Search saved queries…',
   history: 'Search history…',
+  schedules: 'Search schedules…',
 };
 
 export function Sidebar({
@@ -192,6 +197,7 @@ export function Sidebar({
             )}
             {tab === 'saved' && <SavedQueriesPanel search={search} />}
             {tab === 'history' && <HistoryPanel />}
+            {tab === 'schedules' && <SchedulesPanel search={search} />}
           </div>
 
           {/* Resize handle */}

@@ -40,6 +40,12 @@ export const apiRoutes = {
 
   // History
   history: () => '/api/history',
+
+  // Schedules (Query Scheduling feature)
+  schedules: () => '/api/schedules',
+  schedule: (id: string) => `/api/schedules/${enc(id)}`,
+  scheduleRun: (id: string) => `/api/schedules/${enc(id)}/run`,
+  scheduleRuns: (id: string) => `/api/schedules/${enc(id)}/runs`,
 } as const;
 
 export type ApiRoutes = typeof apiRoutes;

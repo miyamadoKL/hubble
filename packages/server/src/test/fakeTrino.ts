@@ -71,6 +71,16 @@ export class FakeTrino {
     this.app = this.buildApp();
   }
 
+  /**
+   * Replace the scenario list at runtime (tests simulating a transient fault
+   * that clears on retry: register a failing scenario, then swap it for a
+   * succeeding one between attempts).
+   */
+  setScenarios(scenarios: FakeScenario[]): void {
+    this.scenarios.length = 0;
+    this.scenarios.push(...scenarios);
+  }
+
   /** A `fetch` impl bound to this fake. Pass to `TrinoClient.fetchImpl`. */
   get fetch(): typeof fetch {
     return ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
