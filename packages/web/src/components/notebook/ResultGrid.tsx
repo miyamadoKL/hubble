@@ -33,7 +33,10 @@ interface RenderedValue {
 function renderValue(value: unknown, type: string): RenderedValue {
   if (value === null || value === undefined) return { text: 'NULL', isNull: true };
   if (typeof value === 'number') {
-    return { text: DECIMAL_TYPES.test(type) ? formatDecimal(value) : formatInt(value), isNull: false };
+    return {
+      text: DECIMAL_TYPES.test(type) ? formatDecimal(value) : formatInt(value),
+      isNull: false,
+    };
   }
   if (typeof value === 'boolean') return { text: value ? 'true' : 'false', isNull: false };
   if (typeof value === 'object') return { text: JSON.stringify(value), isNull: false };
@@ -140,7 +143,9 @@ export function ResultGrid({ columns, rows, className }: ResultGridProps) {
 
   // Grid template: row-number column + one column per visible field.
   const gridTemplate = `3.25rem ${visibleColumns
-    .map(({ col }) => (isNumericType(col.type) ? 'minmax(7rem, max-content)' : 'minmax(9rem, max-content)'))
+    .map(({ col }) =>
+      isNumericType(col.type) ? 'minmax(7rem, max-content)' : 'minmax(9rem, max-content)',
+    )
     .join(' ')}`;
 
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -283,7 +288,11 @@ export function ResultGrid({ columns, rows, className }: ResultGridProps) {
                         )}
                         title={rendered.text}
                       >
-                        <span className="truncate">{rendered.text}</span>
+                        {/* pr-px: the italic NULL's final glyph leans past its
+                            advance width; without it `truncate` clips the ink. */}
+                        <span className={cn('truncate', rendered.isNull && 'pr-px')}>
+                          {rendered.text}
+                        </span>
                       </div>
                     );
                   })}

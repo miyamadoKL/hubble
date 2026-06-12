@@ -228,7 +228,10 @@ function CellName({ name, onRename }: { name?: string; onRename: (name: string) 
       }}
       title="Double-click to rename"
       className={cn(
-        'truncate text-xs font-medium',
+        // pr-0.5: `truncate` clips at the padding edge, and the final italic
+        // glyph of the placeholder leans past its advance width — give the
+        // overhang room so "Untitled cell" doesn't lose the tip of its "l".
+        'truncate pr-0.5 text-xs font-medium',
         name ? 'text-ink-base' : 'text-ink-subtle italic',
       )}
     >
