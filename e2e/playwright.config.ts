@@ -54,7 +54,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'pnpm --filter @hue-fable/server dev',
+      command: 'pnpm --filter @hubble/server dev',
       port: SERVER_PORT,
       cwd: '..',
       reuseExistingServer: !process.env.CI,
@@ -71,7 +71,7 @@ export default defineConfig({
     {
       // Proxy-mode BFF for auth.spec.ts (design.md §11). Same Trino, separate
       // DB + port; SSO headers are injected by the spec.
-      command: 'pnpm --filter @hue-fable/server dev',
+      command: 'pnpm --filter @hubble/server dev',
       port: AUTH_SERVER_PORT,
       cwd: '..',
       reuseExistingServer: !process.env.CI,
@@ -87,7 +87,7 @@ export default defineConfig({
       },
     },
     {
-      command: 'pnpm --filter @hue-fable/web dev',
+      command: 'pnpm --filter @hubble/web dev',
       port: WEB_PORT,
       cwd: '..',
       reuseExistingServer: !process.env.CI,

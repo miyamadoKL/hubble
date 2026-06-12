@@ -9,7 +9,7 @@
 // drive a mock implementation deterministically — no real network, no jsdom
 // EventSource gaps.
 
-import { queryEventSchema, queryEventNames, type QueryEvent } from '@hue-fable/contracts';
+import { queryEventSchema, queryEventNames, type QueryEvent } from '@hubble/contracts';
 import { apiRoutes } from '../api/client';
 
 /** Minimal EventSource surface we depend on (a subset of the DOM type). */

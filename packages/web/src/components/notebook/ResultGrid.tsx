@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { QueryColumn } from '@hue-fable/contracts';
+import type { QueryColumn } from '@hubble/contracts';
 import { ArrowDown, ArrowUp, Columns3, Search, X } from 'lucide-react';
 import { IconButton } from '../common/IconButton';
 import { cn } from '../../utils/cn';

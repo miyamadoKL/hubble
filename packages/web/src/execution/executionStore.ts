@@ -17,7 +17,7 @@ import type {
   QuerySnapshot,
   QueryState,
   QueryStats,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import {
   createQuery,
   cancelQuery,

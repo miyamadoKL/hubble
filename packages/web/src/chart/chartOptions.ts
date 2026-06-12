@@ -4,7 +4,7 @@
 // for all five types is unit-testable. The shape matches echarts' `EChartsOption`
 // but is typed loosely (`EChartsOptionLike`) to avoid coupling tests to the lib.
 
-import type { QueryColumn } from '@hue-fable/contracts';
+import type { QueryColumn } from '@hubble/contracts';
 import type { ResultRow } from '../execution';
 import {
   applySortLimit,

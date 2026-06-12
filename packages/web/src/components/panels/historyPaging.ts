@@ -3,7 +3,7 @@
 // state filter resets the accumulator. Kept framework-free so it can be unit
 // tested directly (design.md §9: 履歴ページング reducer のテスト).
 
-import type { QueryHistoryEntry, QueryState } from '@hue-fable/contracts';
+import type { QueryHistoryEntry, QueryState } from '@hubble/contracts';
 
 export type HistoryFilter = 'all' | QueryState;
 

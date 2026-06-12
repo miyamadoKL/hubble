@@ -1,4 +1,4 @@
-import type { QueryState, QueryStats } from '@hue-fable/contracts';
+import type { QueryState, QueryStats } from '@hubble/contracts';
 import { ExternalLink, Square, TriangleAlert } from 'lucide-react';
 import { StateBadge } from '../common/StateBadge';
 import { ProgressBar } from './ProgressBar';

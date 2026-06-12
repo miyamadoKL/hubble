@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { QueryColumn } from '@hue-fable/contracts';
+import type { QueryColumn } from '@hubble/contracts';
 import {
   classifyType,
   describeColumns,

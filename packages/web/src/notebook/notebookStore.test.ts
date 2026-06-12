@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { notebookSchema, type Notebook } from '@hue-fable/contracts';
+import { notebookSchema, type Notebook } from '@hubble/contracts';
 import {
   useNotebookStore,
   blankNotebook,
@@ -66,7 +66,7 @@ describe('open / close / active', () => {
     expect(entry?.draft).toBe(true);
     expect(entry?.notebook.cells).toHaveLength(1);
     expect(entry?.notebook.cells[0]?.kind).toBe('sql');
-    expect(localStorage.getItem(`hue-fable-draft:${id}`)).not.toBeNull();
+    expect(localStorage.getItem(`hubble-draft:${id}`)).not.toBeNull();
   });
 });
 
@@ -228,7 +228,7 @@ describe('autosave debounce (fake timers)', () => {
     await vi.runAllTimersAsync();
 
     expect(update).not.toHaveBeenCalled();
-    expect(localStorage.getItem(`hue-fable-draft:${id}`)).toContain('SELECT 9');
+    expect(localStorage.getItem(`hubble-draft:${id}`)).toContain('SELECT 9');
   });
 });
 
@@ -247,7 +247,7 @@ describe('explicit persistence', () => {
     expect(s.open['server-id']?.draft).toBe(false);
     expect(s.open['server-id']?.dirty).toBe(false);
     expect(s.open[id]).toBeUndefined();
-    expect(localStorage.getItem(`hue-fable-draft:${id}`)).toBeNull();
+    expect(localStorage.getItem(`hubble-draft:${id}`)).toBeNull();
   });
 
   test('persistSavedNotebook PUTs immediately and clears dirty', async () => {
@@ -266,7 +266,7 @@ describe('workspace persistence', () => {
   test('open tabs + active are mirrored to localStorage', () => {
     useNotebookStore.getState().openNotebook(makeNotebook({ id: 'a' }));
     useNotebookStore.getState().openNotebook(makeNotebook({ id: 'b' }));
-    const snap = JSON.parse(localStorage.getItem('hue-fable-workspace')!);
+    const snap = JSON.parse(localStorage.getItem('hubble-workspace')!);
     expect(snap.openIds).toEqual(['a', 'b']);
     expect(snap.activeId).toBe('b');
   });

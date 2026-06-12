@@ -1,4 +1,4 @@
-import type { QueryColumn, QueryStats } from '@hue-fable/contracts';
+import type { QueryColumn, QueryStats } from '@hubble/contracts';
 
 /**
  * Raw shapes returned by Trino's `/v1/statement` REST protocol.

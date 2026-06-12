@@ -9,7 +9,7 @@ export interface ContextValue {
   schema: string;
 }
 
-export const RECENT_CONTEXTS_KEY = 'hue-fable-recent-contexts';
+export const RECENT_CONTEXTS_KEY = 'hubble-recent-contexts';
 export const MAX_RECENT_CONTEXTS = 5;
 
 /** Two contexts are the same iff catalog and schema both match. */

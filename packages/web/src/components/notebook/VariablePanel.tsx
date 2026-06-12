@@ -1,5 +1,5 @@
 import { Variable as VariableIcon } from 'lucide-react';
-import type { Variable } from '@hue-fable/contracts';
+import type { Variable } from '@hubble/contracts';
 import { cn } from '../../utils/cn';
 
 /**

@@ -1,3 +1,6 @@
+// Imported first: runs the one-time hue-fable-* -> hubble-* localStorage rename
+// before any store reads the new keys (see migrateLegacyStorage.ts).
+import './migrateLegacyStorage';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

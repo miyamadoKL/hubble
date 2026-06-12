@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { meResponseSchema, UNAUTHENTICATED } from '@hue-fable/contracts';
+import { meResponseSchema, UNAUTHENTICATED } from '@hubble/contracts';
 import { createTestContext, waitForTerminal } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 

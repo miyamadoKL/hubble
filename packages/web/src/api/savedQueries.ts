@@ -10,7 +10,7 @@ import {
   type CreateSavedQueryRequest,
   type SavedQuery,
   type UpdateSavedQueryRequest,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import { apiFetch } from './client';
 
 const savedQueryListSchema = z.array(savedQuerySchema);

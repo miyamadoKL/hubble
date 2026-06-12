@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { Notebook } from '@hue-fable/contracts';
+import type { Notebook } from '@hubble/contracts';
 import { toPresentationCards } from './presentation';
 
 function nb(cells: Notebook['cells']): Notebook {

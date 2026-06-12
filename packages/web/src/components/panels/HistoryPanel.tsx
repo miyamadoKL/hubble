@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { HistoryResponse, QueryHistoryEntry } from '@hue-fable/contracts';
+import type { HistoryResponse, QueryHistoryEntry } from '@hubble/contracts';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { FilePlus2, History, TextCursorInput } from 'lucide-react';
 import { fetchHistory, HISTORY_PAGE_SIZE } from '../../api/history';

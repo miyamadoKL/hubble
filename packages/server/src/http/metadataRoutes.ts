@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { metadataRefreshRequestSchema, tableDetailSchema } from '@hue-fable/contracts';
+import { metadataRefreshRequestSchema, tableDetailSchema } from '@hubble/contracts';
 import type { Services } from '../services';
 import { parseJsonBody } from './validate';
 

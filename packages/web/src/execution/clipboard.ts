@@ -3,7 +3,7 @@
 // クリップボードコピー TSV + HTML の ClipboardItem). Operates over the rows
 // currently loaded client-side.
 
-import type { QueryColumn } from '@hue-fable/contracts';
+import type { QueryColumn } from '@hubble/contracts';
 import type { ResultRow } from './executionStore';
 
 function cellToText(value: unknown): string {

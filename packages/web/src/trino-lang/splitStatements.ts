@@ -1,4 +1,4 @@
-// Part of the hue_fable trino-lang fork (grammar/lexer from trino-query-ui,
+// Part of the hubble trino-lang fork (grammar/lexer from trino-query-ui,
 // Apache-2.0; see repo-root NOTICE).
 //
 // `splitStatements` cuts a multi-statement source on top-level semicolons,

@@ -1,5 +1,5 @@
 {
-  "name": "@hue-fable/web",
+  "name": "@hubble/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "@fontsource/ibm-plex-mono": "5.2.7",
     "@fontsource/ibm-plex-sans": "5.2.8",
     "@fontsource/ibm-plex-sans-jp": "5.2.8",
-    "@hue-fable/contracts": "workspace:*",
+    "@hubble/contracts": "workspace:*",
     "@tanstack/react-query": "5.101.0",
     "@tanstack/react-virtual": "^3.14.2",
     "antlr4-c3": "3.4.4",

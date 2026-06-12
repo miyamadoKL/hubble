@@ -1,4 +1,4 @@
-import type { QueryState } from '@hue-fable/contracts';
+import type { QueryState } from '@hubble/contracts';
 import { cn } from '../../utils/cn';
 
 /**

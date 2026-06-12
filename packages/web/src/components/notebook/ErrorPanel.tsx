@@ -1,4 +1,4 @@
-import type { ApiErrorDetail } from '@hue-fable/contracts';
+import type { ApiErrorDetail } from '@hubble/contracts';
 import { CircleAlert } from 'lucide-react';
 import { cn } from '../../utils/cn';
 

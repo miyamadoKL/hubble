@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import type { QueryEvent } from '@hue-fable/contracts';
+import type { QueryEvent } from '@hubble/contracts';
 import { subscribeQueryEvents, type EventSourceLike } from './sse';
 
 /**

@@ -4,7 +4,7 @@
 // session is missing or expired.
 
 import { useQuery } from '@tanstack/react-query';
-import { UNAUTHENTICATED, type MeResponse } from '@hue-fable/contracts';
+import { UNAUTHENTICATED, type MeResponse } from '@hubble/contracts';
 import { ApiClientError, fetchMe } from '../api/client';
 
 export const meQueryKey = ['me'] as const;

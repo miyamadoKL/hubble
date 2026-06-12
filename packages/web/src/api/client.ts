@@ -6,7 +6,7 @@ import {
   type ApiErrorDetail,
   type AppConfig,
   type MeResponse,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import type { ZodType } from 'zod';
 
 /**
@@ -57,7 +57,7 @@ function buildUrl(path: string, query?: RequestOptions['query']): string {
 
 /**
  * Typed fetch wrapper. Validates the response against `schema` (a zod schema
- * from @hue-fable/contracts) and throws `ApiClientError` on non-2xx responses
+ * from @hubble/contracts) and throws `ApiClientError` on non-2xx responses
  * or schema mismatches.
  */
 export async function apiFetch<T>(

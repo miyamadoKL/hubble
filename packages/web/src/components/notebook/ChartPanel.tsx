@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { BarChart3 } from 'lucide-react';
-import type { QueryColumn } from '@hue-fable/contracts';
+import type { QueryColumn } from '@hubble/contracts';
 import { ChartControls } from './ChartControls';
 import { ChartView } from './ChartView';
 import { EmptyState } from '../common/EmptyState';

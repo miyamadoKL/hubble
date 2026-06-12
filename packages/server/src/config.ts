@@ -1,4 +1,4 @@
-import { appConfigSchema, type AppConfig, type AuthMode } from '@hue-fable/contracts';
+import { appConfigSchema, type AppConfig, type AuthMode } from '@hubble/contracts';
 
 /** How a proxy-supplied principal is derived from SSO headers (design.md §11). */
 export type UserMapping = 'email-localpart' | 'email' | 'user';
@@ -101,7 +101,7 @@ function envEnum<T extends string>(env: Env, key: string, allowed: readonly T[],
 export function loadServerConfig(env: Env = process.env): ServerConfig {
   return {
     port: envInt(env, 'PORT', 8080),
-    dbPath: envStr(env, 'DB_PATH', './data/hue_fable.db'),
+    dbPath: envStr(env, 'DB_PATH', './data/hubble.db'),
     staticDir: envOptional(env, 'STATIC_DIR'),
     auth: {
       mode: envEnum(env, 'AUTH_MODE', ['none', 'proxy'] as const, 'none'),

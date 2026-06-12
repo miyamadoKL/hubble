@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { Catalog } from '@hue-fable/contracts';
+import type { Catalog } from '@hubble/contracts';
 import { MetadataService } from './service';
 import type { MetadataSource } from './source';
 

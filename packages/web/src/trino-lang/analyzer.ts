@@ -1,4 +1,4 @@
-// Part of the hue_fable trino-lang fork. The grammar/lexer/parser and several
+// Part of the hubble trino-lang fork. The grammar/lexer/parser and several
 // helpers come from trino-query-ui (Apache-2.0); see repo-root NOTICE.
 //
 // `analyzer.ts` is the synchronous, editor-agnostic heart of the language

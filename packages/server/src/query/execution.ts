@@ -5,7 +5,7 @@ import type {
   QuerySnapshot,
   QueryState,
   QueryStats,
-} from '@hue-fable/contracts';
+} from '@hubble/contracts';
 import { AppError, toErrorResponse } from '../errors';
 import type { TrinoClient } from '../trino/client';
 import {

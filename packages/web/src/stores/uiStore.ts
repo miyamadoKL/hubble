@@ -117,7 +117,7 @@ export const useUiStore = create<UiState>()(
         set({ shellContext, shellDefaultLimit }),
     }),
     {
-      name: 'hue-fable-ui',
+      name: 'hubble-ui',
       // Persist durable layout choices only; palette is transient.
       partialize: (s) => ({
         theme: s.theme,

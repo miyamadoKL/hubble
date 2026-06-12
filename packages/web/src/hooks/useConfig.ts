@@ -4,7 +4,7 @@
 // cached aggressively.
 
 import { useQuery } from '@tanstack/react-query';
-import type { AppConfig } from '@hue-fable/contracts';
+import type { AppConfig } from '@hubble/contracts';
 import { fetchConfig } from '../api/client';
 
 export const configQueryKey = ['config'] as const;

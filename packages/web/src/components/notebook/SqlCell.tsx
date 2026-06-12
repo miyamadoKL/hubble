@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type * as monaco from 'monaco-editor';
-import type { CellResultMeta } from '@hue-fable/contracts';
+import type { CellResultMeta } from '@hubble/contracts';
 import { SqlEditor } from '../../editor/SqlEditor';
 import { CellToolbar } from './CellToolbar';
 import { StatsStrip } from './StatsStrip';

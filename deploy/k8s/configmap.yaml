@@ -7,7 +7,7 @@ metadata:
 data:
   PORT: '8080'
   # SQLite path on the mounted PVC (see pvc.yaml / deployment volumeMounts).
-  DB_PATH: /data/hue_fable.db
+  DB_PATH: /data/hubble.db
   # The image already sets STATIC_DIR; repeated here for visibility.
   STATIC_DIR: /app/packages/web/dist
   # Point at your Trino coordinator (cluster-internal service or external URL).

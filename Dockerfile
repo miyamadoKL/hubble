@@ -48,7 +48,7 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS builder
 COPY . .
 # `pnpm --filter web build` runs `tsc --noEmit && vite build`. The web package
-# depends on @hue-fable/contracts, which is consumed directly as TS source
+# depends on @hubble/contracts, which is consumed directly as TS source
 # (its package "main" points at src/index.ts), so no separate contracts build
 # step is required to produce the web bundle.
 RUN pnpm --filter web build
@@ -58,8 +58,8 @@ RUN pnpm --filter web build
 # ---------------------------------------------------------------------------
 FROM deps AS prod-deps
 # Prune to production deps for the server and its workspace dependencies.
-# `@hue-fable/server...` (trailing `...`) includes @hue-fable/contracts.
-RUN pnpm install --prod --frozen-lockfile --filter "@hue-fable/server..."
+# `@hubble/server...` (trailing `...`) includes @hubble/contracts.
+RUN pnpm install --prod --frozen-lockfile --filter "@hubble/server..."
 
 # ---------------------------------------------------------------------------
 # runtime: minimal image running the server with tsx
@@ -68,7 +68,7 @@ FROM base AS runtime
 ENV NODE_ENV=production
 # Single-process defaults: serve the built SPA and persist SQLite under /data.
 ENV STATIC_DIR=/app/packages/web/dist
-ENV DB_PATH=/data/hue_fable.db
+ENV DB_PATH=/data/hubble.db
 ENV PORT=8080
 
 # Workspace metadata (pnpm resolves the workspace graph at runtime for `start`).
@@ -99,7 +99,7 @@ VOLUME ["/data"]
 USER node
 EXPOSE 8080
 
-# `pnpm --filter @hue-fable/server start` would be equivalent, but the corepack
+# `pnpm --filter @hubble/server start` would be equivalent, but the corepack
 # shim downloads pnpm on first use (runtime stage has no corepack cache), which
 # breaks air-gapped startup. Invoke the workspace-installed tsx directly instead.
 WORKDIR /app/packages/server

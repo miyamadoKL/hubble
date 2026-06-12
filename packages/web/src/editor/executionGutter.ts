@@ -12,7 +12,7 @@
 import type * as monaco from 'monaco-editor';
 import { splitStatements } from '../trino-lang';
 import { correctErrorPosition } from '../execution';
-import type { ApiErrorDetail } from '@hue-fable/contracts';
+import type { ApiErrorDetail } from '@hubble/contracts';
 
 export const EXEC_MARKER_OWNER = 'trino-exec';
 

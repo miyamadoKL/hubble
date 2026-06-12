@@ -1,5 +1,5 @@
 {
-  "name": "@hue-fable/contracts",
+  "name": "@hubble/contracts",
   "version": "0.1.0",
   "private": true,
   "type": "module",

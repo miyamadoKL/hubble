@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { apiRoutes, type MeResponse } from '@hue-fable/contracts';
+import { apiRoutes, type MeResponse } from '@hubble/contracts';
 import { loadServerConfig, toAppConfig } from './config';
 import { openDatabase } from './db';
 import { buildServices, type BuildServicesOptions, type Services } from './services';

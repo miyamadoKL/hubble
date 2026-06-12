@@ -47,18 +47,18 @@ export async function resetWorkspace(
           window.localStorage.clear();
           window.localStorage.setItem(SENTINEL, '1');
           window.localStorage.setItem(
-            'hue-fable-ui',
+            'hubble-ui',
             JSON.stringify({
               state: { theme, sidebarTab, sidebarWidth: 320, sidebarCollapsed: false },
               version: 0,
             }),
           );
-          window.localStorage.setItem('hue-fable-recent-contexts', JSON.stringify([context]));
+          window.localStorage.setItem('hubble-recent-contexts', JSON.stringify([context]));
         }
       } catch {
         /* ignore */
       }
-      // The app's UI store applies `data-theme` from the persisted `hue-fable-ui`
+      // The app's UI store applies `data-theme` from the persisted `hubble-ui`
       // entry on load, so we don't touch documentElement here (it may not exist
       // yet at document_start, and throwing would abort the init script).
     },

@@ -1,4 +1,4 @@
-# hue_fable 設計ドキュメント
+# hubble 設計ドキュメント
 
 > Status: FINAL (v1) — 2026-06-12 確定。調査ソース: hue/ (Notebook 機能棚卸し)、trino-query-ui/ (資産評価)、hue4trino/ (前回の失敗分析)。
 
@@ -22,7 +22,7 @@ cloudera/hue の Notebook 機能を担保しつつ、モダンに作り変えた
 pnpm workspace モノレポ。TypeScript で統一 (前回の Go backend は品質が高かったが、単一言語の方が世代交代・再生成が容易)。
 
 ```
-hue_fable/
+hubble/
   pnpm-workspace.yaml
   docs/design.md
   packages/
