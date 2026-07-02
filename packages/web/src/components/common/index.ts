@@ -1,3 +1,9 @@
+/**
+ * common 配下の共通UIコンポーネント群をまとめて re-export するバレルファイル。
+ * 各コンポーネント/型は個別のファイルで定義されており、このファイルは
+ * 呼び出し側が `components/common` から一括でインポートできるようにするための
+ * 窓口（エントリポイント）としてのみ機能する。実際のロジックは含まない。
+ */
 export { Button } from './Button';
 export type { ButtonVariant, ButtonSize } from './Button';
 export { IconButton } from './IconButton';

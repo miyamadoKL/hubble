@@ -3,6 +3,13 @@
 // the live catalog.schema context. Provided once near the app root so the
 // language registration (which is global to the Monaco namespace) reads live
 // state through stable getters.
+//
+// ---- ファイル概要（日本語） ----
+// すべての SqlEditor インスタンスが共有する「エディター層の依存」を提供する React
+// Context モジュール。具体的には API 経由の MetadataSource 上に構築した SchemaCache
+// （1 つだけ生成しアプリ全体で共有）と、現在の catalog.schema コンテキストを指す。
+// Monaco の言語登録はグローバル（名前空間単位）なため、アプリのルート付近で 1 度だけ
+// Provider を配置し、安定した getter を通じて常に最新の状態を読めるようにしている。
 
 import {
   createContext,

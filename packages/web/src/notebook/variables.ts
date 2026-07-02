@@ -20,11 +20,34 @@
 //
 // Everything here is pure and synchronous (no Monaco/DOM), so it is exercised
 // directly by vitest.
+//
+// ==== ファイルの責務（日本語） ================================================
+// SQL 文中の `${name}` 変数プレースホルダーを検出し、notebook 実行前に実際の
+// 値へ置換するための純粋関数群（Hue 互換）。
+//   - `${name}` / `${name=default}` / `${name=a,b}`（プレーンな選択肢）/
+//     `${name=label(value),…}`（ラベル付き選択肢）の 4 形式をサポートする。
+//   - 検出は「コメント考慮」: `--` 行コメント・`/* */` ブロックコメント内の
+//     `${…}` は変数とみなさない。これは ANTLR の Trino 字句解析器
+//     （SqlBaseLexer）がコメントを HIDDEN チャンネルのトークンとして分離して
+//     くれるおかげで、コメントの span を求めて除外するだけで実現できる。
+//   - 一方、文字列リテラル内の `${…}`（例: `WHERE s = '${status=O,F,P}'`）は
+//     変数として扱う。Hue は SQL をパースする前にテキストとして置換するため、
+//     クォートは置換後の SQL 側の構文であり、プレースホルダー自身の一部では
+//     ないという考え方に基づく。
+//   - notebookStore（recomputeVariables）から呼ばれ、検出結果は
+//     notebook.variables として永続化される。実行時の置換
+//     （substituteVariables）は useNotebookActions から呼ばれる。
+// ============================================================================
 
 import { CharStream, CommonTokenStream, Token } from 'antlr4ng';
 import type { Variable, VariableMeta, VariableType } from '@hubble/contracts';
 import { SqlBaseLexer } from '../trino-lang/generated/SqlBaseLexer.js';
 
+/**
+ * ソース中に現れた 1 個のプレースホルダーをパースした結果。
+ * `${name}` / `${name=default}` / `${name=a,b}` / `${name=label(value),…}`
+ * のいずれも、このひとつの形に正規化される。
+ */
 /** A single placeholder occurrence parsed from the source. */
 export interface DetectedVariable {
   name: string;
@@ -38,8 +61,12 @@ export interface DetectedVariable {
 
 // Matches `${ ... }` where the body has no nested braces. The body is captured
 // raw and parsed by `parseBody` so we keep one place for the `name=value` rules.
+// `${` と `}` の間にネストした `{}` がない前提でマッチする正規表現。
+// 中身（body）は生のまま取り出し、`name=value` 系の解釈ルールは
+// すべて `parseBody` に一本化する。
 const PLACEHOLDER = /\$\{([^{}]*)\}/g;
 
+/** ソース中の [start, end) 範囲。検出処理がこの範囲内の `$` を無視するために使う。 */
 /** A [start, end) span in the source that detection must ignore. */
 interface Span {
   start: number;
@@ -51,6 +78,10 @@ interface Span {
  * is trivia, not a variable. (String literals are intentionally NOT excluded —
  * see the module header.)
  */
+// SqlBaseLexer に SQL を字句解析させ、コメントトークン（SIMPLE_COMMENT /
+// BRACKETED_COMMENT）の位置だけを集める。パーサーは使わず lexer だけで
+// 十分なので軽量。エラーリスナーは外しておき、不完全な SQL（入力途中など）
+// でも例外を投げずにトークン化できるようにしている。
 function exclusionSpans(sql: string): Span[] {
   const lexer = new SqlBaseLexer(CharStream.fromString(sql));
   lexer.removeErrorListeners();
@@ -67,6 +98,7 @@ function exclusionSpans(sql: string): Span[] {
   return spans;
 }
 
+// 与えられた offset がいずれかの span（＝コメント範囲）に含まれるかを判定する。
 function inAnySpan(offset: number, spans: Span[]): boolean {
   for (const s of spans) {
     if (offset >= s.start && offset < s.end) return true;
@@ -74,6 +106,7 @@ function inAnySpan(offset: number, spans: Span[]): boolean {
   return false;
 }
 
+/** 有効な変数名のパターン: 識別子ライクで、Hue の緩いルールに合わせてある。 */
 /** A valid variable name: identifier-ish, matching Hue's tolerant rules. */
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

@@ -1,8 +1,17 @@
+/**
+ * scheduleRoutes.ts（`/api/schedules`）の統合テスト。
+ *
+ * `createTestContext` が組み立てる実際の Hono アプリと FakeTrino（Trino のスタブサーバー）を
+ * 通して、スケジュールの作成/一覧/取得/更新/削除、EXPLAIN (TYPE VALIDATE) によるバリデーション
+ * 挙動（構文エラー時の 400 化、cron 不正時の事前拒否）、手動実行と実行履歴の記録、
+ * 実行中スケジュールへの同時実行リクエストが 409 になることを検証する。
+ */
 import { describe, expect, it } from 'vitest';
 import { scheduleSchema, scheduleRunsResponseSchema, type Schedule } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 
+// EXPLAIN (TYPE VALIDATE) が成功（構文的に妥当）を返す共通シナリオ。
 const VALIDATE_OK: FakeScenario = {
   match: 'EXPLAIN (TYPE VALIDATE)',
   pages: [{ columns: [{ name: 'result', type: 'boolean' }], data: [[true]] }],
@@ -13,6 +22,8 @@ function jsonHeaders(): Record<string, string> {
 }
 
 describe('schedule routes', () => {
+  // EXPLAIN VALIDATE が USER_ERROR を返すステートメントは、作成時に 400 VALIDATION_ERROR で
+  // 拒否され、Trino のエラーメッセージと行/列情報がレスポンス詳細に含まれることを確認する。
   it('rejects creation with a 400 VALIDATION when EXPLAIN VALIDATE reports USER_ERROR', async () => {
     const ctx = await createTestContext({
       scenarios: [
@@ -43,6 +54,8 @@ describe('schedule routes', () => {
     await ctx.services.shutdown();
   });
 
+  // cron 式のバリデーションはローカルで完結するため、不正な cron は Trino へ問い合わせる前に
+  // 400 で弾かれることを確認する。
   it('rejects an invalid cron with a 400 before reaching Trino', async () => {
     const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
     const res = await ctx.app.request('/api/schedules', {
@@ -56,6 +69,9 @@ describe('schedule routes', () => {
     await ctx.services.shutdown();
   });
 
+  // スケジュールの CRUD 一連の流れを一通り検証する: 作成時のデフォルト値（enabled/retry/
+  // nextRunAt）、一覧、取得、PATCH による再検証込みの部分更新（enabled=false で nextRunAt が
+  // null になる）、削除後に一覧が空になることを確認する。
   it('creates, lists, gets, patches (re-validating), and deletes a schedule', async () => {
     const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
 
@@ -105,6 +121,7 @@ describe('schedule routes', () => {
     await ctx.services.shutdown();
   });
 
+  // PATCH でステートメントを不正な内容に変更した場合、再検証が走り 400 で拒否されることを確認する。
   it('PATCH rejects a statement that fails validation', async () => {
     const ctx = await createTestContext({
       scenarios: [
@@ -140,6 +157,8 @@ describe('schedule routes', () => {
     await ctx.services.shutdown();
   });
 
+  // 手動実行 (POST /:id/run) が実行履歴レコードを残すこと、および未知の id には 404 が
+  // 返ることを確認する。
   it('runs a schedule manually and records the run; returns 404 for unknown ids', async () => {
     const ctx = await createTestContext({
       scenarios: [
@@ -183,6 +202,7 @@ describe('schedule routes', () => {
     await ctx.services.shutdown();
   });
 
+  // 同一スケジュールに対して実行中に重ねて手動実行を要求すると 409 CONFLICT になることを確認する。
   it('returns 409 when a run is already in progress', async () => {
     const ctx = await createTestContext({
       scenarios: [

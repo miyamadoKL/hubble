@@ -1,3 +1,15 @@
+/**
+ * スケジュール作成と編集のモーダル（クエリスケジューラー機能）。
+ *
+ * アシストサイドバーの SchedulesPanel から「New schedule」ボタン、または各行の
+ * 「Edit」ボタンを押したときに開くフォームダイアログ。名前、SQL 文、catalog / schema、
+ * cron 式、有効フラグ、リトライポリシーを入力させ、保存時に呼び出し元（SchedulesPanel）
+ * へ CreateScheduleRequest / UpdateScheduleRequest を渡す。SQL 文はブラウザ内蔵の
+ * trino-lang パーサーでその場で構文チェックし、サーバーの EXPLAIN (TYPE VALIDATE) を
+ * 呼ぶ前にクライアント側で保存ボタンを無効化する「実行前バリデーション」を行う。送信後に
+ * サーバーから VALIDATION_ERROR（Trino のエラーメッセージ + 行/列）が返った場合は
+ * serverError として画面下部に表示する。
+ */
 import { useMemo, useState } from 'react';
 import type { Schedule, CreateScheduleRequest, UpdateScheduleRequest } from '@hubble/contracts';
 import { cronExpression, defaultRetryPolicy } from '@hubble/contracts';
@@ -23,22 +35,37 @@ import { cn } from '../../utils/cn';
  */
 
 interface ScheduleFormModalProps {
+  /** モーダルの開閉状態。false の間は何も描画しない（後述の early return）。 */
   open: boolean;
   /** Existing schedule when editing; null/undefined for create. */
+  // 編集対象の既存スケジュール。未指定や null のときは新規作成モードとして扱う。
   schedule?: Schedule | null;
+  /** フォーム初期値に使う catalog / schema。ノートブックの現在の実行コンテキスト。 */
   context: { catalog?: string; schema?: string };
+  /** 作成と更新のミューテーションが実行中かどうか。true の間は保存ボタンを無効化する。 */
   submitting: boolean;
   /** Server error from the last submit (null while clean). */
+  // 直前の送信で返ってきたサーバー側バリデーションエラー（未送信や成功時は null）。
   serverError: FormError | null;
+  /** モーダルを閉じる（キャンセル操作、または保存成功時に呼び出し元から呼ばれる）。 */
   onClose: () => void;
+  /** 新規作成を確定する（新規作成モードで保存したときに呼ばれる）。 */
   onCreate: (body: CreateScheduleRequest) => void;
+  /** 既存スケジュールの更新を確定する（編集モードで保存したときに呼ばれる）。 */
   onUpdate: (body: UpdateScheduleRequest) => void;
 }
 
+// フォーム内のラベル / テキスト入力で共通利用する Tailwind クラス文字列。
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
 const TEXT_INPUT =
   'w-full rounded-md border border-border-base bg-surface-base px-3 py-2 text-sm text-ink-strong placeholder:text-ink-subtle focus:border-accent focus:outline-none';
 
+/**
+ * スケジュールの作成と編集のモーダル本体。
+ * `schedule` prop の有無で編集モードか新規作成モードかを判定し（`editing`）、
+ * 各フィールドをローカル state として保持する。保存ボタンは名前必須、SQL 構文有効、
+ * cron 式有効、送信中でない、をすべて満たしたときだけ活性化する。
+ */
 export function ScheduleFormModal({
   open,
   schedule,
@@ -63,16 +90,22 @@ export function ScheduleFormModal({
   // Rendering nothing while closed means a fresh mount restores these defaults.
   if (!open) return null;
 
+  // フォームのバリデーション: SQL 文の構文チェック、cron 式の書式チェック、名前の必須
+  // チェックをまとめて評価する。いずれかが不成立、または送信中であれば保存不可。
   const check = checkStatement(statement, catalog || undefined, schema || undefined);
   const cronValid = cronExpression.safeParse(cron).success;
   const nameValid = name.trim().length > 0;
   const canSave = nameValid && check.ok && cronValid && !submitting;
 
+  // リトライ設定の数値入力（文字列）をコントラクト定義の範囲にクランプしてから state に反映する。
   const setRetryField = (field: keyof typeof RETRY_BOUNDS, raw: string) => {
     const next = clampRetryField(field, Number(raw));
     setRetry((r) => ({ ...r, [field]: next }));
   };
 
+  // 保存ボタン押下時のハンドラー。編集モードなら UpdateScheduleRequest、新規作成モードなら
+  // CreateScheduleRequest を組み立てて呼び出し元へ渡す。catalog / schema は空文字なら
+  // 未指定として送信する（編集時は null、新規作成時は undefined と、契約の差異に合わせる）。
   const submit = () => {
     if (!canSave) return;
     if (editing && schedule) {
@@ -148,6 +181,8 @@ export function ScheduleFormModal({
               !check.ok && check.message && 'border-error focus:border-error',
             )}
           />
+          {/* 構文エラーがあればメッセージ（行/列があれば付記）を表示し、なければ
+              「実行前にローカル検証済み」という補足説明を表示する分岐。 */}
           {!check.ok && check.message ? (
             <p role="alert" className="flex items-start gap-1.5 font-mono text-2xs text-error">
               <AlertTriangle size={13} strokeWidth={1.75} className="mt-px shrink-0" />
@@ -198,6 +233,7 @@ export function ScheduleFormModal({
         <div className="flex flex-col gap-1.5">
           <span className={FIELD_LABEL}>Schedule (cron)</span>
           <div className="flex flex-wrap gap-1.5">
+            {/* CRON_PRESETS のワンクリック定型文。押すと cron 入力欄の値をそのまま置き換える。 */}
             {CRON_PRESETS.map((preset) => (
               <button
                 key={preset.cron}
@@ -223,6 +259,8 @@ export function ScheduleFormModal({
             placeholder="minute hour day-of-month month day-of-week"
             className={cn(TEXT_INPUT, 'font-mono', !cronValid && 'border-error focus:border-error')}
           />
+          {/* cron 式が 5 フィールド形式として妥当かどうかで、エラー文言と
+              補足説明（次回実行時刻はサーバー側で算出）のどちらを出すか切り替える。 */}
           {!cronValid ? (
             <p role="alert" className="font-mono text-2xs text-error">
               Must be a 5-field cron expression (minute hour day-of-month month day-of-week).
@@ -277,21 +315,28 @@ export function ScheduleFormModal({
         </label>
 
         {/* Server validation error (Trino syntax / cron rejected at submit) */}
+        {/* serverError が設定されている場合のみエラーブロックを表示する条件分岐。 */}
         {serverError && <ServerErrorBlock error={serverError} />}
       </div>
     </Modal>
   );
 }
 
+// リトライポリシーの数値フィールド（最大試行回数、バックオフ秒数、倍率）を描画する
+// 小さな内部コンポーネント。RETRY_BOUNDS から min/max を引いて input に反映する。
 function RetryNumber({
   label,
   field,
   value,
   onChange,
 }: {
+  /** 表示ラベル（例: "Max attempts"）。 */
   label: string;
+  /** RETRY_BOUNDS のどのフィールドを編集するか。 */
   field: keyof typeof RETRY_BOUNDS;
+  /** 現在の値。 */
   value: number;
+  /** 値変更時に呼ばれるコールバック（field と生の入力文字列を渡す）。 */
   onChange: (field: keyof typeof RETRY_BOUNDS, raw: string) => void;
 }) {
   const { min, max } = RETRY_BOUNDS[field];
@@ -312,7 +357,10 @@ function RetryNumber({
   );
 }
 
+// サーバーから返った VALIDATION_ERROR を表示するブロック。行/列情報があれば併記し、
+// Trino の生メッセージ（trinoMessage）があれば折り返し可能な pre で追加表示する。
 function ServerErrorBlock({ error }: { error: FormError }) {
+  // line が無ければ位置情報なし。あれば "line X, col Y" 形式の文字列を作る。
   const located = useMemo(() => {
     if (error.line == null) return null;
     return `line ${error.line}${error.column != null ? `, col ${error.column}` : ''}`;

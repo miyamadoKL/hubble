@@ -1,3 +1,11 @@
+/**
+ * 保存済みクエリ（Saved Queries）パネル（アシストサイドバー内）。
+ *
+ * 検索ボックスの入力をデバウンスして `GET /api/saved-queries` を呼び出し、一覧を
+ * 表示する。各行はお気に入りトグルと展開表示（SQL 全文 + Insert / New cell / Delete
+ * 操作）を持つ。お気に入りのトグルと削除は React Query の mutation で行い、成功時に
+ * 一覧クエリを invalidate して再取得させる。削除は確認モーダルを経由する。
+ */
 import { useState } from 'react';
 import type { SavedQuery } from '@hubble/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,8 +32,22 @@ import { cn } from '../../utils/cn';
  * fresh SQL cell.
  */
 
+// React Query のキャッシュキーを生成するヘルパー。検索語ごとに別キャッシュとして扱う。
 const savedQueriesKey = (q: string) => ['saved-queries', 'list', q] as const;
 
+/**
+ * 保存済みクエリ一覧の 1 行分を描画するコンポーネント。
+ * 折りたたみ時は名前、SQL 文の 1 行要約、説明を表示し、お気に入り星アイコンで
+ * トグルできる。展開すると SQL 全文と Insert / New cell / Delete の操作ボタンを表示する。
+ *
+ * @param query 表示対象の保存済みクエリ。
+ * @param expanded この行が展開表示中かどうか。
+ * @param onToggleExpand 行本体クリック時に呼ぶ、展開状態を切り替えるコールバック。
+ * @param onToggleFavorite 星アイコンクリック時に呼ぶ、お気に入り状態を切り替えるコールバック。
+ * @param onInsert 「Insert」ボタン押下時に呼ぶコールバック。
+ * @param onNewCell 「New cell」ボタン押下時に呼ぶコールバック。
+ * @param onDelete 「Delete」ボタン押下時に呼ぶコールバック（削除確認モーダルを開く）。
+ */
 function SavedRow({
   query,
   expanded,
@@ -43,10 +65,12 @@ function SavedRow({
   onNewCell: () => void;
   onDelete: () => void;
 }) {
+  // SQL 文の改行と連続空白を単一スペースに畳んで、折りたたみ表示用の 1 行要約を作る。
   const oneLine = query.statement.replace(/\s+/g, ' ').trim();
   return (
     <li className="group border-b border-border-subtle">
       <div className="flex items-start gap-2 px-3 py-2 transition-colors hover:bg-surface-sunken">
+        {/* お気に入りトグル用の星アイコンボタン。お気に入り時は塗りつぶし表示になる。 */}
         <button
           type="button"
           aria-label={query.isFavorite ? 'Unfavorite' : 'Favorite'}
@@ -62,6 +86,7 @@ function SavedRow({
             )}
           />
         </button>
+        {/* 名前、SQL 1 行要約、説明を表示する、展開トグル用のクリック領域。 */}
         <button
           type="button"
           onClick={onToggleExpand}
@@ -76,18 +101,22 @@ function SavedRow({
         </button>
       </div>
 
+      {/* 展開時のみ描画する詳細ブロック: SQL 全文と操作ボタン群。 */}
       {expanded && (
         <div className="px-3 pb-2.5">
           <pre className="max-h-40 overflow-auto rounded-md border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-2xs whitespace-pre-wrap text-ink-base">
             {query.statement}
           </pre>
           <div className="mt-2 flex flex-wrap items-center gap-2">
+            {/* 現在アクティブなセルのカーソル位置に SQL 文を挿入する。 */}
             <Button variant="default" size="sm" icon={TextCursorInput} onClick={onInsert}>
               Insert
             </Button>
+            {/* 新しい SQL セルとしてこの文を追加する。 */}
             <Button variant="ghost" size="sm" icon={FilePlus2} onClick={onNewCell}>
               New cell
             </Button>
+            {/* 削除確認モーダルを開く（実際の削除はモーダル側の確定操作で実行される）。 */}
             <Button
               variant="ghost"
               size="sm"
@@ -104,20 +133,32 @@ function SavedRow({
   );
 }
 
+/**
+ * 保存済みクエリパネル本体。
+ *
+ * @param search 検索語（親コンポーネントの検索ボックスから渡される）。300ms
+ *   デバウンスしてから一覧取得のクエリキーに反映する。
+ */
 export function SavedQueriesPanel({ search }: { search: string }) {
   const queryClient = useQueryClient();
+  // 検索語を 300ms デバウンスし、入力のたびに API を叩かないようにする。
   const debounced = useDebouncedValue(search.trim(), 300);
+  // 現在展開中の行 id。null であれば全行折りたたみ状態。
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 削除確認モーダルの対象。null ならモーダルは非表示。
   const [pendingDelete, setPendingDelete] = useState<SavedQuery | null>(null);
 
+  // デバウンス済み検索語で一覧を取得する。
   const list = useQuery({
     queryKey: savedQueriesKey(debounced),
     queryFn: () => listSavedQueries(debounced || undefined),
   });
 
+  // 検索語に関わらず 'saved-queries' 系の一覧キャッシュをまとめて無効化し、再取得させる。
   const invalidate = () =>
     void queryClient.invalidateQueries({ queryKey: ['saved-queries', 'list'] });
 
+  // お気に入りトグル用の mutation。既存フィールドはそのまま送り、isFavorite だけ反転させる。
   const favorite = useMutation({
     mutationFn: (q: SavedQuery) =>
       updateSavedQuery(q.id, {
@@ -132,6 +173,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
     onError: () => toast.error('Update failed', 'Could not reach the server.'),
   });
 
+  // 削除用の mutation。成功時は一覧を無効化して情報トーストを出す。
   const remove = useMutation({
     mutationFn: (id: string) => deleteSavedQuery(id),
     onSuccess: () => {
@@ -141,6 +183,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
     onError: () => toast.error('Delete failed', 'Could not reach the server.'),
   });
 
+  // 初回取得中はローディング表示のみを返す。
   if (list.isPending) {
     return (
       <div className="flex items-center justify-center gap-2 py-8 font-mono text-2xs text-ink-subtle">
@@ -149,6 +192,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
     );
   }
 
+  // 取得エラー時の空状態表示。
   if (list.isError) {
     return (
       <EmptyState
@@ -161,6 +205,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
   }
 
   const queries = list.data;
+  // 検索結果 0 件（または保存済みクエリが 1 件も無い）場合の空状態表示。
   if (queries.length === 0) {
     return (
       <EmptyState
@@ -177,6 +222,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
   }
 
   // Favorites first, then by name.
+  // お気に入りを先頭に、その中/外はそれぞれ名前の昇順で並べ替える。
   const sorted = [...queries].sort((a, b) => {
     if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
     return a.name.localeCompare(b.name);
@@ -184,6 +230,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
 
   return (
     <>
+      {/* 保存済みクエリ一覧本体（お気に入り優先、名前順）。 */}
       <ul className="flex flex-col">
         {sorted.map((query) => (
           <SavedRow
@@ -203,6 +250,8 @@ export function SavedQueriesPanel({ search }: { search: string }) {
         ))}
       </ul>
 
+      {/* 削除確認モーダル。pendingDelete が非 null のときのみ開く。
+          Cancel で取り消し、Delete で実際の削除 mutation を実行してから閉じる。 */}
       <Modal
         open={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}

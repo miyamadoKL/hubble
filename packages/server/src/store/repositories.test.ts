@@ -1,3 +1,10 @@
+/**
+ * `NotebookRepository` / `SavedQueryRepository` / `HistoryRepository`
+ * （それぞれ notebooks.ts / savedQueries.ts / history.ts）を横断して検証する
+ * テストスイート。dbBackends（SQLite 常時、TEST_DATABASE_URL 設定時は
+ * PostgreSQL も追加）でパラメタライズし、両方言で同じ SQL が同じ結果になる
+ * ことを保証する契約レベルのテスト。
+ */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { dbBackends } from '../test/dbBackends';
@@ -25,6 +32,8 @@ for (const backend of dbBackends) {
     }
 
     describe('NotebookRepository', () => {
+      // 作成→一覧→取得→更新→検索（LIKE ワイルドカードのエスケープ含む）→
+      // 削除の一連のライフサイクルと、owner による隔離を検証する。
       it('creates, lists, gets, updates, searches, deletes; owner-scoped', async () => {
         const repo = new NotebookRepository(await open());
 
@@ -65,6 +74,7 @@ for (const backend of dbBackends) {
     });
 
     describe('SavedQueryRepository', () => {
+      // お気に入り優先の並び順、検索、更新、削除、owner による隔離を検証する。
       it('orders favorites first, searches, updates, deletes; owner-scoped', async () => {
         const repo = new SavedQueryRepository(await open());
 
@@ -102,6 +112,8 @@ for (const backend of dbBackends) {
     });
 
     describe('HistoryRepository', () => {
+      // 投入時の insert、確定時の update、state による絞り込み、
+      // ページング、owner による隔離を検証する。
       it('inserts, updates on settle, filters by state, paginates; owner-scoped', async () => {
         const repo = new HistoryRepository(await open());
 
