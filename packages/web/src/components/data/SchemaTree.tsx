@@ -41,12 +41,29 @@ import { cn } from '../../utils/cn';
  * refreshes the server cache and invalidates the tree.
  */
 
+/*
+ * このファイルの責務:
+ * アシストサイドバーの「データブラウザ」タブ本体。catalog → schema → table → column
+ * の4階層ツリーを、展開されたノードだけ TanStack Query 経由で遅延取得しながら描画する。
+ * 画面上の位置づけとしては、SQL エディタの左に置かれるサイドバーの1タブであり、
+ * ここでの操作（テーブル/カラムのクリック）が編集中のカーソル位置へ SQL 断片を挿入する
+ * 入口になっている。テーブル詳細ポップオーバー（TableDetailPopover）の起動もここから行う。
+ */
+
+// カラムの型名（Trino の型文字列）が数値系かどうかを判定する正規表現。
+// bigint/integer/int/smallint/tinyint/double/real/decimal/float のいずれかで始まれば数値扱い。
 const NUMERIC = /^(bigint|integer|int|smallint|tinyint|double|real|decimal|float)/i;
 
+// カラムの型名に応じてツリー行に表示するアイコンを切り替える（数値型は Hash、それ以外は Type）。
 function columnIcon(type: string): LucideIcon {
   return NUMERIC.test(type) ? Hash : Type;
 }
 
+/**
+ * SchemaTree が挿入するテーブル名を「どこまで省略できるか」判定するための現在の
+ * エディタコンテキスト。アクティブなセルが属する catalog/schema と一致していれば、
+ * 挿入されるテーブル名はその分だけ短く（bare name や schema.table）表記される。
+ */
 export interface SchemaTreeContext {
   catalog?: string;
   schema?: string;
@@ -54,17 +71,30 @@ export interface SchemaTreeContext {
 
 // ---- Generic row -----------------------------------------------------------
 
+// ツリーの1行を汎用的に描画するための props。catalog/schema/table/column いずれの
+// 階層でも共通の見た目（インデント、アイコン、ラベル、展開矢印）を出すために使う。
 interface TreeRowProps {
+  /** ツリーの深さ（0 = catalog）。インデント幅の計算に使う。 */
   depth: number;
+  /** 行頭に表示するアイコン。 */
   icon: LucideIcon;
+  /** アイコンに付ける追加の Tailwind クラス（色分けなど）。 */
   iconClass?: string;
+  /** 行のメインラベル（catalog 名、table 名など）。 */
   label: string;
+  /** ラベル右側に薄く出す補助情報（件数や型名）。 */
   meta?: string;
+  /** true なら展開用のシェブロンを表示し、クリックで onToggle を呼べるようにする。 */
   expandable?: boolean;
+  /** 展開中かどうか（シェブロンの回転表示に使う）。 */
   expanded?: boolean;
+  /** 選択中（挿入対象など）としてハイライトするか。 */
   selected?: boolean;
+  /** シェブロンや行クリックで展開/折りたたみを切り替えるハンドラ。 */
   onToggle?: () => void;
+  /** 行本体のクリック（挿入やクエリ発行のトリガー）ハンドラ。 */
   onSelect?: () => void;
+  /** 行右端に追加で表示する要素（詳細ボタンなど）。 */
   trailing?: React.ReactNode;
 }
 
@@ -91,12 +121,15 @@ function TreeRow({
       <button
         type="button"
         onClick={() => {
+          // 行クリックで選択（SQL 挿入など）と、展開可能なら展開/折りたたみを同時に行う。
           onSelect?.();
           if (expandable) onToggle?.();
         }}
         style={{ paddingLeft: `${depth * 14 + 8}px` }}
         className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left text-sm"
       >
+        {/* 展開可能な行だけシェブロンを表示し、展開中は90度回転させる。
+            展開不可の行（カラム行など）は同じ幅のダミー要素でインデントを揃える。 */}
         {expandable ? (
           <ChevronRight
             size={13}
@@ -146,6 +179,8 @@ function NodeStatus({
       style={{ paddingLeft: `${depth * 14 + 26}px` }}
       className="flex h-6 items-center gap-1.5 pr-2 font-mono text-2xs text-ink-subtle"
     >
+      {/* state に応じて loading / empty / error のいずれか1つだけを表示する
+          （3状態は排他的で、通常は複数が同時に真になることはない）。 */}
       {state === 'loading' && (
         <>
           <Spinner size={11} /> Loading…
@@ -173,6 +208,8 @@ function NodeStatus({
 
 // ---- Column list (under an expanded table) ---------------------------------
 
+// 展開されたテーブルの下に並ぶカラム一覧。テーブル詳細（columns）はすでに取得済みの
+// データを渡されるだけで、ここでは検索フィルタの適用と行の描画だけを行う。
 function ColumnList({
   columns,
   depth,
@@ -184,9 +221,11 @@ function ColumnList({
   needle: string;
   onInsertColumn: (name: string) => void;
 }) {
+  // needle（検索文字列）に一致するカラムだけを表示対象にする。
   const visible = filterByNeedle(columns, (c) => c.name, needle);
   return (
     <>
+      {/* フィルタ後のカラム一覧を1行ずつ TreeRow として描画する（クリックでカラム名を挿入）。 */}
       {visible.map((col) => (
         <TreeRow
           key={col.name}
@@ -203,6 +242,9 @@ function ColumnList({
 
 // ---- Table node ------------------------------------------------------------
 
+// テーブル1件分のツリーノード。展開されるとカラム一覧を遅延取得して表示する。
+// クリックでコンテキスト相対のテーブル名をカーソル位置へ挿入し、行右端の
+// 情報アイコンからテーブル詳細ポップオーバーを開ける。
 function TableNode({
   catalog,
   schema,
@@ -226,6 +268,9 @@ function TableNode({
   onToggle: () => void;
   onShowDetail: (target: TableTarget) => void;
 }) {
+  // テーブル詳細（カラム一覧、コメント）は expanded の間だけ取得する（enabled: expanded）。
+  // これがこのツリーの「遅延読み込み」の核心である。折りたたまれたテーブルのために
+  // 無駄なリクエストを発行しない。
   const detail = useQuery({
     queryKey: metadataQueryKeys.table(catalog, schema, table),
     queryFn: () => fetchTableDetail(catalog, schema, table),
@@ -233,8 +278,11 @@ function TableNode({
     staleTime: META_STALE_MS,
   });
 
+  // 詳細ポップオーバーに渡す対象テーブルの識別情報。
   const target: TableTarget = { catalog, schema, name: table, type };
 
+  // テーブル名をコンテキストに応じた相対名に変換してカーソル位置へ挿入する
+  // （同一 catalog/schema なら bare name、そうでなければ schema.table や完全修飾名）。
   const insertTable = () => {
     const text = relativeTableName({ catalog, schema, name: table }, context);
     insertAtActiveCursor(text);
@@ -256,6 +304,7 @@ function TableNode({
             type="button"
             aria-label={`Details for ${table}`}
             onClick={(e) => {
+              // 行本体のクリック（テーブル名挿入 + 展開トグル）を発火させないよう伝播を止める。
               e.stopPropagation();
               onShowDetail(target);
             }}
@@ -267,6 +316,7 @@ function TableNode({
       />
       {expanded && (
         <>
+          {/* 詳細取得中はローディング表示、失敗時はリトライ可能なエラー表示。 */}
           {detail.isPending && <NodeStatus depth={depth + 1} state="loading" />}
           {detail.isError && (
             <NodeStatus depth={depth + 1} state="error" onRetry={() => void detail.refetch()} />
@@ -290,6 +340,8 @@ function TableNode({
 
 // ---- Schema node -----------------------------------------------------------
 
+// スキーマ1件分のツリーノード。展開されるとそのスキーマ配下のテーブル一覧を遅延取得し、
+// 検索フィルタで絞り込んだうえで各テーブルを TableNode として描画する。
 function SchemaNode({
   catalog,
   schema,
@@ -311,6 +363,7 @@ function SchemaNode({
   toggle: (key: string) => void;
   onShowDetail: (target: TableTarget) => void;
 }) {
+  // テーブル一覧も expanded の間だけ取得（遅延読み込み）。
   const tables = useQuery({
     queryKey: metadataQueryKeys.tables(catalog, schema),
     queryFn: () => fetchTables(catalog, schema),
@@ -318,6 +371,7 @@ function SchemaNode({
     staleTime: META_STALE_MS,
   });
 
+  // 取得済みテーブル一覧を検索文字列で絞り込む（needle が空なら全件）。
   const visible = useMemo(
     () => filterByNeedle(tables.data?.items ?? [], (t) => t.name, needle),
     [tables.data, needle],
@@ -334,6 +388,8 @@ function SchemaNode({
         expanded={expanded}
         onToggle={() => toggle(`${catalog}::${schema}`)}
       />
+      {/* 展開中のみテーブル一覧を描画: 読み込み中/エラー/空（フィルタ該当なしを含む）の
+          状態表示のあと、絞り込み済みテーブルをそれぞれ TableNode として再帰的に描画する。 */}
       {expanded && (
         <>
           {tables.isPending && <NodeStatus depth={depth + 1} state="loading" />}
@@ -348,6 +404,8 @@ function SchemaNode({
             />
           )}
           {visible.map((t) => {
+            // 展開状態は「catalog::schema::table」の一意キーで expandedKeys 集合に
+            // 保持される（Set を各ノードへ横流しし、トグル関数だけを子に渡す設計）。
             const key = `${catalog}::${schema}::${t.name}`;
             return (
               <TableNode
@@ -373,6 +431,9 @@ function SchemaNode({
 
 // ---- Catalog node ----------------------------------------------------------
 
+// ツリーの最上位ノード（catalog）。展開されるとスキーマ一覧を遅延取得し、
+// 各スキーマを SchemaNode として描画する。expandedKeys / toggle はそのまま
+// 下位ノードへ橋渡しし、展開状態の単一の真実の情報源をルートに保つ。
 function CatalogNode({
   catalog,
   needle,
@@ -390,6 +451,7 @@ function CatalogNode({
   toggle: (key: string) => void;
   onShowDetail: (target: TableTarget) => void;
 }) {
+  // スキーマ一覧も expanded の間だけ取得（遅延読み込み）。
   const schemas = useQuery({
     queryKey: metadataQueryKeys.schemas(catalog),
     queryFn: () => fetchSchemas(catalog),
@@ -409,6 +471,8 @@ function CatalogNode({
         expanded={expanded}
         onToggle={() => toggle(catalog)}
       />
+      {/* 展開中のみスキーマ一覧を描画: 読み込み中/エラー/空の状態表示のあと、
+          スキーマごとに SchemaNode を再帰的なツリーの次階層として描画する。 */}
       {expanded && (
         <>
           {schemas.isPending && <NodeStatus depth={1} state="loading" />}
@@ -440,23 +504,37 @@ function CatalogNode({
 
 // ---- Root ------------------------------------------------------------------
 
+/**
+ * データブラウザのツリー本体（サイドバーの「データ」タブから使われるエクスポート）。
+ * catalog 一覧をルートに、展開されたノードから順に schema → table → column を
+ * 遅延取得して描画する。`filter` は検索文字列（親のテキストボックスから渡される）、
+ * `context` はテーブル名挿入時の相対名判定に使う現在の catalog/schema。
+ */
 export function SchemaTree({
   filter = '',
   context = {},
 }: {
+  /** 検索フィルタ文字列（未入力なら全件表示、自動展開なし）。 */
   filter?: string;
+  /** 挿入するテーブル名を相対表記にするための現在のエディタコンテキスト。 */
   context?: SchemaTreeContext;
 }) {
   const queryClient = useQueryClient();
+  // ユーザーが手動でクリックして開閉したノードキーの集合（catalog / catalog::schema /
+  // catalog::schema::table のいずれか）。ツリー全体の展開状態の単一の真実の情報源。
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // 詳細ポップオーバーで表示中のテーブル（null なら非表示）。
   const [detailTarget, setDetailTarget] = useState<TableTarget | null>(null);
 
+  // ルートの catalog 一覧はツリーが常に表示するので expanded 条件なしで即時取得する。
   const catalogs = useQuery({
     queryKey: metadataQueryKeys.catalogs(),
     queryFn: fetchCatalogs,
     staleTime: META_STALE_MS,
   });
 
+  // 展開状態のトグル。キーが既に開いていれば閉じ、閉じていれば開く（Set の出し入れ）。
+  // 各ノードへはこの関数と expandedKeys をそのまま渡し、状態管理をルートに集約する。
   const toggle = useCallback((key: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -466,6 +544,8 @@ export function SchemaTree({
     });
   }, []);
 
+  // ヘッダーの更新ボタン用ミューテーション: サーバー側の TTL キャッシュを強制更新させ、
+  // 成功したらクライアント側の 'metadata' クエリを全て無効化してツリーを最新化する。
   const refresh = useMutation({
     mutationFn: () => refreshMetadata(),
     onSuccess: () => {
@@ -475,6 +555,7 @@ export function SchemaTree({
     onError: () => toast.error('Refresh failed', 'Could not reach the server.'),
   });
 
+  // 検索文字列を正規化（前後空白除去、小文字化）してから各ノードへ配る。
   const needle = filter.trim().toLowerCase();
 
   // While filtering, auto-expand already-loaded branches that contain a match so
@@ -483,12 +564,16 @@ export function SchemaTree({
   // into them, and that's acceptable. The auto-expand math lives in the pure
   // `treeFilter` module (unit-tested); here we just feed it the cached tree.
   const effectiveExpanded = useMemo(() => {
+    // needle がなければ自動展開は不要のため、手動展開集合をそのまま使う。
     if (!needle) return expanded;
+    // TanStack Query のキャッシュから「今すでに読み込み済みの」schema/table 一覧だけを
+    // 拾い集めて LoadedTree を組み立てる（未読み込みの分岐は治外法権のまま）。
     const loaded: LoadedTree = { schemasByCatalog: new Map(), tablesBySchema: new Map() };
     for (const cat of catalogs.data?.items ?? []) {
       const schemas = queryClient.getQueryData(metadataQueryKeys.schemas(cat.name)) as
         | { items: { name: string }[] }
         | undefined;
+      // このカタログのスキーマ一覧がまだキャッシュにない（未展開）なら諦めて次のカタログへ。
       if (!schemas) continue;
       loaded.schemasByCatalog.set(
         cat.name,
@@ -506,6 +591,7 @@ export function SchemaTree({
         }
       }
     }
+    // 実際の自動展開判定はテスト済みの純粋関数（treeFilter）に委譲する。
     return expandedForFilter(expanded, needle, loaded);
     // queryClient cache reads are snapshot-in-render; recompute when the needle,
     // the loaded catalogs, or the explicit expansion set changes.
@@ -513,6 +599,8 @@ export function SchemaTree({
 
   return (
     <div>
+      {/* ヘッダー行: 現在の catalog 件数表示と、メタデータキャッシュを強制更新する
+          リフレッシュボタン（更新中はアイコンを回転させて進行中であることを示す）。 */}
       <div className="flex items-center justify-between px-3 pb-1">
         <span className="font-mono text-2xs text-ink-subtle">
           {catalogs.data ? `${catalogs.data.items.length} catalogs` : ' '}
@@ -527,6 +615,8 @@ export function SchemaTree({
         />
       </div>
 
+      {/* ツリー本体: catalog 一覧の読み込み中/エラー/空/取得済みの各状態を出し分け、
+          取得済みなら catalog ごとに CatalogNode を再帰的なツリーのルートとして描画する。 */}
       <div className="py-1">
         {catalogs.isPending && <NodeStatus depth={0} state="loading" />}
         {catalogs.isError && (
@@ -549,6 +639,8 @@ export function SchemaTree({
         ))}
       </div>
 
+      {/* detailTarget が設定されているとき（情報アイコンがクリックされたとき）だけ
+          テーブル詳細ポップオーバーをオーバーレイ表示する。 */}
       {detailTarget && (
         <TableDetailPopover
           target={detailTarget}

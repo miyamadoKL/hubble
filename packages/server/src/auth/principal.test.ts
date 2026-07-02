@@ -1,7 +1,14 @@
+/**
+ * principal.ts（SSO ヘッダーから Principal を解決するロジック）のユニットテスト。
+ * mapPrincipal のヘッダー -> principal マッピング規則、および PrincipalResolver の
+ * 信頼済みプロキシ判定込みの解決フロー（trusted/untrusted、ヘッダー欠落）を検証する。
+ */
 import { describe, it, expect } from 'vitest';
 import type { AuthConfig } from '../config';
 import { mapPrincipal, PrincipalResolver } from './principal';
 
+// テスト共通の AuthConfig（proxy モード、ループバックを信頼、email-localpart マッピング）。
+// `over` で個々のテストが必要な項目だけ上書きできる。
 const baseAuth = (over: Partial<AuthConfig> = {}): AuthConfig => ({
   mode: 'proxy',
   trustedProxyCidrs: '127.0.0.0/8,::1/128',
@@ -11,6 +18,7 @@ const baseAuth = (over: Partial<AuthConfig> = {}): AuthConfig => ({
   ...over,
 });
 
+// mapPrincipal: userMapping ごとのヘッダー -> Principal 変換規則を検証する。
 describe('mapPrincipal', () => {
   it('email-localpart: takes the part before @', () => {
     expect(mapPrincipal('email-localpart', 'ignored', 'alice@example.com')).toEqual({
@@ -44,6 +52,8 @@ describe('mapPrincipal', () => {
   });
 });
 
+// PrincipalResolver: 信頼済みプロキシ判定込みの resolve() の挙動、
+// マッピング方式の切り替え、ヘッダー名のカスタマイズを検証する。
 describe('PrincipalResolver', () => {
   it('resolves a principal from trusted headers (email-localpart)', () => {
     const r = new PrincipalResolver(baseAuth());

@@ -1,3 +1,15 @@
+/**
+ * クエリスケジューラー機能（Schedules 系パネル群）で共有する、UI を持たない
+ * 純粋なヘルパー関数集。React コンポーネントから切り離すことで、単体テストで
+ * ロジックだけを検証できるようにしてある。主な役割は次の 5 つ。
+ *   1. 実行 run の status → 表示トーン（色）/ ラベル文字列への変換
+ *   2. SQL 文のクライアント側構文チェック（保存前バリデーション。サーバーの
+ *      EXPLAIN (TYPE VALIDATE) と同等のチェックをブラウザ内で先に行い、
+ *      無効な SQL を持つスケジュールが保存されるのを防ぐ）
+ *   3. サーバーが返す VALIDATION_ERROR をフォーム表示用の平坦なオブジェクトへ変換
+ *   4. 作成と編集のフォームで使う cron プリセットの定義
+ *   5. リトライ設定の数値フィールドをコントラクトで定義された範囲にクランプする処理
+ */
 import type { ScheduleRunStatus, ScheduleRunSummary } from '@hubble/contracts';
 import { parseStatement } from '../../trino-lang';
 import { ApiClientError } from '../../api/client';
@@ -14,8 +26,11 @@ import { ApiClientError } from '../../api/client';
  */
 
 /** Semantic tone for a run status, mapped to design-token color classes. */
+// 実行結果の状態を、色として意味づけられた「トーン」に分類する型。
+// running=進行中, success=成功, error=失敗, warning=中断/ブロック相当, neutral=中立。
 export type RunTone = 'running' | 'success' | 'error' | 'warning' | 'neutral';
 
+// ScheduleRunStatus の各値をトーン（色分類）へマッピングするテーブル。
 const STATUS_TONE: Record<ScheduleRunStatus, RunTone> = {
   running: 'running',
   success: 'success',
@@ -24,6 +39,7 @@ const STATUS_TONE: Record<ScheduleRunStatus, RunTone> = {
   blocked: 'warning',
 };
 
+// ScheduleRunStatus の各値を画面表示用の大文字ラベルへマッピングするテーブル。
 const STATUS_LABEL: Record<ScheduleRunStatus, string> = {
   running: 'RUNNING',
   success: 'SUCCESS',
@@ -32,10 +48,12 @@ const STATUS_LABEL: Record<ScheduleRunStatus, string> = {
   blocked: 'BLOCKED',
 };
 
+/** run の status からステータスバッジの色トーンを求める。 */
 export function runTone(status: ScheduleRunStatus): RunTone {
   return STATUS_TONE[status];
 }
 
+/** run の status から画面表示用のラベル文字列（大文字）を求める。 */
 export function runStatusLabel(status: ScheduleRunStatus): string {
   return STATUS_LABEL[status];
 }
@@ -46,8 +64,10 @@ export function runStatusLabel(status: ScheduleRunStatus): string {
  * list reads "Failed · 3 attempts" without opening the history view.
  */
 export function summarizeLastRun(run: ScheduleRunSummary): string {
+  // ラベルは先頭大文字+残り小文字（例: "Failed"）に整形して表示用の文とする。
   const label =
     STATUS_LABEL[run.status].charAt(0) + STATUS_LABEL[run.status].slice(1).toLowerCase();
+  // 失敗かつ複数回試行していた場合のみ、試行回数を併記する（例: "Failed · 3 attempts"）。
   if (run.status === 'failed' && run.attempt > 1) {
     return `${label} · ${run.attempt} attempts`;
   }
@@ -55,12 +75,14 @@ export function summarizeLastRun(run: ScheduleRunSummary): string {
 }
 
 /** Human "N attempts" phrasing for the history view (singular-aware). */
+// 1 回だけなら単数形 "1 attempt"、複数回なら "N attempts" と、英語の単数/複数を正しく出し分ける。
 export function attemptLabel(attempt: number): string {
   return attempt === 1 ? '1 attempt' : `${attempt} attempts`;
 }
 
 // ---- Client-side statement syntax check (run-prevention UI) -----------------
 
+/** SQL 文の構文チェック結果。 */
 export interface StatementCheck {
   ok: boolean;
   /** First syntax error message, when the statement does not parse. */
@@ -80,10 +102,15 @@ export function checkStatement(
   catalog?: string,
   schema?: string,
 ): StatementCheck {
+  // 空文字（トリム後）は「未入力」として NG 扱いにするが、エラーメッセージは付けない
+  // （フォーム側で「必須項目」として扱われ、「構文エラー」とは違う見せ方になる）。
   if (!statement.trim()) return { ok: false };
+  // ブラウザ内蔵の trino-lang パーサーで構文解析し、マーカー（エラー/警告位置）を取得する。
   const { markers } = parseStatement(statement, catalog, schema);
   const first = markers[0];
+  // マーカーが 1 つも無ければ構文的に問題なし。
   if (!first) return { ok: true };
+  // 先頭のマーカーのみを使い、メッセージと行/列番号を返す。
   return {
     ok: false,
     message: first.message,
@@ -94,6 +121,7 @@ export function checkStatement(
 
 // ---- Server VALIDATION_ERROR formatting -------------------------------------
 
+/** フォーム表示用に正規化したサーバー側エラー情報。 */
 export interface FormError {
   message: string;
   /** Trino's underlying message, when the server forwarded one. */
@@ -102,10 +130,12 @@ export interface FormError {
   column?: number;
 }
 
+// unknown な値が「有限数」の場合のみ数値として取り出すユーティリティ。
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+// unknown な値が「空でない文字列」の場合のみ文字列として取り出すユーティリティ。
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
@@ -119,6 +149,9 @@ function asString(value: unknown): string | undefined {
  */
 export function formatApiError(error: unknown): FormError {
   if (error instanceof ApiClientError) {
+    // サーバーのエラーエンベロープから detail.details（VALIDATION_ERROR 特有の
+    // trinoMessage / line / column）を優先的に取り出し、無ければ detail 直下の
+    // line / column にフォールバックする。
     const detail = error.detail;
     const details = detail.details ?? {};
     const trinoMessage = asString(details.trinoMessage);
@@ -126,17 +159,20 @@ export function formatApiError(error: unknown): FormError {
     const column = asNumber(details.column) ?? detail.column;
     return { message: detail.message, trinoMessage, line, column };
   }
+  // ApiClientError 以外（ネットワークエラー等）はメッセージのみのフォールバックにする。
   return { message: error instanceof Error ? error.message : 'Request failed' };
 }
 
 // ---- Cron presets -----------------------------------------------------------
 
+/** cron プリセット 1 件分（表示ラベルと実際の cron 式）。 */
 export interface CronPreset {
   label: string;
   cron: string;
 }
 
 /** A small set of common cadences offered as one-click presets in the form. */
+// フォームでワンクリック選択できる、よく使われる実行間隔のプリセット一覧。
 export const CRON_PRESETS: CronPreset[] = [
   { label: 'Every minute', cron: '* * * * *' },
   { label: 'Hourly (on the hour)', cron: '0 * * * *' },
@@ -148,6 +184,7 @@ export const CRON_PRESETS: CronPreset[] = [
 // ---- Retry field clamping ---------------------------------------------------
 
 /** Inclusive [min, max] bounds for the retry fields (from the contract). */
+// リトライ関連フィールドそれぞれの許容範囲（両端含む）。コントラクト定義と一致させる。
 export const RETRY_BOUNDS = {
   maxAttempts: { min: 1, max: 10 },
   backoffSeconds: { min: 1, max: 3600 },
@@ -163,6 +200,8 @@ export type RetryField = keyof typeof RETRY_BOUNDS;
  */
 export function clampRetryField(field: RetryField, value: number): number {
   const { min, max } = RETRY_BOUNDS[field];
+  // 入力欄が空文字などで Number() の結果が NaN/非有限になった場合は下限値にフォールバックする。
   if (!Number.isFinite(value)) return min;
+  // 整数に丸めたうえで [min, max] の範囲にクランプする。
   return Math.min(max, Math.max(min, Math.round(value)));
 }

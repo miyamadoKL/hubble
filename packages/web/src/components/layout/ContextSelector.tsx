@@ -1,3 +1,9 @@
+/**
+ * TopBar に置かれる catalog.schema コンテキストの選択 UI。
+ * ボタンをクリックすると検索付きの2ペイン（catalog / schema）ポップオーバーが開き、
+ * 「最近使った」候補からのワンクリック復元にも対応する。選択結果は `onChange` で
+ * 呼び出し元（AppShell）に伝え、呼び出し元が現在のノートブックと最近使った履歴に保存する。
+ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Clock, Database, Search } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -20,6 +26,14 @@ import { cn } from '../../utils/cn';
  * active notebook + the recent list.
  */
 
+/**
+ * ポップオーバーの外側クリックと Escape キーで `onClose` を呼ぶ共通フック。
+ * `open` が false の間はイベントリスナーを登録しない。
+ *
+ * @param ref - ポップオーバーのルート要素への ref。この要素の外側クリックを検知する。
+ * @param onClose - 外側クリックまたは Escape 押下時に呼ばれるコールバック。
+ * @param open - ポップオーバーが開いているかどうか。
+ */
 function useOutsideClose(ref: React.RefObject<HTMLElement | null>, onClose: () => void, open: boolean) {
   useEffect(() => {
     if (!open) return;
@@ -38,6 +52,14 @@ function useOutsideClose(ref: React.RefObject<HTMLElement | null>, onClose: () =
   }, [ref, onClose, open]);
 }
 
+/**
+ * catalog.schema コンテキストセレクター本体。
+ *
+ * @param catalog - 現在選択されている catalog 名（未選択なら空文字）。
+ * @param schema - 現在選択されている schema 名（未選択なら空文字）。
+ * @param onChange - catalog/schema の選択が確定したときに呼ばれるコールバック。
+ * @param className - ルート要素へ追加する Tailwind クラス。
+ */
 export function ContextSelector({
   catalog,
   schema,
@@ -55,10 +77,12 @@ export function ContextSelector({
   const [pickCatalog, setPickCatalog] = useState(catalog);
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  // 「最近使った」候補一覧。ポップオーバーを開くたびに localStorage から読み直す。
   const [recents, setRecents] = useState<ContextValue[]>([]);
 
   useOutsideClose(rootRef, () => setOpen(false), open);
 
+  // catalog 一覧はポップオーバーを開いたときだけ取得する（閉じている間は無駄なリクエストをしない）。
   const catalogs = useQuery({
     queryKey: metadataQueryKeys.catalogs(),
     queryFn: fetchCatalogs,
@@ -66,6 +90,8 @@ export function ContextSelector({
     enabled: open,
   });
 
+  // schema 一覧は「開いている」かつ「対象 catalog が選ばれている」ときだけ取得する。
+  // pickCatalog が変わるたびに右ペインの内容が切り替わる。
   const schemas = useQuery({
     queryKey: metadataQueryKeys.schemas(pickCatalog),
     queryFn: () => fetchSchemas(pickCatalog),
@@ -89,7 +115,9 @@ export function ContextSelector({
     setOpen(true);
   };
 
+  // 検索欄の入力値をクライアント側フィルタ用に正規化（前後空白除去 + 小文字化）。
   const needle = search.trim().toLowerCase();
+  // catalog / schema それぞれ取得済みの一覧を needle で部分一致フィルタする（サーバー再取得はしない）。
   const catalogItems = useMemo(
     () => (catalogs.data?.items ?? []).filter((c) => c.name.toLowerCase().includes(needle)),
     [catalogs.data, needle],
@@ -99,6 +127,7 @@ export function ContextSelector({
     [schemas.data, needle],
   );
 
+  // catalog + schema の組み合わせを確定させ、呼び出し元へ通知してポップオーバーを閉じる。
   const choose = (nextCatalog: string, nextSchema: string) => {
     onChange({ catalog: nextCatalog, schema: nextSchema });
     setOpen(false);
@@ -106,6 +135,7 @@ export function ContextSelector({
 
   return (
     <div ref={rootRef} className={cn('relative', className)}>
+      {/* 現在の catalog.schema を表示するトリガーボタン。クリックでポップオーバーの開閉を切り替える。 */}
       <button
         type="button"
         aria-label="catalog.schema context"
@@ -130,12 +160,14 @@ export function ContextSelector({
         />
       </button>
 
+      {/* 検索付き2ペインのポップオーバー本体。open のときのみマウントする。 */}
       {open && (
         <div
           role="dialog"
           aria-label="Select context"
           className="absolute right-0 z-50 mt-1 w-80 overflow-hidden rounded-md border border-border-strong bg-surface-overlay shadow-lg animate-[fadeIn_150ms_ease-out]"
         >
+          {/* catalog/schema を横断してフィルタする検索入力欄。 */}
           <div className="flex items-center gap-2 border-b border-border-subtle px-2.5 py-2">
             <Search size={14} strokeWidth={1.75} className="shrink-0 text-ink-subtle" />
             <input
@@ -147,6 +179,7 @@ export function ContextSelector({
             />
           </div>
 
+          {/* 「最近使った」セクションは検索中（needle あり）は非表示にし、フィルタ結果と競合させない。 */}
           {recents.length > 0 && !needle && (
             <div className="border-b border-border-subtle px-2 py-1.5">
               <p className="mb-1 px-1 text-2xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
@@ -172,6 +205,7 @@ export function ContextSelector({
 
           <div className="grid h-56 grid-cols-2">
             {/* Catalogs */}
+            {/* 左ペイン: catalog 一覧。読み込み中/エラー/一覧をそれぞれ出し分ける。 */}
             <div className="overflow-auto border-r border-border-subtle py-1">
               <p className="px-2.5 pb-1 text-2xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
                 Catalog
@@ -188,6 +222,7 @@ export function ContextSelector({
                 <button
                   key={c.name}
                   type="button"
+                  // ホバーだけで右ペインの schema 一覧をプレビュー切り替えする（クリックは不要）。
                   onMouseEnter={() => setPickCatalog(c.name)}
                   onClick={() => setPickCatalog(c.name)}
                   className={cn(
@@ -204,6 +239,7 @@ export function ContextSelector({
             </div>
 
             {/* Schemas of the hovered/selected catalog */}
+            {/* 右ペイン: 左でホバー/選択中の catalog に属する schema 一覧。 */}
             <div className="overflow-auto py-1">
               <p className="px-2.5 pb-1 text-2xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
                 Schema
@@ -222,6 +258,8 @@ export function ContextSelector({
                 </p>
               )}
               {schemaItems.map((s) => {
+                // 「現在確定しているコンテキストと同じ schema か」で選択状態を示す
+                // （pickCatalog はホバー中のプレビューであり、確定値とは別物）。
                 const selected = pickCatalog === catalog && s.name === schema;
                 return (
                   <button

@@ -3,6 +3,16 @@
 // imperatively (getState) so they have stable identity and never re-render their
 // callers. Run-all and save policy live here so every entry point behaves the
 // same.
+//
+// ==== ファイルの責務（日本語） ================================================
+// TopBar、コマンドパレット、グローバルショートカットから共有される、
+// notebook に対する命令的なアクション群（design.md §5 管理, §6 コマンド
+// パレット）。ストアを React フックとして購読するのではなく `getState()` で
+// 直接読み書きするため、これらの関数自体は参照が安定しており、呼び出し元の
+// 再レンダーを引き起こさない。「全セル実行」「アクティブセルの実行」
+// 「保存」といった、どのエントリポイント（ボタン/ショートカット/パレット）
+// から呼ばれても同じ挙動になるべきポリシーをここに集約している。
+// ============================================================================
 
 import { useNotebookStore, persistSavedNotebook, substituteVariables } from '.';
 import {
@@ -17,6 +27,10 @@ import { getActiveEditor } from '../editor/activeEditor';
 import { toast } from '../components/common/Toast';
 
 /** Toast + return true when a cell is blocked by Query Guard (UX guard). */
+/**
+ * セルが Query Guard によってブロックされていればトースト通知して true を
+ * 返す（UX 上のガード）。呼び出し元はこれを見て実行を中止する。
+ */
 function refuseIfBlocked(cellId: string): boolean {
   const block = getCellBlock(cellId);
   if (!block) return false;
@@ -25,6 +39,11 @@ function refuseIfBlocked(cellId: string): boolean {
 }
 
 /** Resolve variables for a notebook's cell, or null if any are missing. */
+/**
+ * セルのソースを実行単位に分割し、それぞれの変数プレースホルダーを
+ * `values` で置換する。いずれかの実行単位に未解決の変数があればトースト
+ * 通知して null を返す（呼び出し元はこれを見て実行全体を中止する）。
+ */
 function resolveCellUnits(source: string, values: Record<string, string>): ExecutionUnit[] | null {
   const resolved: ExecutionUnit[] = [];
   for (const u of allUnits(source)) {
@@ -43,7 +62,7 @@ function resolveCellUnits(source: string, values: Record<string, string>): Execu
 
 /**
  * Run every SQL cell of the active notebook, top to bottom, stopping at the
- * first failure (design.md §5: 全セル実行 — 上から順次, エラーで停止). Markdown
+ * first failure (design.md §5: 全セル実行: 上から順次, エラーで停止). Markdown
  * cells are skipped. Returns when the batch settles.
  */
 export async function runAllCells(
@@ -52,23 +71,30 @@ export async function runAllCells(
 ): Promise<void> {
   const store = useNotebookStore.getState();
   const entry = store.activeId ? store.open[store.activeId] : undefined;
-  if (!entry) return;
+  if (!entry) return; // 開いている notebook が無ければ何もしない。
   const notebook = entry.notebook;
+  // 現在の変数入力値を name → value の Map 形式に変換しておく。
   const values: Record<string, string> = {};
   for (const v of notebook.variables) values[v.name] = v.value;
 
   const ctx: ExecutionContext = { ...context, notebookId: notebook.id };
   const opts = { autoLimit: true, limit: defaultLimit };
+  // markdown セルは実行対象外。SQL セルのみを上から順に処理する。
   const sqlCells = notebook.cells.filter((c) => c.kind === 'sql');
 
   for (const cell of sqlCells) {
     // Query Guard: a blocked cell halts the notebook run (same as a failure).
+    // Query Guard でブロックされているセルに達したら、そこで notebook 全体の
+    // 実行を打ち切る（失敗扱いと同様の停止）。
     if (refuseIfBlocked(cell.id)) return;
     const units = resolveCellUnits(cell.source, values);
     if (units === null) return; // missing variable — abort the whole run
-    if (units.length === 0) continue;
+    if (units.length === 0) continue; // 空セルはスキップして次へ。
+    // このセル内の実行単位（複数ステートメント）を逐次実行し、完了を待つ。
     await executionActions().runUnits(cell.id, units, ctx, opts);
     // Stop the notebook run at the first cell that didn't finish cleanly.
+    // セルが finished 以外の終端状態（failed/canceled）で終わったら、
+    // 以降のセルは実行せず notebook 全体の実行を止める（Hue 互換の挙動）。
     const exec = useExecutionStore.getState().cells[cell.id];
     if (!exec || exec.state !== 'finished') break;
   }
@@ -88,6 +114,7 @@ export function runActiveSqlCell(
   const entry = store.activeId ? store.open[store.activeId] : undefined;
   if (!entry) return;
   const notebook = entry.notebook;
+  // 直前にフォーカスされていたエディタのセルを優先し、無ければ最初の SQL セルを使う。
   const focusedCellId = getActiveEditor()?.cellId;
   const cell =
     (focusedCellId && notebook.cells.find((c) => c.id === focusedCellId && c.kind === 'sql')) ||
@@ -104,11 +131,13 @@ export function runActiveSqlCell(
 
   const ctx: ExecutionContext = { ...context, notebookId: notebook.id };
   const opts = { autoLimit: true, limit: defaultLimit };
+  // 実行単位が 1 個ならシンプルな単発実行、複数あれば逐次実行（バッチ）にする。
   if (units.length === 1) executionActions().runUnit(cell.id, units[0]!, ctx, opts);
   else void executionActions().runUnits(cell.id, units, ctx, opts);
 }
 
 /** True when any SQL cell of the active notebook is currently running. */
+/** アクティブな notebook のいずれかの SQL セルが現在実行中であれば true。 */
 export function isActiveNotebookRunning(): boolean {
   const store = useNotebookStore.getState();
   const entry = store.activeId ? store.open[store.activeId] : undefined;
@@ -118,6 +147,7 @@ export function isActiveNotebookRunning(): boolean {
 }
 
 /** Cancel every running cell of the active notebook (Run → Stop). */
+/** アクティブな notebook 内で実行中のすべてのセルをキャンセルする（Run → Stop ボタン用）。 */
 export function cancelActiveNotebook(): void {
   const store = useNotebookStore.getState();
   const entry = store.activeId ? store.open[store.activeId] : undefined;
@@ -139,7 +169,9 @@ export async function saveActiveNotebook(): Promise<
   const store = useNotebookStore.getState();
   const id = store.activeId;
   const entry = id ? store.open[id] : undefined;
-  if (!id || !entry) return { noop: true };
+  if (!id || !entry) return { noop: true }; // 開いている notebook が無い。
+  // draft はまだ名前を持たない可能性があるため、先に保存モーダルで名前を
+  // 確定させる必要がある。呼び出し元にそれを伝える。
   if (entry.draft) return { needsName: true, id };
   const saved = await persistSavedNotebook(id);
   if (saved) {

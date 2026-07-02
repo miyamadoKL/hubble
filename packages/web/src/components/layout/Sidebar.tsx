@@ -1,3 +1,9 @@
+/**
+ * アプリ左側のサイドバー本体。
+ * アイコンレール（Data / Notebooks / Saved / History / Schedules の切り替え）と、
+ * 選択中タブに応じたパネル（検索欄 + 一覧）、幅のドラッグリサイズ、折りたたみを担当する。
+ * design.md §6 で定義されたシェルの一部で、幅、選択タブ、折りたたみ状態は uiStore に永続化される。
+ */
 import { useCallback, useEffect, useRef } from 'react';
 import {
   BookMarked,
@@ -33,12 +39,14 @@ import { cn } from '../../utils/cn';
  * control. Width and active tab persist via the UI store.
  */
 
+/** アイコンレールに並べる1項目の定義（タブID、アイコン、アクセシビリティラベル）。 */
 interface RailItem {
   id: SidebarTab;
   icon: LucideIcon;
   label: string;
 }
 
+// レールに表示するタブの並び。表示順もここで決まる。
 const RAIL: RailItem[] = [
   { id: 'data', icon: Database, label: 'Data' },
   { id: 'notebooks', icon: NotebookText, label: 'Notebooks' },
@@ -47,6 +55,7 @@ const RAIL: RailItem[] = [
   { id: 'schedules', icon: CalendarClock, label: 'Schedules' },
 ];
 
+// 各タブのパネル見出しに表示する文言。
 const PANEL_TITLE: Record<SidebarTab, string> = {
   data: 'Data browser',
   notebooks: 'Notebooks',
@@ -55,6 +64,7 @@ const PANEL_TITLE: Record<SidebarTab, string> = {
   schedules: 'Schedules',
 };
 
+// 各タブの検索欄に表示するプレースホルダー文言。
 const PANEL_PLACEHOLDER: Record<SidebarTab, string> = {
   data: 'Filter tables…',
   notebooks: 'Search notebooks…',
@@ -63,6 +73,14 @@ const PANEL_PLACEHOLDER: Record<SidebarTab, string> = {
   schedules: 'Search schedules…',
 };
 
+/**
+ * サイドバー本体コンポーネント。
+ *
+ * @param search - 現在アクティブなパネルの検索文字列（コントロールドコンポーネント）。
+ * @param onSearchChange - 検索文字列が変更されたときに呼ばれるコールバック。
+ * @param activeNotebookId - 現在アクティブなノートブックのID。Notebooks パネルの選択状態表示に使う。
+ * @param context - 現在の catalog / schema コンテキスト。Data パネル（SchemaTree）へ渡す。
+ */
 export function Sidebar({
   search,
   onSearchChange,
@@ -83,6 +101,7 @@ export function Sidebar({
   const focusNonce = useUiStore((s) => s.sidebarFocusNonce);
 
   const searchRef = useRef<HTMLInputElement>(null);
+  // リサイズハンドルのドラッグ中かどうか。再レンダーを起こしたくないので ref で保持する。
   const draggingRef = useRef(false);
 
   // Focus the panel search when a "Go to …" command requests it (command palette).
@@ -101,12 +120,14 @@ export function Sidebar({
     [setWidth],
   );
 
+  // ドラッグ終了時に ref をリセットし、ドラッグ中に付けたカーソル/選択禁止のスタイルを戻す。
   const stopDrag = useCallback(() => {
     draggingRef.current = false;
     document.body.style.removeProperty('cursor');
     document.body.style.removeProperty('user-select');
   }, []);
 
+  // ポインタ移動/離脱は resize handle 以外の場所でも発生しうるため、window に直接登録する。
   useEffect(() => {
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', stopDrag);
@@ -116,6 +137,8 @@ export function Sidebar({
     };
   }, [onPointerMove, stopDrag]);
 
+  // リサイズハンドルの pointerdown で呼ばれ、ドラッグ中の見た目（col-resize カーソル、
+  // テキスト選択の禁止）を適用する。
   const startDrag = () => {
     draggingRef.current = true;
     document.body.style.cursor = 'col-resize';
@@ -125,7 +148,9 @@ export function Sidebar({
   return (
     <aside className="flex h-full shrink-0">
       {/* Icon rail */}
+      {/* 左端のアイコンレール。タブ切り替えと、同じタブを再クリックしたときの折りたたみを兼ねる。 */}
       <nav className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border-base bg-surface-base py-2">
+        {/* RAIL に定義された各タブをアイコンボタンとして描画する。 */}
         {RAIL.map((item) => {
           const active = tab === item.id && !collapsed;
           const Icon = item.icon;
@@ -157,11 +182,13 @@ export function Sidebar({
       </nav>
 
       {/* Panel */}
+      {/* 右側のパネル本体。折りたたまれている（collapsed）間はマウントしない。 */}
       {!collapsed && (
         <div
           className="relative flex h-full flex-col border-r border-border-base bg-surface-base"
           style={{ width: `${width}px` }}
         >
+          {/* パネル見出しと折りたたみボタン。 */}
           <div className="flex items-center justify-between px-3 pt-3 pb-2">
             <h2 className="text-2xs font-semibold tracking-[0.14em] text-ink-muted uppercase">
               {PANEL_TITLE[tab]}
@@ -179,6 +206,7 @@ export function Sidebar({
           </div>
 
           {/* History filters by state chips, not text — hide the search field. */}
+          {/* History タブだけは文字列検索ではなく状態チップで絞り込むため、検索欄自体を出さない。 */}
           {tab !== 'history' && (
             <div className="px-3 pb-2">
               <SearchInput
@@ -190,6 +218,7 @@ export function Sidebar({
             </div>
           )}
 
+          {/* 選択中タブに応じてパネル本体を出し分ける（同時に描画されるのは1つだけ）。 */}
           <div className="min-h-0 flex-1 overflow-auto">
             {tab === 'data' && <SchemaTree filter={search} context={context} />}
             {tab === 'notebooks' && (
@@ -201,6 +230,7 @@ export function Sidebar({
           </div>
 
           {/* Resize handle */}
+          {/* パネル右端のリサイズハンドル。ドラッグ（pointerdown 起点）と矢印キーの両方で幅を変更できる。 */}
           <div
             role="separator"
             aria-orientation="vertical"
@@ -228,6 +258,9 @@ export function Sidebar({
  * The Notebooks sidebar panel: the saved notebooks from the server (design.md §5
  * Notebook 一覧 / 検索 / 再オープン). Clicking a row fetches the full notebook and
  * opens it in a tab (the store dedupes if it's already open).
+ *
+ * @param search - Notebooks パネルの検索文字列。サーバー側の一覧取得に渡す。
+ * @param activeNotebookId - 現在アクティブなノートブックID。行のハイライトに使う。
  */
 function NotebooksSidebarPanel({
   search,
@@ -236,11 +269,14 @@ function NotebooksSidebarPanel({
   search: string;
   activeNotebookId: string;
 }) {
+  // 検索文字列が変わるたびにサーバーへ再問い合わせする（クライアント側でのフィルタはしない）。
   const { data } = useQuery({
     queryKey: ['notebooks', 'list', search],
     queryFn: () => listNotebooks(search.trim() || undefined),
   });
 
+  // ノートブック行クリック時の処理。既に開いていればタブを切り替えるだけ、未オープンなら
+  // サーバーから全文を取得してタブとして開く。取得に失敗した場合（削除済み等）は無視する。
   const open = async (id: string) => {
     const store = useNotebookStore.getState();
     if (store.open[id]) {

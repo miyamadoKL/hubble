@@ -1,3 +1,9 @@
+/**
+ * `ScheduleRepository` / `ScheduleRunRepository`（packages/server/src/store/schedules.ts）
+ * の振る舞いを検証するテストスイート。dbBackends（SQLite 常時、
+ * TEST_DATABASE_URL 設定時は PostgreSQL も追加）でパラメタライズし、両方言で
+ * 同じ SQL が同じ結果になることを保証する。
+ */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { dbBackends } from '../test/dbBackends';
@@ -16,6 +22,8 @@ for (const backend of dbBackends) {
     afterEach(async () => {
       if (db) {
         // pg backends persist across cases; clean the new tables explicitly.
+        // PostgreSQL バックエンドはケース間で状態が持ち越されるため、
+        // 明示的に schedules / schedule_runs をクリアしてから閉じる。
         if (db.dialect === 'postgres') {
           await db.run('DELETE FROM schedule_runs');
           await db.run('DELETE FROM schedules');
@@ -30,6 +38,8 @@ for (const backend of dbBackends) {
     }
 
     describe('ScheduleRepository', () => {
+      // 作成→一覧→取得→更新（null クリア含む）→削除の一連のライフサイクルと、
+      // owner による隔離（他 owner からは見えない/操作できない）を検証する。
       it('creates, lists, gets, updates, deletes; owner-scoped', async () => {
         const repo = new ScheduleRepository(await open());
 
@@ -77,6 +87,8 @@ for (const backend of dbBackends) {
         expect(await repo.get('alice', created.id)).toBeUndefined();
       });
 
+      // listAllEnabled() が owner を横断して enabled=true のスケジュールのみを
+      // 返すこと（スケジューラーが使う想定の挙動）を検証する。
       it('lists only enabled schedules across owners for the scheduler', async () => {
         const repo = new ScheduleRepository(await open());
         await repo.create('alice', { name: 'on', statement: 'SELECT 1', cron: '* * * * *' });
@@ -92,6 +104,8 @@ for (const backend of dbBackends) {
         expect(enabled.map((s) => s.name).sort()).toEqual(['on', 'on2']);
       });
 
+      // スケジュール削除時に、そのスケジュールに紐づく実行履歴（schedule_runs）も
+      // アプリ側カスケードで一緒に削除されることを検証する。
       it('cascade-deletes runs when a schedule is removed', async () => {
         const db2 = await open();
         const repo = new ScheduleRepository(db2);
@@ -122,6 +136,9 @@ for (const backend of dbBackends) {
     });
 
     describe('ScheduleRunRepository', () => {
+      // start→finish で状態が running→終端に遷移すること、list() が
+      // 新しい順に並ぶこと、abortOrphans() が running のまま残った行を
+      // aborted にすることを検証する。
       it('records, lists newest-first, reports running, and aborts orphans', async () => {
         const db2 = await open();
         const repo = new ScheduleRepository(db2);
@@ -174,6 +191,8 @@ for (const backend of dbBackends) {
         expect(after.find((r) => r.id === r2)?.status).toBe('aborted');
       });
 
+      // retention（保持上限）を超えた古い実行履歴が自動的に間引かれ、
+      // 常に最新 N 件だけが残ることを検証する。
       it('prunes to the retention cap per schedule', async () => {
         const db2 = await open();
         const repo = new ScheduleRepository(db2);

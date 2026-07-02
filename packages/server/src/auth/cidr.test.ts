@@ -1,3 +1,8 @@
+/**
+ * cidr.ts（信頼済みプロキシ判定用の CIDR パース／マッチングロジック）のユニットテスト。
+ * IPv4/IPv6 のアドレスパース、CIDR レンジのパース、所属判定、CIDR リストのパース、
+ * 不正入力の扱いを網羅する。
+ */
 import { describe, it, expect } from 'vitest';
 import {
   cidrContains,
@@ -7,6 +12,7 @@ import {
   parseCidrList,
 } from './cidr';
 
+// parseAddress: 文字列を {version, value} に正規化できるかを検証する。
 describe('parseAddress', () => {
   it('parses IPv4', () => {
     expect(parseAddress('127.0.0.1')?.version).toBe(4);
@@ -43,6 +49,7 @@ describe('parseAddress', () => {
   });
 });
 
+// parseCidr: "アドレス/プレフィックス" 文字列を ParsedCidr に変換できるかを検証する。
 describe('parseCidr', () => {
   it('parses an IPv4 range', () => {
     const c = parseCidr('127.0.0.0/8');
@@ -60,6 +67,7 @@ describe('parseCidr', () => {
   });
 });
 
+// cidrContains: アドレスが CIDR レンジに含まれるかの判定（v4/v6 混在の扱いを含む）を検証する。
 describe('cidrContains', () => {
   const v4 = parseCidr('127.0.0.0/8')!;
   const v6Loop = parseCidr('::1/128')!;
@@ -92,6 +100,8 @@ describe('cidrContains', () => {
   });
 });
 
+// parseCidrList + isTrustedAddress: デフォルトの信頼済みプロキシ設定
+// （ループバック v4/v6）が想定通りに機能するか、不正エントリを含むリストの扱いを検証する。
 describe('parseCidrList + isTrustedAddress', () => {
   const defaults = parseCidrList('127.0.0.0/8,::1/128');
 

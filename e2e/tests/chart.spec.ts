@@ -2,7 +2,7 @@ import { test, expect, type Locator } from '@playwright/test';
 import { resetWorkspace, setEditor, runCell, resultPane, expectFinished, waitGrid, openResultTab } from './helpers';
 
 /**
- * Chart suite (design.md §5 結果 — チャート): a GROUP BY result rendered as a bar
+ * Chart suite (design.md §5 結果: チャート): a GROUP BY result rendered as a bar
  * chart, switched to a pie chart, with the ECharts canvas verified to have
  * actually painted (non-blank pixels), not merely mounted.
  */

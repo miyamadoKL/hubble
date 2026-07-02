@@ -1,8 +1,21 @@
 // Maps ANTLR token types to coarse highlight scopes consumed by the Monaco
 // tokenizer.
+//
+// 日本語: このファイルは ANTLR（generated/SqlBaseLexer.ts）が定義するトークン種別
+// （キーワード、演算子、文字列、識別子など）を、Monaco のトークナイザーが理解する
+// 大まかなハイライトスコープ名（'keyword' / 'operator' / 'string' など）に対応付ける
+// テーブルである。SqlBase.g4 の字句規則ごとに 1 行、静的に列挙してあるだけで、
+// 動的なロジックは持たない。
 
 import { SqlBaseLexer } from '../generated/SqlBaseLexer.js';
 
+/**
+ * ANTLR token type (SqlBaseLexer の各定数) → Monaco ハイライトスコープ名 の対応表。
+ * デリミタ記号は 'delimiter'、SQL キーワードは 'keyword'、比較/算術演算子は
+ * 'operator'、文字列/数値/識別子/コメント/空白/不正トークンはそれぞれの種別名に
+ * マッピングされる。Monaco の言語定義（editor/ 配下）がトークナイザーの出力を
+ * このマップで色分けする。
+ */
 export const tokenMap = {
   [SqlBaseLexer.T__0]: 'delimiter',
   [SqlBaseLexer.T__1]: 'delimiter',

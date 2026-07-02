@@ -1,6 +1,14 @@
 import { emptySessionMutations, type TrinoRequestContext } from '../trino/types';
 import type { TrinoClient } from '../trino/client';
 
+/**
+ * このファイルは Query Scheduling 機能の「実行」ステップを担う `drainStatement` を
+ * 提供する。scheduler.ts の attemptWithRetries() の検証とガードを通過した後、
+ * 最終的にステートメントを Trino に投げて完走させるのはここ。通常のクエリ実行
+ * (trino/registry.ts 等、SSE でクライアントへ結果をストリームする経路) とは異なり、
+ * スケジュール実行は結果データを誰も見ないため、行データを溜め込まず件数だけを数える。
+ */
+
 export interface DrainResult {
   /** Trino's query id (`stats`-bearing response id). */
   trinoQueryId: string;
@@ -19,11 +27,19 @@ export async function drainStatement(
   statement: string,
   ctx: TrinoRequestContext,
 ): Promise<DrainResult> {
+  // 日本語: このスケジュール実行専用にセッションプロパティ等の変更を追跡する空の
+  // mutations オブジェクトを用意する (結果を誰にも返さないため、変更内容自体は
+  // 呼び出し元では使わないが client.start/advance のシグネチャ上必要)。
   const mutations = emptySessionMutations();
+  // POST /v1/statement で最初のページ (QUEUED) を取得。以降 nextUri を追走する。
   let page = await client.start(statement, ctx, mutations);
   const trinoQueryId = page.id;
   let rowCount = page.data ? page.data.length : 0;
 
+  // 日本語: idleAttempt は「データが来ないまま何回連続で追走したか」のカウンタ。
+  // client.waitBackoff がこれを基に待ち時間を決める (データが来れば 0 にリセットし、
+  // 来なければ増やして徐々に間隔を伸ばす) ことで、Trino への問い合わせ頻度を
+  // 実行状況に応じて調整する。通常のストリーミング実行経路と同じ規律を踏襲。
   let idleAttempt = 0;
   while (page.nextUri) {
     const hadData = page.data !== undefined && page.data.length > 0;
@@ -33,8 +49,11 @@ export async function drainStatement(
       await client.waitBackoff(idleAttempt);
       idleAttempt += 1;
     }
+    // 次のページを取得し、行があれば件数だけ加算する (page.data 自体は破棄され、
+    // rowCount 以外どこにも保持されない)。
     page = await client.advance(page.nextUri, ctx, mutations);
     if (page.data) rowCount += page.data.length;
   }
+  // nextUri が無くなった = FINISHED (または FAILED は例外で投げられ、ここには来ない)。
   return { trinoQueryId, rowCount };
 }
