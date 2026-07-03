@@ -78,7 +78,7 @@ function isOnlyTrailingTrivia(sql: string, start: number): boolean {
 }
 
 /**
- * 文字列リテラル・クォート識別子・コメントを考慮し、
+ * 文字列リテラル、クォート識別子、コメントを考慮し、
  * 文末以外のセミコロン（複数文）があるか判定する。
  */
 function containsMultipleStatements(statement: string): boolean {
