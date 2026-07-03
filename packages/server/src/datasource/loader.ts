@@ -10,6 +10,7 @@ import { parse as parseYaml } from 'yaml';
 import type { ZodError } from 'zod';
 import type { ServerConfig } from '../config';
 import { datasourcesFileSchema, type DatasourceEntry } from './schema';
+import { resolveSqlConnectionOptions } from './connectionOptions';
 import type { ResolvedDatasource } from './types';
 
 type Env = Record<string, string | undefined>;
@@ -114,7 +115,8 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
         baseUrl: entry.baseUrl,
         source: entry.source ?? 'hubble',
       };
-    case 'mysql':
+    case 'mysql': {
+      const conn = resolveSqlConnectionOptions(entry.id, entry);
       return {
         id: entry.id,
         type: 'mysql',
@@ -124,8 +126,11 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
         host: entry.host,
         port: entry.port ?? 3306,
         database: entry.database,
+        ...conn,
       };
-    case 'postgresql':
+    }
+    case 'postgresql': {
+      const conn = resolveSqlConnectionOptions(entry.id, entry);
       return {
         id: entry.id,
         type: 'postgresql',
@@ -135,7 +140,9 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
         host: entry.host,
         port: entry.port ?? 5432,
         database: entry.database,
+        ...conn,
       };
+    }
     default: {
       const _exhaustive: never = entry;
       throw new Error(`unsupported datasource type: ${(_exhaustive as DatasourceEntry).type}`);

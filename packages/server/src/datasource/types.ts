@@ -29,8 +29,16 @@ export interface ResolvedTrinoDatasource extends ResolvedDatasourceBase {
   source: string;
 }
 
+/** mysql/postgresql 共通の解決済み接続オプション。 */
+export interface ResolvedSqlConnectionOptions {
+  readOnly: boolean;
+  tls: boolean;
+  tlsCa?: string;
+  maxConnections: number;
+}
+
 /** MySQL データソースの解決済み設定。 */
-export interface ResolvedMysqlDatasource extends ResolvedDatasourceBase {
+export interface ResolvedMysqlDatasource extends ResolvedDatasourceBase, ResolvedSqlConnectionOptions {
   type: 'mysql';
   host: string;
   port: number;
@@ -38,7 +46,8 @@ export interface ResolvedMysqlDatasource extends ResolvedDatasourceBase {
 }
 
 /** PostgreSQL データソースの解決済み設定。 */
-export interface ResolvedPostgresqlDatasource extends ResolvedDatasourceBase {
+export interface ResolvedPostgresqlDatasource
+  extends ResolvedDatasourceBase, ResolvedSqlConnectionOptions {
   type: 'postgresql';
   host: string;
   port: number;

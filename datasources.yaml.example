@@ -21,6 +21,13 @@ datasources:
     host: mysql.internal
     port: 3306
     database: analytics
+    # 省略時 readOnly: true。SET SESSION TRANSACTION READ ONLY を発行するガードレール。
+    # 本気のアクセス制御は DB 側の権限で行う。
+    readOnly: true
+    # TLS を有効化する場合は tls: true。CA 証明書は tlsCaFile で指定可能(tls: true 必須)。
+    # tls: true
+    # tlsCaFile: /var/run/secrets/mysql-ca.pem
+    # maxConnections: 5
 
   - id: pg-warehouse
     type: postgresql
@@ -29,3 +36,7 @@ datasources:
     passwordEnv: PG_PASSWORD
     host: postgres.internal
     database: warehouse
+    readOnly: true
+    # tls: true
+    # tlsCaFile: /var/run/secrets/pg-ca.pem
+    # maxConnections: 5
