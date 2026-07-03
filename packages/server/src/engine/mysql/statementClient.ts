@@ -3,7 +3,7 @@
  *
  * QueryRegistry / SSE / CSV が Trino の start/advance ループをそのまま使えるよう、
  * TrinoStatementResponse 形のページを返す。実行状態は内部 Map で管理し、
- * 完了/失敗/キャンセル時に必ず接続をプールへ返却する。
+ * 完了/失敗時は接続をプールへ返却し、キャンセル時は進行中クエリの接続を破棄する。
  */
 import type { Connection } from 'mysql2';
 import type { PoolConnection, FieldPacket } from 'mysql2/promise';
@@ -39,11 +39,19 @@ function fieldsToColumns(fields: FieldPacket[]): TrinoColumn[] {
 export function createMysqlStatementClient(pool: MysqlPool): StatementClient {
   const executions = new Map<string, MysqlExecution>();
 
-  const cleanup = async (exec: MysqlExecution): Promise<void> => {
+  const releaseExecution = async (exec: MysqlExecution): Promise<void> => {
     if (exec.released) return;
     exec.released = true;
     executions.delete(exec.queryId);
     exec.conn.release();
+  };
+
+  /** キャンセル等で進行中クエリが残る接続はプールへ返さず破棄する。 */
+  const destroyExecution = async (exec: MysqlExecution): Promise<void> => {
+    if (exec.released) return;
+    exec.released = true;
+    executions.delete(exec.queryId);
+    exec.conn.destroy();
   };
 
   return {
@@ -112,10 +120,10 @@ export function createMysqlStatementClient(pool: MysqlPool): StatementClient {
         const { rows, done } = await exec.reader.readBatch(batchSize());
         exec.rowCount += rows.length;
         const next = done ? undefined : nextUri;
-        if (done) await cleanup(exec);
+        if (done) await releaseExecution(exec);
         return buildPage(exec.queryId, undefined, rows, next, exec.rowCount);
       } catch (err) {
-        await cleanup(exec);
+        await releaseExecution(exec);
         throwMysqlDriverError(err);
       }
     },
@@ -134,7 +142,7 @@ export function createMysqlStatementClient(pool: MysqlPool): StatementClient {
         // ベストエフォート。
       } finally {
         killer?.release();
-        await cleanup(exec);
+        await destroyExecution(exec);
       }
     },
 

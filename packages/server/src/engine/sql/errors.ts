@@ -14,6 +14,18 @@ const PG_SYNTAX_ERROR = '42601';
 /** MySQL の構文/解析系 errno。 */
 const MYSQL_SYNTAX_ERRNOS = new Set([1064, 1149, 1060, 1054]);
 
+/** MySQL の一時障害 errno(リトライ対象。USER_ERROR bucket より先に判定する)。 */
+const MYSQL_TRANSIENT_ERRNOS = new Set([
+  1040, // ER_CON_COUNT_ERROR: Too many connections
+  1041, // ER_OUT_OF_MEMORY
+  1053, // ER_SERVER_SHUTDOWN: Server shutdown in progress
+  1203, // ER_TOO_MANY_USER_CONNECTIONS
+  1159, // ER_NET_READ_INTERRUPTED
+  1160, // ER_NET_WRITE_INTERRUPTED
+  2006, // ER_SERVER_GONE_ERROR
+  2013, // ER_SERVER_LOST
+]);
+
 const CONNECTION_ERRNO = new Set([
   'ECONNREFUSED',
   'ECONNRESET',
@@ -83,6 +95,9 @@ export function throwMysqlDriverError(err: unknown): never {
       errorName: 'SYNTAX_ERROR',
       errorLocation: line !== undefined ? { lineNumber: line, columnNumber: 1 } : undefined,
     });
+  }
+  if (e.errno !== undefined && MYSQL_TRANSIENT_ERRNOS.has(e.errno)) {
+    throwTransport(`MySQL transient failure: ${message}`);
   }
   // 実行時のユーザー起因エラー(未知テーブル等)も USER_ERROR 扱い。
   if (e.errno !== undefined && e.errno >= 1000 && e.errno < 2000) {

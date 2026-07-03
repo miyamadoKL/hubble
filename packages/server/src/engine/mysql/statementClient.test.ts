@@ -18,12 +18,12 @@ interface FakePoolOptions {
   threadId?: number;
 }
 
-function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; released: string[] } {
-  const released: string[] = [];
+function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; actions: string[] } {
+  const actions: string[] = [];
   const rows = opts.rows ?? [[1], [2], [3]];
   const pool = {
     getConnection: async () => ({
-      threadId: opts.threadId ?? 42,
+      threadId: opts.threadId ?? 77,
       connection: {
         query: () => ({
           stream: () => {
@@ -42,14 +42,17 @@ function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; released: 
         }),
       },
       release: () => {
-        released.push('conn');
+        actions.push('release');
+      },
+      destroy: () => {
+        actions.push('destroy');
       },
       query: async (sql: string) => {
-        if (sql.startsWith('KILL QUERY')) released.push('kill');
+        if (sql.startsWith('KILL QUERY')) actions.push('kill');
       },
     }),
   } as unknown as MysqlPool;
-  return { pool, released };
+  return { pool, actions };
 }
 
 describe('createMysqlStatementClient', () => {
@@ -65,7 +68,7 @@ describe('createMysqlStatementClient', () => {
 
   it('splits large result sets across advance pages', async () => {
     const rows = Array.from({ length: SQL_BATCH_SIZE + 5 }, (_, i) => [i]);
-    const { pool, released } = makeFakePool({ rows });
+    const { pool, actions } = makeFakePool({ rows });
     const client = createMysqlStatementClient(pool);
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
@@ -78,7 +81,8 @@ describe('createMysqlStatementClient', () => {
     expect(second.nextUri).toBeUndefined();
     expect(second.stats?.state).toBe('FINISHED');
 
-    expect(released).toContain('conn');
+    expect(actions).toContain('release');
+    expect(actions).not.toContain('destroy');
   });
 
   it('maps syntax errors to USER_ERROR', async () => {
@@ -109,16 +113,33 @@ describe('createMysqlStatementClient', () => {
     ).rejects.toBeInstanceOf(TrinoTransportError);
   });
 
-  it('releases the connection on cancel', async () => {
+  it('destroys the execution connection on cancel instead of returning it to the pool', async () => {
     const rows = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
-    const { pool, released } = makeFakePool({ rows, threadId: 77 });
+    const { pool, actions } = makeFakePool({ rows, threadId: 77 });
     const client = createMysqlStatementClient(pool);
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
     await client.cancel(first.nextUri!, { source: 'test' });
 
-    expect(released).toContain('kill');
-    expect(released.filter((r) => r === 'conn').length).toBeGreaterThanOrEqual(1);
+    expect(actions).toContain('kill');
+    expect(actions).toContain('destroy');
+    // KILL 用の別接続だけ release し、実行中クエリの接続は destroy する。
+    expect(actions.filter((a) => a === 'release').length).toBe(1);
+    expect(actions.filter((a) => a === 'destroy').length).toBe(1);
+  });
+
+  it('is idempotent when cancel races with destroy', async () => {
+    const rows = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
+    const { pool, actions } = makeFakePool({ rows });
+    const client = createMysqlStatementClient(pool);
+
+    const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
+    await Promise.all([
+      client.cancel(first.nextUri!, { source: 'test' }),
+      client.cancel(first.nextUri!, { source: 'test' }),
+    ]);
+
+    expect(actions.filter((a) => a === 'destroy').length).toBe(1);
   });
 
   it('waitBackoff resolves immediately', async () => {

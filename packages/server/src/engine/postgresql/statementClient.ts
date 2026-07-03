@@ -56,7 +56,7 @@ function cursorFields(cursor: Cursor): FieldDef[] | undefined {
 export function createPgStatementClient(pool: PgPool, readOnly: boolean): StatementClient {
   const executions = new Map<string, PgExecution>();
 
-  const cleanup = async (exec: PgExecution): Promise<void> => {
+  const releaseExecution = async (exec: PgExecution): Promise<void> => {
     if (exec.released) return;
     exec.released = true;
     executions.delete(exec.queryId);
@@ -66,6 +66,24 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
       // ベストエフォート。
     }
     exec.client.release();
+  };
+
+  /** キャンセル等で portal が残る接続はプールへ返さず破棄する。 */
+  const destroyExecution = async (exec: PgExecution, reason?: Error): Promise<void> => {
+    if (exec.released) return;
+    exec.released = true;
+    executions.delete(exec.queryId);
+    try {
+      await exec.cursor.close();
+    } catch {
+      // ベストエフォート。
+    }
+    exec.client.release(reason ?? new Error('Query cancelled'));
+  };
+
+  const destroyClient = (client: PoolClient, reason: unknown): void => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    client.release(err);
   };
 
   const acquire = async (): Promise<PoolClient> => {
@@ -86,11 +104,12 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
       if (signal?.aborted) throw new Error('Aborted');
       const queryId = nextQueryId('pg');
       let client: PoolClient | undefined;
+      let cursor: Cursor | undefined;
       try {
         client = await acquire();
         const pidRes = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
         const backendPid = Number(pidRes.rows[0]?.pid ?? 0);
-        const cursor = new Cursor(statement, undefined, { rowMode: 'array' });
+        cursor = new Cursor(statement, undefined, { rowMode: 'array' });
         (client.query as (submittable: Cursor) => void)(cursor);
         const rows = (await cursor.read(batchSize())) as unknown[][];
         const fields = cursorFields(cursor);
@@ -110,10 +129,17 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
         client = undefined;
 
         const nextUri = done ? undefined : queryId;
-        if (done) await cleanup(exec);
+        if (done) await releaseExecution(exec);
         return buildPage(queryId, columns, rows, nextUri, exec.rowCount);
       } catch (err) {
-        client?.release();
+        if (cursor) {
+          try {
+            await cursor.close();
+          } catch {
+            // ベストエフォート。
+          }
+        }
+        if (client) destroyClient(client, err);
         throwPgDriverError(err, statement);
       }
     },
@@ -134,10 +160,10 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
         exec.rowCount += rows.length;
         const done = rows.length < batchSize();
         const next = done ? undefined : nextUri;
-        if (done) await cleanup(exec);
+        if (done) await releaseExecution(exec);
         return buildPage(exec.queryId, undefined, rows, next, exec.rowCount);
       } catch (err) {
-        await cleanup(exec);
+        await releaseExecution(exec);
         throwPgDriverError(err);
       }
     },
@@ -156,7 +182,7 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
         // ベストエフォート。
       } finally {
         killer?.release();
-        await cleanup(exec);
+        await destroyExecution(exec);
       }
     },
 

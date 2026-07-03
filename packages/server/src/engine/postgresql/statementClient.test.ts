@@ -19,8 +19,8 @@ interface FakePgPoolOptions {
   readError?: unknown;
 }
 
-function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; released: string[] } {
-  const released: string[] = [];
+function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; actions: string[] } {
+  const actions: string[] = [];
   const batches = opts.batches ?? [[[1], [2], [3]]];
   let readCalls = 0;
   let batchIndex = 0;
@@ -46,13 +46,13 @@ function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; released:
         };
         cursor.close = async () => {};
       },
-      release: () => {
-        released.push('client');
+      release: (err?: Error) => {
+        actions.push(err ? 'destroy' : 'release');
       },
     }),
   } as unknown as PgPool;
 
-  return { pool, released };
+  return { pool, actions };
 }
 
 describe('createPgStatementClient', () => {
@@ -69,7 +69,7 @@ describe('createPgStatementClient', () => {
   it('splits large result sets across advance pages', async () => {
     const full = Array.from({ length: SQL_BATCH_SIZE + 2 }, (_, i) => [i]);
     const batches = [full.slice(0, SQL_BATCH_SIZE), full.slice(SQL_BATCH_SIZE)];
-    const { pool, released } = makeFakePgPool({ batches });
+    const { pool, actions } = makeFakePgPool({ batches });
     const client = createPgStatementClient(pool, false);
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
@@ -81,7 +81,8 @@ describe('createPgStatementClient', () => {
     expect(second.data).toHaveLength(2);
     expect(second.nextUri).toBeUndefined();
     expect(second.stats?.state).toBe('FINISHED');
-    expect(released).toContain('client');
+    expect(actions).toContain('release');
+    expect(actions).not.toContain('destroy');
   });
 
   it('maps syntax errors to USER_ERROR with line number', async () => {
@@ -115,9 +116,9 @@ describe('createPgStatementClient', () => {
     ).rejects.toBeInstanceOf(TrinoTransportError);
   });
 
-  it('releases the connection on cancel', async () => {
+  it('destroys the execution connection on cancel instead of returning it to the pool', async () => {
     const full = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
-    const { pool, released } = makeFakePgPool({
+    const { pool, actions } = makeFakePgPool({
       batches: [full.slice(0, SQL_BATCH_SIZE), full.slice(SQL_BATCH_SIZE)],
     });
     const client = createPgStatementClient(pool, false);
@@ -125,7 +126,40 @@ describe('createPgStatementClient', () => {
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
     await client.cancel(first.nextUri!, { source: 'test' });
 
-    expect(released.filter((r) => r === 'client').length).toBeGreaterThanOrEqual(1);
+    expect(actions).toContain('destroy');
+    // 実行接続は destroy、KILL 用の別接続だけ release。
+    expect(actions.filter((a) => a === 'release').length).toBe(1);
+    expect(actions.filter((a) => a === 'destroy').length).toBe(1);
+  });
+
+  it('destroys the connection when start fails after opening a cursor', async () => {
+    const { pool, actions } = makeFakePgPool({
+      batches: [[]],
+      readError: { code: '42601', message: 'syntax error', position: '1' },
+    });
+    const client = createPgStatementClient(pool, false);
+
+    await expect(
+      client.start('SELECT BAD', { source: 'test' }, emptySessionMutations()),
+    ).rejects.toBeInstanceOf(TrinoQueryError);
+    expect(actions).toContain('destroy');
+    expect(actions).not.toContain('release');
+  });
+
+  it('is idempotent when cancel races with destroy', async () => {
+    const full = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
+    const { pool, actions } = makeFakePgPool({
+      batches: [full.slice(0, SQL_BATCH_SIZE), full.slice(SQL_BATCH_SIZE)],
+    });
+    const client = createPgStatementClient(pool, false);
+
+    const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
+    await Promise.all([
+      client.cancel(first.nextUri!, { source: 'test' }),
+      client.cancel(first.nextUri!, { source: 'test' }),
+    ]);
+
+    expect(actions.filter((a) => a === 'destroy').length).toBe(1);
   });
 
   it('waitBackoff resolves immediately', async () => {
