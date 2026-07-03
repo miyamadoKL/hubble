@@ -58,7 +58,25 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: datasources
+              mountPath: /etc/hubble/datasources.yaml
+              subPath: datasources.yaml
+              readOnly: true
+            # passwordFile 方式の例 (Secret をファイルマウントする場合):
+            # - name: datasource-secrets
+            #   mountPath: /etc/hubble/secrets
+            #   readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: hubble-data
+        - name: datasources
+          configMap:
+            name: hubble-config
+            items:
+              - key: datasources.yaml
+                path: datasources.yaml
+        # passwordFile 用 Secret ボリュームの例:
+        # - name: datasource-secrets
+        #   secret:
+        #     secretName: hubble-datasource-secrets
