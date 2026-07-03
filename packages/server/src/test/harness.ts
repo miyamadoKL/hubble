@@ -51,6 +51,8 @@ export async function createTestContext(
     remoteAddress?: RemoteAddressFn;
     /** Start the in-process scheduler tick loop (default: false, API only). */
     startScheduler?: boolean;
+    /** datasources.yaml 探索の作業ディレクトリ（テスト用）。 */
+    cwd?: string;
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
@@ -78,6 +80,8 @@ export async function createTestContext(
 
   const db = await openMemoryDatabase();
   const services = await buildServices(config, db, {
+    env: options.env,
+    cwd: options.cwd,
     fetchImpl: fake.fetch,
     // 日本語: 既定では待たずに即 resolve するので、バックオフ待ちが原因で
     // テストが遅くなることはない。実際の待ち時間を検証したいテストのみ

@@ -85,10 +85,20 @@ pnpm --filter @hubble/web dev
 
 そのうえで <http://localhost:5173> を開きます。（`pnpm dev` で両方を並行起動できます。）
 
+### データソース設定（宣言的 YAML）
+
+複数データソースは `datasources.yaml` で宣言します（例は `datasources.yaml.example`）。
+`DATASOURCES_PATH` でファイルパスを指定でき、未設定時はカレントディレクトリの
+`datasources.yaml` を探します。ファイルが無い場合は従来どおり `TRINO_*` 環境変数から
+単一の Trino データソースを合成します。パスワードは YAML に直接書かず、`passwordEnv` または
+`passwordFile` で参照します。一覧は `GET /api/datasources` で取得できます（接続先や認証情報は
+含みません）。設定変更はプロセス再起動後に反映されます。
+
 ### 環境変数（server）
 
 | 変数                              | 既定値                   | 説明                                                                                            |
 | --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `DATASOURCES_PATH`                | —                        | データソース定義 YAML のパス。未設定時は `./datasources.yaml` を探し、無ければ `TRINO_*` で合成 |
 | `PORT`                            | `8080`                   | BFF が待ち受ける HTTP ポート                                                                    |
 | `DB_PATH`                         | `./data/hubble.db`       | SQLite データベースファイル                                                                     |
 | `DATABASE_URL`                    | —                        | `postgres://` 形式の接続文字列。設定すると永続化が PostgreSQL になり `DB_PATH` より優先         |

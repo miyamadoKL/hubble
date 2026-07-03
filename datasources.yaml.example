@@ -1,0 +1,30 @@
+# Declarative datasource definitions for Hubble (Grafana provisioning style).
+# Copy to datasources.yaml or point DATASOURCES_PATH at your file.
+# Secrets are referenced via passwordEnv or passwordFile, not stored in YAML.
+# Changes take effect after process restart (no hot reload).
+
+datasources:
+  - id: trino-prod
+    type: trino
+    displayName: Production Trino
+    username: admin
+    passwordEnv: TRINO_PASSWORD
+    baseUrl: http://trino:8080
+    source: hubble
+
+  - id: mysql-analytics
+    type: mysql
+    displayName: Analytics MySQL
+    username: hubble
+    passwordFile: /var/run/secrets/mysql-password
+    host: mysql.internal
+    port: 3306
+    database: analytics
+
+  - id: pg-warehouse
+    type: postgresql
+    displayName: Warehouse PostgreSQL
+    username: hubble
+    passwordEnv: PG_PASSWORD
+    host: postgres.internal
+    database: warehouse
