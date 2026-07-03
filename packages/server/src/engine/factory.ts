@@ -3,8 +3,9 @@
  */
 import type { ServerConfig } from '../config';
 import type { ResolvedDatasource } from '../datasource/types';
+import { createMysqlEngine } from './mysql/engine';
+import { createPostgresqlEngine } from './postgresql/engine';
 import { createTrinoEngine } from './trino';
-import { createUnsupportedEngine } from './unsupported';
 import type { QueryEngine } from './types';
 
 /** buildEngines に渡すオプション。 */
@@ -42,9 +43,15 @@ export function buildEngines(
         );
         break;
       case 'mysql':
-      case 'postgresql':
-        engines.set(ds.id, createUnsupportedEngine(ds.id, ds.type));
+        engines.set(ds.id, createMysqlEngine({ datasource: ds }));
         break;
+      case 'postgresql':
+        engines.set(ds.id, createPostgresqlEngine({ datasource: ds }));
+        break;
+      default: {
+        const _exhaustive: never = ds;
+        throw new Error(`Unsupported datasource type: ${(_exhaustive as ResolvedDatasource).type}`);
+      }
     }
   }
 
