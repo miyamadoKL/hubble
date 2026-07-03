@@ -14,7 +14,7 @@
  * 呼び出し、返された AsyncGenerator をレスポンスストリームへ接続する。
  * Trino との通信は execution.ts と同様に `TrinoClient` に委譲する。
  */
-import type { TrinoClient } from '../trino/client';
+import type { StatementClient } from '../engine/types';
 import {
   emptySessionMutations,
   type TrinoColumn,
@@ -134,9 +134,9 @@ export async function* streamCsv(
 }
 
 export interface CsvDownloadDeps {
-  /** Client used to issue the dedicated re-execution query (source hubble-download). */
-  // 再実行クエリの発行に使う TrinoClient（ソースは hubble-download 固定）。
-  client: TrinoClient;
+  /** Client used to issue the dedicated re-execution query (download source tag). */
+  // 再実行クエリの発行に使うステートメントクライアント。
+  client: StatementClient;
   /** Aborts the re-execution fetch when the HTTP client disconnects. */
   // HTTP クライアントが切断された際に再実行クエリを中断させるための signal。
   signal?: AbortSignal;

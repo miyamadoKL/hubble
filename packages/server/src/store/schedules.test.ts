@@ -7,7 +7,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { dbBackends } from '../test/dbBackends';
+import { DEFAULT_DATASOURCE_ID } from '../test/testEngine';
 import { ScheduleRepository, ScheduleRunRepository } from './schedules';
+
+const ds = { datasourceId: DEFAULT_DATASOURCE_ID };
 
 /**
  * Schedule + schedule-run repository suite, parameterized over every available
@@ -49,7 +52,9 @@ for (const backend of dbBackends) {
           cron: '0 0 * * *',
           catalog: 'tpch',
           schema: 'tiny',
+          ...ds,
         });
+        expect(created.datasourceId).toBe(DEFAULT_DATASOURCE_ID);
         expect(created.id).toMatch(/^sch_/);
         expect(created.enabled).toBe(true);
         expect(created.retry).toEqual({
@@ -91,14 +96,15 @@ for (const backend of dbBackends) {
       // 返すこと（スケジューラーが使う想定の挙動）を検証する。
       it('lists only enabled schedules across owners for the scheduler', async () => {
         const repo = new ScheduleRepository(await open());
-        await repo.create('alice', { name: 'on', statement: 'SELECT 1', cron: '* * * * *' });
+        await repo.create('alice', { name: 'on', statement: 'SELECT 1', cron: '* * * * *', ...ds });
         await repo.create('bob', {
           name: 'off',
           statement: 'SELECT 2',
           cron: '* * * * *',
           enabled: false,
+          ...ds,
         });
-        await repo.create('carol', { name: 'on2', statement: 'SELECT 3', cron: '* * * * *' });
+        await repo.create('carol', { name: 'on2', statement: 'SELECT 3', cron: '* * * * *', ...ds });
 
         const enabled = await repo.listAllEnabled();
         expect(enabled.map((s) => s.name).sort()).toEqual(['on', 'on2']);
@@ -114,6 +120,7 @@ for (const backend of dbBackends) {
           name: 's',
           statement: 'SELECT 1',
           cron: '* * * * *',
+          ...ds,
         });
         const runId = await runs.start({
           scheduleId: s.id,
@@ -133,6 +140,19 @@ for (const backend of dbBackends) {
         await repo.delete('alice', s.id);
         expect(await runs.list(s.id, 10)).toHaveLength(0);
       });
+
+      it('persists datasource_id from create input', async () => {
+        const repo = new ScheduleRepository(await open());
+        const created = await repo.create('alice', {
+          name: 'ds-test',
+          statement: 'SELECT 1',
+          cron: '0 0 * * *',
+          datasourceId: 'custom-trino',
+        });
+        expect(created.datasourceId).toBe('custom-trino');
+        const fetched = await repo.get('alice', created.id);
+        expect(fetched?.datasourceId).toBe('custom-trino');
+      });
     });
 
     describe('ScheduleRunRepository', () => {
@@ -147,6 +167,7 @@ for (const backend of dbBackends) {
           name: 's',
           statement: 'SELECT 1',
           cron: '* * * * *',
+          ...ds,
         });
 
         const r1 = await runs.start({
@@ -201,6 +222,7 @@ for (const backend of dbBackends) {
           name: 's',
           statement: 'SELECT 1',
           cron: '* * * * *',
+          ...ds,
         });
 
         for (let i = 0; i < 6; i++) {

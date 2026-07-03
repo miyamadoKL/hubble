@@ -184,7 +184,8 @@ describeIt('real Trino integration', () => {
 
   it('EXPLAIN VALIDATE: a valid statement passes', async () => {
     const { services } = await makeApp();
-    const result = await services.scheduleValidator.validate({
+    const engine = services.engines.get(services.defaultDatasourceId)!;
+    const result = await engine.validate({
       statement: 'SELECT count(*) FROM tpch.tiny.nation',
       principal: 'admin',
     });
@@ -193,7 +194,8 @@ describeIt('real Trino integration', () => {
 
   it('EXPLAIN VALIDATE: a syntax error is a USER_ERROR with line/column', async () => {
     const { services } = await makeApp();
-    const result = await services.scheduleValidator.validate({
+    const engine = services.engines.get(services.defaultDatasourceId)!;
+    const result = await engine.validate({
       statement: 'SELECT FROM x WHERE',
       principal: 'admin',
     });

@@ -189,7 +189,10 @@ describe('CSV full-result re-execution (C-2)', () => {
     const ac = new AbortController();
     const gen = streamCsvReexec(
       exec,
-      { client: ctx.services.trino, signal: ac.signal },
+      {
+        client: ctx.services.engines.get(ctx.services.defaultDatasourceId)!.downloadClient(),
+        signal: ac.signal,
+      },
       { flushEvery: 1 },
     );
     // Pull the first chunk (flushEvery=1 yields after page 1, parked at a live

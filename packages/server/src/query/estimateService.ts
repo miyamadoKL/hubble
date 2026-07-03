@@ -1,26 +1,23 @@
 /**
  * このファイルは Query Guard 機能の中核サービス `EstimateService` を提供する。
  *
- * 役割: ユーザーが実行しようとしている SQL ステートメントに対して
- * `EXPLAIN (TYPE IO, FORMAT JSON)` を実行し、そのユーザーの principal で
- * スキャン量（バイト数や行数）を見積もる。見積もり結果を `guardVerdict.ts`
- * の判定ロジックに渡して allow/warn/block の判定（verdict）を作り、結果を
- * TTL 付きキャッシュに保持することで、同一クエリに対する繰り返しの
- * EXPLAIN 呼び出しを避ける。
+ * 役割: ユーザーが実行しようとしている SQL ステートメントに対して、解決済み
+ * `QueryEngine` へ EXPLAIN (TYPE IO) の実行を委譲しスキャン量を見積もる。
+ * 見積もり結果を TTL 付きキャッシュに保持し、同一クエリへの繰り返し EXPLAIN を
+ * 避ける。EXPLAIN の実行本体は `engine/trinoEstimate.ts`（TrinoEngine 経由）に
+ * 移し、このクラスはキャッシュ層とエンジン解決に専念する。
  *
  * アーキテクチャ上の位置づけ: HTTP ルート層（担当外）がクエリ実行前に
  * このサービスを呼び出し、`block` 判定であれば実行そのものを拒否する。
  * `mode=off` のときはこのサービス自体を呼ばず、ルート側で `guard.ts` の
  * `disabledEstimate()` を返す（このファイルは on/warn/enforce の経路のみを
- * 担当する）。EXPLAIN の実行自体は execution.ts と同様に `TrinoClient` を
- * 介して Trino の `/v1/statement` プロトコルをポーリングする。
+ * 担当する）。
  */
-import type { EstimateResult, EstimateStatus } from '@hubble/contracts';
-import { AppError, TrinoQueryError, TrinoTransportError } from '../errors';
-import type { TrinoClient } from '../trino/client';
-import { emptySessionMutations, type TrinoColumn, type TrinoRequestContext } from '../trino/types';
-import { parseExplainIoJson } from './explainIo';
-import { computeVerdict, type GuardLimits } from './guardVerdict';
+import type { EstimateResult } from '@hubble/contracts';
+import { AppError } from '../errors';
+import type { QueryEngine } from '../engine/types';
+import { resolveEngine } from '../engine/resolve';
+import type { GuardLimits } from './guardVerdict';
 
 /** Resolved guard settings the estimate service operates against. */
 // EstimateService が動作する上で必要な、解決済みの Query Guard 設定一式。
@@ -49,6 +46,9 @@ export interface EstimateRequestParams {
   // EXPLAIN を実行する際の identity。実際のユーザークエリと同じ
   // `X-Trino-User` を使う（認証済み principal）。キャッシュキーの一部にもなる。
   principal: string;
+  /** Target datasource id. Omitted = default at request time. */
+  // 実行先データソース id。省略時はリクエスト時点の既定データソース。
+  datasourceId?: string;
 }
 
 // キャッシュ 1 エントリ分（見積もり結果 + 有効期限）。
@@ -63,16 +63,14 @@ const MAX_CACHE_ENTRIES = 500;
 /**
  * Query Guard estimation service (Query Guard feature).
  *
- * Runs `EXPLAIN (TYPE IO, FORMAT JSON)` against the user's statement (as the
- * user's principal), parses the scan estimate, applies the configured limits to
- * produce a verdict, and caches the result. `mode=off` is handled by the caller
- * (the route short-circuits before reaching the service).
+ * Resolves the target `QueryEngine`, delegates `EXPLAIN (TYPE IO, FORMAT JSON)`
+ * to it, and caches the result per principal/catalog/schema/statement/datasource.
+ * `mode=off` is handled by the caller (the route short-circuits before reaching
+ * the service).
  *
- * Query Guard の見積もりサービス。ユーザーのステートメントに対して
- * （そのユーザーの principal として）`EXPLAIN (TYPE IO, FORMAT JSON)` を
- * 実行し、スキャン見積もりをパースして、設定された上限を適用して判定
- * （verdict）を作り、結果をキャッシュする。`mode=off` は呼び出し元
- * （ルート層）が処理し、このサービスまで到達しない。
+ * Query Guard の見積もりサービス。対象エンジンを解決し、
+ * `EXPLAIN (TYPE IO, FORMAT JSON)` を委譲して結果をキャッシュする。
+ * `mode=off` は呼び出し元（ルート層）が処理し、このサービスまで到達しない。
  */
 export class EstimateService {
   /** Insertion-ordered cache (Map preserves order; oldest evicted first). */
@@ -81,28 +79,22 @@ export class EstimateService {
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(
-    private readonly client: TrinoClient,
+    private readonly engines: Map<string, QueryEngine>,
+    private readonly defaultDatasourceId: string,
     private readonly config: EstimateGuardConfig,
-    /** `X-Trino-Source` tag for guard EXPLAINs (the metadata source). */
-    // guard の EXPLAIN 実行に付与する `X-Trino-Source` タグ（メタデータ用ソース）。
-    private readonly source: string,
     private readonly now: () => number = Date.now,
   ) {}
 
-  // 設定から GuardLimits（判定用の限度値一式）を取り出す。
-  private limits(): GuardLimits {
-    return {
-      mode: this.config.mode,
-      maxScanBytes: this.config.maxScanBytes,
-      maxScanRows: this.config.maxScanRows,
-      onUnknown: this.config.onUnknown,
-    };
-  }
-
-  // principal、catalog、schema、statement を連結してキャッシュキーを作る。
-  // 同じユーザーでも catalog/schema が異なれば別クエリとして扱う。
-  private cacheKey(params: EstimateRequestParams): string {
-    return [params.principal, params.catalog ?? '', params.schema ?? '', params.statement].join(' ');
+  // principal、catalog、schema、statement、datasourceId を連結してキャッシュキーを作る。
+  // 同じユーザーでも catalog/schema やデータソースが異なれば別クエリとして扱う。
+  private cacheKey(params: EstimateRequestParams, datasourceId: string): string {
+    return [
+      datasourceId,
+      params.principal,
+      params.catalog ?? '',
+      params.schema ?? '',
+      params.statement,
+    ].join(' ');
   }
 
   /**
@@ -114,11 +106,17 @@ export class EstimateService {
    * 往復なしに再利用できるよう公開されている。
    */
   getCached(params: EstimateRequestParams): EstimateResult | undefined {
-    const entry = this.cache.get(this.cacheKey(params));
+    const { datasourceId } = resolveEngine(
+      this.engines,
+      params.datasourceId,
+      this.defaultDatasourceId,
+    );
+    const key = this.cacheKey(params, datasourceId);
+    const entry = this.cache.get(key);
     if (!entry) return undefined;
     if (entry.expiresAt <= this.now()) {
       // 期限切れなら削除してキャッシュミス扱いにする。
-      this.cache.delete(this.cacheKey(params));
+      this.cache.delete(key);
       return undefined;
     }
     return entry.result;
@@ -141,157 +139,35 @@ export class EstimateService {
   }
 
   /** Estimate, consulting the cache first. */
-  // まずキャッシュを確認し、ヒットすればそれを返す。ミスであれば実際に
-  // EXPLAIN を実行し（run）、結果をキャッシュへ格納してから返す。
+  // まずキャッシュを確認し、ヒットすればそれを返す。ミスであれば対象エンジンへ
+  // 委譲して EXPLAIN を実行し、結果をキャッシュへ格納してから返す。
   async estimate(params: EstimateRequestParams): Promise<EstimateResult> {
-    const key = this.cacheKey(params);
+    const { datasourceId, engine } = resolveEngine(
+      this.engines,
+      params.datasourceId,
+      this.defaultDatasourceId,
+    );
+
+    if (!engine.capabilities.costEstimate) {
+      throw AppError.badRequest(
+        `Datasource ${datasourceId} does not support cost estimation`,
+        'ESTIMATE_NOT_SUPPORTED',
+      );
+    }
+
+    const key = this.cacheKey(params, datasourceId);
     const cached = this.getCached(params);
     if (cached) return cached;
-    const result = await this.run(params);
+
+    const result = await engine.estimate(params, {
+      mode: this.config.mode,
+      maxScanBytes: this.config.maxScanBytes,
+      maxScanRows: this.config.maxScanRows,
+      onUnknown: this.config.onUnknown,
+      estimateTimeoutMs: this.config.estimateTimeoutMs,
+      bytesPerSecond: this.config.bytesPerSecond,
+    });
     this.store(key, result);
     return result;
-  }
-
-  /** Run the EXPLAIN, parse, and build the verdict (no caching). */
-  // EXPLAIN を実行し、結果をパースし、verdict（判定）を組み立てる。
-  // キャッシュへの読み書きはこのメソッドの責務外（呼び出し元の estimate() が行う）。
-  private async run(params: EstimateRequestParams): Promise<EstimateResult> {
-    const start = this.now();
-    const explain = `EXPLAIN (TYPE IO, FORMAT JSON) ${params.statement}`;
-    const ctx: TrinoRequestContext = {
-      catalog: params.catalog,
-      schema: params.schema,
-      source: this.source,
-      user: params.principal,
-    };
-
-    let status: EstimateStatus;
-    let parsed: ReturnType<typeof parseExplainIoJson>;
-    try {
-      const cell = await this.runExplain(explain, ctx);
-      parsed = cell === undefined ? undefined : parseExplainIoJson(cell);
-      // A missing cell or a non-IO-plan cell (Trino echoed an unsupported
-      // statement verbatim) means the query cannot be estimated -> allow.
-      // セルが存在しない、または IO プランでないセル（Trino が非対応の
-      // ステートメントをそのままエコーバックした場合など）は「見積もり不能」
-      // を意味し、ステータスは unsupported（=常に allow）となる。
-      status = parsed ? 'estimated' : 'unsupported';
-    } catch (err) {
-      // EXPLAIN 自体が例外を投げた場合はエラー種別から状態を分類する。
-      status = this.classifyError(err);
-      parsed = undefined;
-    }
-
-    const elapsedMs = Math.max(this.now() - start, 0);
-    return this.buildResult(status, parsed, elapsedMs);
-  }
-
-  // パース結果と状態から最終的な EstimateResult（verdict を含む）を組み立てる。
-  private buildResult(
-    status: EstimateStatus,
-    parsed: ReturnType<typeof parseExplainIoJson>,
-    elapsedMs: number,
-  ): EstimateResult {
-    const scanBytes = parsed?.scanBytes ?? null;
-    const scanRows = parsed?.scanRows ?? null;
-    // guardVerdict.ts の純粋関数へ委譲して allow/warn/block を決定する。
-    const verdict = computeVerdict({ status, scanBytes, scanRows }, this.limits());
-    // 設定されたスループット（bytesPerSecond）からおおよその所要時間を概算する。
-    const estimatedSeconds =
-      this.config.bytesPerSecond > 0 && scanBytes !== null
-        ? scanBytes / this.config.bytesPerSecond
-        : null;
-    return {
-      status,
-      scanBytes,
-      scanRows,
-      outputRows: parsed?.outputRows ?? null,
-      outputBytes: parsed?.outputBytes ?? null,
-      estimatedSeconds,
-      tables: parsed?.tables ?? [],
-      verdict,
-      elapsedMs,
-    };
-  }
-
-  /**
-   * Map a thrown error to an estimate status:
-   * - Trino USER_ERROR (syntax/analysis, EXPLAIN-unsupported): `unsupported`
-   *   (the real run would fail immediately the same way — no resource risk).
-   * - anything else (transport, timeout-abort, engine fault): `unavailable`.
-   *
-   * 投げられたエラーを見積もりステータスへマッピングする:
-   * - Trino の USER_ERROR（構文/解析エラー、EXPLAIN 非対応など）は
-   *   `unsupported` とする（実際にクエリを実行しても同様に即座に失敗する
-   *   だけであり、リソースを消費するリスクは無いため）。
-   * - それ以外（トランスポート障害、タイムアウトによる abort、エンジン側の
-   *   障害など）はすべて `unavailable` とする。
-   */
-  private classifyError(err: unknown): EstimateStatus {
-    if (err instanceof TrinoQueryError && err.trino.errorType === 'USER_ERROR') {
-      return 'unsupported';
-    }
-    if (err instanceof TrinoTransportError) return 'unavailable';
-    // AbortError from the timeout, network failures, anything else -> unavailable.
-    void (err instanceof AppError);
-    return 'unavailable';
-  }
-
-  /**
-   * Drive the EXPLAIN to completion, returning the single varchar cell, with a
-   * hard timeout. On timeout the in-flight statement is cancelled (DELETE) and
-   * the abort propagates so the run is torn down rather than left hanging.
-   *
-   * EXPLAIN 文を最後まで駆動し、単一の varchar セルを返す。ハードタイムアウト
-   * 付きで、タイムアウト時は実行中のステートメントをキャンセル（DELETE）し、
-   * abort を伝播させることで実行を宙ぶらりんにせず確実に後始末する。
-   */
-  private async runExplain(
-    statement: string,
-    ctx: TrinoRequestContext,
-  ): Promise<string | undefined> {
-    const ac = new AbortController();
-    // estimateTimeoutMs 経過で強制的に abort する安全弁。
-    const timer = setTimeout(() => ac.abort(), this.config.estimateTimeoutMs);
-    const mutations = emptySessionMutations();
-    let currentNextUri: string | undefined;
-    try {
-      // execution.ts の run() と同様のポーリングループ（開始 -> nextUri を
-      // 辿って完了まで進める）。ただし EXPLAIN IO は 1 行 1 列しか返さないため
-      // 行バッファは単純な配列に貯めるだけでよい。
-      let page = await this.client.start(statement, ctx, mutations, ac.signal);
-      let columns: TrinoColumn[] = page.columns ?? [];
-      const rows: unknown[][] = [];
-      if (page.data) rows.push(...page.data);
-
-      let idleAttempt = 0;
-      while (page.nextUri) {
-        currentNextUri = page.nextUri;
-        if (page.data && page.data.length > 0) {
-          idleAttempt = 0;
-        } else {
-          await this.client.waitBackoff(idleAttempt, ac.signal);
-          idleAttempt += 1;
-        }
-        page = await this.client.advance(page.nextUri, ctx, mutations, ac.signal);
-        if (page.columns && columns.length === 0) columns = page.columns;
-        if (page.data) rows.push(...page.data);
-      }
-      currentNextUri = undefined;
-      // EXPLAIN IO returns exactly one row, one varchar column.
-      // EXPLAIN IO は必ず 1 行 1 列（varchar）だけを返す仕様。
-      const cell = rows[0]?.[0];
-      return typeof cell === 'string' ? cell : undefined;
-    } catch (err) {
-      // Best-effort cancel of the in-flight EXPLAIN on timeout/abort.
-      // タイムアウト/abort が原因の場合は、実行中の EXPLAIN をベストエフォートで
-      // キャンセルしてから元の例外を再送出する。
-      if (ac.signal.aborted && currentNextUri) {
-        await this.client.cancel(currentNextUri, ctx);
-      }
-      throw err;
-    } finally {
-      clearTimeout(timer);
-    }
   }
 }

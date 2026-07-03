@@ -35,6 +35,9 @@ export const createQueryRequestSchema = z.object({
   /** Cap on rows buffered server-side for this query. */
   // このクエリについて server 側でバッファする行数の上限。省略時は server の既定値。
   maxRows: z.number().int().positive().optional(),
+  /** Target datasource id. Omitted = default (first configured datasource). */
+  // 実行先データソース id。省略時は既定データソース（設定順先頭）。
+  datasourceId: z.string().optional(),
 });
 
 /** クエリ実行リクエストの推論型。 */
@@ -125,6 +128,9 @@ export const querySnapshotSchema = z.object({
   submittedAt: isoTimestamp,
   // クエリが終端状態に達した日時（実行中は未設定）。
   finishedAt: isoTimestamp.optional(),
+  /** Datasource this query runs against. */
+  // このクエリが実行されたデータソース id。
+  datasourceId: z.string().optional(),
 });
 /** クエリスナップショットの推論型。 */
 export type QuerySnapshot = z.infer<typeof querySnapshotSchema>;

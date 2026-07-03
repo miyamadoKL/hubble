@@ -18,14 +18,14 @@
  * 次の未来の発火だけを予約する。
  */
 import type { ScheduleRunStatus } from '@hubble/contracts';
-import type { TrinoClient } from '../trino/client';
 import type { TrinoRequestContext } from '../trino/types';
 import type { EstimateService } from '../query/estimateService';
+import type { QueryEngine } from '../engine/types';
+import { getEngineOrUndefined } from '../engine/resolve';
 import type { ScheduleRecord, ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
 import { drainStatement } from './execute';
 import { nextRunAfter } from './cron';
 import { backoffMs, classifyFailure, shouldRetry } from './retry';
-import { StatementValidator } from './validator';
 
 /**
  * Resolved scheduler settings.
@@ -55,15 +55,13 @@ export interface SchedulerDeps {
   schedules: ScheduleRepository;
   // schedule_runs (実行履歴) の永続化リポジトリ。
   runs: ScheduleRunRepository;
-  /** Trino client tagged with the scheduled source + run as the owner. */
-  client: TrinoClient;
-  // 実行前検証 (EXPLAIN VALIDATE) を担うバリデータ (validator.ts)。
-  validator: StatementValidator;
+  /** データソース id から QueryEngine を引くマップ。 */
+  engines: Map<string, QueryEngine>;
+  /** datasourceId 省略時の既定 id（スケジュールには永続化済み id を使う）。 */
+  defaultDatasourceId: string;
   // Query Guard のスキャン量見積りサービス (enforce モードで使用)。
   estimate: EstimateService;
   config: SchedulerConfig;
-  /** `X-Trino-Source` for scheduled runs. */
-  source: string;
   /** Wall clock (injectable for tests). */
   // 日本語: 省略時は Date.now。テストでは仮想時計を注入して cron 発火判定を制御する。
   now?: () => number;
@@ -367,6 +365,18 @@ export class Scheduler {
     const policy = schedule.retry;
     let attempt = 0;
 
+    const engine = getEngineOrUndefined(this.deps.engines, schedule.datasourceId);
+    if (!engine) {
+      return {
+        status: 'failed',
+        attempt: 1,
+        trinoQueryId: null,
+        errorType: 'NOT_CONFIGURED',
+        errorMessage: `Datasource '${schedule.datasourceId}' is not configured`,
+        rowCount: null,
+      };
+    }
+
     // 日本語: 無限ループに見えるが、各分岐は必ず return するか (確定的失敗/成功/blocked)、
     // maybeRetry() が undefined を返した場合のみ waitBeforeRetry() を挟んで continue する。
     // つまりループを抜けるのは「確定」か「リトライ上限到達で確定」のいずれかのみ。
@@ -376,7 +386,7 @@ export class Scheduler {
       // 1. Pre-flight validation (EXPLAIN VALIDATE). USER_ERROR is deterministic.
       // 日本語: 実行直前にもう一度 EXPLAIN (TYPE VALIDATE) で検証する。作成/更新時にも
       // 検証しているが、依存テーブルの変化などで実行時点では失敗しうるための再チェック。
-      const validation = await this.deps.validator.validate({
+      const validation = await engine.validate({
         statement: schedule.statement,
         catalog: schedule.catalog,
         schema: schedule.schema,
@@ -421,6 +431,7 @@ export class Scheduler {
           catalog: schedule.catalog ?? undefined,
           schema: schedule.schema ?? undefined,
           principal: schedule.owner,
+          datasourceId: schedule.datasourceId,
         });
         if (estimate.verdict.decision === 'block') {
           return {
@@ -438,13 +449,16 @@ export class Scheduler {
       // 日本語: 検証とガードを通過したので実際に Trino へ投げ、完走 (全ページ追走) させる。
       // drainStatement は結果行をバッファせず行数だけ数える (execute.ts 参照)。
       try {
+        const client = engine.executionClient({
+          source: 'scheduled',
+          user: schedule.owner,
+        });
         const ctx: TrinoRequestContext = {
           catalog: schedule.catalog ?? undefined,
           schema: schedule.schema ?? undefined,
-          source: this.deps.source,
           user: schedule.owner,
         };
-        const result = await drainStatement(this.deps.client, schedule.statement, ctx);
+        const result = await drainStatement(client, schedule.statement, ctx);
         return {
           status: 'success',
           attempt,

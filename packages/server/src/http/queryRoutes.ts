@@ -23,6 +23,7 @@ import {
   type QueryRowsPage,
 } from '@hubble/contracts';
 import type { Services } from '../services';
+import { resolveEngine } from '../engine/resolve';
 import type { TrinoRequestContext } from '../trino/types';
 import type { OverflowMode } from '../query/execution';
 import type { AuthVariables } from '../auth/middleware';
@@ -64,6 +65,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       catalog: body.catalog ?? services.config.defaults.catalog,
       schema: body.schema ?? services.config.defaults.schema,
       principal: principal.user,
+      datasourceId: body.datasourceId,
     });
     return c.json(result);
   });
@@ -96,6 +98,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         catalog,
         schema,
         principal: principal.user,
+        datasourceId: body.datasourceId,
       });
       if (estimate.verdict.decision === 'block') {
         throw AppError.queryBlocked(estimate.verdict.reasons[0] ?? 'Query blocked by Query Guard', {
@@ -112,6 +115,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       statement: body.statement,
       ctx,
       owner: principal.user,
+      datasourceId: body.datasourceId,
       maxRows: body.maxRows,
       overflowMode,
       notebookId: body.notebookId,
@@ -251,7 +255,15 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       // 再クエリ）の両方を同時に打ち切れるようにする。
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
-      const csv = streamQueryCsv(exec, { client: services.trino, signal: ac.signal });
+      const engine = resolveEngine(
+        services.engines,
+        exec.datasourceId,
+        services.defaultDatasourceId,
+      ).engine;
+      const csv = streamQueryCsv(exec, {
+        client: engine.downloadClient(exec.ctx.user),
+        signal: ac.signal,
+      });
 
       if (zip) {
         await pipeZip(rawStream, csvName, csv, ac.signal);

@@ -124,6 +124,7 @@ for (const backend of dbBackends) {
           schema: 'tiny',
           state: 'running',
           owner: 'alice',
+          datasourceId: 'trino-default',
           submittedAt: '2026-01-01T00:00:00.000Z',
         });
         await repo.insert({
@@ -131,6 +132,7 @@ for (const backend of dbBackends) {
           statement: 'SELECT bad',
           state: 'running',
           owner: 'alice',
+          datasourceId: 'trino-default',
           submittedAt: '2026-01-01T00:01:00.000Z',
         });
         await repo.insert({
@@ -138,8 +140,12 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           state: 'finished',
           owner: 'bob',
+          datasourceId: 'trino-default',
           submittedAt: '2026-01-01T00:02:00.000Z',
         });
+
+        const h1 = await repo.get('alice', 'h1');
+        expect(h1?.datasourceId).toBe('trino-default');
 
         await repo.update('h1', { state: 'finished', rowCount: 25, elapsedMs: 120 });
         await repo.update('h2', {

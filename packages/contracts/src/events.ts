@@ -16,6 +16,9 @@ export const stateEventSchema = z.object({
   type: z.literal('state'),
   // 新しいクエリ状態（queued / running / finished / failed / canceled）。
   state: queryStateSchema,
+  /** Datasource this query runs against (included when known). */
+  // 実行先データソース id（判明している場合のみ付与）。
+  datasourceId: z.string().optional(),
 });
 
 // 結果セットの列情報（列名と型）が確定したことを通知するイベント。

@@ -28,6 +28,7 @@ interface HistoryRow {
   error_message: string | null;
   notebook_id: string | null;
   cell_id: string | null;
+  datasource_id: string;
   submitted_at: string;
 }
 
@@ -45,6 +46,7 @@ export interface HistoryInsert {
   owner: string;
   notebookId?: string;
   cellId?: string;
+  datasourceId: string;
   submittedAt: string;
 }
 
@@ -83,8 +85,8 @@ export class HistoryRepository {
     // error_message）は SQL リテラルで NULL/0 を埋め、それ以外は
     // プレースホルダで位置バインドする。statement は STATEMENT_MAX で切り詰める。
     await this.db.run(
-      `INSERT INTO query_history (id, statement, catalog, schema, trino_query_id, state, row_count, elapsed_ms, error_message, owner, notebook_id, cell_id, submitted_at)
-       VALUES (?, ?, ?, ?, NULL, ?, 0, 0, NULL, ?, ?, ?, ?)`,
+      `INSERT INTO query_history (id, statement, catalog, schema, trino_query_id, state, row_count, elapsed_ms, error_message, owner, notebook_id, cell_id, datasource_id, submitted_at)
+       VALUES (?, ?, ?, ?, NULL, ?, 0, 0, NULL, ?, ?, ?, ?, ?)`,
       [
         entry.id,
         entry.statement.slice(0, STATEMENT_MAX),
@@ -94,6 +96,7 @@ export class HistoryRepository {
         entry.owner,
         entry.notebookId ?? null,
         entry.cellId ?? null,
+        entry.datasourceId,
         entry.submittedAt,
       ],
     );
@@ -182,5 +185,6 @@ function rowToEntry(row: HistoryRow): QueryHistoryEntry {
   if (row.error_message) entry.errorMessage = row.error_message;
   if (row.notebook_id) entry.notebookId = row.notebook_id;
   if (row.cell_id) entry.cellId = row.cell_id;
+  if (row.datasource_id) entry.datasourceId = row.datasource_id;
   return queryHistoryEntrySchema.parse(entry);
 }

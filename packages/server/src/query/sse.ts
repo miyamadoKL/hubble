@@ -50,7 +50,7 @@ const ROW_CHUNK_SIZE = 500;
 export function buildReplayEvents(exec: QueryExecution): QueryEvent[] {
   const events: QueryEvent[] = [];
   // まず現在の state を送る（クライアントが最初に表示すべき情報）。
-  events.push({ type: 'state', state: exec.state });
+  events.push({ type: 'state', state: exec.state, datasourceId: exec.datasourceId });
   // 列情報が判明していれば columns イベントを送る（まだなら省略）。
   if (exec.columns.length > 0) {
     events.push({ type: 'columns', columns: exec.columns });

@@ -19,6 +19,7 @@ import {
   type ScheduleRunSummary,
 } from '@hubble/contracts';
 import type { Services } from '../services';
+import { resolveEngine } from '../engine/resolve';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
 import type { ScheduleRecord, ScheduleRunRecord } from '../store/schedules';
@@ -72,6 +73,7 @@ async function toSchedule(services: Services, record: ScheduleRecord): Promise<S
     cron: record.cron,
     enabled: record.enabled,
     retry: record.retry,
+    datasourceId: record.datasourceId,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     // Computed from "now": disabled schedules have no next run.
@@ -89,7 +91,7 @@ async function toSchedule(services: Services, record: ScheduleRecord): Promise<S
  * スケジュール作成/更新時のバリデーション結果を検査し、書き込みを許可してよいかを判定する
  * ゲート関数。`ok` または Trino 未到達による `unavailable` は許容し（実行時に再検証されるため）、
  * `user_error`（Trino が構文/意味エラーと判定）の場合のみ 400 の `AppError` を送出して書き込みを拒否する。
- * @param result - `services.scheduleValidator.validate` の結果。
+ * @param result - 対象エンジンの `validate()` の結果。
  * @throws {AppError} `result.kind === 'user_error'` のとき、行/列情報付きの 400 VALIDATION_ERROR。
  */
 function assertValidationAllowsWrite(result: ValidationResult): void {
@@ -133,14 +135,28 @@ export function scheduleRoutes(services: Services): App {
   app.post('/', async (c) => {
     const owner = c.var.principal.user;
     const body = await parseJsonBody(c, createScheduleRequestSchema);
-    const validation = await services.scheduleValidator.validate({
+    const { datasourceId, engine } = resolveEngine(
+      services.engines,
+      body.datasourceId,
+      services.defaultDatasourceId,
+    );
+    const validation = await engine.validate({
       statement: body.statement,
       catalog: body.catalog,
       schema: body.schema,
       principal: owner,
     });
     assertValidationAllowsWrite(validation);
-    const record = await services.schedules.create(owner, body);
+    const record = await services.schedules.create(owner, {
+      name: body.name,
+      statement: body.statement,
+      catalog: body.catalog,
+      schema: body.schema,
+      cron: body.cron,
+      enabled: body.enabled,
+      retry: body.retry,
+      datasourceId,
+    });
     return c.json(await toSchedule(services, record), 201);
   });
 
@@ -152,8 +168,8 @@ export function scheduleRoutes(services: Services): App {
     return c.json(await toSchedule(services, record));
   });
 
-  // PATCH /api/schedules/:id: 部分更新。ステートメント/catalog/schema/cron のいずれかが
-  // 変わる場合のみ再検証する。
+  // PATCH /api/schedules/:id: 部分更新。ステートメント/catalog/schema/cron/datasourceId の
+  // いずれかが変わる場合のみ再検証する。
   app.patch('/:id', async (c) => {
     const owner = c.var.principal.user;
     const id = c.req.param('id');
@@ -167,9 +183,16 @@ export function scheduleRoutes(services: Services): App {
       body.statement !== undefined ||
       body.catalog !== undefined ||
       body.schema !== undefined ||
-      body.cron !== undefined;
+      body.cron !== undefined ||
+      body.datasourceId !== undefined;
     if (statementChanges) {
-      const validation = await services.scheduleValidator.validate({
+      const targetDatasourceId = body.datasourceId ?? existing.datasourceId;
+      const { engine } = resolveEngine(
+        services.engines,
+        targetDatasourceId,
+        services.defaultDatasourceId,
+      );
+      const validation = await engine.validate({
         statement: body.statement ?? existing.statement,
         catalog: body.catalog !== undefined ? body.catalog : existing.catalog,
         schema: body.schema !== undefined ? body.schema : existing.schema,
