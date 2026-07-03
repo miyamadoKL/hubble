@@ -13,15 +13,18 @@
  * クラスは「誰が、いつ、何件同時に実行できるか」という運用上の制御に専念
  * する。`service.ts`（履歴永続化）はこのレジストリをラップして構築される。
  */
-import type { TrinoClient } from '../trino/client';
 import type { TrinoRequestContext } from '../trino/types';
+import type { QueryEngine } from '../engine/types';
 import { AppError } from '../errors';
 import { newId } from '../util/id';
 import { QueryExecution, type OverflowMode } from './execution';
 
 /** `QueryRegistry` の生成に必要なオプション一式。 */
 export interface QueryRegistryOptions {
-  client: TrinoClient;
+  /** データソース id から QueryEngine を引くマップ。 */
+  engines: Map<string, QueryEngine>;
+  /** datasourceId 省略時に使う既定 id。 */
+  defaultDatasourceId: string;
   /** Default cap on buffered rows per query. */
   // 1 クエリあたりバッファする行数のデフォルト上限。
   defaultMaxRows: number;
@@ -49,6 +52,10 @@ export interface QueryRegistryOptions {
 export interface SubmitParams {
   statement: string;
   ctx: TrinoRequestContext;
+  /** 実行先データソース id。省略時は defaultDatasourceId。 */
+  datasourceId?: string;
+  /** ユーザークエリかスケジュール実行か。 */
+  executionSource?: 'user' | 'scheduled';
   maxRows?: number;
   overflowMode?: OverflowMode;
 }
@@ -64,7 +71,8 @@ export interface SubmitParams {
 export class QueryRegistry {
   // queryId をキーに実行中/終了済みの QueryExecution を保持するマップ。
   private readonly executions = new Map<string, QueryExecution>();
-  private readonly client: TrinoClient;
+  private readonly engines: Map<string, QueryEngine>;
+  private readonly defaultDatasourceId: string;
   private readonly defaultMaxRows: number;
   private readonly concurrency: number;
   private readonly ttlMs: number;
@@ -80,7 +88,8 @@ export class QueryRegistry {
   private sweepTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: QueryRegistryOptions) {
-    this.client = options.client;
+    this.engines = options.engines;
+    this.defaultDatasourceId = options.defaultDatasourceId;
     this.defaultMaxRows = options.defaultMaxRows;
     this.concurrency = options.concurrency;
     this.ttlMs = options.ttlMs;
@@ -104,14 +113,27 @@ export class QueryRegistry {
   // 返し、実際の実行開始（run()）はセマフォの空きを待ってから非同期に行う
   // （scheduleRun を待たずに返るため、呼び出しはノンブロッキング）。
   submit(params: SubmitParams): QueryExecution {
+    const datasourceId = params.datasourceId ?? this.defaultDatasourceId;
+    const engine = this.engines.get(datasourceId);
+    if (!engine) {
+      throw AppError.notFound(`Datasource ${datasourceId} not found`);
+    }
+
     const queryId = newId('q_');
+    const execSource = params.executionSource ?? 'user';
+    const client = engine.executionClient({
+      source: execSource,
+      user: params.ctx.user,
+    });
+
     const exec = new QueryExecution({
       queryId,
       statement: params.statement,
       ctx: params.ctx,
+      datasourceId,
       maxRows: params.maxRows ?? this.defaultMaxRows,
       overflowMode: params.overflowMode ?? this.defaultOverflowMode,
-      client: this.client,
+      client,
       now: this.now,
       onSettled: (e) => {
         this.onSettled?.(e);

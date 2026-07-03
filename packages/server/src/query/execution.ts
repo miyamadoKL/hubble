@@ -26,7 +26,7 @@ import type {
   QueryStats,
 } from '@hubble/contracts';
 import { AppError, toErrorResponse } from '../errors';
-import type { TrinoClient } from '../trino/client';
+import type { StatementClient } from '../engine/types';
 import {
   emptySessionMutations,
   toQueryColumns,
@@ -46,9 +46,11 @@ export interface QueryExecutionInit {
   queryId: string;
   statement: string;
   ctx: TrinoRequestContext;
+  /** 実行先データソース id。 */
+  datasourceId: string;
   maxRows: number;
   overflowMode: OverflowMode;
-  client: TrinoClient;
+  client: StatementClient;
   /** Wall-clock time source (injectable for tests). */
   // テスト時に時刻を差し替えられるようにするための注入ポイント。
   now?: () => number;
@@ -76,11 +78,12 @@ export class QueryExecution {
   readonly queryId: string;
   readonly statement: string;
   readonly ctx: TrinoRequestContext;
+  readonly datasourceId: string;
   readonly maxRows: number;
   readonly overflowMode: OverflowMode;
   readonly submittedAt: number;
 
-  private readonly client: TrinoClient;
+  private readonly client: StatementClient;
   private readonly now: () => number;
   private readonly onSettled?: (exec: QueryExecution) => void;
 
@@ -124,6 +127,7 @@ export class QueryExecution {
     this.queryId = init.queryId;
     this.statement = init.statement;
     this.ctx = init.ctx;
+    this.datasourceId = init.datasourceId;
     this.maxRows = init.maxRows;
     this.overflowMode = init.overflowMode;
     this.client = init.client;
@@ -196,6 +200,7 @@ export class QueryExecution {
       rowCount: this.producedRows,
       truncated: this.truncated,
       submittedAt: new Date(this.submittedAt).toISOString(),
+      datasourceId: this.datasourceId,
     };
     if (this.trinoQueryId) snap.trinoQueryId = this.trinoQueryId;
     if (this.infoUri) snap.infoUri = this.infoUri;
@@ -218,7 +223,7 @@ export class QueryExecution {
   private setState(state: QueryState): void {
     if (this.state === state) return;
     this.state = state;
-    this.emit({ type: 'state', state });
+    this.emit({ type: 'state', state, datasourceId: this.datasourceId });
   }
 
   // 列定義を一度だけ確定させる。すでに列がある場合や空配列の場合は無視する
@@ -363,7 +368,7 @@ export class QueryExecution {
 
   // Trino から受け取った 1 ページ分の内容（columns/data/stats）を、
   // 存在するフィールドだけ状態へ反映する。
-  private applyPage(page: Awaited<ReturnType<TrinoClient['start']>>): void {
+  private applyPage(page: Awaited<ReturnType<StatementClient['start']>>): void {
     if (page.columns) this.setColumns(toQueryColumns(page.columns));
     if (page.data) this.appendRows(page.data);
     if (page.stats) this.setStats(toQueryStats(page.stats));

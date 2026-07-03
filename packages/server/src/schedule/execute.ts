@@ -1,5 +1,5 @@
 import { emptySessionMutations, type TrinoRequestContext } from '../trino/types';
-import type { TrinoClient } from '../trino/client';
+import type { StatementClient } from '../engine/types';
 
 /**
  * このファイルは Query Scheduling 機能の「実行」ステップを担う `drainStatement` を
@@ -23,7 +23,7 @@ export interface DrainResult {
  * the streaming registry. Throws on any Trino error (the caller classifies it).
  */
 export async function drainStatement(
-  client: TrinoClient,
+  client: StatementClient,
   statement: string,
   ctx: TrinoRequestContext,
 ): Promise<DrainResult> {

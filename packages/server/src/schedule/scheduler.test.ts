@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openMemoryDatabase } from '../db';
 import type { SqlDatabase } from '../db/sqlDatabase';
-import { TrinoClient } from '../trino/client';
 import { EstimateService } from '../query/estimateService';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
 import { FakeTrino, type FakeScenario } from '../test/fakeTrino';
-import { StatementValidator } from './validator';
+import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { Scheduler, type SchedulerConfig } from './scheduler';
 
 /**
@@ -55,20 +54,12 @@ async function makeHarness(
 ): Promise<Harness> {
   const db = await openMemoryDatabase();
   const fake = new FakeTrino(scenarios);
-  const client = new TrinoClient({
-    baseUrl: 'http://trino.test',
-    username: 'admin',
-    password: '',
-    user: 'admin',
-    source: 'hubble-scheduled',
-    fetchImpl: fake.fetch,
-    sleepImpl: () => Promise.resolve(),
-  });
+  const { engines, defaultDatasourceId } = makeEnginesMap(fake);
   const schedules = new ScheduleRepository(db);
   const runs = new ScheduleRunRepository(db, 50);
-  const validator = new StatementValidator(client, 'hubble-scheduled');
   const estimate = new EstimateService(
-    client,
+    engines,
+    defaultDatasourceId,
     {
       mode: configOverrides.guardMode ?? 'warn',
       maxScanBytes: 0,
@@ -78,7 +69,6 @@ async function makeHarness(
       cacheTtlSeconds: 0,
       bytesPerSecond: 0,
     },
-    'hubble-scheduled',
   );
   const sleeps: number[] = [];
   let nowMs = Date.parse('2026-01-01T00:00:00.000Z');
@@ -94,11 +84,10 @@ async function makeHarness(
   const scheduler = new Scheduler({
     schedules,
     runs,
-    client,
-    validator,
+    engines,
+    defaultDatasourceId,
     estimate,
     config,
-    source: 'hubble-scheduled',
     now,
     sleep: (ms) => {
       onSleep?.(sleeps.length, ms);
@@ -139,6 +128,7 @@ describe('Scheduler run matrix', () => {
       name: 'ok',
       statement: 'SELECT_OK',
       cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
     });
     const { runId } = await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -170,6 +160,7 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT_BAD',
       cron: '* * * * *',
       retry: { maxAttempts: 5, backoffSeconds: 60, backoffMultiplier: 2 },
+      datasourceId: DEFAULT_DATASOURCE_ID,
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -210,6 +201,7 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT_FLAKY',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
+      datasourceId: DEFAULT_DATASOURCE_ID,
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -239,6 +231,7 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT_DOWN',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
+      datasourceId: DEFAULT_DATASOURCE_ID,
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -272,6 +265,7 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT_BIG',
       cron: '* * * * *',
       retry: { maxAttempts: 5, backoffSeconds: 60, backoffMultiplier: 2 },
+      datasourceId: DEFAULT_DATASOURCE_ID,
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -304,6 +298,7 @@ describe('Scheduler overlap and concurrency', () => {
       name: 'hold',
       statement: 'SELECT_HOLD',
       cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
     });
     await h.scheduler.runManual(s);
     // Second manual run must be rejected while the first is in flight.
@@ -331,6 +326,7 @@ describe('Scheduler tick + lifecycle', () => {
       name: 'tick',
       statement: 'SELECT_TICK',
       cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
     });
     // Start (seeds nextFire from now). enabled stays false so no real timer runs;
     // we drive tick() manually.
@@ -353,6 +349,7 @@ describe('Scheduler tick + lifecycle', () => {
       name: 'orphan',
       statement: 'SELECT 1',
       cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
     });
     // Simulate a run left `running` by a crashed process.
     const orphanId = await h.runs.start({
@@ -378,6 +375,7 @@ describe('Scheduler disabled', () => {
         name: 'x',
         statement: 'SELECT 1',
         cron: '* * * * *',
+        datasourceId: DEFAULT_DATASOURCE_ID,
       });
       const orphanId = await h.runs.start({
         scheduleId: s.id,

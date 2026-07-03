@@ -127,6 +127,22 @@ describe('metadata endpoints', () => {
     expect(second.source).toBe('cache');
   });
 
+  it('GET /api/datasources/:id/catalogs returns datasource-scoped metadata', async () => {
+    const ctx = await createTestContext({ scenarios });
+    const res = await ctx.app.request(`/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`);
+    expect(res.status).toBe(200);
+    const body = catalogsResponseSchema.parse(await res.json());
+    expect(body.items.map((c) => c.name)).toEqual(['tpch', 'mysql']);
+    await ctx.services.shutdown();
+  });
+
+  it('returns 404 for unknown datasource on scoped metadata route', async () => {
+    const ctx = await createTestContext({ scenarios });
+    const res = await ctx.app.request('/api/datasources/unknown-ds/catalogs');
+    expect(res.status).toBe(404);
+    await ctx.services.shutdown();
+  });
+
   it('POST /api/metadata/refresh re-fetches catalogs', async () => {
     const ctx = await createTestContext({ scenarios });
     await ctx.app.request('/api/catalogs');

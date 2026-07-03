@@ -19,6 +19,7 @@ import {
   type ScheduleRunSummary,
 } from '@hubble/contracts';
 import type { Services } from '../services';
+import { resolveEngine } from '../engine/resolve';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
 import type { ScheduleRecord, ScheduleRunRecord } from '../store/schedules';
@@ -72,6 +73,7 @@ async function toSchedule(services: Services, record: ScheduleRecord): Promise<S
     cron: record.cron,
     enabled: record.enabled,
     retry: record.retry,
+    datasourceId: record.datasourceId,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     // Computed from "now": disabled schedules have no next run.
@@ -133,14 +135,28 @@ export function scheduleRoutes(services: Services): App {
   app.post('/', async (c) => {
     const owner = c.var.principal.user;
     const body = await parseJsonBody(c, createScheduleRequestSchema);
-    const validation = await services.scheduleValidator.validate({
+    const { datasourceId, engine } = resolveEngine(
+      services.engines,
+      body.datasourceId,
+      services.defaultDatasourceId,
+    );
+    const validation = await engine.validate({
       statement: body.statement,
       catalog: body.catalog,
       schema: body.schema,
       principal: owner,
     });
     assertValidationAllowsWrite(validation);
-    const record = await services.schedules.create(owner, body);
+    const record = await services.schedules.create(owner, {
+      name: body.name,
+      statement: body.statement,
+      catalog: body.catalog,
+      schema: body.schema,
+      cron: body.cron,
+      enabled: body.enabled,
+      retry: body.retry,
+      datasourceId,
+    });
     return c.json(await toSchedule(services, record), 201);
   });
 
@@ -169,7 +185,13 @@ export function scheduleRoutes(services: Services): App {
       body.schema !== undefined ||
       body.cron !== undefined;
     if (statementChanges) {
-      const validation = await services.scheduleValidator.validate({
+      const targetDatasourceId = body.datasourceId ?? existing.datasourceId;
+      const { engine } = resolveEngine(
+        services.engines,
+        targetDatasourceId,
+        services.defaultDatasourceId,
+      );
+      const validation = await engine.validate({
         statement: body.statement ?? existing.statement,
         catalog: body.catalog !== undefined ? body.catalog : existing.catalog,
         schema: body.schema !== undefined ? body.schema : existing.schema,

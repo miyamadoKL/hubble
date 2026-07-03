@@ -35,6 +35,7 @@ export interface SubmitQueryParams {
   // このクエリの所有者となる principal。Trino へのリクエストでは
   // `X-Trino-User` としても使われる（design.md §11 参照）。
   owner: string;
+  datasourceId?: string;
   maxRows?: number;
   overflowMode?: OverflowMode;
   notebookId?: string;
@@ -67,6 +68,7 @@ export class QueryService {
     const exec = this.params.registry.submit({
       statement: params.statement,
       ctx: params.ctx,
+      datasourceId: params.datasourceId,
       maxRows: params.maxRows,
       overflowMode: params.overflowMode,
     });
@@ -89,6 +91,7 @@ export class QueryService {
         owner: params.owner,
         notebookId: params.notebookId,
         cellId: params.cellId,
+        datasourceId: exec.datasourceId,
         submittedAt: new Date(exec.submittedAt).toISOString(),
       })
       .catch((err: unknown) => {
