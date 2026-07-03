@@ -24,6 +24,8 @@ import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
 import { StatementValidator } from './schedule/validator';
 import { Scheduler } from './schedule/scheduler';
 import { backfillOwners } from './db/backfill';
+import { loadDatasources } from './datasource/loader';
+import type { ResolvedDatasource } from './datasource/types';
 
 /** All long-lived services the HTTP layer depends on. */
 /**
@@ -32,6 +34,8 @@ import { backfillOwners } from './db/backfill';
  */
 export interface Services {
   config: ServerConfig;
+  /** 宣言的に設定されたデータソース一覧（Phase 1、クエリ実行には未配線）。 */
+  datasources: ResolvedDatasource[];
   trino: TrinoClient;
   metadata: MetadataService;
   queries: QueryService;
@@ -58,6 +62,10 @@ export interface Services {
  * 実時間の待機、実クロック）を差し替えるためのオプション。本番経路では未指定
  * （= 実装のデフォルト動作）のまま使われる。 */
 export interface BuildServicesOptions {
+  /** 環境変数の差し替え（データソース読み込みと設定読み込みのテスト用）。 */
+  env?: Record<string, string | undefined>;
+  /** datasources.yaml 探索の作業ディレクトリ（テスト用）。 */
+  cwd?: string;
   /** Injectable fetch for tests (fake Trino). */
   fetchImpl?: typeof fetch;
   /** Injectable sleep for tests (deterministic backoff). */
@@ -83,6 +91,9 @@ export async function buildServices(
   db: SqlDatabase,
   options: BuildServicesOptions = {},
 ): Promise<Services> {
+  const env = options.env ?? process.env;
+  const datasources = loadDatasources({ env, trino: config.trino, cwd: options.cwd });
+
   // ユーザーが発行する通常クエリ用の Trino クライアント（X-Trino-Source: hubble）。
   const trino = new TrinoClient({
     baseUrl: config.trino.baseUrl,
@@ -193,6 +204,7 @@ export async function buildServices(
 
   return {
     config,
+    datasources,
     trino,
     metadata,
     queries,

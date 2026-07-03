@@ -19,6 +19,7 @@ import { openDatabase } from './db';
 import { buildServices, type BuildServicesOptions, type Services } from './services';
 import { AppError, toErrorResponse } from './errors';
 import { authMiddleware, type AuthVariables, type RemoteAddressFn } from './auth/middleware';
+import { datasourceRoutes } from './http/datasourceRoutes';
 import { metadataRoutes } from './http/metadataRoutes';
 import { queryRoutes } from './http/queryRoutes';
 import { historyRoutes, notebookRoutes, savedQueryRoutes } from './http/storeRoutes';
@@ -83,6 +84,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
 
   // フロントエンドが起動時に読む公開設定（Trino URL/既定値/認証モード/Guard 設定等）。
   app.get(apiRoutes.config(), (c) => c.json(toAppConfig(services.config)));
+  app.route('/api/datasources', datasourceRoutes(services));
   // 認証ミドルウェアが解決した principal をそのまま返すだけの薄いエンドポイント。
   // TopBar のユーザー表示や 401 時のフォールバック UI 判定に使われる。
   app.get(apiRoutes.me(), (c) => {

@@ -17,6 +17,8 @@ export const apiRoutes = {
   healthz: () => '/api/healthz',
   // アプリ設定取得エンドポイント。
   config: () => '/api/config',
+  // 宣言的に設定されたデータソース一覧取得。
+  datasources: () => '/api/datasources',
   // ログイン中ユーザー情報取得エンドポイント。
   me: () => '/api/me',
 

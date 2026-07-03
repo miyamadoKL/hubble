@@ -16,6 +16,8 @@ export * from './error';
 export * from './auth';
 // アプリ設定（`GET /api/config`）の契約
 export * from './config';
+// データソース一覧（`GET /api/datasources`）の契約
+export * from './datasource';
 // カタログ / スキーマ / テーブルなどメタデータ系の契約
 export * from './metadata';
 // クエリ実行（`POST /api/queries` など）の契約
