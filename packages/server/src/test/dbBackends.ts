@@ -33,7 +33,7 @@ const TEST_PG_URL = process.env.TEST_DATABASE_URL;
 // 日本語: リポジトリテストが読み書きしうる全テーブル名。pg バックエンドでは
 // テストケースごとにこれらを TRUNCATE してデータを空にし、テスト間の
 // 干渉を防ぐ (SQLite は毎回新規のインメモリ DB を開くため不要)。
-const OWNED_TABLES = ['notebooks', 'saved_queries', 'query_history'] as const;
+const OWNED_TABLES = ['notebooks', 'saved_queries', 'query_history', 'schedules', 'schedule_runs'] as const;
 
 // 日本語: SQLite バックエンド定義。open() のたびに新規のインメモリ DB を
 // 生成するため、テストケース間の分離は自然に得られる (マイグレーションも

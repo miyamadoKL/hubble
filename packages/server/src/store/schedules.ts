@@ -44,6 +44,8 @@ export interface ScheduleRecord {
   enabled: boolean;
   /** 失敗時の再試行ポリシー（最大試行回数、待機時間、倍率）。 */
   retry: RetryPolicy;
+  /** 実行先データソース id（作成/更新時に解決して永続化）。 */
+  datasourceId: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -62,6 +64,8 @@ export interface CreateScheduleInput {
   cron: string;
   enabled?: boolean;
   retry?: RetryPolicy;
+  /** 実行先データソース id（ルート層で省略時は既定に解決済み）。 */
+  datasourceId: string;
 }
 
 /**
@@ -78,6 +82,7 @@ export interface UpdateScheduleInput {
   cron?: string;
   enabled?: boolean;
   retry?: RetryPolicy;
+  datasourceId?: string;
 }
 
 /**
@@ -97,6 +102,7 @@ interface ScheduleRow {
   retry_max_attempts: number;
   retry_backoff_seconds: number;
   retry_backoff_multiplier: number;
+  datasource_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -123,6 +129,7 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
       backoffSeconds: Number(row.retry_backoff_seconds),
       backoffMultiplier: Number(row.retry_backoff_multiplier),
     }),
+    datasourceId: row.datasource_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -192,6 +199,7 @@ export class ScheduleRepository {
       cron: input.cron,
       enabled: input.enabled ?? true,
       retry,
+      datasourceId: input.datasourceId,
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -199,8 +207,8 @@ export class ScheduleRepository {
       `INSERT INTO schedules
          (id, owner, name, statement, catalog, schema, cron, enabled,
           retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
-          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          datasource_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertParams(record),
     );
     return record;
@@ -228,13 +236,14 @@ export class ScheduleRepository {
       cron: input.cron ?? existing.cron,
       enabled: input.enabled ?? existing.enabled,
       retry: input.retry ?? existing.retry,
+      datasourceId: input.datasourceId ?? existing.datasourceId,
       updatedAt: new Date().toISOString(),
     };
     await this.db.run(
       `UPDATE schedules SET
          name = ?, statement = ?, catalog = ?, schema = ?, cron = ?, enabled = ?,
          retry_max_attempts = ?, retry_backoff_seconds = ?, retry_backoff_multiplier = ?,
-         updated_at = ?
+         datasource_id = ?, updated_at = ?
        WHERE id = ? AND owner = ?`,
       [
         merged.name,
@@ -246,6 +255,7 @@ export class ScheduleRepository {
         merged.retry.maxAttempts,
         merged.retry.backoffSeconds,
         merged.retry.backoffMultiplier,
+        merged.datasourceId,
         merged.updatedAt,
         id,
         owner,
@@ -284,6 +294,7 @@ function insertParams(s: ScheduleRecord): SqlParam[] {
     s.retry.maxAttempts,
     s.retry.backoffSeconds,
     s.retry.backoffMultiplier,
+    s.datasourceId,
     s.createdAt,
     s.updatedAt,
   ];
