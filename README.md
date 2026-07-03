@@ -175,7 +175,12 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo u
 `RBAC_PATH` でファイルパスを指定でき、未設定時はカレントディレクトリの
 `rbac.yaml` を探します。ファイルが無い場合は組み込みロール `unrestricted`
 （`query.write` のみ）が全員に割り当てられ、従来どおり全ユーザーが書き込み可能です。
-Phase A ではロールは `GET /api/me` に露出するだけで、権限の強制は Phase B 以降です。
+`query.write` 権限の有無で書き込み文の実行を拒否し、ロールごとに Query Guard 上限を
+上書きできます。スケジュール実行時のロール解決は owner 文字列のみを使います
+（`{ user: owner, email: owner に '@' が含まれるとき }`）。そのため
+`AUTH_USER_MAPPING=email-localpart` では email 系 assignment がスケジュール実行に
+効きません。email 系 assignment をスケジュールでも使う場合は owner をメールアドレス
+形式で保存するか、`user` / `email` マッピングを使ってください。
 設定変更はプロセス再起動後に反映されます。
 
 ### 環境変数（server）
