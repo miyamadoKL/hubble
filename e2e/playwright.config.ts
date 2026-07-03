@@ -1,4 +1,11 @@
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
+
+const e2eDir = dirname(fileURLToPath(import.meta.url));
+/** マルチデータソース E2E (datasources.spec.ts)。`MULTI_DS_E2E=1` で有効化。 */
+const multiDsE2e = process.env.MULTI_DS_E2E === '1';
+const multiDsConfigPath = resolve(e2eDir, 'datasources.e2e.yaml');
 
 /**
  * Playwright config (design.md §3, §9). Starts the BFF server (port 8081) and the
@@ -110,7 +117,15 @@ export default defineConfig({
         DB_PATH: ':memory:',
         // 結果行バッファの上限（切り詰めテストの決定性確保のため）。
         QUERY_MAX_ROWS: '10000',
-        TRINO_BASE_URL: process.env.TRINO_BASE_URL ?? 'http://127.0.0.1:30080',
+        ...(multiDsE2e
+          ? {
+              DATASOURCES_PATH: multiDsConfigPath,
+              DEMO_MYSQL_PASSWORD: process.env.DEMO_MYSQL_PASSWORD ?? 'hubble-demo',
+              DEMO_POSTGRES_PASSWORD: process.env.DEMO_POSTGRES_PASSWORD ?? 'hubble-demo',
+            }
+          : {
+              TRINO_BASE_URL: process.env.TRINO_BASE_URL ?? 'http://127.0.0.1:30080',
+            }),
         DEFAULT_CATALOG: 'tpch',
         DEFAULT_SCHEMA: 'tiny',
       },
@@ -130,7 +145,13 @@ export default defineConfig({
         AUTH_MODE: 'proxy',
         DB_PATH: ':memory:',
         QUERY_MAX_ROWS: '10000',
-        TRINO_BASE_URL: process.env.TRINO_BASE_URL ?? 'http://127.0.0.1:30080',
+        ...(multiDsE2e
+          ? {
+              DATASOURCES_PATH: multiDsConfigPath,
+              DEMO_MYSQL_PASSWORD: process.env.DEMO_MYSQL_PASSWORD ?? 'hubble-demo',
+              DEMO_POSTGRES_PASSWORD: process.env.DEMO_POSTGRES_PASSWORD ?? 'hubble-demo',
+            }
+          : { TRINO_BASE_URL: process.env.TRINO_BASE_URL ?? 'http://127.0.0.1:30080' }),
         DEFAULT_CATALOG: 'tpch',
         DEFAULT_SCHEMA: 'tiny',
       },

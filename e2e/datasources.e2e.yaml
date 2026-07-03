@@ -1,0 +1,31 @@
+# Playwright マルチデータソース E2E 用 (MULTI_DS_E2E=1)。
+# ローカルで demo DB を起動している場合:
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d demo-mysql demo-postgres
+# Trino は既存 E2E と同様 TRINO_BASE_URL (既定 http://127.0.0.1:30080) を参照する。
+datasources:
+  - id: trino-demo
+    type: trino
+    displayName: Demo Trino
+    username: admin
+    baseUrl: http://127.0.0.1:30080
+    source: hubble
+
+  - id: mysql-demo
+    type: mysql
+    displayName: Demo MySQL
+    username: hubble
+    passwordEnv: DEMO_MYSQL_PASSWORD
+    host: 127.0.0.1
+    port: 3307
+    database: demo
+    readOnly: true
+
+  - id: postgres-demo
+    type: postgresql
+    displayName: Demo PostgreSQL
+    username: hubble
+    passwordEnv: DEMO_POSTGRES_PASSWORD
+    host: 127.0.0.1
+    port: 5434
+    database: demo
+    readOnly: true
