@@ -30,6 +30,18 @@ export interface ExecutionClientOptions {
   source: 'user' | 'scheduled';
   /** impersonation 対象の principal（省略時は技術アカウント）。 */
   user?: string;
+  /**
+   * principal が query.write を持たない実行では true。
+   * MySQL/PostgreSQL はチェックアウト時にセッション read only を設定し、
+   * プール返却前にデータソース既定値へ戻す。
+   */
+  sessionReadOnly?: boolean;
+}
+
+/** Trino IO explain（write check 等）の実行コンテキスト。 */
+export interface IoExplainExecution {
+  client: StatementClient;
+  ctx: TrinoRequestContext;
 }
 
 /** EXPLAIN 見積もりの入力。 */
@@ -84,6 +96,12 @@ export interface QueryEngine {
    * @returns 検証結果。
    */
   validate(params: EngineValidateParams): Promise<ValidationResult>;
+
+  /**
+   * Trino の IO explain 実行に使うクライアントとコンテキスト（write check 用）。
+   * Trino 以外は undefined。
+   */
+  ioExplainExecution?(params: EngineEstimateParams): IoExplainExecution | undefined;
 
   /** カタログ一覧を返す。 */
   listCatalogs(): Promise<Catalog[]>;

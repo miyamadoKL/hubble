@@ -25,6 +25,8 @@ interface FakePgPoolOptions {
   batches?: unknown[][][];
   pidQueryError?: unknown;
   readError?: unknown;
+  /** SET default_transaction_read_only 発行を記録する配列。 */
+  sqlLog?: string[];
 }
 
 function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; actions: string[] } {
@@ -37,6 +39,7 @@ function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; actions: 
     connect: async () => ({
       query: (arg: unknown) => {
         if (typeof arg === 'string') {
+          if (arg.startsWith('SET default_transaction_read_only')) opts.sqlLog?.push(arg);
           if (opts.pidQueryError) return Promise.reject(opts.pidQueryError);
           return Promise.resolve({ rows: [{ pid: 99 }] });
         }
@@ -66,7 +69,10 @@ function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; actions: 
 describe('createPgStatementClient', () => {
   it('returns the first batch with columns and FINISHED when rows fit one page', async () => {
     const { pool } = makeFakePgPool();
-    const client = createPgStatementClient(pool, false);
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
     const page = await client.start('SELECT 1', { source: 'test' }, emptySessionMutations());
     expect(page.columns).toEqual([{ name: 'n', type: 'integer' }]);
     expect(page.data).toEqual([[1], [2], [3]]);
@@ -78,7 +84,10 @@ describe('createPgStatementClient', () => {
     const full = Array.from({ length: SQL_BATCH_SIZE + 2 }, (_, i) => [i]);
     const batches = [full.slice(0, SQL_BATCH_SIZE), full.slice(SQL_BATCH_SIZE)];
     const { pool, actions } = makeFakePgPool({ batches });
-    const client = createPgStatementClient(pool, false);
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
     expect(first.data).toHaveLength(SQL_BATCH_SIZE);
@@ -102,7 +111,10 @@ describe('createPgStatementClient', () => {
       batches: [[]],
       readError: { code: '42601', message: 'syntax error', position: '8' },
     });
-    const client = createPgStatementClient(pool, false);
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
     const statement = 'SELECT\nBAD';
     await expect(
       client.start(statement, { source: 'test' }, emptySessionMutations()),
@@ -122,7 +134,10 @@ describe('createPgStatementClient', () => {
     const { pool } = makeFakePgPool({
       pidQueryError: { code: 'ECONNREFUSED', message: 'connect refused' },
     });
-    const client = createPgStatementClient(pool, false);
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
     await expect(
       client.start('SELECT 1', { source: 'test' }, emptySessionMutations()),
     ).rejects.toBeInstanceOf(TrinoTransportError);
@@ -133,7 +148,10 @@ describe('createPgStatementClient', () => {
     const { pool, actions } = makeFakePgPool({
       batches: [full.slice(0, SQL_BATCH_SIZE), full.slice(SQL_BATCH_SIZE)],
     });
-    const client = createPgStatementClient(pool, false);
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
     await client.cancel(first.nextUri!, { source: 'test' });
@@ -149,7 +167,10 @@ describe('createPgStatementClient', () => {
       batches: [[]],
       readError: { code: '42601', message: 'syntax error', position: '1' },
     });
-    const client = createPgStatementClient(pool, false);
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
 
     await expect(
       client.start('SELECT BAD', { source: 'test' }, emptySessionMutations()),
@@ -163,7 +184,10 @@ describe('createPgStatementClient', () => {
     const { pool, actions } = makeFakePgPool({
       batches: [full.slice(0, SQL_BATCH_SIZE), full.slice(SQL_BATCH_SIZE)],
     });
-    const client = createPgStatementClient(pool, false);
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
     await Promise.all([
@@ -174,9 +198,54 @@ describe('createPgStatementClient', () => {
     expect(actions.filter((a) => a === 'destroy').length).toBe(1);
   });
 
+  it('applies and restores session read only on release after normal completion', async () => {
+    const sqlLog: string[] = [];
+    const full = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
+    const { pool, actions } = makeFakePgPool({
+      batches: [full.slice(0, SQL_BATCH_SIZE), full.slice(SQL_BATCH_SIZE)],
+      sqlLog,
+    });
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: true,
+    });
+    const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
+    await client.advance(first.nextUri!, { source: 'test' }, emptySessionMutations());
+
+    expect(sqlLog).toEqual([
+      'SET default_transaction_read_only = on',
+      'SET default_transaction_read_only = off',
+    ]);
+    expect(actions).toContain('release');
+  });
+
+  it('restores session read only before destroy when start fails', async () => {
+    const sqlLog: string[] = [];
+    const { pool, actions } = makeFakePgPool({
+      batches: [[]],
+      readError: { code: '42601', message: 'syntax error', position: '1' },
+      sqlLog,
+    });
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: true,
+    });
+    await expect(
+      client.start('SELECT BAD', { source: 'test' }, emptySessionMutations()),
+    ).rejects.toBeInstanceOf(TrinoQueryError);
+    expect(sqlLog).toEqual([
+      'SET default_transaction_read_only = on',
+      'SET default_transaction_read_only = off',
+    ]);
+    expect(actions).toContain('destroy');
+  });
+
   it('waitBackoff resolves immediately', async () => {
     const { pool } = makeFakePgPool();
-    const client = createPgStatementClient(pool, false);
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
     await expect(client.waitBackoff(0)).resolves.toBeUndefined();
   });
 });

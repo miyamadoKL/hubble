@@ -126,6 +126,18 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
       return wrapClientWithUser(downloadClient, user);
     },
 
+    ioExplainExecution(params: EngineEstimateParams) {
+      return {
+        client: metadataClient,
+        ctx: {
+          catalog: params.catalog,
+          schema: params.schema,
+          source: tags.metadata,
+          user: params.principal,
+        },
+      };
+    },
+
     async estimate(
       params: EngineEstimateParams,
       guard: EstimateGuardConfig,

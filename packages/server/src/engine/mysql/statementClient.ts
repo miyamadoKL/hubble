@@ -14,6 +14,13 @@ import { batchSize, buildPage, nextQueryId } from '../sql/response';
 import { RowStreamReader } from '../sql/streamReader';
 import type { MysqlPool } from './pool';
 
+export interface MysqlStatementClientOptions {
+  /** データソース既定の readOnly（プール返却時に戻す値）。 */
+  datasourceReadOnly: boolean;
+  /** この実行単位でセッション read only を強制するか。 */
+  sessionReadOnly: boolean;
+}
+
 interface MysqlExecution {
   queryId: string;
   conn: PoolConnection;
@@ -22,6 +29,8 @@ interface MysqlExecution {
   threadId: number;
   rowCount: number;
   released: boolean;
+  /** チェックアウト時に read only を上書きしたか。 */
+  sessionReadOnlyApplied: boolean;
 }
 
 function fieldsToColumns(fields: FieldPacket[]): TrinoColumn[] {
@@ -31,19 +40,36 @@ function fieldsToColumns(fields: FieldPacket[]): TrinoColumn[] {
   }));
 }
 
+async function applyMysqlSessionReadOnly(conn: PoolConnection, readOnly: boolean): Promise<void> {
+  await conn.query(
+    readOnly ? 'SET SESSION TRANSACTION READ ONLY' : 'SET SESSION TRANSACTION READ WRITE',
+  );
+}
+
 /**
  * MySQL プールを使った StatementClient を生成する。
  * @param pool - mysql2 プール(テストから差し替え可能)。
+ * @param options - データソース既定 readOnly と実行単位の sessionReadOnly。
  * @returns StatementClient 実装。
  */
-export function createMysqlStatementClient(pool: MysqlPool): StatementClient {
+export function createMysqlStatementClient(
+  pool: MysqlPool,
+  options: MysqlStatementClientOptions,
+): StatementClient {
   const executions = new Map<string, MysqlExecution>();
+
+  const restoreAndRelease = async (exec: MysqlExecution): Promise<void> => {
+    if (exec.sessionReadOnlyApplied) {
+      await applyMysqlSessionReadOnly(exec.conn, options.datasourceReadOnly);
+    }
+    exec.conn.release();
+  };
 
   const releaseExecution = async (exec: MysqlExecution): Promise<void> => {
     if (exec.released) return;
     exec.released = true;
     executions.delete(exec.queryId);
-    exec.conn.release();
+    await restoreAndRelease(exec);
   };
 
   /** キャンセル等で進行中クエリが残る接続はプールへ返さず破棄する。 */
@@ -52,6 +78,16 @@ export function createMysqlStatementClient(pool: MysqlPool): StatementClient {
     exec.released = true;
     executions.delete(exec.queryId);
     exec.conn.destroy();
+  };
+
+  const checkout = async (): Promise<{ conn: PoolConnection; sessionReadOnlyApplied: boolean }> => {
+    const conn = await pool.getConnection();
+    let sessionReadOnlyApplied = false;
+    if (options.sessionReadOnly && !options.datasourceReadOnly) {
+      await applyMysqlSessionReadOnly(conn, true);
+      sessionReadOnlyApplied = true;
+    }
+    return { conn, sessionReadOnlyApplied };
   };
 
   return {
@@ -64,8 +100,9 @@ export function createMysqlStatementClient(pool: MysqlPool): StatementClient {
       if (signal?.aborted) throw new Error('Aborted');
       const queryId = nextQueryId('mysql');
       let conn: PoolConnection | undefined;
+      let sessionReadOnlyApplied = false;
       try {
-        conn = await pool.getConnection();
+        ({ conn, sessionReadOnlyApplied } = await checkout());
         const threadId = conn.threadId ?? 0;
         const rawConn = conn.connection as unknown as Connection;
         const stream = rawConn
@@ -93,6 +130,7 @@ export function createMysqlStatementClient(pool: MysqlPool): StatementClient {
           threadId,
           rowCount: rows.length,
           released: false,
+          sessionReadOnlyApplied,
         };
         executions.set(queryId, exec);
         conn = undefined;
@@ -100,7 +138,12 @@ export function createMysqlStatementClient(pool: MysqlPool): StatementClient {
         const nextUri = done ? undefined : queryId;
         return buildPage(queryId, columns, rows, nextUri, exec.rowCount);
       } catch (err) {
-        if (conn) conn.release();
+        if (conn) {
+          if (sessionReadOnlyApplied) {
+            await applyMysqlSessionReadOnly(conn, options.datasourceReadOnly).catch(() => {});
+          }
+          conn.release();
+        }
         throwMysqlDriverError(err);
       }
     },

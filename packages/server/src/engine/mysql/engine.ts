@@ -45,8 +45,6 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
   const capabilities: DatasourceCapabilities = capabilitiesForKind('mysql');
   const syntheticCatalog = datasource.id;
 
-  const statementClient = createMysqlStatementClient(pool);
-
   const assertCatalog = (catalog: string): void => {
     if (catalog !== syntheticCatalog) {
       throw AppError.notFound(`Catalog ${catalog} not found`);
@@ -68,12 +66,17 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
     capabilities,
 
     executionClient(opts: ExecutionClientOptions): StatementClient {
-      void opts;
-      return statementClient;
+      return createMysqlStatementClient(pool, {
+        datasourceReadOnly: datasource.readOnly,
+        sessionReadOnly: opts.sessionReadOnly ?? false,
+      });
     },
 
     downloadClient(): StatementClient {
-      return statementClient;
+      return createMysqlStatementClient(pool, {
+        datasourceReadOnly: datasource.readOnly,
+        sessionReadOnly: false,
+      });
     },
 
     async estimate(): Promise<never> {
