@@ -1,0 +1,60 @@
+# マルチデータソースデモ用の compose オーバーレイ。
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up --build
+#
+# 既定の `docker compose up` (このファイルなし) は Trino のみの従来構成のまま。
+# demo-postgres はアプリ永続化用 DATABASE_URL とは別サービス (demo-postgres)。
+services:
+  hubble:
+    environment:
+      DATASOURCES_PATH: /etc/hubble/datasources.yaml
+      DEMO_MYSQL_PASSWORD: ${DEMO_MYSQL_PASSWORD:-hubble-demo}
+      DEMO_POSTGRES_PASSWORD: ${DEMO_POSTGRES_PASSWORD:-hubble-demo}
+    volumes:
+      - ./deploy/compose/datasources.demo.yaml:/etc/hubble/datasources.yaml:ro
+    depends_on:
+      trino:
+        condition: service_healthy
+      demo-mysql:
+        condition: service_healthy
+      demo-postgres:
+        condition: service_healthy
+
+  demo-mysql:
+    image: mysql:8.4
+    profiles: [demo]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DEMO_MYSQL_ROOT_PASSWORD:-root-demo}
+      MYSQL_DATABASE: demo
+      MYSQL_USER: hubble
+      MYSQL_PASSWORD: ${DEMO_MYSQL_PASSWORD:-hubble-demo}
+    ports:
+      - '3307:3306'
+    volumes:
+      - ./deploy/compose/demo-mysql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h localhost -u root -p"$$MYSQL_ROOT_PASSWORD" || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+
+  demo-postgres:
+    image: postgres:16
+    profiles: [demo]
+    environment:
+      POSTGRES_DB: demo
+      POSTGRES_USER: hubble
+      POSTGRES_PASSWORD: ${DEMO_POSTGRES_PASSWORD:-hubble-demo}
+    ports:
+      - '5434:5432'
+    volumes:
+      - ./deploy/compose/demo-postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U hubble -d demo']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
