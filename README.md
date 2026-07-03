@@ -94,6 +94,17 @@ pnpm --filter @hubble/web dev
 `passwordFile` で参照します。一覧は `GET /api/datasources` で取得できます（接続先や認証情報は
 含みません）。設定変更はプロセス再起動後に反映されます。
 
+MySQL / PostgreSQL データソースでは次の接続オプションが使えます。
+
+- `readOnly`（省略時 `true`）: 接続確立時に読み取り専用セッションを設定します
+  （MySQL: `SET SESSION TRANSACTION READ ONLY`、PostgreSQL:
+  `SET default_transaction_read_only = on`）。ガードレールであり境界ではないため、
+  ユーザーが `SET` で解除できる可能性があります。書き込みを防ぐ本番運用では DB 側の
+  権限（読み取り専用ロール等）で制御してください。
+- `tls`（省略時 `false`）: TLS を有効化します。`tlsCaFile` で CA 証明書パスを指定できます
+  （`tls: true` が必須。読めなければ起動エラー）。
+- `maxConnections`（省略時 `5`）: コネクションプールの上限です。
+
 ### 環境変数（server）
 
 | 変数                              | 既定値                   | 説明                                                                                            |
