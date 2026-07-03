@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { permissionSchema } from './rbac';
 
 /**
  * Authentication contract (design.md §11). The server runs in one of two modes:
@@ -32,6 +33,10 @@ export const meResponseSchema = z.object({
   email: z.string().optional(),
   // 現在有効な認証モード。none の場合 web は右上のユーザーチップを非表示にする。
   authMode: authModeSchema,
+  // 解決済みロール名（rbac.yaml または組み込み unrestricted）。
+  role: z.string().min(1),
+  // ロールに紐づく権限一覧（ソート済みで返す）。
+  permissions: z.array(permissionSchema),
 });
 /** `GET /api/me` レスポンスの推論型。 */
 export type MeResponse = z.infer<typeof meResponseSchema>;

@@ -17,7 +17,9 @@ import { getConnInfo } from '@hono/node-server/conninfo';
 import { UNAUTHENTICATED } from '@hubble/contracts';
 import type { AuthConfig } from '../config';
 import { AppError } from '../errors';
-import { PrincipalResolver, type Principal } from './principal';
+import { resolveRoleForPrincipal } from '../rbac/resolve';
+import type { LoadedRbac } from '../rbac/types';
+import { PrincipalResolver, type Principal, type PrincipalIdentity } from './principal';
 
 /**
  * Hono `c.var` bindings set by the auth middleware.
@@ -65,6 +67,15 @@ export interface AuthMiddlewareOptions {
    * リモートアドレス取得元の差し替え（テスト用）。
    */
   remoteAddress?: RemoteAddressFn;
+  /** 起動時に読み込んだ RBAC 設定。principal 解決直後にロールを付与する。 */
+  rbac: LoadedRbac;
+}
+
+function attachRole(rbac: LoadedRbac, identity: PrincipalIdentity): Principal {
+  return {
+    ...identity,
+    role: resolveRoleForPrincipal(rbac, identity),
+  };
 }
 
 /**
@@ -101,7 +112,7 @@ function unauthenticated(reason: string): never {
  * @returns Hono の `MiddlewareHandler`。認証失敗時は例外（401）を送出する。
  */
 export function authMiddleware(options: AuthMiddlewareOptions): MiddlewareHandler {
-  const { auth, noneModeUser } = options;
+  const { auth, noneModeUser, rbac } = options;
   const remoteAddress = options.remoteAddress ?? defaultRemoteAddress;
   // proxy モードのときだけ CIDR リストをパース済みの PrincipalResolver を1つ生成し、
   // リクエストごとに使い回す（毎リクエストで CIDR 文字列を再パースしない）。
@@ -110,7 +121,7 @@ export function authMiddleware(options: AuthMiddlewareOptions): MiddlewareHandle
   return async (c, next) => {
     if (auth.mode === 'none' || resolver === undefined) {
       // none モード: 認証を行わず、常に固定の技術ユーザーとして principal を設定する。
-      c.set('principal', { user: noneModeUser });
+      c.set('principal', attachRole(rbac, { user: noneModeUser }));
       await next();
       return;
     }
@@ -120,7 +131,7 @@ export function authMiddleware(options: AuthMiddlewareOptions): MiddlewareHandle
       // 信頼できないプロキシからのリクエスト、またはヘッダー欠落 → 401 を送出して打ち切る。
       unauthenticated(result.reason);
     }
-    c.set('principal', result.principal);
+    c.set('principal', attachRole(rbac, result.principal));
     await next();
   };
 }

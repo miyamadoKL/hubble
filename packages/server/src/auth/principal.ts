@@ -11,6 +11,7 @@
  */
 import type { AuthConfig } from '../config';
 import { isTrustedAddress, parseCidrList, type ParsedCidr } from './cidr';
+import type { ResolvedRole } from '../rbac/types';
 
 /**
  * The authenticated identity for a request (design.md §11). `user` is both the
@@ -19,13 +20,22 @@ import { isTrustedAddress, parseCidrList, type ParsedCidr } from './cidr';
  * リクエストの認証済み識別情報（design.md §11）。`user` は保存リソースの所有者 id と、
  * Trino へのリクエストで使う `X-Trino-User`（impersonation）の値を兼ねる。
  */
-export interface Principal {
+
+/** SSO / none モードで解決されたユーザー識別子（ロール付与前）。 */
+export interface PrincipalIdentity {
   user: string;
   email?: string;
 }
 
-/** {@link PrincipalResolver.resolve} の結果。成功時は principal を、失敗時は理由を持つ。 */
-export type ResolveResult = { ok: true; principal: Principal } | { ok: false; reason: string };
+export interface Principal extends PrincipalIdentity {
+  /** リクエストごとに解決されたロール（Phase A は露出のみ、強制は Phase B）。 */
+  role: ResolvedRole;
+}
+
+/** {@link PrincipalResolver.resolve} の結果。成功時は identity を、失敗時は理由を持つ。 */
+export type ResolveResult =
+  | { ok: true; principal: PrincipalIdentity }
+  | { ok: false; reason: string };
 
 /**
  * Look up a header value (case-insensitive) from a plain record.
@@ -55,14 +65,14 @@ function header(headers: Record<string, string | undefined>, name: string): stri
  * @param mapping - principal の組み立て方（'user' | 'email' | 'email-localpart'）。
  * @param userHeader - `X-Forwarded-User` 相当のヘッダー値。
  * @param emailHeader - `X-Forwarded-Email` 相当のヘッダー値。
- * @returns 組み立てられた {@link Principal}。マッピングに必要なヘッダーが欠落または空文字の場合は
+ * @returns 組み立てられた {@link PrincipalIdentity}。マッピングに必要なヘッダーが欠落または空文字の場合は
  *          undefined（未認証扱い）。
  */
 export function mapPrincipal(
   mapping: AuthConfig['userMapping'],
   userHeader: string | undefined,
   emailHeader: string | undefined,
-): Principal | undefined {
+): PrincipalIdentity | undefined {
   const user = userHeader?.trim() || undefined;
   const email = emailHeader?.trim() || undefined;
   switch (mapping) {
@@ -118,7 +128,7 @@ export class PrincipalResolver {
    * 欠落）の場合は未認証とし、呼び出し元（middleware.ts）が 401 を返す。
    * @param headers - リクエストヘッダー（ヘッダー名 -> 値）。
    * @param remoteAddress - リクエストの送信元アドレス。
-   * @returns 成功時は principal を含む結果、失敗時は理由文字列を含む結果。
+   * @returns 成功時は identity を含む結果、失敗時は理由文字列を含む結果。
    */
   resolve(
     headers: Record<string, string | undefined>,

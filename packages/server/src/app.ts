@@ -79,6 +79,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
       auth: services.config.auth,
       noneModeUser: services.config.trino.user,
       remoteAddress: deps.remoteAddress,
+      rbac: services.rbac,
     })(c, next),
   );
 
@@ -93,6 +94,8 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
     const me: MeResponse = {
       user: principal.user,
       authMode: services.config.auth.mode,
+      role: principal.role.name,
+      permissions: [...principal.role.permissions].sort(),
       ...(principal.email ? { email: principal.email } : {}),
     };
     return c.json(me);

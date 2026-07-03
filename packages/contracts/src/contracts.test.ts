@@ -3,6 +3,7 @@ import {
   apiErrorSchema,
   appConfigSchema,
   meResponseSchema,
+  permissionSchema,
   authModeSchema,
   catalogsResponseSchema,
   metadataResponseSchema,
@@ -108,6 +109,13 @@ describe('config', () => {
   });
 });
 
+describe('rbac', () => {
+  it('accepts known permissions', () => {
+    expect(permissionSchema.parse('query.write')).toBe('query.write');
+    expect(permissionSchema.safeParse('query.admin').success).toBe(false);
+  });
+});
+
 describe('auth', () => {
   it('accepts the two auth modes', () => {
     expect(authModeSchema.parse('none')).toBe('none');
@@ -116,13 +124,27 @@ describe('auth', () => {
   });
 
   it('parses a MeResponse with and without email', () => {
-    expect(meResponseSchema.parse({ user: 'alice', authMode: 'proxy' })).toEqual({
+    expect(
+      meResponseSchema.parse({
+        user: 'alice',
+        authMode: 'proxy',
+        role: 'member',
+        permissions: [],
+      }),
+    ).toEqual({
       user: 'alice',
       authMode: 'proxy',
+      role: 'member',
+      permissions: [],
     });
     expect(
-      meResponseSchema.parse({ user: 'alice', email: 'alice@example.com', authMode: 'proxy' })
-        .email,
+      meResponseSchema.parse({
+        user: 'alice',
+        email: 'alice@example.com',
+        authMode: 'proxy',
+        role: 'admin',
+        permissions: ['query.write'],
+      }).email,
     ).toBe('alice@example.com');
   });
 
