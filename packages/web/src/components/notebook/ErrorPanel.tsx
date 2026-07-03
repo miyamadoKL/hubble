@@ -7,6 +7,7 @@
  * 表示を、エラー内容に応じて出し分ける。
  */
 import type { ApiErrorDetail } from '@hubble/contracts';
+import { WRITE_NOT_ALLOWED } from '@hubble/contracts';
 import { CircleAlert, OctagonX } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { parseQueryBlocked } from '../../execution';
@@ -30,6 +31,28 @@ import { formatBytes, formatInt } from '../../utils/format';
  * @param className - 外側の要素に追加で適用する任意の CSS クラス。
  */
 export function ErrorPanel({ error, className }: { error: ApiErrorDetail; className?: string }) {
+  if (error.code === WRITE_NOT_ALLOWED) {
+    return (
+      <div
+        className={cn('flex gap-3 bg-error-soft px-4 py-3', className)}
+        role="alert"
+        data-testid="error-panel"
+        data-error-code={WRITE_NOT_ALLOWED}
+      >
+        <CircleAlert size={16} strokeWidth={2} className="mt-0.5 shrink-0 text-error" />
+        <div className="min-w-0 flex-1">
+          <span className="rounded-sm bg-error/15 px-1.5 py-0.5 font-mono text-2xs font-semibold tracking-wide text-error uppercase">
+            Read-only role
+          </span>
+          <p className="mt-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-ink-base">
+            読み取り専用ロールのため、この SQL は実行できません。書き込みが必要な場合は管理者に
+            相談してください。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // エラーが Query Guard によるブロック（QUERY_BLOCKED）由来かどうかを判定する。
   const blocked = parseQueryBlocked(error);
   // ブロックエラーの場合は専用パネルに委譲し、通常のエラー表示は行わない。

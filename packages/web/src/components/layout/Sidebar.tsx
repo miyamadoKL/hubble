@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useRef } from 'react';
 import {
+  Activity,
   BookMarked,
   CalendarClock,
   Database,
@@ -28,6 +29,9 @@ import { NotebookListPanel } from '../panels/NotebookListPanel';
 import { SavedQueriesPanel } from '../panels/SavedQueriesPanel';
 import { HistoryPanel } from '../panels/HistoryPanel';
 import { SchedulesPanel } from '../panels/SchedulesPanel';
+import { OperationsPanel } from '../panels/OperationsPanel';
+import { useMe } from '../../hooks/useMe';
+import { hasPermission } from '../../permissions';
 import { listNotebooks } from '../../api/notebooks';
 import { getNotebook } from '../../api/notebooks';
 import { useNotebookStore } from '../../notebook';
@@ -53,6 +57,7 @@ const RAIL: RailItem[] = [
   { id: 'saved', icon: BookMarked, label: 'Saved' },
   { id: 'history', icon: History, label: 'History' },
   { id: 'schedules', icon: CalendarClock, label: 'Schedules' },
+  { id: 'operations', icon: Activity, label: 'Operations' },
 ];
 
 // 各タブのパネル見出しに表示する文言。
@@ -62,6 +67,7 @@ const PANEL_TITLE: Record<SidebarTab, string> = {
   saved: 'Saved queries',
   history: 'History',
   schedules: 'Schedules',
+  operations: 'Operations',
 };
 
 // 各タブの検索欄に表示するプレースホルダー文言。
@@ -71,6 +77,7 @@ const PANEL_PLACEHOLDER: Record<SidebarTab, string> = {
   saved: 'Search saved queries…',
   history: 'Search history…',
   schedules: 'Search schedules…',
+  operations: 'Filter queries…',
 };
 
 /**
@@ -96,8 +103,12 @@ export function Sidebar({
   datasourceId?: string;
   flattenCatalog?: boolean;
 }) {
+  const { data: me } = useMe();
+  const canViewOperations = hasPermission(me, 'queries.viewAll');
   const tab = useUiStore((s) => s.sidebarTab);
   const setTab = useUiStore((s) => s.setSidebarTab);
+  const effectiveTab = tab === 'operations' && !canViewOperations ? 'data' : tab;
+  const visibleRail = RAIL.filter((item) => item.id !== 'operations' || canViewOperations);
   const width = useUiStore((s) => s.sidebarWidth);
   const setWidth = useUiStore((s) => s.setSidebarWidth);
   const collapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -155,8 +166,8 @@ export function Sidebar({
       {/* 左端のアイコンレール。タブ切り替えと、同じタブを再クリックしたときの折りたたみを兼ねる。 */}
       <nav className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border-base bg-surface-base py-2">
         {/* RAIL に定義された各タブをアイコンボタンとして描画する。 */}
-        {RAIL.map((item) => {
-          const active = tab === item.id && !collapsed;
+        {visibleRail.map((item) => {
+          const active = effectiveTab === item.id && !collapsed;
           const Icon = item.icon;
           return (
             <Tooltip key={item.id} label={item.label} side="right">
@@ -165,7 +176,7 @@ export function Sidebar({
                 aria-label={item.label}
                 aria-current={active || undefined}
                 onClick={() => {
-                  if (tab === item.id && !collapsed) toggleSidebar();
+                  if (effectiveTab === item.id && !collapsed) toggleSidebar();
                   else setTab(item.id);
                 }}
                 className={cn(
@@ -195,7 +206,7 @@ export function Sidebar({
           {/* パネル見出しと折りたたみボタン。 */}
           <div className="flex items-center justify-between px-3 pt-3 pb-2">
             <h2 className="text-2xs font-semibold tracking-[0.14em] text-ink-muted uppercase">
-              {PANEL_TITLE[tab]}
+              {PANEL_TITLE[effectiveTab]}
             </h2>
             <Tooltip label="Collapse sidebar" side="bottom">
               <button
@@ -211,20 +222,20 @@ export function Sidebar({
 
           {/* History filters by state chips, not text — hide the search field. */}
           {/* History タブだけは文字列検索ではなく状態チップで絞り込むため、検索欄自体を出さない。 */}
-          {tab !== 'history' && (
+          {effectiveTab !== 'history' && effectiveTab !== 'operations' && (
             <div className="px-3 pb-2">
               <SearchInput
                 inputRef={searchRef}
                 value={search}
                 onChange={onSearchChange}
-                placeholder={PANEL_PLACEHOLDER[tab]}
+                placeholder={PANEL_PLACEHOLDER[effectiveTab]}
               />
             </div>
           )}
 
           {/* 選択中タブに応じてパネル本体を出し分ける（同時に描画されるのは1つだけ）。 */}
           <div className="min-h-0 flex-1 overflow-auto">
-            {tab === 'data' && datasourceId && (
+            {effectiveTab === 'data' && datasourceId && (
               <SchemaTree
                 filter={search}
                 context={context}
@@ -232,12 +243,13 @@ export function Sidebar({
                 flattenCatalog={flattenCatalog}
               />
             )}
-            {tab === 'notebooks' && (
+            {effectiveTab === 'notebooks' && (
               <NotebooksSidebarPanel search={search} activeNotebookId={activeNotebookId} />
             )}
-            {tab === 'saved' && <SavedQueriesPanel search={search} />}
-            {tab === 'history' && <HistoryPanel />}
-            {tab === 'schedules' && <SchedulesPanel search={search} />}
+            {effectiveTab === 'saved' && <SavedQueriesPanel search={search} />}
+            {effectiveTab === 'history' && <HistoryPanel />}
+            {effectiveTab === 'schedules' && <SchedulesPanel search={search} />}
+            {effectiveTab === 'operations' && <OperationsPanel />}
           </div>
 
           {/* Resize handle */}

@@ -24,9 +24,17 @@ export function UserChip() {
 
   // アバター代わりに表示するユーザー名の頭文字（大文字化）。
   const initial = me.user.charAt(0).toUpperCase();
+  const identity = me.email ?? me.user;
   return (
-    // メールアドレスがあればツールチップで表示し、なければユーザー名を表示する。
-    <Tooltip label={me.email ?? me.user}>
+    // メールアドレスまたはユーザー名と、解決済みロール名をツールチップで表示する。
+    <Tooltip
+      label={
+        <span className="block text-center">
+          {identity}
+          <span className="mt-0.5 block font-mono text-2xs text-ink-muted">Role: {me.role}</span>
+        </span>
+      }
+    >
       <span
         className="flex items-center gap-2 rounded-md border border-border-subtle bg-surface-sunken py-1 pr-2.5 pl-1.5 text-ink-base"
         data-testid="user-chip"

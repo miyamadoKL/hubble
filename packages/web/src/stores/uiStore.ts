@@ -34,7 +34,7 @@ export type ThemeMode = 'light' | 'dark';
  * 'saved'（保存済みクエリ）、'history'（実行履歴）、
  * 'schedules'（クエリスケジュール、後から追加された機能）の5種類。
  */
-export type SidebarTab = 'data' | 'notebooks' | 'saved' | 'history' | 'schedules';
+export type SidebarTab = 'data' | 'notebooks' | 'saved' | 'history' | 'schedules' | 'operations';
 
 /** サイドバーの最小幅（ピクセル）。これより狭くはドラッグでリサイズできない。 */
 export const SIDEBAR_MIN_WIDTH = 200;
