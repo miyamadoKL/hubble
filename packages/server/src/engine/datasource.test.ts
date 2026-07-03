@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
-import { createUnsupportedEngine } from './unsupported';
 import { deriveTrinoSourceTags } from './trino';
 import { TEST_TRINO_CONFIG } from '../test/testEngine';
 import { openMemoryDatabase } from '../db';
@@ -16,8 +15,6 @@ import { Scheduler } from '../schedule/scheduler';
 import { EstimateService } from '../query/estimateService';
 import { makeEnginesMap } from '../test/testEngine';
 import { FakeTrino } from '../test/fakeTrino';
-import { emptySessionMutations } from '../trino/types';
-
 const fast: FakeScenario = {
   match: 'SELECT',
   pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]], state: 'FINISHED' }],
@@ -74,19 +71,6 @@ describe('deriveTrinoSourceTags', () => {
       metadata: 'custom-source-metadata',
       scheduled: 'custom-source-scheduled',
       download: 'custom-source-download',
-    });
-  });
-});
-
-describe('unsupported engine stub', () => {
-  it('execute returns 501 NOT_IMPLEMENTED', async () => {
-    const engine = createUnsupportedEngine('mysql-analytics', 'mysql');
-    const client = engine.executionClient({ source: 'user' });
-    await expect(
-      client.start('SELECT 1', { source: 'hubble' }, emptySessionMutations()),
-    ).rejects.toMatchObject({
-      status: 501,
-      detail: { code: 'NOT_IMPLEMENTED' },
     });
   });
 });
@@ -207,7 +191,7 @@ describe('datasource routing (HTTP)', () => {
     await ctx.services.shutdown();
   });
 
-  it('returns 501 when executing against a mysql datasource', async () => {
+  it('accepts mysql datasource queries under enforce guard without estimate', async () => {
     const yamlPath = writeDatasourcesYaml(
       tempDir,
       `datasources:
@@ -219,7 +203,8 @@ describe('datasource routing (HTTP)', () => {
   - id: mysql-analytics
     type: mysql
     username: mysql-user
-    host: mysql.internal
+    host: 127.0.0.1
+    port: 1
     database: analytics
 `,
     );
@@ -227,6 +212,17 @@ describe('datasource routing (HTTP)', () => {
       scenarios: [fast],
       env: { DATASOURCES_PATH: yamlPath },
       cwd: tempDir,
+      configOverrides: {
+        guard: {
+          mode: 'enforce',
+          maxScanBytes: 0,
+          maxScanRows: 1,
+          onUnknown: 'block',
+          estimateTimeoutMs: 3000,
+          cacheTtlSeconds: 0,
+          bytesPerSecond: 0,
+        } as never,
+      },
     });
 
     const res = await ctx.app.request('/api/queries', {
@@ -234,18 +230,15 @@ describe('datasource routing (HTTP)', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ statement: 'SELECT 1', datasourceId: 'mysql-analytics' }),
     });
+    // enforce でも costEstimate 非対応の mysql は見積りをスキップして受理される。
     expect(res.status).toBe(202);
     const { queryId } = (await res.json()) as { queryId: string };
     await ctx.services.registry.get(queryId)!.settled;
 
     const snapRes = await ctx.app.request(`/api/queries/${queryId}`);
-    const snap = (await snapRes.json()) as {
-      state: string;
-      error?: { code: string; message: string };
-    };
+    const snap = (await snapRes.json()) as { state: string; error?: { code: string } };
     expect(snap.state).toBe('failed');
-    expect(snap.error?.code).toBe('NOT_IMPLEMENTED');
-    expect(snap.error?.message).toContain('not supported yet');
+    expect(snap.error?.code).not.toBe('QUERY_BLOCKED');
 
     await ctx.services.shutdown();
   });
