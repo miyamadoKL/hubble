@@ -129,6 +129,8 @@ export interface QueryEngine {
     table: string,
     limit?: number,
   ): Promise<SampleRowsResponse>;
+
+  close(): Promise<void>;
 }
 
 /** EstimateService からエンジンへ渡す Query Guard 設定。 */

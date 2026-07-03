@@ -155,11 +155,14 @@ export class Scheduler {
   // 日本語: stop() 呼び出し後は true になり、以後 tick のスケジューリングを止める。
   private stopping = false;
 
-  constructor(private readonly deps: SchedulerDeps) {
-    // 各依存の未指定分をデフォルト実装で補完する。
+  constructor(private deps: SchedulerDeps) {
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? defaultSleep;
     this.setTimer = deps.setTimer ?? defaultSetTimer;
+  }
+
+  setDefaultDatasourceId(id: string): void {
+    this.deps.defaultDatasourceId = id;
   }
 
   /**

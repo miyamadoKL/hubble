@@ -23,19 +23,17 @@ import { loadDatasources } from './datasource/loader';
 import { loadRbac } from './rbac/loader';
 import type { LoadedRbac } from './rbac/types';
 import type { ResolvedDatasource } from './datasource/types';
-import { buildEngines } from './engine/factory';
+import { applyDatasourceReloadSync, planDatasourceReload } from './datasource/reload';
+import { buildEngines, type BuildEnginesOptions } from './engine/factory';
+import type { MysqlPoolFactory } from './engine/mysql/pool';
+import type { PgPoolFactory } from './engine/postgresql/pool';
 import type { QueryEngine } from './engine/types';
 
-/** All long-lived services the HTTP layer depends on. */
 export interface Services {
   config: ServerConfig;
-  /** 宣言的に設定された RBAC（ロール解決に使用）。 */
   rbac: LoadedRbac;
-  /** 宣言的に設定されたデータソース一覧。 */
   datasources: ResolvedDatasource[];
-  /** データソース id から引ける QueryEngine マップ。 */
   engines: Map<string, QueryEngine>;
-  /** datasourceId 省略時に使う既定 id（設定順先頭）。 */
   defaultDatasourceId: string;
   metadata: MetadataService;
   queries: QueryService;
@@ -47,6 +45,7 @@ export interface Services {
   schedules: ScheduleRepository;
   scheduleRuns: ScheduleRunRepository;
   scheduler: Scheduler;
+  reloadDatasources: () => Promise<void>;
   shutdown: () => Promise<void>;
 }
 
@@ -58,55 +57,57 @@ export interface BuildServicesOptions {
   now?: () => number;
   schedulerSleep?: (ms: number) => Promise<void>;
   schedulerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
+  mysqlPoolFactory?: MysqlPoolFactory;
+  pgPoolFactory?: PgPoolFactory;
+  reloadLogError?: (message: string, err: unknown) => void;
+  reloadLogWarn?: (message: string) => void;
 }
 
-/**
- * 日本語: 設定 (`ServerConfig`) と開いた DB 接続 (`SqlDatabase`) から、
- * サーバーが必要とするサービス一式を構築する。
- */
 export async function buildServices(
   config: ServerConfig,
   db: SqlDatabase,
   options: BuildServicesOptions = {},
 ): Promise<Services> {
   const env = options.env ?? process.env;
-  const rbac = loadRbac({ env, cwd: options.cwd });
-  const datasources = loadDatasources({ env, trino: config.trino, cwd: options.cwd });
-  const { engines, defaultDatasourceId } = buildEngines(datasources, {
+  const cwd = options.cwd;
+  const rbac = loadRbac({ env, cwd });
+  const datasources = loadDatasources({ env, trino: config.trino, cwd });
+  const buildEngineOptions: BuildEnginesOptions = {
     trinoConfig: config.trino,
     fetchImpl: options.fetchImpl,
     sleepImpl: options.sleepImpl,
     now: options.now,
-  });
+    mysqlPoolFactory: options.mysqlPoolFactory,
+    pgPoolFactory: options.pgPoolFactory,
+  };
+  const built = buildEngines(datasources, buildEngineOptions);
+  const { engines } = built;
+  const runtime = { defaultDatasourceId: built.defaultDatasourceId };
 
   const metadata = new MetadataService(
     engines,
-    defaultDatasourceId,
+    runtime.defaultDatasourceId,
     config.metadata.ttlSeconds * 1000,
     options.now,
   );
-
   await backfillOwners(db, config.trino.user);
 
   const history = new HistoryRepository(db);
   const notebooks = new NotebookRepository(db);
   const savedQueries = new SavedQueryRepository(db);
-
   const registry = new QueryRegistry({
     engines,
-    defaultDatasourceId,
+    defaultDatasourceId: runtime.defaultDatasourceId,
     defaultMaxRows: config.query.maxRows,
     concurrency: config.query.concurrency,
     ttlMs: config.query.ttlMinutes * 60_000,
     defaultOverflowMode: config.query.overflowMode,
     now: options.now,
   });
-
   const queries = new QueryService({ registry, history });
-
   const estimate = new EstimateService(
     engines,
-    defaultDatasourceId,
+    runtime.defaultDatasourceId,
     {
       mode: config.guard.mode,
       maxScanBytes: config.guard.maxScanBytes,
@@ -118,14 +119,13 @@ export async function buildServices(
     },
     options.now,
   );
-
   const schedules = new ScheduleRepository(db);
   const scheduleRuns = new ScheduleRunRepository(db, config.scheduler.runsRetention);
   const scheduler = new Scheduler({
     schedules,
     runs: scheduleRuns,
     engines,
-    defaultDatasourceId,
+    defaultDatasourceId: runtime.defaultDatasourceId,
     estimate,
     rbac,
     guardConfig: config.guard,
@@ -141,12 +141,49 @@ export async function buildServices(
     setTimer: options.schedulerSetTimer,
   });
 
+  let reloadInFlight = false;
+  const reloadLogError = options.reloadLogError ?? ((m, e) => console.error(m, e));
+  const reloadLogWarn = options.reloadLogWarn ?? console.warn;
+  const reloadDatasources = async (): Promise<void> => {
+    if (reloadInFlight) return;
+    reloadInFlight = true;
+    try {
+      const next = loadDatasources({ env, trino: config.trino, cwd });
+      const plan = planDatasourceReload(engines, datasources, next, buildEngineOptions);
+      applyDatasourceReloadSync(
+        {
+          engines,
+          datasources,
+          setDefaultDatasourceId: (id) => {
+            runtime.defaultDatasourceId = id;
+            metadata.setDefaultDatasourceId(id);
+            registry.setDefaultDatasourceId(id);
+            estimate.setDefaultDatasourceId(id);
+            scheduler.setDefaultDatasourceId(id);
+          },
+          invalidateDatasource: (id) => {
+            metadata.invalidateDatasource(id);
+            estimate.invalidateDatasource(id);
+          },
+        },
+        plan,
+        reloadLogWarn,
+      );
+    } catch (err) {
+      reloadLogError('datasource reload failed; keeping current config', err);
+    } finally {
+      reloadInFlight = false;
+    }
+  };
+
   return {
     config,
     rbac,
     datasources,
     engines,
-    defaultDatasourceId,
+    get defaultDatasourceId() {
+      return runtime.defaultDatasourceId;
+    },
     metadata,
     queries,
     registry,
@@ -157,6 +194,7 @@ export async function buildServices(
     schedules,
     scheduleRuns,
     scheduler,
+    reloadDatasources,
     shutdown: async () => {
       await scheduler.stop();
       await registry.shutdown();

@@ -85,10 +85,21 @@ export class EstimateService {
 
   constructor(
     private readonly engines: Map<string, QueryEngine>,
-    private readonly defaultDatasourceId: string,
+    private defaultDatasourceId: string,
     private readonly config: EstimateGuardConfig,
     private readonly now: () => number = Date.now,
   ) {}
+
+  setDefaultDatasourceId(id: string): void {
+    this.defaultDatasourceId = id;
+  }
+
+  invalidateDatasource(datasourceId: string): void {
+    const prefix = `${datasourceId} `;
+    for (const key of [...this.cache.keys()]) {
+      if (key.startsWith(prefix)) this.cache.delete(key);
+    }
+  }
 
   // principal、catalog、schema、statement、datasourceId を連結してキャッシュキーを作る。
   // 同じユーザーでも catalog/schema やデータソースが異なれば別クエリとして扱う。

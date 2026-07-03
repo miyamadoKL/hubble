@@ -146,6 +146,10 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       };
     },
 
+    async close(): Promise<void> {
+      await pool.end();
+    },
+
     async sampleTable(
       catalog: string,
       schema: string,
