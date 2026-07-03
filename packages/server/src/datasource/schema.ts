@@ -39,21 +39,47 @@ export const trinoDatasourceSchema = baseDatasourceSchema.safeExtend({
   source: z.string().min(1).optional(),
 });
 
+/** tlsCaFile は tls: true が必須であることを検証する。 */
+function refineTlsCaFile(
+  value: { tls?: boolean; tlsCaFile?: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.tlsCaFile !== undefined && value.tls !== true) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'tlsCaFile requires tls: true',
+      path: ['tlsCaFile'],
+    });
+  }
+}
+
 /** MySQL データソースの YAML エントリ。 */
-export const mysqlDatasourceSchema = baseDatasourceSchema.safeExtend({
-  type: z.literal('mysql'),
-  host: z.string().min(1),
-  port: z.number().int().positive().optional(),
-  database: z.string().min(1),
-});
+export const mysqlDatasourceSchema = baseDatasourceSchema
+  .safeExtend({
+    type: z.literal('mysql'),
+    host: z.string().min(1),
+    port: z.number().int().positive().optional(),
+    database: z.string().min(1),
+    readOnly: z.boolean().optional(),
+    tls: z.boolean().optional(),
+    tlsCaFile: z.string().min(1).optional(),
+    maxConnections: z.number().int().positive().optional(),
+  })
+  .superRefine(refineTlsCaFile);
 
 /** PostgreSQL データソースの YAML エントリ。 */
-export const postgresqlDatasourceSchema = baseDatasourceSchema.safeExtend({
-  type: z.literal('postgresql'),
-  host: z.string().min(1),
-  port: z.number().int().positive().optional(),
-  database: z.string().min(1),
-});
+export const postgresqlDatasourceSchema = baseDatasourceSchema
+  .safeExtend({
+    type: z.literal('postgresql'),
+    host: z.string().min(1),
+    port: z.number().int().positive().optional(),
+    database: z.string().min(1),
+    readOnly: z.boolean().optional(),
+    tls: z.boolean().optional(),
+    tlsCaFile: z.string().min(1).optional(),
+    maxConnections: z.number().int().positive().optional(),
+  })
+  .superRefine(refineTlsCaFile);
 
 /** 種別で分岐するデータソース 1 件分のスキーマ。 */
 export const datasourceEntrySchema = z.discriminatedUnion('type', [

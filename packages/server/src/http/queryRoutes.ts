@@ -93,18 +93,26 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     // 見積りサービス側に TTL キャッシュがあるため、直前の /estimate 呼び出しと同一なら
     // Trino への追加問い合わせは実質発生しない。
     if (services.config.guard.mode === 'enforce') {
-      const estimate = await services.estimate.estimate({
-        statement: body.statement,
-        catalog,
-        schema,
-        principal: principal.user,
-        datasourceId: body.datasourceId,
-      });
-      if (estimate.verdict.decision === 'block') {
-        throw AppError.queryBlocked(estimate.verdict.reasons[0] ?? 'Query blocked by Query Guard', {
-          estimate,
-          limits: guardLimitsSnapshot(services.config),
+      const { engine } = resolveEngine(
+        services.engines,
+        body.datasourceId,
+        services.defaultDatasourceId,
+      );
+      // costEstimate 非対応エンジン(mysql/postgresql)は見積りをスキップして実行へ進む。
+      if (engine.capabilities.costEstimate) {
+        const estimate = await services.estimate.estimate({
+          statement: body.statement,
+          catalog,
+          schema,
+          principal: principal.user,
+          datasourceId: body.datasourceId,
         });
+        if (estimate.verdict.decision === 'block') {
+          throw AppError.queryBlocked(estimate.verdict.reasons[0] ?? 'Query blocked by Query Guard', {
+            estimate,
+            limits: guardLimitsSnapshot(services.config),
+          });
+        }
       }
     }
 

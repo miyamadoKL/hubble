@@ -86,6 +86,9 @@ describe('loadDatasources', () => {
       host: 'mysql.internal',
       port: 3306,
       database: 'analytics',
+      readOnly: true,
+      tls: false,
+      maxConnections: 5,
     });
     expect(result[2]).toEqual({
       id: 'pg-warehouse',
@@ -96,6 +99,9 @@ describe('loadDatasources', () => {
       host: 'postgres.internal',
       port: 5433,
       database: 'warehouse',
+      readOnly: true,
+      tls: false,
+      maxConnections: 5,
     });
   });
 
@@ -351,6 +357,61 @@ describe('loadDatasources', () => {
         source: 'hubble',
       },
     ]);
+  });
+
+  it('resolves mysql/postgresql connection options from YAML', () => {
+    const caPath = join(tempDir, 'ca.pem');
+    writeFileSync(caPath, '-----BEGIN CERT-----\n', 'utf8');
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: mysql-a
+    type: mysql
+    username: u
+    host: localhost
+    database: app
+    readOnly: false
+    tls: true
+    tlsCaFile: ${caPath}
+    maxConnections: 10
+`,
+    );
+
+    const result = loadDatasources({
+      env: { DATASOURCES_PATH: 'datasources.yaml' },
+      trino: trinoConfig,
+      cwd: tempDir,
+    });
+
+    expect(result[0]).toMatchObject({
+      id: 'mysql-a',
+      readOnly: false,
+      tls: true,
+      tlsCa: '-----BEGIN CERT-----\n',
+      maxConnections: 10,
+    });
+  });
+
+  it('rejects tlsCaFile without tls: true', () => {
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: mysql-a
+    type: mysql
+    username: u
+    host: localhost
+    database: app
+    tlsCaFile: /tmp/ca.pem
+`,
+    );
+
+    expect(() =>
+      loadDatasources({
+        env: { DATASOURCES_PATH: 'datasources.yaml' },
+        trino: trinoConfig,
+        cwd: tempDir,
+      }),
+    ).toThrow(/tlsCaFile requires tls: true/);
   });
 
   it('errors when DATASOURCES_PATH points to a missing file', () => {
