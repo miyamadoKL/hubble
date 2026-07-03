@@ -41,3 +41,6 @@ test-results/
 /.claude/
 /.codex/
 /CLAUDE.md
+
+# Agent-local conventions (kept out of the repository)
+AGENTS.md
