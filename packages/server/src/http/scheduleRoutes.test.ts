@@ -6,7 +6,10 @@
  * 挙動（構文エラー時の 400 化、cron 不正時の事前拒否）、手動実行と実行履歴の記録、
  * 実行中スケジュールへの同時実行リクエストが 409 になることを検証する。
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { scheduleSchema, scheduleRunsResponseSchema, type Schedule } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
@@ -119,6 +122,110 @@ describe('schedule routes', () => {
     expect(delRes.status).toBe(200);
     expect((await (await ctx.app.request('/api/schedules')).json()) as unknown[]).toHaveLength(0);
     await ctx.services.shutdown();
+  });
+
+  // datasourceId だけを未知の id に変更した場合、404 で拒否されることを確認する。
+  it('PATCH returns 404 when changing to an unknown datasourceId', async () => {
+    const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+    const created = scheduleSchema.parse(
+      await (
+        await ctx.app.request('/api/schedules', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ name: 'ok', statement: 'SELECT 1', cron: '* * * * *' }),
+        })
+      ).json(),
+    );
+
+    const res = await ctx.app.request(`/api/schedules/${created.id}`, {
+      method: 'PATCH',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ datasourceId: 'no-such-datasource' }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('NOT_FOUND');
+
+    const got = scheduleSchema.parse(
+      await (await ctx.app.request(`/api/schedules/${created.id}`)).json(),
+    );
+    expect(got.datasourceId).toBe(created.datasourceId);
+    await ctx.services.shutdown();
+  });
+
+  describe('PATCH datasourceId-only change', () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+      tempDir = mkdtempSync(join(tmpdir(), 'hubble-sched-patch-'));
+    });
+
+    afterEach(() => {
+      rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    // datasourceId のみの変更でも EXPLAIN (TYPE VALIDATE) による再検証が走ることを確認する。
+    it('re-validates when only datasourceId changes', async () => {
+      const yamlPath = join(tempDir, 'datasources.yaml');
+      writeFileSync(
+        yamlPath,
+        `datasources:
+  - id: trino-a
+    type: trino
+    username: admin
+    baseUrl: http://trino.test
+    source: source-a
+  - id: trino-b
+    type: trino
+    username: admin
+    baseUrl: http://trino.test
+    source: source-b
+`,
+        'utf8',
+      );
+      const ctx = await createTestContext({
+        scenarios: [VALIDATE_OK],
+        env: { DATASOURCES_PATH: yamlPath },
+        cwd: tempDir,
+      });
+
+      const created = scheduleSchema.parse(
+        await (
+          await ctx.app.request('/api/schedules', {
+            method: 'POST',
+            headers: jsonHeaders(),
+            body: JSON.stringify({
+              name: 'ds-switch',
+              statement: 'SELECT 1',
+              cron: '* * * * *',
+              datasourceId: 'trino-a',
+            }),
+          })
+        ).json(),
+      );
+      expect(created.datasourceId).toBe('trino-a');
+
+      const validateBefore = ctx.fake.requests.filter(
+        (r) => r.method === 'POST' && r.body?.includes('EXPLAIN (TYPE VALIDATE)'),
+      ).length;
+
+      const patchRes = await ctx.app.request(`/api/schedules/${created.id}`, {
+        method: 'PATCH',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ datasourceId: 'trino-b' }),
+      });
+      expect(patchRes.status).toBe(200);
+      const patched = scheduleSchema.parse(await patchRes.json());
+      expect(patched.datasourceId).toBe('trino-b');
+      expect(patched.statement).toBe('SELECT 1');
+
+      const validateAfter = ctx.fake.requests.filter(
+        (r) => r.method === 'POST' && r.body?.includes('EXPLAIN (TYPE VALIDATE)'),
+      ).length;
+      expect(validateAfter).toBeGreaterThan(validateBefore);
+
+      await ctx.services.shutdown();
+    });
   });
 
   // PATCH でステートメントを不正な内容に変更した場合、再検証が走り 400 で拒否されることを確認する。
