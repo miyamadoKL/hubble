@@ -11,6 +11,11 @@ import {
   metadataQueryKeys,
 } from './metadata';
 
+// Lazy-load data layer for the Data browser tree (design.md §5): each level is
+// fetched on demand from `/api/catalogs...`. These tests stub `fetch` to verify
+// the right URL is hit, the contract response is parsed, and the MetadataSource
+// (used by completion + the tree's cache) dedupes repeat reads.
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -138,6 +143,7 @@ describe('createApiMetadataSource caches through the QueryClient', () => {
 
     expect(first).toEqual(['sf1', 'sf10']);
     expect(second).toEqual(['sf1', 'sf10']);
+    // Second read served from the QueryClient cache → no extra fetch.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

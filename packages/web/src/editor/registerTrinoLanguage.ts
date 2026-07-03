@@ -40,7 +40,8 @@ export const TRINO_LANGUAGE_ID = 'trino-sql';
 // 構文解析のデバウンス時間（ms）。入力のたびに毎回パースしないよう間引く。
 const PARSE_DEBOUNCE_MS = 200;
 // setModelMarkers の owner 文字列。実行時エラー用マーカー（EXEC_MARKER_OWNER）とは別 owner にして共存させる。
-const MARKER_OWNER = 'trino-sql';
+export const TRINO_MARKER_OWNER = 'trino-sql';
+const MARKER_OWNER = TRINO_MARKER_OWNER;
 
 /** Dependencies injected into the language layer (no globals). */
 /** 言語レイヤーに注入する依存関係（グローバル状態を持たせないための DI）。 */
