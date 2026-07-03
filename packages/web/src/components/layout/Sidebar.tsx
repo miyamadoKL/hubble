@@ -86,11 +86,15 @@ export function Sidebar({
   onSearchChange,
   activeNotebookId,
   context,
+  datasourceId,
+  flattenCatalog,
 }: {
   search: string;
   onSearchChange: (value: string) => void;
   activeNotebookId: string;
   context: { catalog?: string; schema?: string };
+  datasourceId?: string;
+  flattenCatalog?: boolean;
 }) {
   const tab = useUiStore((s) => s.sidebarTab);
   const setTab = useUiStore((s) => s.setSidebarTab);
@@ -220,7 +224,14 @@ export function Sidebar({
 
           {/* 選択中タブに応じてパネル本体を出し分ける（同時に描画されるのは1つだけ）。 */}
           <div className="min-h-0 flex-1 overflow-auto">
-            {tab === 'data' && <SchemaTree filter={search} context={context} />}
+            {tab === 'data' && datasourceId && (
+              <SchemaTree
+                filter={search}
+                context={context}
+                datasourceId={datasourceId}
+                flattenCatalog={flattenCatalog}
+              />
+            )}
             {tab === 'notebooks' && (
               <NotebooksSidebarPanel search={search} activeNotebookId={activeNotebookId} />
             )}

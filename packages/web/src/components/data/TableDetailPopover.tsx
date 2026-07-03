@@ -57,10 +57,12 @@ export interface TableTarget {
 export function TableDetailPopover({
   target,
   context,
+  datasourceId,
   onClose,
 }: {
   target: TableTarget;
   context: EditorContext;
+  datasourceId: string;
   onClose: () => void;
 }) {
   // 表示対象テーブルの識別情報を分解しておく（クエリキーの組み立てなどで繰り返し使う）。
@@ -69,8 +71,8 @@ export function TableDetailPopover({
   // テーブル詳細（カラム一覧、コメント）を取得する。SchemaTree 側で既に展開済みの
   // テーブルであれば TanStack Query のキャッシュがヒットし、即座に表示される。
   const detail = useQuery({
-    queryKey: metadataQueryKeys.table(catalog, schema, name),
-    queryFn: () => fetchTableDetail(catalog, schema, name),
+    queryKey: metadataQueryKeys.table(datasourceId, catalog, schema, name),
+    queryFn: () => fetchTableDetail(datasourceId, catalog, schema, name),
     staleTime: META_STALE_MS,
   });
 
@@ -79,8 +81,8 @@ export function TableDetailPopover({
   // サンプル行はこのコンポーネントがマウントされている間だけ取得する
   // （このポップオーバーを開いたときにだけ発火する遅延取得）。
   const sample = useQuery({
-    queryKey: metadataQueryKeys.sample(catalog, schema, name),
-    queryFn: () => fetchTableSample(catalog, schema, name),
+    queryKey: metadataQueryKeys.sample(datasourceId, catalog, schema, name),
+    queryFn: () => fetchTableSample(datasourceId, catalog, schema, name),
     staleTime: 60_000,
   });
 

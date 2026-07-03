@@ -110,7 +110,7 @@ interface UiState {
   // AppShell が現在選択しているカタログとスキーマ情報のコピー。
   // グローバルなキーボードショートカット（アクティブセルの実行など）が
   // props のバケツリレーをせずにこれらの値を参照できるようにするためのミラー。
-  shellContext: { catalog?: string; schema?: string };
+  shellContext: { catalog?: string; schema?: string; datasourceId?: string };
   // シェル側で設定されているデフォルトの LIMIT 件数のミラー。
   shellDefaultLimit: number;
 
@@ -141,7 +141,10 @@ interface UiState {
   /** プレゼンテーションモードの有効/無効を反転させる。 */
   togglePresentation: () => void;
   /** AppShell から現在のカタログ/スキーマとデフォルト LIMIT のミラーを更新する。 */
-  setShellRuntime: (context: { catalog?: string; schema?: string }, defaultLimit: number) => void;
+  setShellRuntime: (
+    context: { catalog?: string; schema?: string; datasourceId?: string },
+    defaultLimit: number,
+  ) => void;
 }
 
 /**

@@ -11,7 +11,12 @@
  * serverError として画面下部に表示する。
  */
 import { useMemo, useState } from 'react';
-import type { Schedule, CreateScheduleRequest, UpdateScheduleRequest } from '@hubble/contracts';
+import type {
+  DatasourceSummary,
+  Schedule,
+  CreateScheduleRequest,
+  UpdateScheduleRequest,
+} from '@hubble/contracts';
 import { cronExpression, defaultRetryPolicy } from '@hubble/contracts';
 import { AlertTriangle } from 'lucide-react';
 import { Modal } from '../common/Modal';
@@ -24,6 +29,8 @@ import {
   type FormError,
 } from './scheduleFormat';
 import { cn } from '../../utils/cn';
+import { Dropdown } from '../common/Dropdown';
+
 
 /**
  * Create / edit form for a schedule (Query Scheduling feature). Modeled on the
@@ -42,6 +49,10 @@ interface ScheduleFormModalProps {
   schedule?: Schedule | null;
   /** フォーム初期値に使う catalog / schema。ノートブックの現在の実行コンテキスト。 */
   context: { catalog?: string; schema?: string };
+  /** データソース一覧（セレクタ表示用）。 */
+  datasources: DatasourceSummary[];
+  /** 新規作成時の既定データソース id。 */
+  defaultDatasourceId?: string;
   /** 作成と更新のミューテーションが実行中かどうか。true の間は保存ボタンを無効化する。 */
   submitting: boolean;
   /** Server error from the last submit (null while clean). */
@@ -70,6 +81,8 @@ export function ScheduleFormModal({
   open,
   schedule,
   context,
+  datasources,
+  defaultDatasourceId,
   submitting,
   serverError,
   onClose,
@@ -85,6 +98,9 @@ export function ScheduleFormModal({
   const [cron, setCron] = useState(schedule?.cron ?? CRON_PRESETS[2]!.cron);
   const [enabled, setEnabled] = useState(schedule?.enabled ?? true);
   const [retry, setRetry] = useState(schedule?.retry ?? defaultRetryPolicy);
+  const [datasourceId, setDatasourceId] = useState(
+    schedule?.datasourceId ?? defaultDatasourceId ?? datasources[0]?.id ?? '',
+  );
 
   // Reset the form to the target schedule's values each time the modal opens.
   // Rendering nothing while closed means a fresh mount restores these defaults.
@@ -117,6 +133,7 @@ export function ScheduleFormModal({
         cron,
         enabled,
         retry,
+        datasourceId: datasourceId || undefined,
       };
       onUpdate(body);
     } else {
@@ -128,6 +145,7 @@ export function ScheduleFormModal({
         cron,
         enabled,
         retry,
+        datasourceId: datasourceId || undefined,
       };
       onCreate(body);
     }
@@ -204,6 +222,22 @@ export function ScheduleFormModal({
             </p>
           )}
         </div>
+
+        {/* Data source */}
+        {datasources.length > 0 && (
+          <label className="flex flex-col gap-1.5">
+            <span className={FIELD_LABEL}>Data source</span>
+            <Dropdown
+              value={datasourceId}
+              options={datasources.map((d) => ({
+                value: d.id,
+                label: d.displayName,
+              }))}
+              onChange={setDatasourceId}
+              ariaLabel="Schedule data source"
+            />
+          </label>
+        )}
 
         {/* Catalog / schema */}
         <div className="grid grid-cols-2 gap-3">

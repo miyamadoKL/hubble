@@ -10,6 +10,8 @@ import { Command, Moon, Play, Save, Square, Sun } from 'lucide-react';
 import { Logo } from './Logo';
 import { NotebookTabs } from './NotebookTabs';
 import { ContextSelector } from './ContextSelector';
+import { DatasourceSelector } from './DatasourceSelector';
+import { useDatasources } from '../../hooks/useDatasources';
 import { UserChip } from './UserChip';
 import { Button } from '../common/Button';
 import { IconButton } from '../common/IconButton';
@@ -75,6 +77,13 @@ export function TopBar({
   const execCells = useExecutionStore((s) => s.cells);
   const running = activeCellIds.some((id) => isCellRunning(execCells[id]));
 
+  const {
+    datasources,
+    selectedId,
+    setSelectedId,
+    isLoading: datasourcesLoading,
+  } = useDatasources();
+
   // 「未保存のノートブックを閉じようとしている」ときに表示する確認モーダルの対象
   // （id と表示名）。null なら確認モーダルは非表示。
   const [closing, setClosing] = useState<{ id: string; name: string } | null>(null);
@@ -102,7 +111,7 @@ export function TopBar({
       cancelActiveNotebook();
       return;
     }
-    void runAllCells(context, defaultLimit);
+    void runAllCells({ ...context, datasourceId: selectedId }, defaultLimit);
   };
 
   // Save ボタンのクリック処理。まだ名前が付いていない（新規未保存）ノートブックの
@@ -132,8 +141,15 @@ export function TopBar({
 
         {/* 右寄せグループ: コンテキスト選択、実行/保存、パレット/テーマ、ユーザー表示。 */}
         <div className="ml-auto flex items-center gap-2">
+          <DatasourceSelector
+            datasources={datasources}
+            selectedId={selectedId}
+            onChange={setSelectedId}
+            loading={datasourcesLoading}
+          />
           {/* catalog.schema コンテキストの選択 UI。 */}
           <ContextSelector
+            datasourceId={selectedId}
             catalog={context.catalog}
             schema={context.schema}
             onChange={onContextChange}

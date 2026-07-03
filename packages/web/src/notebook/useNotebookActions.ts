@@ -66,7 +66,7 @@ function resolveCellUnits(source: string, values: Record<string, string>): Execu
  * cells are skipped. Returns when the batch settles.
  */
 export async function runAllCells(
-  context: { catalog?: string; schema?: string },
+  context: { catalog?: string; schema?: string; datasourceId?: string },
   defaultLimit: number,
 ): Promise<void> {
   const store = useNotebookStore.getState();
@@ -107,7 +107,7 @@ export async function runAllCells(
  * cell. Variables are substituted; a missing value aborts with a toast.
  */
 export function runActiveSqlCell(
-  context: { catalog?: string; schema?: string },
+  context: { catalog?: string; schema?: string; datasourceId?: string },
   defaultLimit: number,
 ): void {
   const store = useNotebookStore.getState();

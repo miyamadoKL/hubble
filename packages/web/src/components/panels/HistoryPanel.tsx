@@ -11,9 +11,9 @@
 import { useState } from 'react';
 import type { HistoryResponse, QueryHistoryEntry } from '@hubble/contracts';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { FilePlus2, History, TextCursorInput } from 'lucide-react';
+import { FilePlus2, History, Play, TextCursorInput } from 'lucide-react';
 import { fetchHistory, HISTORY_PAGE_SIZE } from '../../api/history';
-import { insertAtActiveCursor, addSqlCellWithSource } from '../../notebook';
+import { insertAtActiveCursor, addSqlCellWithSource, runActiveSqlCell } from '../../notebook';
 import { nextOffset, filterToStateParam, type HistoryFilter } from './historyPaging';
 import { StateBadge } from '../common/StateBadge';
 import { EmptyState } from '../common/EmptyState';
@@ -22,6 +22,12 @@ import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
 import { formatDuration, formatInt, formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
+import { useDatasources } from '../../hooks/useDatasources';
+import { DatasourceBadge } from '../common/DatasourceBadge';
+import { useDatasourceStore } from '../../stores/datasourceStore';
+import { useUiStore } from '../../stores/uiStore';
+
+import { trySelectDatasource, toastDatasourceMissing } from '../../utils/applyDatasource';
 
 /**
  * History panel (design.md §5: offset ページング 50 件, state フィルタチップ, 各行
@@ -56,11 +62,15 @@ function HistoryRow({
   now,
   expanded,
   onToggle,
+  datasources,
+  onRerun,
 }: {
   entry: QueryHistoryEntry;
   now: Date;
   expanded: boolean;
   onToggle: () => void;
+  datasources: ReturnType<typeof useDatasources>['datasources'];
+  onRerun: (entry: QueryHistoryEntry) => void;
 }) {
   // SQL 文の改行と連続空白を単一スペースに畳んで、折りたたみ表示用の 1 行要約を作る。
   const oneLine = entry.statement.replace(/\s+/g, ' ').trim();
@@ -75,8 +85,9 @@ function HistoryRow({
       >
         <div className="min-w-0 flex-1">
           {/* state バッジ（finished/failed/running 等）と実行開始からの相対時刻 */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <StateBadge state={entry.state} />
+            <DatasourceBadge datasourceId={entry.datasourceId} datasources={datasources} />
             <span className="font-mono text-2xs text-ink-subtle">
               {formatRelativeTime(entry.submittedAt, now)}
             </span>
@@ -152,6 +163,9 @@ function HistoryRow({
             >
               New cell
             </Button>
+            <Button variant="ghost" size="sm" icon={Play} onClick={() => onRerun(entry)}>
+              Re-run
+            </Button>
           </div>
         </div>
       )}
@@ -166,6 +180,8 @@ function HistoryRow({
  * ページング状態をすべて完結させる自己完結型コンポーネント。
  */
 export function HistoryPanel() {
+  const { datasources } = useDatasources();
+  const defaultLimit = useUiStore((s) => s.shellDefaultLimit);
   // 選択中の state フィルタ（"all" がデフォルト）。
   const [filter, setFilter] = useState<HistoryFilter>('all');
   // 現在展開中の履歴行 id。null であれば全行折りたたみ状態。
@@ -209,6 +225,25 @@ export function HistoryPanel() {
   }
   // サーバーが報告する一致件数の合計（最後に取得したページの total を採用）。
   const total = query.data?.pages.at(-1)?.total ?? 0;
+
+  const rerunFromHistory = (entry: QueryHistoryEntry) => {
+    if (entry.datasourceId && !trySelectDatasource(datasources, entry.datasourceId)) {
+      toastDatasourceMissing(entry.datasourceId);
+      return;
+    }
+    if (addSqlCellWithSource(entry.statement)) {
+      const shell = useUiStore.getState().shellContext;
+      runActiveSqlCell(
+        {
+          catalog: entry.catalog ?? shell.catalog,
+          schema: entry.schema ?? shell.schema,
+          datasourceId: entry.datasourceId ?? useDatasourceStore.getState().selectedId ?? undefined,
+        },
+        defaultLimit,
+      );
+      toast.success('Re-running query');
+    }
+  };
 
   return (
     <div className="flex flex-col">
@@ -261,8 +296,10 @@ export function HistoryPanel() {
               key={entry.id}
               entry={entry}
               now={now}
+              datasources={datasources}
               expanded={expandedId === entry.id}
               onToggle={() => setExpandedId((id) => (id === entry.id ? null : entry.id))}
+              onRerun={rerunFromHistory}
             />
           ))}
         </ul>

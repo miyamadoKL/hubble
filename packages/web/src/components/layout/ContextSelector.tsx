@@ -61,11 +61,13 @@ function useOutsideClose(ref: React.RefObject<HTMLElement | null>, onClose: () =
  * @param className - ルート要素へ追加する Tailwind クラス。
  */
 export function ContextSelector({
+  datasourceId,
   catalog,
   schema,
   onChange,
   className,
 }: {
+  datasourceId?: string;
   catalog: string;
   schema: string;
   onChange: (next: { catalog: string; schema: string }) => void;
@@ -84,19 +86,22 @@ export function ContextSelector({
 
   // catalog 一覧はポップオーバーを開いたときだけ取得する（閉じている間は無駄なリクエストをしない）。
   const catalogs = useQuery({
-    queryKey: metadataQueryKeys.catalogs(),
-    queryFn: fetchCatalogs,
+    queryKey: datasourceId ? metadataQueryKeys.catalogs(datasourceId) : ['metadata', 'noop'],
+    queryFn: () => fetchCatalogs(datasourceId!),
     staleTime: META_STALE_MS,
-    enabled: open,
+    enabled: open && Boolean(datasourceId),
   });
 
   // schema 一覧は「開いている」かつ「対象 catalog が選ばれている」ときだけ取得する。
   // pickCatalog が変わるたびに右ペインの内容が切り替わる。
   const schemas = useQuery({
-    queryKey: metadataQueryKeys.schemas(pickCatalog),
-    queryFn: () => fetchSchemas(pickCatalog),
+    queryKey:
+      datasourceId && pickCatalog
+        ? metadataQueryKeys.schemas(datasourceId, pickCatalog)
+        : ['metadata', 'noop'],
+    queryFn: () => fetchSchemas(datasourceId!, pickCatalog),
     staleTime: META_STALE_MS,
-    enabled: open && Boolean(pickCatalog),
+    enabled: open && Boolean(datasourceId) && Boolean(pickCatalog),
   });
 
   // Focus the search once the popover is open (DOM side effect only — no

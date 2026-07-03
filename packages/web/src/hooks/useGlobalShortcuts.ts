@@ -166,7 +166,7 @@ function focusContext(target: EventTarget | null): FocusContext {
 // スナップショットから直接読み取る。これにより、グローバルショートカットで実行した際にも
 // ツールバーが表示しているのと同じ catalog.schema が使われるようにしている。
 // これらの値は AppShell がコンテキスト変更のたびに UI ストアへ書き込んでいる。
-function currentContext(): { catalog?: string; schema?: string } {
+function currentContext(): { catalog?: string; schema?: string; datasourceId?: string } {
   return useUiStore.getState().shellContext;
 }
 function currentDefaultLimit(): number {

@@ -23,6 +23,8 @@ export const savedQuerySchema = z.object({
   catalog: z.string().optional(),
   // 実行対象の既定スキーマ。
   schema: z.string().optional(),
+  /** 保存時点の実行先データソース id。省略または NULL は未指定。 */
+  datasourceId: z.string().optional(),
   // お気に入りフラグ。
   isFavorite: z.boolean(),
   // 作成日時。
@@ -43,6 +45,7 @@ export const createSavedQueryRequestSchema = z.object({
   statement: z.string().min(1),
   catalog: z.string().optional(),
   schema: z.string().optional(),
+  datasourceId: z.string().optional(),
   isFavorite: z.boolean().optional(),
 });
 /** 保存済みクエリ作成リクエストの推論型。 */
@@ -58,6 +61,7 @@ export const updateSavedQueryRequestSchema = z.object({
   statement: z.string().min(1),
   catalog: z.string().optional(),
   schema: z.string().optional(),
+  datasourceId: z.string().optional(),
   isFavorite: z.boolean(),
 });
 /** 保存済みクエリ更新リクエストの推論型。 */

@@ -246,6 +246,7 @@ function ColumnList({
 // クリックでコンテキスト相対のテーブル名をカーソル位置へ挿入し、行右端の
 // 情報アイコンからテーブル詳細ポップオーバーを開ける。
 function TableNode({
+  datasourceId,
   catalog,
   schema,
   table,
@@ -257,6 +258,7 @@ function TableNode({
   onToggle,
   onShowDetail,
 }: {
+  datasourceId: string;
   catalog: string;
   schema: string;
   table: string;
@@ -272,8 +274,8 @@ function TableNode({
   // これがこのツリーの「遅延読み込み」の核心である。折りたたまれたテーブルのために
   // 無駄なリクエストを発行しない。
   const detail = useQuery({
-    queryKey: metadataQueryKeys.table(catalog, schema, table),
-    queryFn: () => fetchTableDetail(catalog, schema, table),
+    queryKey: metadataQueryKeys.table(datasourceId, catalog, schema, table),
+    queryFn: () => fetchTableDetail(datasourceId, catalog, schema, table),
     enabled: expanded,
     staleTime: META_STALE_MS,
   });
@@ -343,6 +345,7 @@ function TableNode({
 // スキーマ1件分のツリーノード。展開されるとそのスキーマ配下のテーブル一覧を遅延取得し、
 // 検索フィルタで絞り込んだうえで各テーブルを TableNode として描画する。
 function SchemaNode({
+  datasourceId,
   catalog,
   schema,
   depth,
@@ -353,6 +356,7 @@ function SchemaNode({
   toggle,
   onShowDetail,
 }: {
+  datasourceId: string;
   catalog: string;
   schema: string;
   depth: number;
@@ -365,8 +369,8 @@ function SchemaNode({
 }) {
   // テーブル一覧も expanded の間だけ取得（遅延読み込み）。
   const tables = useQuery({
-    queryKey: metadataQueryKeys.tables(catalog, schema),
-    queryFn: () => fetchTables(catalog, schema),
+    queryKey: metadataQueryKeys.tables(datasourceId, catalog, schema),
+    queryFn: () => fetchTables(datasourceId, catalog, schema),
     enabled: expanded,
     staleTime: META_STALE_MS,
   });
@@ -410,6 +414,7 @@ function SchemaNode({
             return (
               <TableNode
                 key={t.name}
+                datasourceId={datasourceId}
                 catalog={catalog}
                 schema={schema}
                 table={t.name}
@@ -435,6 +440,7 @@ function SchemaNode({
 // 各スキーマを SchemaNode として描画する。expandedKeys / toggle はそのまま
 // 下位ノードへ橋渡しし、展開状態の単一の真実の情報源をルートに保つ。
 function CatalogNode({
+  datasourceId,
   catalog,
   needle,
   context,
@@ -442,7 +448,9 @@ function CatalogNode({
   expandedKeys,
   toggle,
   onShowDetail,
+  hideCatalogRow = false,
 }: {
+  datasourceId: string;
   catalog: string;
   needle: string;
   context: SchemaTreeContext;
@@ -450,44 +458,56 @@ function CatalogNode({
   expandedKeys: Set<string>;
   toggle: (key: string) => void;
   onShowDetail: (target: TableTarget) => void;
+  /** true のときカタログ行を描画せず schema 階層だけをルートに出す。 */
+  hideCatalogRow?: boolean;
 }) {
   // スキーマ一覧も expanded の間だけ取得（遅延読み込み）。
   const schemas = useQuery({
-    queryKey: metadataQueryKeys.schemas(catalog),
-    queryFn: () => fetchSchemas(catalog),
+    queryKey: metadataQueryKeys.schemas(datasourceId, catalog),
+    queryFn: () => fetchSchemas(datasourceId, catalog),
     enabled: expanded,
     staleTime: META_STALE_MS,
   });
 
+  const schemaDepth = hideCatalogRow ? 0 : 1;
+  const statusDepth = hideCatalogRow ? 0 : 1;
+
   return (
     <>
-      <TreeRow
-        depth={0}
-        icon={Database}
-        iconClass="text-accent"
-        label={catalog}
-        meta={schemas.data ? String(schemas.data.items.length) : undefined}
-        expandable
-        expanded={expanded}
-        onToggle={() => toggle(catalog)}
-      />
+      {!hideCatalogRow && (
+        <TreeRow
+          depth={0}
+          icon={Database}
+          iconClass="text-accent"
+          label={catalog}
+          meta={schemas.data ? String(schemas.data.items.length) : undefined}
+          expandable
+          expanded={expanded}
+          onToggle={() => toggle(catalog)}
+        />
+      )}
       {/* 展開中のみスキーマ一覧を描画: 読み込み中/エラー/空の状態表示のあと、
           スキーマごとに SchemaNode を再帰的なツリーの次階層として描画する。 */}
       {expanded && (
         <>
-          {schemas.isPending && <NodeStatus depth={1} state="loading" />}
+          {schemas.isPending && <NodeStatus depth={statusDepth} state="loading" />}
           {schemas.isError && (
-            <NodeStatus depth={1} state="error" onRetry={() => void schemas.refetch()} />
+            <NodeStatus
+              depth={statusDepth}
+              state="error"
+              onRetry={() => void schemas.refetch()}
+            />
           )}
           {schemas.data && schemas.data.items.length === 0 && (
-            <NodeStatus depth={1} state="empty" emptyLabel="No schemas" />
+            <NodeStatus depth={statusDepth} state="empty" emptyLabel="No schemas" />
           )}
           {(schemas.data?.items ?? []).map((s) => (
             <SchemaNode
               key={s.name}
+              datasourceId={datasourceId}
               catalog={catalog}
               schema={s.name}
-              depth={1}
+              depth={schemaDepth}
               needle={needle}
               context={context}
               expanded={expandedKeys.has(`${catalog}::${s.name}`)}
@@ -513,11 +533,17 @@ function CatalogNode({
 export function SchemaTree({
   filter = '',
   context = {},
+  datasourceId,
+  flattenCatalog = false,
 }: {
   /** 検索フィルタ文字列（未入力なら全件表示、自動展開なし）。 */
   filter?: string;
   /** 挿入するテーブル名を相対表記にするための現在のエディタコンテキスト。 */
   context?: SchemaTreeContext;
+  /** 選択中データソース id。 */
+  datasourceId: string;
+  /** true のとき合成カタログ 1 件分を畳み、schema から表示する。 */
+  flattenCatalog?: boolean;
 }) {
   const queryClient = useQueryClient();
   // ユーザーが手動でクリックして開閉したノードキーの集合（catalog / catalog::schema /
@@ -528,10 +554,15 @@ export function SchemaTree({
 
   // ルートの catalog 一覧はツリーが常に表示するので expanded 条件なしで即時取得する。
   const catalogs = useQuery({
-    queryKey: metadataQueryKeys.catalogs(),
-    queryFn: fetchCatalogs,
+    queryKey: metadataQueryKeys.catalogs(datasourceId),
+    queryFn: () => fetchCatalogs(datasourceId),
     staleTime: META_STALE_MS,
   });
+
+  const syntheticCatalog =
+    flattenCatalog && catalogs.data?.items.length === 1
+      ? catalogs.data.items[0]!.name
+      : undefined;
 
   // 展開状態のトグル。キーが既に開いていれば閉じ、閉じていれば開く（Set の出し入れ）。
   // 各ノードへはこの関数と expandedKeys をそのまま渡し、状態管理をルートに集約する。
@@ -549,8 +580,8 @@ export function SchemaTree({
   const refresh = useMutation({
     mutationFn: () => refreshMetadata(),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['metadata'] });
-      toast.info('Metadata refreshed', 'Schema cache reloaded from Trino.');
+      void queryClient.invalidateQueries({ queryKey: ['metadata', datasourceId] });
+      toast.info('Metadata refreshed', 'Schema cache reloaded.');
     },
     onError: () => toast.error('Refresh failed', 'Could not reach the server.'),
   });
@@ -570,9 +601,9 @@ export function SchemaTree({
     // 拾い集めて LoadedTree を組み立てる（未読み込みの分岐は治外法権のまま）。
     const loaded: LoadedTree = { schemasByCatalog: new Map(), tablesBySchema: new Map() };
     for (const cat of catalogs.data?.items ?? []) {
-      const schemas = queryClient.getQueryData(metadataQueryKeys.schemas(cat.name)) as
-        | { items: { name: string }[] }
-        | undefined;
+      const schemas = queryClient.getQueryData(
+        metadataQueryKeys.schemas(datasourceId, cat.name),
+      ) as { items: { name: string }[] } | undefined;
       // このカタログのスキーマ一覧がまだキャッシュにない（未展開）なら諦めて次のカタログへ。
       if (!schemas) continue;
       loaded.schemasByCatalog.set(
@@ -580,9 +611,9 @@ export function SchemaTree({
         schemas.items.map((s) => s.name),
       );
       for (const s of schemas.items) {
-        const tables = queryClient.getQueryData(metadataQueryKeys.tables(cat.name, s.name)) as
-          | { items: { name: string }[] }
-          | undefined;
+        const tables = queryClient.getQueryData(
+          metadataQueryKeys.tables(datasourceId, cat.name, s.name),
+        ) as { items: { name: string }[] } | undefined;
         if (tables) {
           loaded.tablesBySchema.set(
             schemaKey(cat.name, s.name),
@@ -595,7 +626,7 @@ export function SchemaTree({
     return expandedForFilter(expanded, needle, loaded);
     // queryClient cache reads are snapshot-in-render; recompute when the needle,
     // the loaded catalogs, or the explicit expansion set changes.
-  }, [needle, expanded, catalogs.data, queryClient]);
+  }, [needle, expanded, catalogs.data, queryClient, datasourceId]);
 
   return (
     <div>
@@ -603,7 +634,11 @@ export function SchemaTree({
           リフレッシュボタン（更新中はアイコンを回転させて進行中であることを示す）。 */}
       <div className="flex items-center justify-between px-3 pb-1">
         <span className="font-mono text-2xs text-ink-subtle">
-          {catalogs.data ? `${catalogs.data.items.length} catalogs` : ' '}
+          {catalogs.data
+            ? syntheticCatalog
+              ? 'schemas'
+              : `${catalogs.data.items.length} catalogs`
+            : ' '}
         </span>
         <IconButton
           icon={RefreshCw}
@@ -625,18 +660,33 @@ export function SchemaTree({
         {catalogs.data && catalogs.data.items.length === 0 && (
           <NodeStatus depth={0} state="empty" emptyLabel="No catalogs" />
         )}
-        {(catalogs.data?.items ?? []).map((c) => (
+        {syntheticCatalog ? (
           <CatalogNode
-            key={c.name}
-            catalog={c.name}
+            datasourceId={datasourceId}
+            catalog={syntheticCatalog}
             needle={needle}
             context={context}
-            expanded={effectiveExpanded.has(c.name)}
+            expanded
             expandedKeys={effectiveExpanded}
             toggle={toggle}
             onShowDetail={setDetailTarget}
+            hideCatalogRow
           />
-        ))}
+        ) : (
+          (catalogs.data?.items ?? []).map((c) => (
+            <CatalogNode
+              key={c.name}
+              datasourceId={datasourceId}
+              catalog={c.name}
+              needle={needle}
+              context={context}
+              expanded={effectiveExpanded.has(c.name)}
+              expandedKeys={effectiveExpanded}
+              toggle={toggle}
+              onShowDetail={setDetailTarget}
+            />
+          ))
+        )}
       </div>
 
       {/* detailTarget が設定されているとき（情報アイコンがクリックされたとき）だけ
@@ -645,6 +695,7 @@ export function SchemaTree({
         <TableDetailPopover
           target={detailTarget}
           context={context}
+          datasourceId={datasourceId}
           onClose={() => setDetailTarget(null)}
         />
       )}
