@@ -1,0 +1,30 @@
+# Docker Compose デモ用データソース定義 (trino + mysql + postgresql)。
+# docker-compose.demo.yml から /etc/hubble/datasources.yaml としてマウントする。
+# パスワードは compose の environment から passwordEnv で解決する。
+datasources:
+  - id: trino-demo
+    type: trino
+    displayName: Demo Trino
+    username: admin
+    baseUrl: http://trino:8080
+    source: hubble
+
+  - id: mysql-demo
+    type: mysql
+    displayName: Demo MySQL
+    username: hubble
+    passwordEnv: DEMO_MYSQL_PASSWORD
+    host: demo-mysql
+    port: 3306
+    database: demo
+    readOnly: true
+
+  - id: postgres-demo
+    type: postgresql
+    displayName: Demo PostgreSQL
+    username: hubble
+    passwordEnv: DEMO_POSTGRES_PASSWORD
+    host: demo-postgres
+    port: 5432
+    database: demo
+    readOnly: true

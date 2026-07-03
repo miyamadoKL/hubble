@@ -10,8 +10,20 @@ data:
   DB_PATH: /data/hubble.db
   # The image already sets STATIC_DIR; repeated here for visibility.
   STATIC_DIR: /app/packages/web/dist
-  # Point at your Trino coordinator (cluster-internal service or external URL).
-  TRINO_BASE_URL: http://trino.trino.svc.cluster.local:8080
+  # Declarative datasources (mounted at /etc/hubble/datasources.yaml).
+  # 既定は既存の単一 Trino 構成と等価。mysql/postgresql を足すときはこの YAML と
+  # Secret のパスワードエントリを拡張する (README のデータソース設定を参照)。
+  DATASOURCES_PATH: /etc/hubble/datasources.yaml
+  datasources.yaml: |
+    datasources:
+      - id: trino-default
+        type: trino
+        displayName: Trino
+        username: admin
+        passwordEnv: TRINO_PASSWORD
+        baseUrl: http://trino.trino.svc.cluster.local:8080
+        source: hubble
+  # Impersonation user and X-Trino-Source (still read from env when set).
   TRINO_USER: admin
   TRINO_USERNAME: admin
   TRINO_SOURCE: hubble

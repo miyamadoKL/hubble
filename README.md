@@ -90,20 +90,72 @@ pnpm --filter @hubble/web dev
 複数データソースは `datasources.yaml` で宣言します（例は `datasources.yaml.example`）。
 `DATASOURCES_PATH` でファイルパスを指定でき、未設定時はカレントディレクトリの
 `datasources.yaml` を探します。ファイルが無い場合は従来どおり `TRINO_*` 環境変数から
-単一の Trino データソースを合成します。パスワードは YAML に直接書かず、`passwordEnv` または
-`passwordFile` で参照します。一覧は `GET /api/datasources` で取得できます（接続先や認証情報は
-含みません）。設定変更はプロセス再起動後に反映されます。
+単一の Trino データソース（id: `trino-default`）を合成します。一覧は
+`GET /api/datasources` で取得できます（接続先や認証情報は含みません）。設定変更は
+プロセス再起動後に反映されます。
 
-MySQL / PostgreSQL データソースでは次の接続オプションが使えます。
+#### 種別ごとのフィールド
 
-- `readOnly`（省略時 `true`）: 接続確立時に読み取り専用セッションを設定します
-  （MySQL: `SET SESSION TRANSACTION READ ONLY`、PostgreSQL:
-  `SET default_transaction_read_only = on`）。ガードレールであり境界ではないため、
-  ユーザーが `SET` で解除できる可能性があります。書き込みを防ぐ本番運用では DB 側の
-  権限（読み取り専用ロール等）で制御してください。
-- `tls`（省略時 `false`）: TLS を有効化します。`tlsCaFile` で CA 証明書パスを指定できます
-  （`tls: true` が必須。読めなければ起動エラー）。
-- `maxConnections`（省略時 `5`）: コネクションプールの上限です。
+| フィールド | trino | mysql | postgresql | 説明 |
+| ---------- | ----- | ----- | ---------- | ---- |
+| `id` | 必須 | 必須 | 必須 | 不変識別子（`^[a-z][a-z0-9-]{0,62}$`） |
+| `type` | `trino` | `mysql` | `postgresql` | 種別 |
+| `displayName` | 任意 | 任意 | 任意 | UI 表示名（省略時は `id`） |
+| `username` | 必須 | 必須 | 必須 | 接続ユーザー |
+| `passwordEnv` / `passwordFile` | 任意 | 任意 | 任意 | パスワード参照（後述） |
+| `baseUrl` | 必須 | — | — | Trino coordinator URL |
+| `source` | 任意 | — | — | `X-Trino-Source`（省略時 `hubble`） |
+| `host` | — | 必須 | 必須 | DB ホスト |
+| `port` | — | 任意 | 任意 | 省略時 3306 / 5432 |
+| `database` | — | 必須 | 必須 | データベース名 |
+| `readOnly` | — | 任意 | 任意 | 省略時 `true`（後述） |
+| `tls` | — | 任意 | 任意 | 省略時 `false` |
+| `tlsCaFile` | — | 任意 | 任意 | CA ファイル（`tls: true` 必須） |
+| `maxConnections` | — | 任意 | 任意 | プール上限（省略時 5） |
+
+#### パスワードの参照
+
+パスワードは YAML に直接書きません。
+
+- `passwordEnv`: 環境変数名。Docker Compose では `environment` に載せるのが素直です。
+- `passwordFile`: ファイルパス。Kubernetes では Secret をボリュームマウントして
+  `passwordFile: /etc/hubble/secrets/mysql-password` のように参照するのが一般的です。
+- 両方を同時に指定することはできません。
+
+#### readOnly と Query Guard
+
+- `readOnly`（mysql/postgresql、省略時 `true`）は接続時に読み取り専用セッションを
+  設定するガードレールです（MySQL: `SET SESSION TRANSACTION READ ONLY`、
+  PostgreSQL: `SET default_transaction_read_only = on`）。ユーザーが `SET` で
+  解除できる可能性があるため、本番の書き込み防止は DB 側の権限で行ってください。
+- mysql / postgresql では EXPLAIN によるスキャン量見積り（Query Guard）に非対応です。
+  UI の見積りストリップは無効化され、`POST /api/queries/estimate` は
+  `ESTIMATE_NOT_SUPPORTED` を返します。`enforce` モードでもクエリ実行自体はブロックされません。
+
+#### `TRINO_*` からの移行
+
+1. 稼働中の `TRINO_BASE_URL` / `TRINO_USERNAME` / `TRINO_PASSWORD` / `TRINO_SOURCE` を控える。
+2. `datasources.yaml` に 1 件の `type: trino` エントリを書く（例は `datasources.yaml.example`）。
+3. `DATASOURCES_PATH` を設定して再起動する。
+4. Web UI のデータソースセレクタとメタデータツリーが期待どおりか確認する。
+
+`DATASOURCES_PATH` を外せば、再び `TRINO_*` から `trino-default` が合成されます（後方互換）。
+
+#### Docker Compose デモ（Trino + MySQL + PostgreSQL）
+
+既定の `docker compose up` は従来どおり Trino のみです。3 データソースを試すときは
+デモ用オーバーレイと `demo` プロファイルを使います。
+
+```bash
+# ビルドと起動 (Hubble + Trino + demo-mysql + demo-postgres)
+docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up --build
+
+# http://localhost:8080 を開き、TopBar のデータソースセレクタで切り替え
+# demo-postgres はアプリ永続化用 DATABASE_URL とは別サービスです
+```
+
+定義ファイルは `deploy/compose/datasources.demo.yaml` です。ホストから DB に直接つなぐ場合は
+`127.0.0.1:3307`（MySQL）と `127.0.0.1:5434`（PostgreSQL）が公開されます。
 
 ### 環境変数（server）
 
@@ -159,6 +211,10 @@ pnpm --filter web build
 # End-to-end against a live Trino (tpch). Starts the server (in-memory DB) + web
 # automatically; needs a reachable Trino on :30080.
 pnpm --filter @hubble/e2e test
+
+# Multi-datasource E2E (optional; does not run in the default command above)
+# Start demo DBs: docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d demo-mysql demo-postgres
+MULTI_DS_E2E=1 pnpm --filter @hubble/e2e test tests/datasources.spec.ts
 ```
 
 E2E スイート（editor / execution / results / notebook / panels / chart / app にわたる

@@ -59,6 +59,8 @@ RUN pnpm --filter web build
 FROM deps AS prod-deps
 # Prune to production deps for the server and its workspace dependencies.
 # `@hubble/server...` (trailing `...`) includes @hubble/contracts.
+# Docker build has no TTY; CI=true lets pnpm replace node_modules without prompting.
+ENV CI=true
 RUN pnpm install --prod --frozen-lockfile --filter "@hubble/server..."
 
 # ---------------------------------------------------------------------------

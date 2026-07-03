@@ -1,10 +1,12 @@
 /**
  * node-postgres コネクションプールの生成。
  */
-import { Pool } from 'pg';
+import pg from 'pg';
 import type { ResolvedPostgresqlDatasource } from '../../datasource/types';
 
-export type PgPool = Pool;
+const { Pool } = pg;
+
+export type PgPool = InstanceType<typeof Pool>;
 export type PgPoolFactory = (ds: ResolvedPostgresqlDatasource) => PgPool;
 
 /**

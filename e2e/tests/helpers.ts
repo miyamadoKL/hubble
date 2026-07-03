@@ -367,6 +367,45 @@ export async function seedSavedQuery(
  * Run a statement to a terminal state through the API (so it lands in history).
  * API 経由で SQL 文を終端状態まで実行する（実行履歴に記録させるためのヘルパー）。
  */
+/**
+ * データソースセレクタを開く。
+ */
+export async function openDatasourceMenu(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Data source' }).click();
+}
+
+/**
+ * TopBar のデータソースを displayName で切り替える。
+ */
+export async function selectDatasource(page: Page, displayName: string): Promise<void> {
+  await openDatasourceMenu(page);
+  await page.getByRole('option').filter({ hasText: displayName }).first().click();
+}
+
+/**
+ * demo-postgres へ到達できるか API で確認する (MULTI_DS_E2E 用)。
+ */
+export async function isPostgresDemoReachable(request: APIRequestContext): Promise<boolean> {
+  try {
+    const res = await request.post('/api/queries', {
+      data: { statement: 'SELECT 1', datasourceId: 'postgres-demo', source: 'hubble' },
+    });
+    if (res.status() !== 202) return false;
+    const { queryId } = (await res.json()) as { queryId: string };
+    for (let i = 0; i < 40; i++) {
+      const snap = (await request.get(`/api/queries/${queryId}`).then((r) => r.json())) as {
+        state: string;
+      };
+      if (snap.state === 'finished') return true;
+      if (['failed', 'canceled'].includes(snap.state)) return false;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function runToHistory(
   request: APIRequestContext,
   statement: string,
