@@ -211,7 +211,7 @@ export function SqlEditor({
     if (monacoRef.current) applyFableTheme(monacoRef.current, theme);
   }, [theme]);
 
-  // データソース切り替えで Trino 言語機能（補完・診断）と Monaco の language id を同期する。
+  // データソース切り替えで Trino 言語機能（補完と診断）と Monaco の language id を同期する。
   useEffect(() => {
     const editor = editorRef.current;
     const monacoNs = monacoRef.current;
