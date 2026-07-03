@@ -20,6 +20,7 @@ build/
 .env
 .env.*
 !.env.example
+/datasources.yaml
 
 # Test / coverage
 coverage/

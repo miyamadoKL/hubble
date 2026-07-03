@@ -1,5 +1,6 @@
 # Declarative datasource definitions for Hubble (Grafana provisioning style).
 # Copy to datasources.yaml or point DATASOURCES_PATH at your file.
+# datasources.yaml is git-ignored (like .env); only this example is tracked.
 # Secrets are referenced via passwordEnv or passwordFile, not stored in YAML.
 # Changes take effect after process restart (no hot reload).
 

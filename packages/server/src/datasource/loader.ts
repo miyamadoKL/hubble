@@ -80,7 +80,7 @@ function resolvePassword(entry: DatasourceEntry, env: Env): string {
   if (entry.passwordFile !== undefined) {
     try {
       const raw = readFileSync(entry.passwordFile, 'utf8');
-      return raw.replace(/\n$/, '');
+      return raw.replace(/\r?\n$/, '');
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new Error(

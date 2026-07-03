@@ -289,6 +289,29 @@ describe('loadDatasources', () => {
     expect(result[0]?.password).toBe('file-secret');
   });
 
+  it('reads passwordFile and trims trailing CRLF', () => {
+    const passPath = join(tempDir, 'pass-crlf.txt');
+    writeFileSync(passPath, 'crlf-secret\r\n', 'utf8');
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: trino-a
+    type: trino
+    username: u
+    passwordFile: ${passPath}
+    baseUrl: http://trino:8080
+`,
+    );
+
+    const result = loadDatasources({
+      env: { DATASOURCES_PATH: 'datasources.yaml' },
+      trino: trinoConfig,
+      cwd: tempDir,
+    });
+
+    expect(result[0]?.password).toBe('crlf-secret');
+  });
+
   it('errors when passwordFile cannot be read', () => {
     writeDatasources(
       tempDir,
