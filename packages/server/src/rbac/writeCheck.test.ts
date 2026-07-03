@@ -18,6 +18,20 @@ describe('classifyStatementWrite', () => {
   it('routes WITH to IO explain', () => {
     expect(classifyStatementWrite('WITH x AS (SELECT 1) SELECT * FROM x')).toBe('explain');
   });
+
+  it('routes multi-statement SQL to IO explain even when the first keyword is SELECT', () => {
+    expect(classifyStatementWrite('SELECT 1; INSERT INTO t VALUES (1)')).toBe('explain');
+  });
+
+  it('ignores semicolons inside string literals and quoted identifiers', () => {
+    expect(classifyStatementWrite("SELECT 'a;b'")).toBe('allow');
+    expect(classifyStatementWrite('SELECT "col;name" FROM t')).toBe('allow');
+    expect(classifyStatementWrite('SELECT `tbl;name` FROM t')).toBe('allow');
+  });
+
+  it('allows a single trailing semicolon', () => {
+    expect(classifyStatementWrite('SELECT 1;')).toBe('allow');
+  });
 });
 
 describe('assertQueryWriteAllowed', () => {
@@ -34,6 +48,18 @@ describe('assertQueryWriteAllowed', () => {
     await expect(
       assertQueryWriteAllowed({
         statement: 'INSERT INTO t VALUES (1)',
+        role: readOnlyRole,
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      detail: { code: WRITE_NOT_ALLOWED },
+    });
+  });
+
+  it('rejects multi-statement SQL for read-only role without IO explain', async () => {
+    await expect(
+      assertQueryWriteAllowed({
+        statement: 'SELECT 1; INSERT INTO t VALUES (1)',
         role: readOnlyRole,
       }),
     ).rejects.toMatchObject({

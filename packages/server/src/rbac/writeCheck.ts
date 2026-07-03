@@ -33,6 +33,94 @@ const UNCLASSIFIED_MESSAGE =
 
 const WRITE_DENIED_MESSAGE = '読み取り専用ロールのため書き込み文は実行できません。';
 
+function isWhitespace(ch: string): boolean {
+  return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f';
+}
+
+/** クォート区切りを読み進め、閉じクォート直後の位置を返す。 */
+function scanQuoted(sql: string, start: number, quote: string): number {
+  let i = start + 1;
+  while (i < sql.length) {
+    if (sql[i] === quote) {
+      if (sql[i + 1] === quote) {
+        i += 2;
+        continue;
+      }
+      return i + 1;
+    }
+    i += 1;
+  }
+  return sql.length;
+}
+
+/** 位置 start 以降が空白とコメントだけかどうか。 */
+function isOnlyTrailingTrivia(sql: string, start: number): boolean {
+  let i = start;
+  while (i < sql.length) {
+    if (isWhitespace(sql[i]!)) {
+      i += 1;
+      continue;
+    }
+    if (sql[i] === '-' && sql[i + 1] === '-') {
+      i += 2;
+      while (i < sql.length && sql[i] !== '\n') i += 1;
+      continue;
+    }
+    if (sql[i] === '/' && sql[i + 1] === '*') {
+      i += 2;
+      while (i < sql.length - 1 && !(sql[i] === '*' && sql[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 文字列リテラル・クォート識別子・コメントを考慮し、
+ * 文末以外のセミコロン（複数文）があるか判定する。
+ */
+function containsMultipleStatements(statement: string): boolean {
+  const sql = statement;
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i]!;
+    if (isWhitespace(ch)) {
+      i += 1;
+      continue;
+    }
+    if (ch === '-' && sql[i + 1] === '-') {
+      i += 2;
+      while (i < sql.length && sql[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && sql[i + 1] === '*') {
+      i += 2;
+      while (i < sql.length - 1 && !(sql[i] === '*' && sql[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    if (ch === "'") {
+      i = scanQuoted(sql, i, "'");
+      continue;
+    }
+    if (ch === '"') {
+      i = scanQuoted(sql, i, '"');
+      continue;
+    }
+    if (ch === '`') {
+      i = scanQuoted(sql, i, '`');
+      continue;
+    }
+    if (ch === ';') {
+      return !isOnlyTrailingTrivia(sql, i + 1);
+    }
+    i += 1;
+  }
+  return false;
+}
+
 /** SQL コメントを除いた先頭トークン列を返す。 */
 function significantTokens(statement: string): string[] {
   let sql = statement.trim();
@@ -62,6 +150,8 @@ function significantTokens(statement: string): string[] {
  * WITH や曖昧な文は IO explain へ回す。
  */
 export function classifyStatementWrite(statement: string): StatementWriteClassification {
+  if (containsMultipleStatements(statement)) return 'explain';
+
   const tokens = significantTokens(statement);
   if (tokens.length === 0) return 'explain';
 
