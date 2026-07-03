@@ -40,6 +40,9 @@ export const queryHistoryEntrySchema = z.object({
   cellId: z.string().optional(),
   // クエリが投入された日時。
   submittedAt: isoTimestamp,
+  /** Datasource this query ran against. */
+  // 実行先データソース id。
+  datasourceId: z.string().optional(),
 });
 /** 履歴 1 件分の推論型。 */
 export type QueryHistoryEntry = z.infer<typeof queryHistoryEntrySchema>;

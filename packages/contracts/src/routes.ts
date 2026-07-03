@@ -39,6 +39,18 @@ export const apiRoutes = {
   // メタデータキャッシュの強制再取得。
   metadataRefresh: () => '/api/metadata/refresh',
 
+  // Datasource-scoped metadata (Phase 2)
+  datasourceCatalogs: (datasourceId: string) =>
+    `/api/datasources/${enc(datasourceId)}/catalogs`,
+  datasourceSchemas: (datasourceId: string, catalog: string) =>
+    `/api/datasources/${enc(datasourceId)}/catalogs/${enc(catalog)}/schemas`,
+  datasourceTables: (datasourceId: string, catalog: string, schema: string) =>
+    `/api/datasources/${enc(datasourceId)}/catalogs/${enc(catalog)}/schemas/${enc(schema)}/tables`,
+  datasourceTable: (datasourceId: string, catalog: string, schema: string, table: string) =>
+    `/api/datasources/${enc(datasourceId)}/catalogs/${enc(catalog)}/schemas/${enc(schema)}/tables/${enc(table)}`,
+  datasourceTableSample: (datasourceId: string, catalog: string, schema: string, table: string) =>
+    `/api/datasources/${enc(datasourceId)}/catalogs/${enc(catalog)}/schemas/${enc(schema)}/tables/${enc(table)}/sample`,
+
   // Queries
   // クエリ実行の開始（POST）/ 一覧などの基点パス。
   queries: () => '/api/queries',

@@ -557,6 +557,7 @@ describe('schedule', () => {
     cron: '0 0 * * *',
     enabled: true,
     retry: { maxAttempts: 3, backoffSeconds: 60, backoffMultiplier: 2 },
+    datasourceId: 'trino-default',
     createdAt: ISO,
     updatedAt: ISO,
     nextRunAt: ISO,

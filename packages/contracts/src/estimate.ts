@@ -25,6 +25,9 @@ export const estimateRequestSchema = z.object({
   catalog: z.string().optional(),
   // 実行時に使用するスキーマ名（省略可）。
   schema: z.string().optional(),
+  /** Target datasource id. Omitted = default (first configured datasource). */
+  // 見積もり対象のデータソース id。省略時は既定データソース。
+  datasourceId: z.string().optional(),
 });
 /** 見積もりリクエストの推論型。 */
 export type EstimateRequest = z.infer<typeof estimateRequestSchema>;

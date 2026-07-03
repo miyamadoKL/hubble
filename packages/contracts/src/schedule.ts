@@ -173,6 +173,9 @@ export const scheduleSchema = z.object({
   /** Most recent run, or null if the schedule has never run. */
   // 直近の実行サマリ。一度も実行されていない場合は null。
   lastRun: scheduleRunSummarySchema.nullable(),
+  /** Datasource this schedule executes against (resolved at create/update time). */
+  // 実行先データソース id（作成/更新時に解決して永続化）。
+  datasourceId: z.string(),
 });
 /** スケジュール全体の推論型。 */
 export type Schedule = z.infer<typeof scheduleSchema>;
@@ -191,6 +194,9 @@ export const createScheduleRequestSchema = z.object({
   enabled: z.boolean().optional(),
   // 省略時は defaultRetryPolicy が適用される。
   retry: retryPolicySchema.optional(),
+  /** Target datasource id. Omitted = default at create time. */
+  // 実行先データソース id。省略時は作成時に既定データソースを保存する。
+  datasourceId: z.string().optional(),
 });
 /** スケジュール作成リクエストの推論型。 */
 export type CreateScheduleRequest = z.infer<typeof createScheduleRequestSchema>;
@@ -214,6 +220,7 @@ export const updateScheduleRequestSchema = z
     cron: cronExpression.optional(),
     enabled: z.boolean().optional(),
     retry: retryPolicySchema.optional(),
+    datasourceId: z.string().optional(),
   })
   // 更新対象フィールドが 1 つも指定されていない空リクエストを拒否する。
   .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
