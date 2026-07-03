@@ -26,7 +26,10 @@ export function ShortcutsHelp({ open, onClose }: { open: boolean; onClose: () =>
       {/* SHORTCUTS レジストリの内容をそのまま一覧化し、各行にラベルとキー表示 (Kbd) を並べる */}
       <ul className="divide-y divide-border-subtle">
         {SHORTCUTS.map((s) => (
-          <li key={`${s.action}-${s.keys.join('+')}`} className="flex items-center justify-between gap-4 py-2">
+          <li
+            key={`${s.action}-${s.keys.join('+')}`}
+            className="flex items-center justify-between gap-4 py-2"
+          >
             <span className="text-sm text-ink-base">{s.label}</span>
             <Kbd keys={s.keys} />
           </li>

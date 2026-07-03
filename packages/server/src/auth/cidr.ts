@@ -132,9 +132,7 @@ const V4_MAPPED_HI = 0xffffn; // groups[5] === ffff for ::ffff:a.b.c.d
  * @param raw - 生のリモートアドレス文字列（ゾーンIDや角括弧を含んでいてもよい）。
  * @returns バージョンと値の組。パース不能な形式の場合は undefined。
  */
-export function parseAddress(
-  raw: string,
-): { version: 4 | 6; value: bigint } | undefined {
+export function parseAddress(raw: string): { version: 4 | 6; value: bigint } | undefined {
   let ip = raw.trim();
   if (ip === '') return undefined;
   // Strip a zone id (`fe80::1%eth0`) and brackets (`[::1]`).
@@ -188,8 +186,7 @@ export function parseCidr(cidr: string): ParsedCidr | undefined {
   const totalBits = parsed.version === 4 ? V4_BITS : V6_BITS;
   // prefix ビット分だけ1を立てたマスクを、アドレス長に合わせて上位に寄せる。
   // 例: v4, prefix=8 なら 0xFF000000（上位8bitが1、残りが0）。
-  const mask =
-    prefix === 0 ? 0n : (((1n << BigInt(prefix)) - 1n) << (totalBits - BigInt(prefix)));
+  const mask = prefix === 0 ? 0n : ((1n << BigInt(prefix)) - 1n) << (totalBits - BigInt(prefix));
   // マスクをかけて下位ビットを0にすることで、任意のホストアドレスからネットワークベースアドレスを求める。
   return { version: parsed.version, base: parsed.value & mask, prefix };
 }
@@ -229,7 +226,7 @@ export function cidrContains(cidr: ParsedCidr, address: string): boolean {
   const mask =
     cidr.prefix === 0
       ? 0n
-      : (((1n << BigInt(cidr.prefix)) - 1n) << (totalBits - BigInt(cidr.prefix)));
+      : ((1n << BigInt(cidr.prefix)) - 1n) << (totalBits - BigInt(cidr.prefix));
   // 対象アドレスにも同じマスクを適用し、CIDR のベースアドレスと一致すれば同一ネットワーク内。
   return (parsed.value & mask) === cidr.base;
 }

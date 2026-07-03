@@ -45,7 +45,8 @@ const variants: Record<ButtonVariant, string> = {
     'border-accent bg-accent text-accent-contrast hover:bg-accent-hover active:bg-accent-active',
   default:
     'border-border-base bg-surface-raised text-ink-base hover:bg-surface-sunken hover:text-ink-strong',
-  ghost: 'border-transparent bg-transparent text-ink-muted hover:bg-surface-sunken hover:text-ink-strong',
+  ghost:
+    'border-transparent bg-transparent text-ink-muted hover:bg-surface-sunken hover:text-ink-strong',
   danger: 'border-error/40 bg-error-soft text-error hover:border-error',
 };
 

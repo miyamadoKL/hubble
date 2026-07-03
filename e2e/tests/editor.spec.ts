@@ -66,14 +66,18 @@ test('formats SQL via Ctrl+Shift+F (sql-formatter, no server round-trip)', async
   await page.keyboard.press('Control+Shift+KeyF');
 
   // The formatter upper-cases keywords and breaks clauses onto their own lines.
-  await expect.poll(async () =>
-    page.evaluate(() => {
-      const ed = (window as unknown as { __fableEditors?: { getValue: () => string }[] }).__fableEditors?.[0];
-      return ed?.getValue() ?? '';
-    }),
-  ).toMatch(/SELECT[\s\S]*FROM[\s\S]*WHERE/);
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const ed = (window as unknown as { __fableEditors?: { getValue: () => string }[] })
+          .__fableEditors?.[0];
+        return ed?.getValue() ?? '';
+      }),
+    )
+    .toMatch(/SELECT[\s\S]*FROM[\s\S]*WHERE/);
   const formatted = await page.evaluate(() => {
-    const ed = (window as unknown as { __fableEditors?: { getValue: () => string }[] }).__fableEditors?.[0];
+    const ed = (window as unknown as { __fableEditors?: { getValue: () => string }[] })
+      .__fableEditors?.[0];
     return ed?.getValue() ?? '';
   });
   // Clauses on separate lines (multi-line output).

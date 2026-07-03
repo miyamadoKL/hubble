@@ -134,7 +134,9 @@ describe('auth — owner scoping', () => {
     });
     const { id } = (await created.json()) as { id: string };
 
-    expect(await (await ctx.app.request('/api/saved-queries', { headers: bob })).json()).toEqual([]);
+    expect(await (await ctx.app.request('/api/saved-queries', { headers: bob })).json()).toEqual(
+      [],
+    );
     expect((await ctx.app.request(`/api/saved-queries/${id}`, { headers: bob })).status).toBe(404);
     expect(
       (await ctx.app.request(`/api/saved-queries/${id}`, { method: 'DELETE', headers: bob }))
@@ -168,9 +170,9 @@ describe('auth — owner scoping', () => {
     expect(aliceHist.total).toBe(1);
     expect(aliceHist.items[0]!.id).toBe(aliceQ);
 
-    const bobHist = (await (
-      await ctx.app.request('/api/history', { headers: bob })
-    ).json()) as { total: number };
+    const bobHist = (await (await ctx.app.request('/api/history', { headers: bob })).json()) as {
+      total: number;
+    };
     expect(bobHist.total).toBe(1);
   });
 

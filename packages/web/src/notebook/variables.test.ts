@@ -61,8 +61,7 @@ describe('detectVariables — comment exclusion', () => {
   });
 
   test('detects real + string-literal vars, but not commented decoys', () => {
-    const sql =
-      "SELECT '${quoted}' -- ${commented}\nFROM t WHERE x = ${real} /* ${blocked} */";
+    const sql = "SELECT '${quoted}' -- ${commented}\nFROM t WHERE x = ${real} /* ${blocked} */";
     const names = detectVariables([sql]).map((v) => v.name);
     expect(names).toEqual(['quoted', 'real']);
   });
@@ -89,7 +88,14 @@ describe('detectVariables — dedup across cells', () => {
 
 describe('inferType — type inference', () => {
   test('options → select', () => {
-    expect(inferType({ name: 's', defaultValue: 'O', hasDefault: true, options: [{ label: 'O', value: 'O' }] })).toBe('select');
+    expect(
+      inferType({
+        name: 's',
+        defaultValue: 'O',
+        hasDefault: true,
+        options: [{ label: 'O', value: 'O' }],
+      }),
+    ).toBe('select');
   });
   test('integer / decimal → number', () => {
     expect(inferType({ name: 'n', defaultValue: '10', hasDefault: true })).toBe('number');
@@ -99,8 +105,12 @@ describe('inferType — type inference', () => {
     expect(inferType({ name: 'd', defaultValue: '2026-01-01', hasDefault: true })).toBe('date');
   });
   test('YYYY-MM-DDTHH:MM → datetime-local', () => {
-    expect(inferType({ name: 'd', defaultValue: '2026-01-01T08:30', hasDefault: true })).toBe('datetime-local');
-    expect(inferType({ name: 'd', defaultValue: '2026-01-01 08:30:00', hasDefault: true })).toBe('datetime-local');
+    expect(inferType({ name: 'd', defaultValue: '2026-01-01T08:30', hasDefault: true })).toBe(
+      'datetime-local',
+    );
+    expect(inferType({ name: 'd', defaultValue: '2026-01-01 08:30:00', hasDefault: true })).toBe(
+      'datetime-local',
+    );
   });
   test('true/false → checkbox', () => {
     expect(inferType({ name: 'b', defaultValue: 'true', hasDefault: true })).toBe('checkbox');

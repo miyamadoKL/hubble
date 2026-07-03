@@ -76,10 +76,7 @@ async function setEditor(page, index, text) {
 }
 
 async function waitEditorReady(page, timeout = 20_000) {
-  await page
-    .locator('[data-testid="sql-editor"][data-ready="true"]')
-    .first()
-    .waitFor({ timeout });
+  await page.locator('[data-testid="sql-editor"][data-ready="true"]').first().waitFor({ timeout });
 }
 
 /** Seed two saved queries (one favorited) via the API so the panel has content. */
@@ -100,7 +97,7 @@ async function seedSavedQueries(request) {
       name: 'Late shipments by mode',
       description: 'Line items where receipt slipped past commit date.',
       statement:
-        "SELECT shipmode, count(*) AS late\nFROM tpch.tiny.lineitem\nWHERE receiptdate > commitdate\nGROUP BY shipmode\nORDER BY late DESC",
+        'SELECT shipmode, count(*) AS late\nFROM tpch.tiny.lineitem\nWHERE receiptdate > commitdate\nGROUP BY shipmode\nORDER BY late DESC',
       catalog: 'tpch',
       schema: 'tiny',
       isFavorite: false,
@@ -176,7 +173,10 @@ async function main() {
     // Expand tpch → tiny → orders by clicking the chevrons/rows.
     await page.getByRole('button', { name: /^tpch/ }).first().click();
     await page.getByRole('button', { name: /^tiny/ }).first().click();
-    await page.getByRole('button', { name: /^orders/ }).first().click();
+    await page
+      .getByRole('button', { name: /^orders/ })
+      .first()
+      .click();
     // Wait for columns of orders to appear (types rendered to the right).
     await page.locator('text=orderkey').first().waitFor({ timeout: 15_000 });
     // Click a column to insert it into the focused cell, after seeding the caret.

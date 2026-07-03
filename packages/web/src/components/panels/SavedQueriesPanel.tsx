@@ -10,11 +10,7 @@ import { useState } from 'react';
 import type { SavedQuery } from '@hubble/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookMarked, FilePlus2, Star, TextCursorInput, Trash2 } from 'lucide-react';
-import {
-  listSavedQueries,
-  updateSavedQuery,
-  deleteSavedQuery,
-} from '../../api/savedQueries';
+import { listSavedQueries, updateSavedQuery, deleteSavedQuery } from '../../api/savedQueries';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { insertAtActiveCursor, addSqlCellWithSource } from '../../notebook';
 import { EmptyState } from '../common/EmptyState';
@@ -228,9 +224,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
         icon={BookMarked}
         title={debounced ? 'No matches' : 'No saved queries'}
         description={
-          debounced
-            ? 'Try a different search term.'
-            : 'Save a query from a cell to find it here.'
+          debounced ? 'Try a different search term.' : 'Save a query from a cell to find it here.'
         }
         compact
       />
@@ -278,9 +272,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
         onClose={() => setPendingDelete(null)}
         title="Delete saved query?"
         description={
-          pendingDelete
-            ? `“${pendingDelete.name}” will be permanently removed.`
-            : undefined
+          pendingDelete ? `“${pendingDelete.name}” will be permanently removed.` : undefined
         }
         footer={
           <>

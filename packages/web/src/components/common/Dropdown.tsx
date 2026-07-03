@@ -90,7 +90,12 @@ export function Dropdown<T extends string>({
   function openMenu() {
     // Highlight the currently-selected option when the menu opens.
     // 現在選択中の値に対応するインデックスをアクティブにしてからメニューを開く。
-    setActiveIndex(Math.max(0, options.findIndex((o) => o.value === value)));
+    setActiveIndex(
+      Math.max(
+        0,
+        options.findIndex((o) => o.value === value),
+      ),
+    );
     setOpen(true);
   }
 
@@ -197,7 +202,9 @@ export function Dropdown<T extends string>({
                   />
                   <span className="min-w-0 flex-1 truncate">{opt.label}</span>
                   {/* hint が指定されている場合のみ、補足テキストを右側に表示する */}
-                  {opt.hint && <span className="shrink-0 font-mono text-2xs text-ink-subtle">{opt.hint}</span>}
+                  {opt.hint && (
+                    <span className="shrink-0 font-mono text-2xs text-ink-subtle">{opt.hint}</span>
+                  )}
                 </button>
               </li>
             );

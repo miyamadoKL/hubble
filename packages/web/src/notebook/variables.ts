@@ -131,7 +131,9 @@ function parseBody(body: string): DetectedVariable | undefined {
   // still split only outside parens to be safe).
   const parts = splitTopLevel(rhs);
   if (parts.length > 1 || /\(.*\)/.test(rhs)) {
-    const options = parts.map(parseOption).filter((o): o is { label: string; value: string } => !!o);
+    const options = parts
+      .map(parseOption)
+      .filter((o): o is { label: string; value: string } => !!o);
     if (options.length > 0) {
       return { name, defaultValue: options[0]!.value, hasDefault: true, options };
     }
@@ -238,7 +240,8 @@ export function reconcileVariables(detected: DetectedVariable[], previous: Varia
     const meta: VariableMeta = { type };
     if (d.options) meta.options = d.options;
     if (d.defaultValue) {
-      meta.placeholder = type === 'datetime-local' ? normaliseDatetime(d.defaultValue) : d.defaultValue;
+      meta.placeholder =
+        type === 'datetime-local' ? normaliseDatetime(d.defaultValue) : d.defaultValue;
     }
     const prev = prevByName.get(d.name);
     // Keep a value the user already typed; otherwise seed from the default.

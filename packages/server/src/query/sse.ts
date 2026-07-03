@@ -70,7 +70,12 @@ export function buildReplayEvents(exec: QueryExecution): QueryEvent[] {
   // を伝える。
   if (exec.isTerminal) {
     if (exec.error) events.push({ type: 'error', error: exec.error });
-    events.push({ type: 'done', state: exec.state, rowCount: exec.rowCount, truncated: exec.truncated });
+    events.push({
+      type: 'done',
+      state: exec.state,
+      rowCount: exec.rowCount,
+      truncated: exec.truncated,
+    });
   }
   return events;
 }

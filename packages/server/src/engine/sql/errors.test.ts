@@ -34,6 +34,8 @@ describe('throwMysqlDriverError', () => {
   });
 
   it('classifies unknown table errno as USER_ERROR', () => {
-    expectUserError(() => throwMysqlDriverError({ errno: 1146, sqlMessage: "Table 't' doesn't exist" }));
+    expectUserError(() =>
+      throwMysqlDriverError({ errno: 1146, sqlMessage: "Table 't' doesn't exist" }),
+    );
   });
 });

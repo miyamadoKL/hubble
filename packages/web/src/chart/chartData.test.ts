@@ -29,7 +29,16 @@ const rows = [
 
 describe('classifyType', () => {
   it('maps numeric Trino types to number', () => {
-    for (const t of ['bigint', 'integer', 'smallint', 'tinyint', 'double', 'real', 'decimal(10,2)', 'numeric']) {
+    for (const t of [
+      'bigint',
+      'integer',
+      'smallint',
+      'tinyint',
+      'double',
+      'real',
+      'decimal(10,2)',
+      'numeric',
+    ]) {
       expect(classifyType(t)).toBe('number');
     }
   });

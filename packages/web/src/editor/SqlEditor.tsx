@@ -47,7 +47,10 @@ export interface SqlEditorProps {
   onExecute?: (editor: monaco.editor.IStandaloneCodeEditor) => void;
   /** Called once the editor + Monaco namespace are ready (for markers/gutter). */
   /** エディターと Monaco 名前空間の準備ができた時点で 1 度だけ呼ばれる（マーカー/ガター用）。 */
-  onReady?: (editor: monaco.editor.IStandaloneCodeEditor, monaco: typeof import('monaco-editor')) => void;
+  onReady?: (
+    editor: monaco.editor.IStandaloneCodeEditor,
+    monaco: typeof import('monaco-editor'),
+  ) => void;
   /** Read-only display (e.g. history preview). */
   /** 読み取り専用表示（例: 履歴プレビュー）。 */
   readOnly?: boolean;

@@ -304,8 +304,7 @@ export function SqlCell({
   ]);
 
   // 見積りを行うべきステートメント（不要ならnullでフックにリクエストさせない）。
-  const estimateStatement =
-    target.estimate && 'statement' in target ? target.statement : null;
+  const estimateStatement = target.estimate && 'statement' in target ? target.statement : null;
   // 実際にサーバーへ見積りを問い合わせるReact Queryフック。
   const estimateQuery = useEstimate({
     statement: estimateStatement,

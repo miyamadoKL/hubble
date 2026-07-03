@@ -326,9 +326,7 @@ export function readWorkspaceSnapshot(): WorkspaceSnapshot | null {
 export function readDrafts(): Notebook[] {
   const snapshot = readWorkspaceSnapshot();
   if (!snapshot) return [];
-  return snapshot.draftIds
-    .map((id) => readDraft(id))
-    .filter((nb): nb is Notebook => nb !== null);
+  return snapshot.draftIds.map((id) => readDraft(id)).filter((nb): nb is Notebook => nb !== null);
 }
 
 // ---- Autosave scheduling ----------------------------------------------------
@@ -437,15 +435,13 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
             ? { ...existing }
             : { notebook, dirty: false, draft, saving: false },
         };
-        const openIds = s.openIds.includes(notebook.id)
-          ? s.openIds
-          : [...s.openIds, notebook.id];
+        const openIds = s.openIds.includes(notebook.id) ? s.openIds : [...s.openIds, notebook.id];
         return {
           open,
           openIds,
           // activate: false の場合でも、まだ何も開かれていなければ最初の
           // notebook をアクティブにする（アクティブが空のままにならないように）。
-          activeId: activate ? notebook.id : s.activeId ?? notebook.id,
+          activeId: activate ? notebook.id : (s.activeId ?? notebook.id),
         };
       });
       writeWorkspace(get());
@@ -552,9 +548,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     toggleCellCollapsed: (id, cellId) => {
       mutate(id, (nb) => ({
         ...nb,
-        cells: nb.cells.map((c) =>
-          c.id === cellId ? { ...c, collapsed: !c.collapsed } : c,
-        ),
+        cells: nb.cells.map((c) => (c.id === cellId ? { ...c, collapsed: !c.collapsed } : c)),
       }));
     },
 

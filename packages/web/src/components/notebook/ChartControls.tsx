@@ -276,9 +276,7 @@ function MultiSelect({
   };
 
   // 現在選択されている列の表示名一覧。
-  const selectedNames = options
-    .filter((c) => selected.includes(c.index))
-    .map((c) => c.name);
+  const selectedNames = options.filter((c) => selected.includes(c.index)).map((c) => c.name);
   // ボタンに表示する要約文言: 未選択なら「Select…」、2 件以下なら列名を列挙、
   // それ以上なら件数のみを表示する。
   const summary =
@@ -329,7 +327,9 @@ function MultiSelect({
                   onClick={() => toggle(c.index)}
                   className={cn(
                     'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs',
-                    isSelected ? 'bg-accent-soft text-accent' : 'text-ink-base hover:bg-surface-sunken',
+                    isSelected
+                      ? 'bg-accent-soft text-accent'
+                      : 'text-ink-base hover:bg-surface-sunken',
                   )}
                 >
                   <Check
@@ -338,7 +338,9 @@ function MultiSelect({
                     className={cn('shrink-0', isSelected ? 'opacity-100' : 'opacity-0')}
                   />
                   <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                  <span className="shrink-0 font-mono text-[0.625rem] text-ink-subtle">{c.type}</span>
+                  <span className="shrink-0 font-mono text-[0.625rem] text-ink-subtle">
+                    {c.type}
+                  </span>
                 </button>
               </li>
             );

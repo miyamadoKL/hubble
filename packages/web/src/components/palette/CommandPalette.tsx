@@ -420,8 +420,7 @@ function PaletteContent({
   }
 
   // 現在のモードに応じた検索欄のプレースホルダー文言。
-  const placeholder =
-    mode === 'open-notebook' ? 'Search notebooks…' : 'Type a command…';
+  const placeholder = mode === 'open-notebook' ? 'Search notebooks…' : 'Type a command…';
 
   return (
     <div className="fixed inset-0 z-[95] flex items-start justify-center px-4 pt-[12vh]">

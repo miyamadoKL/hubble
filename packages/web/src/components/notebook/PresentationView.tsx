@@ -34,7 +34,10 @@ export function PresentationView() {
   const cards = entry ? toPresentationCards(entry.notebook) : [];
 
   return (
-    <div className="fixed inset-0 z-[80] overflow-auto bg-surface-base" data-testid="presentation-view">
+    <div
+      className="fixed inset-0 z-[80] overflow-auto bg-surface-base"
+      data-testid="presentation-view"
+    >
       {/* ヘッダー: 上部に固定表示され、ノートブック名とExitボタンを表示する。 */}
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border-base bg-surface-base/95 px-8 py-4 backdrop-blur">
         <div className="min-w-0">

@@ -1,5 +1,13 @@
 import { test, expect, type Locator } from '@playwright/test';
-import { resetWorkspace, setEditor, runCell, resultPane, expectFinished, waitGrid, openResultTab } from './helpers';
+import {
+  resetWorkspace,
+  setEditor,
+  runCell,
+  resultPane,
+  expectFinished,
+  waitGrid,
+  openResultTab,
+} from './helpers';
 
 /**
  * Chart suite (design.md §5 結果: チャート): a GROUP BY result rendered as a bar

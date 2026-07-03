@@ -73,9 +73,7 @@ function buildResult(
   const verdict = computeVerdict({ status, scanBytes, scanRows }, options.limits);
   // 設定されたスループット（bytesPerSecond）からおおよその所要時間を概算する。
   const estimatedSeconds =
-    options.bytesPerSecond > 0 && scanBytes !== null
-      ? scanBytes / options.bytesPerSecond
-      : null;
+    options.bytesPerSecond > 0 && scanBytes !== null ? scanBytes / options.bytesPerSecond : null;
   return {
     status,
     scanBytes,

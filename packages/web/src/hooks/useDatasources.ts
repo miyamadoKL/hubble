@@ -45,9 +45,7 @@ export function useDatasources(): {
   }, [datasources, selectedId, setSelectedId]);
 
   const effectiveId =
-    selectedId && datasources.some((d) => d.id === selectedId)
-      ? selectedId
-      : datasources[0]?.id;
+    selectedId && datasources.some((d) => d.id === selectedId) ? selectedId : datasources[0]?.id;
 
   const selected = datasources.find((d) => d.id === effectiveId);
 

@@ -70,8 +70,7 @@ export function readRecentContexts(): ContextValue[] {
     // 壊れた/型の合わないエントリを除外しつつ、念のため長さも再度キャップする。
     return parsed
       .filter(
-        (c): c is ContextValue =>
-          typeof c?.catalog === 'string' && typeof c?.schema === 'string',
+        (c): c is ContextValue => typeof c?.catalog === 'string' && typeof c?.schema === 'string',
       )
       .slice(0, MAX_RECENT_CONTEXTS);
   } catch {

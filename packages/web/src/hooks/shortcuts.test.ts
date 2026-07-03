@@ -21,8 +21,12 @@ describe('matchShortcut — global chords (any focus)', () => {
 
 describe('matchShortcut — format', () => {
   it('Ctrl+Shift+F formats in any focus', () => {
-    expect(matchShortcut(chord({ ctrlKey: true, shiftKey: true, key: 'f' }), 'editor')).toBe('format');
-    expect(matchShortcut(chord({ ctrlKey: true, shiftKey: true, key: 'f' }), 'none')).toBe('format');
+    expect(matchShortcut(chord({ ctrlKey: true, shiftKey: true, key: 'f' }), 'editor')).toBe(
+      'format',
+    );
+    expect(matchShortcut(chord({ ctrlKey: true, shiftKey: true, key: 'f' }), 'none')).toBe(
+      'format',
+    );
   });
   it('Ctrl+I formats only when NOT in the editor (editor binds it locally)', () => {
     expect(matchShortcut(chord({ ctrlKey: true, key: 'i' }), 'editor')).toBeNull();

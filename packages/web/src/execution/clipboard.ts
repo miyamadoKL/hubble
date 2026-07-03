@@ -30,10 +30,7 @@ function escapeTsv(text: string): string {
 
 // HTML 出力側で構文が壊れないよう、最低限の特殊文字だけをエスケープする。
 function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**

@@ -96,22 +96,22 @@ pnpm --filter @hubble/web dev
 
 #### 種別ごとのフィールド
 
-| フィールド | trino | mysql | postgresql | 説明 |
-| ---------- | ----- | ----- | ---------- | ---- |
-| `id` | 必須 | 必須 | 必須 | 不変識別子（`^[a-z][a-z0-9-]{0,62}$`） |
-| `type` | `trino` | `mysql` | `postgresql` | 種別 |
-| `displayName` | 任意 | 任意 | 任意 | UI 表示名（省略時は `id`） |
-| `username` | 必須 | 必須 | 必須 | 接続ユーザー |
-| `passwordEnv` / `passwordFile` | 任意 | 任意 | 任意 | パスワード参照（後述） |
-| `baseUrl` | 必須 | — | — | Trino coordinator URL |
-| `source` | 任意 | — | — | `X-Trino-Source`（省略時 `hubble`） |
-| `host` | — | 必須 | 必須 | DB ホスト |
-| `port` | — | 任意 | 任意 | 省略時 3306 / 5432 |
-| `database` | — | 必須 | 必須 | データベース名 |
-| `readOnly` | — | 任意 | 任意 | 省略時 `true`（後述） |
-| `tls` | — | 任意 | 任意 | 省略時 `false` |
-| `tlsCaFile` | — | 任意 | 任意 | CA ファイル（`tls: true` 必須） |
-| `maxConnections` | — | 任意 | 任意 | プール上限（省略時 5） |
+| フィールド                     | trino   | mysql   | postgresql   | 説明                                   |
+| ------------------------------ | ------- | ------- | ------------ | -------------------------------------- |
+| `id`                           | 必須    | 必須    | 必須         | 不変識別子（`^[a-z][a-z0-9-]{0,62}$`） |
+| `type`                         | `trino` | `mysql` | `postgresql` | 種別                                   |
+| `displayName`                  | 任意    | 任意    | 任意         | UI 表示名（省略時は `id`）             |
+| `username`                     | 必須    | 必須    | 必須         | 接続ユーザー                           |
+| `passwordEnv` / `passwordFile` | 任意    | 任意    | 任意         | パスワード参照（後述）                 |
+| `baseUrl`                      | 必須    | —       | —            | Trino coordinator URL                  |
+| `source`                       | 任意    | —       | —            | `X-Trino-Source`（省略時 `hubble`）    |
+| `host`                         | —       | 必須    | 必須         | DB ホスト                              |
+| `port`                         | —       | 任意    | 任意         | 省略時 3306 / 5432                     |
+| `database`                     | —       | 必須    | 必須         | データベース名                         |
+| `readOnly`                     | —       | 任意    | 任意         | 省略時 `true`（後述）                  |
+| `tls`                          | —       | 任意    | 任意         | 省略時 `false`                         |
+| `tlsCaFile`                    | —       | 任意    | 任意         | CA ファイル（`tls: true` 必須）        |
+| `maxConnections`               | —       | 任意    | 任意         | プール上限（省略時 5）                 |
 
 #### パスワードの参照
 

@@ -87,10 +87,7 @@ export function StatsStrip({
         {/* 経過時間。 */}
         <StatItem label="elapsed" value={formatDuration(stats?.elapsedTimeMillis ?? 0)} />
         {/* 行数。クライアントに読み込み済みの行数(loadedRows)を優先し、なければ Trino 側の処理行数を使う。 */}
-        <StatItem
-          label="rows"
-          value={formatInt(loadedRows ?? stats?.processedRows ?? 0)}
-        />
+        <StatItem label="rows" value={formatInt(loadedRows ?? stats?.processedRows ?? 0)} />
         {/* 処理バイト数。 */}
         <StatItem label="bytes" value={formatBytes(stats?.processedBytes ?? 0)} />
         {/* スプリット（Trinoの並列処理単位）の完了数/総数。 */}

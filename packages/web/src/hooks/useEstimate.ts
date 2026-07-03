@@ -90,9 +90,7 @@ export function estimateQueryKey(params: UseEstimateParams) {
 export function useEstimate(params: UseEstimateParams) {
   // statement が null または空文字なら見積もりを行う意味がないため、クエリ自体を無効化する。
   const enabled =
-    params.enabled !== false &&
-    params.statement !== null &&
-    params.statement.length > 0;
+    params.enabled !== false && params.statement !== null && params.statement.length > 0;
   return useQuery<EstimateResult>({
     queryKey: estimateQueryKey(params),
     queryFn: () =>

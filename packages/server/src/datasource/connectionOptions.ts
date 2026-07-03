@@ -32,10 +32,9 @@ export function readTlsCaFile(datasourceId: string, path: string): string {
     return readFileSync(path, 'utf8');
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `datasource '${datasourceId}': tlsCaFile '${path}' cannot be read: ${detail}`,
-      { cause: err },
-    );
+    throw new Error(`datasource '${datasourceId}': tlsCaFile '${path}' cannot be read: ${detail}`, {
+      cause: err,
+    });
   }
 }
 

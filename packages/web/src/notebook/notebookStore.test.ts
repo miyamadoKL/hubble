@@ -141,9 +141,7 @@ describe('moveItem (pure helper)', () => {
 describe('variables recompute', () => {
   test('editing SQL source refreshes notebook.variables', () => {
     useNotebookStore.getState().openNotebook(makeNotebook());
-    useNotebookStore
-      .getState()
-      .setCellSource('nb-1', 'c1', 'SELECT * FROM t LIMIT ${n=10}');
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT * FROM t LIMIT ${n=10}');
     const vars = useNotebookStore.getState().open['nb-1']!.notebook.variables;
     expect(vars.map((v) => v.name)).toEqual(['n']);
     expect(vars[0]?.value).toBe('10');
@@ -223,7 +221,9 @@ describe('autosave debounce (fake timers)', () => {
     __setPersistence({ create: vi.fn(async (nb) => nb), update });
 
     const id = useNotebookStore.getState().createBlankNotebook();
-    useNotebookStore.getState().setCellSource(id, useNotebookStore.getState().open[id]!.notebook.cells[0]!.id, 'SELECT 9');
+    useNotebookStore
+      .getState()
+      .setCellSource(id, useNotebookStore.getState().open[id]!.notebook.cells[0]!.id, 'SELECT 9');
     vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_MS * 2);
     await vi.runAllTimersAsync();
 
@@ -297,9 +297,9 @@ describe('setCellResultMeta (resultMeta write-back)', () => {
     st.openNotebook(makeNotebook({ id: 'a', cells: [{ id: 'ca', kind: 'sql', source: 'X' }] }));
     st.openNotebook(makeNotebook({ id: 'b', cells: [{ id: 'cb', kind: 'sql', source: 'Y' }] }));
     useNotebookStore.getState().setCellResultMeta('cb', { state: 'failed', errorMessage: 'boom' });
-    expect(
-      useNotebookStore.getState().open['b']!.notebook.cells[0]!.resultMeta?.errorMessage,
-    ).toBe('boom');
+    expect(useNotebookStore.getState().open['b']!.notebook.cells[0]!.resultMeta?.errorMessage).toBe(
+      'boom',
+    );
     // Cell in the other notebook untouched.
     expect(useNotebookStore.getState().open['a']!.notebook.cells[0]!.resultMeta).toBeUndefined();
     // Unknown cell id is a no-op (no throw).

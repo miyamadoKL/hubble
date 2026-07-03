@@ -30,12 +30,7 @@ import type {
   QueryState,
   QueryStats,
 } from '@hubble/contracts';
-import {
-  createQuery,
-  cancelQuery,
-  fetchQuerySnapshot,
-  fetchQueryRows,
-} from './api';
+import { createQuery, cancelQuery, fetchQuerySnapshot, fetchQueryRows } from './api';
 import { subscribeQueryEvents, type EventSourceFactory, type SseSubscription } from './sse';
 import { withAutoLimit } from './sql';
 import type { ExecutionUnit } from './executionUnit';

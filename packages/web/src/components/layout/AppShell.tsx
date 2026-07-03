@@ -189,11 +189,7 @@ export function AppShell() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface-base text-ink-base">
       {/* 最上部の TopBar。context の表示/変更と全セル実行のデフォルト行数上限を渡す。 */}
-      <TopBar
-        context={context}
-        onContextChange={handleContextChange}
-        defaultLimit={defaultLimit}
-      />
+      <TopBar context={context} onContextChange={handleContextChange} defaultLimit={defaultLimit} />
       {/* Signature hairline under the TopBar (design.md §6 memorable detail). */}
       {/* TopBar 直下の1px の装飾ライン。左端だけアクセントカラーのグラデーションを乗せる。 */}
       <div className="relative h-px shrink-0 bg-border-base">
@@ -230,10 +226,7 @@ export function AppShell() {
 
       {/* 画面横断のオーバーレイ群: コマンドパレット、ショートカットヘルプ、
           プレゼンテーションモード（有効時のみ描画）、トースト通知。 */}
-      <CommandPalette
-        context={{ ...context, datasourceId }}
-        defaultLimit={defaultLimit}
-      />
+      <CommandPalette context={{ ...context, datasourceId }} defaultLimit={defaultLimit} />
       <ShortcutsHelp open={shortcutsHelpOpen} onClose={() => setShortcutsHelpOpen(false)} />
       {presentationMode && <PresentationView />}
       <ToastViewport />

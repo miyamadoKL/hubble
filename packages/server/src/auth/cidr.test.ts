@@ -4,13 +4,7 @@
  * 不正入力の扱いを網羅する。
  */
 import { describe, it, expect } from 'vitest';
-import {
-  cidrContains,
-  isTrustedAddress,
-  parseAddress,
-  parseCidr,
-  parseCidrList,
-} from './cidr';
+import { cidrContains, isTrustedAddress, parseAddress, parseCidr, parseCidrList } from './cidr';
 
 // parseAddress: 文字列を {version, value} に正規化できるかを検証する。
 describe('parseAddress', () => {

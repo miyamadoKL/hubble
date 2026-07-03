@@ -10,7 +10,15 @@ import { createPgStatementClient } from './statementClient';
 import type { PgPool } from './pool';
 
 const FIELDS: FieldDef[] = [
-  { name: 'n', tableID: 0, columnID: 0, dataTypeID: 23, dataTypeSize: 4, dataTypeModifier: -1, format: 'text' },
+  {
+    name: 'n',
+    tableID: 0,
+    columnID: 0,
+    dataTypeID: 23,
+    dataTypeSize: 4,
+    dataTypeModifier: -1,
+    format: 'text',
+  },
 ];
 
 interface FakePgPoolOptions {
@@ -77,7 +85,11 @@ describe('createPgStatementClient', () => {
     expect(first.nextUri).toBeDefined();
     expect(first.stats?.state).toBe('RUNNING');
 
-    const second = await client.advance(first.nextUri!, { source: 'test' }, emptySessionMutations());
+    const second = await client.advance(
+      first.nextUri!,
+      { source: 'test' },
+      emptySessionMutations(),
+    );
     expect(second.data).toHaveLength(2);
     expect(second.nextUri).toBeUndefined();
     expect(second.stats?.state).toBe('FINISHED');

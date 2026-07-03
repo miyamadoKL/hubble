@@ -15,11 +15,7 @@
  * Trino との通信は execution.ts と同様に `TrinoClient` に委譲する。
  */
 import type { StatementClient } from '../engine/types';
-import {
-  emptySessionMutations,
-  type TrinoColumn,
-  type TrinoRequestContext,
-} from '../trino/types';
+import { emptySessionMutations, type TrinoColumn, type TrinoRequestContext } from '../trino/types';
 import type { QueryExecution } from './execution';
 
 /** `X-Trino-Source` used by CSV re-execution queries (kept out of history). */

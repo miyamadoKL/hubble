@@ -31,7 +31,6 @@ import {
 import { cn } from '../../utils/cn';
 import { Dropdown } from '../common/Dropdown';
 
-
 /**
  * Create / edit form for a schedule (Query Scheduling feature). Modeled on the
  * SaveNotebookModal convention but richer: name / statement / catalog·schema /

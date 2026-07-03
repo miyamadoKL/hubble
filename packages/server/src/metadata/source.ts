@@ -1,10 +1,4 @@
-import type {
-  Catalog,
-  Column,
-  SampleRowsResponse,
-  SchemaItem,
-  TableItem,
-} from '@hubble/contracts';
+import type { Catalog, Column, SampleRowsResponse, SchemaItem, TableItem } from '@hubble/contracts';
 import type { TrinoClient } from '../trino/client';
 import { runToCompletion } from '../trino/runner';
 import type { TrinoColumn, TrinoRequestContext } from '../trino/types';

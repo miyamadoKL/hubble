@@ -167,9 +167,9 @@ describe('datasource routing (HTTP)', () => {
     const { queryId } = (await res.json()) as { queryId: string };
     await ctx.services.registry.get(queryId)!.settled;
 
-    const snap = (await (
-      await ctx.app.request(`/api/queries/${queryId}`)
-    ).json()) as { datasourceId: string };
+    const snap = (await (await ctx.app.request(`/api/queries/${queryId}`)).json()) as {
+      datasourceId: string;
+    };
     expect(snap.datasourceId).toBe('first-ds');
 
     const source = ctx.fake.requests.find((r) => r.method === 'POST')?.headers['x-trino-source'];

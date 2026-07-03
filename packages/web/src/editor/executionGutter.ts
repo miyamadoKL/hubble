@@ -131,12 +131,7 @@ export function setExecutionMarkers(
   }
   const source = model.getValue();
   // ステートメント相対座標 → ソース全体座標への補正（execution モジュールに委譲）。
-  const { line, column } = correctErrorPosition(
-    source,
-    unitStart,
-    error.line,
-    error.column ?? 1,
-  );
+  const { line, column } = correctErrorPosition(source, unitStart, error.line, error.column ?? 1);
   // Underline to the end of the offending token/line.
   // 問題のトークン/行末までを下線表示範囲とする。
   const lineMaxColumn = model.getLineMaxColumn(Math.min(line, model.getLineCount()));

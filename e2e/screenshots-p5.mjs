@@ -122,17 +122,23 @@ async function main() {
     await setEditor(
       page,
       0,
-      "SELECT orderpriority, count(*) c, sum(totalprice) s\nFROM tpch.sf1.orders\nGROUP BY orderpriority\nORDER BY orderpriority",
+      'SELECT orderpriority, count(*) c, sum(totalprice) s\nFROM tpch.sf1.orders\nGROUP BY orderpriority\nORDER BY orderpriority',
     );
     await runAndWaitGrid(page);
     await openChartTab(page);
     await page.locator('[data-testid="chart-canvas"] canvas').first().waitFor({ timeout: 20_000 });
     // Default seeds bars + the first numeric measure; add the second Y measure so
     // both `c` and `s` plot as series (design.md §6: 複数 Y 軸).
-    await page.locator('[data-testid="chart-controls"]').getByRole('button', { name: 'Y axis columns' }).click();
+    await page
+      .locator('[data-testid="chart-controls"]')
+      .getByRole('button', { name: 'Y axis columns' })
+      .click();
     await page.getByRole('option', { name: /^s/ }).click();
     // Close the multiselect popover (click the trigger again) so the chart is clean.
-    await page.locator('[data-testid="chart-controls"]').getByRole('button', { name: 'Y axis columns' }).click();
+    await page
+      .locator('[data-testid="chart-controls"]')
+      .getByRole('button', { name: 'Y axis columns' })
+      .click();
     await page.waitForTimeout(700);
     await page.screenshot({ path: resolve(outDir, 'p5-bar.png') });
 

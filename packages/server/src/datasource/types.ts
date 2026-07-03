@@ -38,7 +38,8 @@ export interface ResolvedSqlConnectionOptions {
 }
 
 /** MySQL データソースの解決済み設定。 */
-export interface ResolvedMysqlDatasource extends ResolvedDatasourceBase, ResolvedSqlConnectionOptions {
+export interface ResolvedMysqlDatasource
+  extends ResolvedDatasourceBase, ResolvedSqlConnectionOptions {
   type: 'mysql';
   host: string;
   port: number;

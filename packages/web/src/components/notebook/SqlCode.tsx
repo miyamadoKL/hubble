@@ -22,17 +22,75 @@ type TokenType = 'keyword' | 'function' | 'string' | 'number' | 'comment' | 'ope
 
 // SQL の予約語として強調表示する単語の集合（小文字で比較する）。
 const KEYWORDS = new Set([
-  'select', 'from', 'where', 'group', 'by', 'order', 'having', 'join', 'left', 'right',
-  'inner', 'outer', 'on', 'as', 'and', 'or', 'not', 'in', 'is', 'null', 'distinct',
-  'limit', 'offset', 'union', 'all', 'case', 'when', 'then', 'else', 'end', 'with',
-  'insert', 'into', 'values', 'update', 'set', 'delete', 'create', 'table', 'view',
-  'explain', 'asc', 'desc', 'between', 'like', 'exists', 'cross', 'using', 'date',
+  'select',
+  'from',
+  'where',
+  'group',
+  'by',
+  'order',
+  'having',
+  'join',
+  'left',
+  'right',
+  'inner',
+  'outer',
+  'on',
+  'as',
+  'and',
+  'or',
+  'not',
+  'in',
+  'is',
+  'null',
+  'distinct',
+  'limit',
+  'offset',
+  'union',
+  'all',
+  'case',
+  'when',
+  'then',
+  'else',
+  'end',
+  'with',
+  'insert',
+  'into',
+  'values',
+  'update',
+  'set',
+  'delete',
+  'create',
+  'table',
+  'view',
+  'explain',
+  'asc',
+  'desc',
+  'between',
+  'like',
+  'exists',
+  'cross',
+  'using',
+  'date',
 ]);
 
 // 関数名として強調表示する単語の集合（小文字で比較する）。
 const FUNCTIONS = new Set([
-  'count', 'sum', 'avg', 'min', 'max', 'round', 'coalesce', 'cast', 'date_trunc',
-  'concat', 'lower', 'upper', 'abs', 'now', 'current_date', 'approx_distinct',
+  'count',
+  'sum',
+  'avg',
+  'min',
+  'max',
+  'round',
+  'coalesce',
+  'cast',
+  'date_trunc',
+  'concat',
+  'lower',
+  'upper',
+  'abs',
+  'now',
+  'current_date',
+  'approx_distinct',
 ]);
 
 // トークン種別ごとの表示クラス。すべてテーマ用の CSS 変数（--syntax-*）経由で色を参照し、
@@ -60,7 +118,8 @@ interface Token {
 // 4. 識別子/予約語/関数名になりうる単語
 // 5. 記号列（カンマ、括弧、比較演算子、算術演算子など）
 // 6. 空白列
-const TOKEN_RE = /(--[^\n]*)|('(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|([(),.;*=<>!+\-/]+)|(\s+)/g;
+const TOKEN_RE =
+  /(--[^\n]*)|('(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|([(),.;*=<>!+\-/]+)|(\s+)/g;
 
 /**
  * 1行分の SQL テキストを TOKEN_RE でスキャンし、Token の配列へ分解する。
