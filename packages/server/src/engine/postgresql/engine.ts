@@ -14,6 +14,7 @@ import { capabilitiesForKind } from '../../datasource/summary';
 import type { ResolvedPostgresqlDatasource } from '../../datasource/types';
 import type { ValidationResult } from '../../schedule/validator';
 import type {
+  DownloadClientOptions,
   EngineValidateParams,
   ExecutionClientOptions,
   QueryEngine,
@@ -84,10 +85,10 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
       });
     },
 
-    downloadClient(): StatementClient {
+    downloadClient(opts: DownloadClientOptions = {}): StatementClient {
       return createPgStatementClient(pool, {
         datasourceReadOnly: datasource.readOnly,
-        sessionReadOnly: false,
+        sessionReadOnly: opts.sessionReadOnly ?? false,
       });
     },
 

@@ -17,6 +17,7 @@ import { capabilitiesForKind } from '../../datasource/summary';
 import type { ResolvedMysqlDatasource } from '../../datasource/types';
 import type { ValidationResult } from '../../schedule/validator';
 import type {
+  DownloadClientOptions,
   EngineValidateParams,
   ExecutionClientOptions,
   QueryEngine,
@@ -72,10 +73,10 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       });
     },
 
-    downloadClient(): StatementClient {
+    downloadClient(opts: DownloadClientOptions = {}): StatementClient {
       return createMysqlStatementClient(pool, {
         datasourceReadOnly: datasource.readOnly,
-        sessionReadOnly: false,
+        sessionReadOnly: opts.sessionReadOnly ?? false,
       });
     },
 

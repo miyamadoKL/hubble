@@ -270,13 +270,35 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
 
   // GET /api/queries/:id/download.csv?compression=gzip|zip
   // 結果全体を CSV としてストリーミングダウンロードするエンドポイント。無圧縮/gzip/zip を選択可能。
-  app.get('/:id/download.csv', (c) => {
+  app.get('/:id/download.csv', async (c) => {
     const exec = ownedExec(c);
+    const principal = c.var.principal;
     const compression = c.req.query('compression');
     const gzip = compression === 'gzip';
     const zip = compression === 'zip';
     const csvName = `${exec.queryId}.csv`;
     const filename = zip ? `${exec.queryId}.zip` : `${csvName}${gzip ? '.gz' : ''}`;
+
+    const { engine } = resolveEngine(
+      services.engines,
+      exec.datasourceId,
+      services.defaultDatasourceId,
+    );
+    const catalog = exec.ctx.catalog ?? services.config.defaults.catalog;
+    const schema = exec.ctx.schema ?? services.config.defaults.schema;
+    const ioExplain = engine.ioExplainExecution?.({
+      statement: exec.statement,
+      catalog,
+      schema,
+      principal: principal.user,
+    });
+    await assertQueryWriteAllowed({
+      statement: exec.statement,
+      role: principal.role,
+      ioExplainClient: ioExplain?.client,
+      ioExplainCtx: ioExplain?.ctx,
+      ioExplainTimeoutMs: services.config.guard.estimateTimeoutMs,
+    });
 
     c.header('Content-Type', zip ? 'application/zip' : 'text/csv; charset=utf-8');
     c.header('Content-Disposition', `attachment; filename="${filename}"`);
@@ -290,13 +312,11 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       // 再クエリ）の両方を同時に打ち切れるようにする。
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
-      const engine = resolveEngine(
-        services.engines,
-        exec.datasourceId,
-        services.defaultDatasourceId,
-      ).engine;
       const csv = streamQueryCsv(exec, {
-        client: engine.downloadClient(exec.ctx.user),
+        client: engine.downloadClient({
+          user: exec.ctx.user,
+          sessionReadOnly: !hasQueryWrite(principal.role),
+        }),
         signal: ac.signal,
       });
 

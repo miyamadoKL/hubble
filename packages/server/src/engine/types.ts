@@ -38,6 +38,17 @@ export interface ExecutionClientOptions {
   sessionReadOnly?: boolean;
 }
 
+/** CSV 再実行用クライアントの生成オプション。 */
+export interface DownloadClientOptions {
+  /** impersonation 対象の principal（省略時は技術アカウント）。 */
+  user?: string;
+  /**
+   * principal が query.write を持たないダウンロードでは true。
+   * MySQL/PostgreSQL はチェックアウト時にセッション read only を設定する。
+   */
+  sessionReadOnly?: boolean;
+}
+
 /** Trino IO explain（write check 等）の実行コンテキスト。 */
 export interface IoExplainExecution {
   client: StatementClient;
@@ -78,10 +89,10 @@ export interface QueryEngine {
 
   /**
    * CSV 再実行用のステートメントクライアントを返す（Trino の download ソース）。
-   * @param user - impersonation 対象の principal。
+   * @param opts - impersonation とセッション read only。
    * @returns ダウンロード専用クライアント。
    */
-  downloadClient(user?: string): StatementClient;
+  downloadClient(opts?: DownloadClientOptions): StatementClient;
 
   /**
    * EXPLAIN ベースのスキャン量見積もり。capabilities.costEstimate が false なら呼ばれない。
