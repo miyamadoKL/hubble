@@ -45,8 +45,10 @@ import { useActiveNotebook, useNotebookStore, substituteVariables } from '../../
  * @property defaultLimit - セルの LIMIT 自動付与に使う既定件数（/api/config 由来）。
  */
 interface NotebookViewProps {
-  context: { catalog: string; schema: string };
+  context: { catalog: string; schema: string; datasourceId?: string };
   defaultLimit: number;
+  costEstimateEnabled?: boolean;
+  trinoLanguage?: boolean;
 }
 
 /**
@@ -69,7 +71,12 @@ function useCellStatus(cellId: string): CellStatus {
  * @param context - 実行時に使うカタログ／スキーマのコンテキスト。
  * @param defaultLimit - 新規セル実行時の既定 LIMIT 値。
  */
-export function NotebookView({ context, defaultLimit }: NotebookViewProps) {
+export function NotebookView({
+  context,
+  defaultLimit,
+  costEstimateEnabled = true,
+  trinoLanguage = true,
+}: NotebookViewProps) {
   const entry = useActiveNotebook();
   const store = useNotebookStore;
 
@@ -238,6 +245,8 @@ export function NotebookView({ context, defaultLimit }: NotebookViewProps) {
               total={cells.length}
               context={cellContext}
               defaultLimit={defaultLimit}
+              costEstimateEnabled={costEstimateEnabled}
+              trinoLanguage={trinoLanguage}
               resolveUnit={resolveUnit}
               variableValues={variableValues}
               editingMarkdown={editingMarkdownId === cell.id}
@@ -470,6 +479,8 @@ function CellRow({
   total,
   context,
   defaultLimit,
+  costEstimateEnabled,
+  trinoLanguage,
   resolveUnit,
   variableValues,
   editingMarkdown,
@@ -490,6 +501,8 @@ function CellRow({
   total: number;
   context: ExecutionContext;
   defaultLimit: number;
+  costEstimateEnabled: boolean;
+  trinoLanguage: boolean;
   resolveUnit: (unit: ExecutionUnit) => ExecutionUnit | null;
   variableValues: Record<string, string>;
   editingMarkdown: boolean;
@@ -557,6 +570,8 @@ function CellRow({
           onFocus={onFocus}
           context={context}
           defaultLimit={defaultLimit}
+          costEstimateEnabled={costEstimateEnabled}
+          trinoLanguage={trinoLanguage}
           resolveUnit={resolveUnit}
           variableValues={variableValues}
           chrome={chrome}

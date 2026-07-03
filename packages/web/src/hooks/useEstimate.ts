@@ -47,6 +47,9 @@ export interface UseEstimateParams {
   statement: string | null;
   catalog?: string;
   schema?: string;
+  datasourceId?: string;
+  /** false のときリクエスト自体を送らない（costEstimate 非対応データソース向け）。 */
+  enabled?: boolean;
 }
 
 /** TanStack Query key for an estimate — stable per resolved statement + context. */
@@ -56,7 +59,13 @@ export interface UseEstimateParams {
  * 同じ組み合わせであればキャッシュがヒットして再フェッチされない。
  */
 export function estimateQueryKey(params: UseEstimateParams) {
-  return ['estimate', params.catalog ?? '', params.schema ?? '', params.statement] as const;
+  return [
+    'estimate',
+    params.datasourceId ?? '',
+    params.catalog ?? '',
+    params.schema ?? '',
+    params.statement,
+  ] as const;
 }
 
 /**
@@ -80,7 +89,10 @@ export function estimateQueryKey(params: UseEstimateParams) {
  */
 export function useEstimate(params: UseEstimateParams) {
   // statement が null または空文字なら見積もりを行う意味がないため、クエリ自体を無効化する。
-  const enabled = params.statement !== null && params.statement.length > 0;
+  const enabled =
+    params.enabled !== false &&
+    params.statement !== null &&
+    params.statement.length > 0;
   return useQuery<EstimateResult>({
     queryKey: estimateQueryKey(params),
     queryFn: () =>
@@ -88,6 +100,7 @@ export function useEstimate(params: UseEstimateParams) {
         statement: params.statement as string,
         catalog: params.catalog,
         schema: params.schema,
+        datasourceId: params.datasourceId,
       }),
     enabled,
     // サーバー側の見積もりキャッシュ（30秒）に合わせて、同じキーへの再フェッチを抑制する。

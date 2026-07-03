@@ -16,9 +16,19 @@ describe('estimateQueryKey', () => {
     expect(estimateQueryKey(base)).not.toEqual(estimateQueryKey({ ...base, schema: 'sf1' }));
   });
 
+  it('includes datasourceId in the key', () => {
+    const key = estimateQueryKey({
+      statement: 'SELECT 1',
+      catalog: 'tpch',
+      schema: 'tiny',
+      datasourceId: 'trino-default',
+    });
+    expect(key).toEqual(['estimate', 'trino-default', 'tpch', 'tiny', 'SELECT 1']);
+  });
+
   it('carries a null statement (the disabled sentinel) in the key', () => {
     const key = estimateQueryKey({ statement: null });
-    expect(key[3]).toBeNull();
+    expect(key[4]).toBeNull();
   });
 
   it('mirrors the server cache window', () => {

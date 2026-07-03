@@ -8,6 +8,7 @@ import {
   fetchTableSample,
   refreshMetadata,
   createApiMetadataSource,
+  metadataQueryKeys,
 } from './metadata';
 
 // Lazy-load data layer for the Data browser tree (design.md §5): each level is
@@ -29,6 +30,8 @@ const metaEnvelope = <T>(items: T[]) => ({
   lastUpdatedAt: '2026-06-12T00:00:00.000Z',
 });
 
+const DS = 'trino-default';
+
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -41,27 +44,33 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('metadata fetchers hit the contract routes', () => {
+describe('metadata fetchers hit datasource-scoped routes', () => {
   test('fetchCatalogs', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(metaEnvelope([{ name: 'tpch' }])));
-    const res = await fetchCatalogs();
-    expect(fetchMock).toHaveBeenCalledWith('/api/catalogs', expect.anything());
+    const res = await fetchCatalogs(DS);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/datasources/${DS}/catalogs`,
+      expect.anything(),
+    );
     expect(res.items).toEqual([{ name: 'tpch' }]);
   });
 
   test('fetchSchemas encodes the catalog into the path', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(metaEnvelope([{ name: 'sf1' }])));
-    await fetchSchemas('tpch');
-    expect(fetchMock).toHaveBeenCalledWith('/api/catalogs/tpch/schemas', expect.anything());
+    await fetchSchemas(DS, 'tpch');
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/datasources/${DS}/catalogs/tpch/schemas`,
+      expect.anything(),
+    );
   });
 
   test('fetchTables', async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(metaEnvelope([{ name: 'orders', type: 'BASE TABLE' }])),
     );
-    const res = await fetchTables('tpch', 'sf1');
+    const res = await fetchTables(DS, 'tpch', 'sf1');
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/catalogs/tpch/schemas/sf1/tables',
+      `/api/datasources/${DS}/catalogs/tpch/schemas/sf1/tables`,
       expect.anything(),
     );
     expect(res.items[0]).toMatchObject({ name: 'orders' });
@@ -76,9 +85,9 @@ describe('metadata fetchers hit the contract routes', () => {
         columns: [{ name: 'orderkey', type: 'bigint' }],
       }),
     );
-    const res = await fetchTableDetail('tpch', 'sf1', 'orders');
+    const res = await fetchTableDetail(DS, 'tpch', 'sf1', 'orders');
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/catalogs/tpch/schemas/sf1/tables/orders',
+      `/api/datasources/${DS}/catalogs/tpch/schemas/sf1/tables/orders`,
       expect.anything(),
     );
     expect(res.columns).toEqual([{ name: 'orderkey', type: 'bigint' }]);
@@ -92,12 +101,22 @@ describe('metadata fetchers hit the contract routes', () => {
         source: 'live',
       }),
     );
-    const res = await fetchTableSample('tpch', 'sf1', 'orders');
+    const res = await fetchTableSample(DS, 'tpch', 'sf1', 'orders');
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/catalogs/tpch/schemas/sf1/tables/orders/sample',
+      `/api/datasources/${DS}/catalogs/tpch/schemas/sf1/tables/orders/sample`,
       expect.anything(),
     );
     expect(res.rows).toHaveLength(2);
+  });
+
+  test('metadata query keys include datasource id', () => {
+    expect(metadataQueryKeys.catalogs('mysql-1')).toEqual(['metadata', 'mysql-1', 'catalogs']);
+    expect(metadataQueryKeys.schemas('mysql-1', 'db')).toEqual([
+      'metadata',
+      'mysql-1',
+      'schemas',
+      'db',
+    ]);
   });
 
   test('refreshMetadata POSTs an empty scope by default', async () => {
@@ -116,7 +135,7 @@ describe('createApiMetadataSource caches through the QueryClient', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity } },
     });
-    const source = createApiMetadataSource(client);
+    const source = createApiMetadataSource(client, () => DS);
     fetchMock.mockResolvedValue(jsonResponse(metaEnvelope([{ name: 'sf1' }, { name: 'sf10' }])));
 
     const first = await source.listSchemas('tpch');

@@ -53,6 +53,7 @@ export function estimateQuery(request: {
   statement: string;
   catalog?: string;
   schema?: string;
+  datasourceId?: string;
 }): Promise<EstimateResult> {
   const body = estimateRequestSchema.parse(request);
   return apiFetch(estimateResultSchema, apiRoutes.queryEstimate(), { method: 'POST', body });

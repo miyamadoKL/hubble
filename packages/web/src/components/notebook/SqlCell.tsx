@@ -17,6 +17,8 @@ import { parseStatement } from '../../trino-lang';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { useEstimate } from '../../hooks/useEstimate';
 import { useGuardConfig } from '../../hooks/useConfig';
+import { Tooltip } from '../common/Tooltip';
+import { Gauge } from 'lucide-react';
 import {
   computeLiveEstimateTarget,
   estimatePresentation,
@@ -79,6 +81,10 @@ interface SqlCellProps {
   /** Default LIMIT from /api/config (design.md §5). */
   // /api/config から取得したデフォルトのLIMIT値（design.md §5）。
   defaultLimit: number;
+  /** false のとき Query Guard 見積りを行わない（costEstimate 非対応データソース）。 */
+  costEstimateEnabled?: boolean;
+  /** false のとき Monaco 標準 SQL モードを使う（Trino ANTLR を無効化）。 */
+  trinoLanguage?: boolean;
   /**
    * Resolve a unit's statement before it runs (variable substitution). Returns a
    * unit with substituted text, or null to abort the run (missing variables).
@@ -138,6 +144,8 @@ export function SqlCell({
   onFocus,
   context,
   defaultLimit,
+  costEstimateEnabled = true,
+  trinoLanguage = true,
   resolveUnit,
   variableValues,
   chrome,
@@ -266,37 +274,45 @@ export function SqlCell({
 
   // デバウンス後の状態から、見積り対象（実行されるであろうステートメント）を算出する。
   // parsesClean は構文エラーが無いかを判定するコールバック。
-  const target = useMemo(
-    () =>
-      computeLiveEstimateTarget({
-        source: debouncedSource,
-        selection: debouncedSelection,
-        variableValues,
-        autoLimit,
-        limit,
-        guardMode: guard.mode,
-        parsesClean: (sql) =>
-          parseStatement(sql, context.catalog, context.schema).markers.length === 0,
-      }),
-    [
-      debouncedSource,
-      debouncedSelection,
+  const target = useMemo(() => {
+    if (!costEstimateEnabled) {
+      return { estimate: false, reason: 'guard-off' as const };
+    }
+    return computeLiveEstimateTarget({
+      source: debouncedSource,
+      selection: debouncedSelection,
       variableValues,
       autoLimit,
       limit,
-      guard.mode,
-      context.catalog,
-      context.schema,
-    ],
-  );
+      guardMode: guard.mode,
+      parsesClean: (sql) =>
+        trinoLanguage
+          ? parseStatement(sql, context.catalog, context.schema).markers.length === 0
+          : sql.trim().length > 0,
+    });
+  }, [
+    costEstimateEnabled,
+    debouncedSource,
+    debouncedSelection,
+    variableValues,
+    autoLimit,
+    limit,
+    guard.mode,
+    context.catalog,
+    context.schema,
+    trinoLanguage,
+  ]);
 
   // 見積りを行うべきステートメント（不要ならnullでフックにリクエストさせない）。
-  const estimateStatement = target.estimate ? target.statement : null;
+  const estimateStatement =
+    target.estimate && 'statement' in target ? target.statement : null;
   // 実際にサーバーへ見積りを問い合わせるReact Queryフック。
   const estimateQuery = useEstimate({
     statement: estimateStatement,
     catalog: context.catalog,
     schema: context.schema,
+    datasourceId: context.datasourceId,
+    enabled: costEstimateEnabled,
   });
 
   // Derive the strip presentation; only show it when we actually estimated.
@@ -489,7 +505,12 @@ export function SqlCell({
     explainSubRef.current?.close();
 
     // EXPLAINクエリをサーバーに投げ、返ってきたqueryIdでSSEイベントを購読する。
-    createQuery({ statement, catalog: context.catalog, schema: context.schema })
+    createQuery({
+      statement,
+      catalog: context.catalog,
+      schema: context.schema,
+      datasourceId: context.datasourceId,
+    })
       .then(({ queryId }) => {
         explainSubRef.current = subscribeQueryEvents(queryId, {
           onEvent: (event) => {
@@ -514,7 +535,7 @@ export function SqlCell({
         setExplainText(`-- ${err instanceof Error ? err.message : 'EXPLAIN failed'}`);
         setExplainRunning(false);
       });
-  }, [source, caretOffset, context.catalog, context.schema]);
+  }, [source, caretOffset, context.catalog, context.schema, context.datasourceId]);
 
   return (
     <div>
@@ -551,11 +572,20 @@ export function SqlCell({
               onChange={handleChange}
               onExecute={handleExecute}
               onReady={handleReady}
+              trinoLanguage={trinoLanguage}
               ariaLabel={`SQL cell ${name ?? ''}`}
             />
           </div>
+          {!costEstimateEnabled && (
+            <Tooltip label="This data source does not support scan estimates">
+              <div className="flex items-center gap-1.5 border-b border-border-subtle bg-surface-inset px-3 py-1 font-mono text-2xs text-ink-subtle">
+                <Gauge size={12} strokeWidth={1.75} className="shrink-0 opacity-50" />
+                Estimate unavailable for this data source
+              </div>
+            </Tooltip>
+          )}
           {/* Query Guardのライブ見積りストリップ。見積りが取得できた場合のみ表示する。 */}
-          {presentation.visible && (
+          {costEstimateEnabled && presentation.visible && (
             <div className="border-b border-border-subtle bg-surface-raised">
               <EstimateStrip presentation={presentation} loading={estimateQuery.isFetching} />
             </div>

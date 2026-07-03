@@ -18,6 +18,7 @@ import {
   registerTrinoLanguage,
   attachDiagnostics,
   TRINO_LANGUAGE_ID,
+  TRINO_MARKER_OWNER,
 } from './registerTrinoLanguage';
 import { applyFableTheme } from './theme';
 import { useEditorRuntime } from './EditorRuntime';
@@ -50,6 +51,8 @@ export interface SqlEditorProps {
   /** Read-only display (e.g. history preview). */
   /** 読み取り専用表示（例: 履歴プレビュー）。 */
   readOnly?: boolean;
+  /** false のとき Monaco 標準 SQL モードを使う（Trino ANTLR 機能を無効化）。 */
+  trinoLanguage?: boolean;
   ariaLabel?: string;
 }
 
@@ -65,6 +68,7 @@ export function SqlEditor({
   onExecute,
   onReady,
   readOnly,
+  trinoLanguage = true,
   ariaLabel,
 }: SqlEditorProps) {
   // エディターをマウントする DOM ホスト要素。
@@ -77,6 +81,8 @@ export function SqlEditor({
   const [height, setHeight] = useState(MIN_LINES * LINE_HEIGHT + VERTICAL_PADDING);
   // Monaco のロードとエディター生成が完了したかどうか（data-ready 属性に反映しテスト等が待てるようにする）。
   const [ready, setReady] = useState(false);
+  // Trino 診断ループ（attachDiagnostics の返り値）。データソース切り替え時に dispose する。
+  const diagnosticsRef = useRef<monaco.IDisposable | undefined>(undefined);
 
   // 全エディターで共有するランタイム依存（スキーマキャッシュと catalog.schema コンテキスト）。
   const runtime = useEditorRuntime();
@@ -104,7 +110,6 @@ export function SqlEditor({
   useEffect(() => {
     let disposed = false;
     let editor: monaco.editor.IStandaloneCodeEditor | undefined;
-    let diagnostics: monaco.IDisposable | undefined;
     let changeSub: monaco.IDisposable | undefined;
     let sizeSub: monaco.IDisposable | undefined;
 
@@ -114,19 +119,12 @@ export function SqlEditor({
       if (disposed || !hostRef.current) return;
       monacoRef.current = monacoNs;
 
-      // Trino 言語（tokenizer/補完/ホバー）を Monaco 名前空間へ登録する（冪等）。
-      registerTrinoLanguage(monacoNs, {
-        cache: runtime.cache,
-        getContext: runtime.getContext,
-        getTheme: () => themeRef.current,
-        onExecute: (ed) =>
-          onExecuteRef.current?.(ed as monaco.editor.IStandaloneCodeEditor),
-      });
+      const useTrino = trinoLanguage && runtime.isTrinoLanguage();
 
       // Monaco エディター本体を DOM ホストに生成する（各種表示オプションを指定）。
       editor = monacoNs.editor.create(hostRef.current, {
         value,
-        language: TRINO_LANGUAGE_ID,
+        language: useTrino ? TRINO_LANGUAGE_ID : 'sql',
         readOnly,
         automaticLayout: true,
         minimap: { enabled: false },
@@ -178,15 +176,6 @@ export function SqlEditor({
       });
       sizeSub = editor.onDidContentSizeChange(syncHeight);
 
-      // 構文エラーマーカー、テーブル参照装飾、実行/整形コマンドをこのエディターに配線する。
-      diagnostics = attachDiagnostics(monacoNs, editor, {
-        cache: runtime.cache,
-        getContext: runtime.getContext,
-        getTheme: () => themeRef.current,
-        onExecute: (ed) =>
-          onExecuteRef.current?.(ed as monaco.editor.IStandaloneCodeEditor),
-      });
-
       onReadyRef.current?.(editor, monacoNs);
 
       syncHeight();
@@ -195,7 +184,8 @@ export function SqlEditor({
 
     return () => {
       disposed = true;
-      diagnostics?.dispose();
+      diagnosticsRef.current?.dispose();
+      diagnosticsRef.current = undefined;
       changeSub?.dispose();
       sizeSub?.dispose();
       editor?.dispose();
@@ -220,6 +210,35 @@ export function SqlEditor({
   useEffect(() => {
     if (monacoRef.current) applyFableTheme(monacoRef.current, theme);
   }, [theme]);
+
+  // データソース切り替えで Trino 言語機能（補完と診断）と Monaco の language id を同期する。
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monacoNs = monacoRef.current;
+    const model = editor?.getModel();
+    if (!ready || !editor || !monacoNs || !model) return;
+
+    const useTrino = trinoLanguage && runtime.isTrinoLanguage();
+    const trinoDeps = {
+      cache: runtime.cache,
+      getContext: runtime.getContext,
+      getTheme: () => themeRef.current,
+      onExecute: (ed: monaco.editor.ICodeEditor) =>
+        onExecuteRef.current?.(ed as monaco.editor.IStandaloneCodeEditor),
+    };
+
+    diagnosticsRef.current?.dispose();
+    diagnosticsRef.current = undefined;
+
+    if (useTrino) {
+      registerTrinoLanguage(monacoNs, trinoDeps);
+      diagnosticsRef.current = attachDiagnostics(monacoNs, editor, trinoDeps);
+      monacoNs.editor.setModelLanguage(model, TRINO_LANGUAGE_ID);
+    } else {
+      monacoNs.editor.setModelMarkers(model, TRINO_MARKER_OWNER, []);
+      monacoNs.editor.setModelLanguage(model, 'sql');
+    }
+  }, [trinoLanguage, runtime, ready]);
 
   return (
     // Monaco のマウント先ホスト要素。高さは自動計算した値をインラインスタイルで指定する。

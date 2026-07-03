@@ -85,6 +85,7 @@ for (const backend of dbBackends) {
           isFavorite: true,
           catalog: 'tpch',
           schema: 'tiny',
+          datasourceId: 'trino-default',
         });
         expect(fav.id).toMatch(/^sq_/);
 
@@ -93,6 +94,7 @@ for (const backend of dbBackends) {
         expect(list[0]!.id).toBe(fav.id); // favorites first
         expect(list[0]!.isFavorite).toBe(true);
         expect(list[0]!.catalog).toBe('tpch');
+        expect(list[0]!.datasourceId).toBe('trino-default');
 
         expect(await repo.list('alice', 'SELECT 2')).toHaveLength(1);
         expect(await repo.list('bob')).toEqual([]);
@@ -102,9 +104,11 @@ for (const backend of dbBackends) {
           description: 'd',
           statement: 'SELECT 3',
           isFavorite: false,
+          datasourceId: 'mysql-1',
         });
         expect(updated?.statement).toBe('SELECT 3');
         expect(updated?.isFavorite).toBe(false);
+        expect(updated?.datasourceId).toBe('mysql-1');
 
         expect(await repo.delete('alice', fav.id)).toBe(true);
         expect(await repo.delete('alice', fav.id)).toBe(false);

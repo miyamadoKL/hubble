@@ -97,7 +97,7 @@ type PaletteMode = 'commands' | 'open-notebook';
  * @returns パレットに表示するコマンドの配列。
  */
 function buildCommands(deps: {
-  context: { catalog: string; schema: string };
+  context: { catalog: string; schema: string; datasourceId?: string };
   defaultLimit: number;
   theme: 'light' | 'dark';
   presentationMode: boolean;
@@ -269,7 +269,7 @@ function PaletteContent({
   defaultLimit,
 }: {
   onClose: () => void;
-  context: { catalog: string; schema: string };
+  context: { catalog: string; schema: string; datasourceId?: string };
   defaultLimit: number;
 }) {
   // UI ストアから、コマンド実行に必要な状態と操作関数をそれぞれ購読する。
@@ -570,7 +570,7 @@ export function CommandPalette({
   context,
   defaultLimit,
 }: {
-  context: { catalog: string; schema: string };
+  context: { catalog: string; schema: string; datasourceId?: string };
   defaultLimit: number;
 }) {
   // パレットが開いているかどうかを UI ストアから購読する。

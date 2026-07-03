@@ -27,6 +27,7 @@ interface SavedQueryRow {
   statement: string;
   catalog: string | null;
   schema: string | null;
+  datasource_id: string | null;
   is_favorite: number;
   created_at: string;
   updated_at: string;
@@ -84,13 +85,14 @@ export class SavedQueryRepository {
       statement: req.statement,
       catalog: req.catalog,
       schema: req.schema,
+      datasourceId: req.datasourceId,
       isFavorite: req.isFavorite ?? false,
       createdAt: nowIso,
       updatedAt: nowIso,
     });
     await this.db.run(
-      `INSERT INTO saved_queries (id, name, description, statement, catalog, schema, is_favorite, owner, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO saved_queries (id, name, description, statement, catalog, schema, datasource_id, is_favorite, owner, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertParams(saved, owner),
     );
     return saved;
@@ -112,12 +114,13 @@ export class SavedQueryRepository {
       statement: req.statement,
       catalog: req.catalog,
       schema: req.schema,
+      datasourceId: req.datasourceId,
       isFavorite: req.isFavorite,
       updatedAt: new Date().toISOString(),
     });
     await this.db.run(
       `UPDATE saved_queries SET name=?, description=?, statement=?,
-         catalog=?, schema=?, is_favorite=?, updated_at=?
+         catalog=?, schema=?, datasource_id=?, is_favorite=?, updated_at=?
        WHERE id=? AND owner=?`,
       [
         updated.name,
@@ -125,6 +128,7 @@ export class SavedQueryRepository {
         updated.statement,
         updated.catalog ?? null,
         updated.schema ?? null,
+        updated.datasourceId ?? null,
         updated.isFavorite ? 1 : 0,
         updated.updatedAt,
         id,
@@ -161,6 +165,7 @@ function rowToSavedQuery(row: SavedQueryRow): SavedQuery {
   };
   if (row.catalog) q.catalog = row.catalog;
   if (row.schema) q.schema = row.schema;
+  if (row.datasource_id) q.datasourceId = row.datasource_id;
   return savedQuerySchema.parse(q);
 }
 
@@ -174,6 +179,7 @@ function insertParams(q: SavedQuery, owner: string): SqlParam[] {
     q.statement,
     q.catalog ?? null,
     q.schema ?? null,
+    q.datasourceId ?? null,
     q.isFavorite ? 1 : 0,
     owner,
     q.createdAt,

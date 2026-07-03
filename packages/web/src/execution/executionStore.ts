@@ -110,6 +110,8 @@ export interface ExecutionContext {
   catalog?: string;
   schema?: string;
   notebookId?: string;
+  /** 実行先データソース id。省略時はサーバー既定。 */
+  datasourceId?: string;
 }
 
 /**
@@ -401,6 +403,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
       schema: ctx.schema,
       notebookId: ctx.notebookId,
       cellId,
+      datasourceId: ctx.datasourceId,
     })
       .then(({ queryId }) => {
         if (runtimeFor(cellId).generation !== generation) return; // superseded

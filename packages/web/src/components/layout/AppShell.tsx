@@ -15,6 +15,7 @@ import { ToastViewport } from '../common/Toast';
 import { toast } from '../common/Toast';
 import { useGlobalShortcuts } from '../../hooks/useGlobalShortcuts';
 import { useConfig, useDefaultLimit } from '../../hooks/useConfig';
+import { useDatasources } from '../../hooks/useDatasources';
 import { EditorRuntimeProvider } from '../../editor/EditorRuntime';
 import { useUiStore } from '../../stores/uiStore';
 import {
@@ -42,6 +43,7 @@ import {
 export function AppShell() {
   const defaultLimit = useDefaultLimit();
   const { data: config } = useConfig();
+  const { selectedId: datasourceId, selected: selectedDatasource } = useDatasources();
   // Seed the shell context from the most-recently-used context (design.md §5:
   // 最近使った値を復元); config defaults fill any gap once loaded.
   // シェル全体で共有する catalog.schema コンテキスト。初期値は localStorage の「最近使った
@@ -64,8 +66,11 @@ export function AppShell() {
   // 反映しておく。グローバルショートカット側はこの store 経由で同じ実行条件を参照する。
   const setShellRuntime = useUiStore((s) => s.setShellRuntime);
   useEffect(() => {
-    setShellRuntime({ catalog: context.catalog, schema: context.schema }, defaultLimit);
-  }, [context.catalog, context.schema, defaultLimit, setShellRuntime]);
+    setShellRuntime(
+      { catalog: context.catalog, schema: context.schema, datasourceId },
+      defaultLimit,
+    );
+  }, [context.catalog, context.schema, datasourceId, defaultLimit, setShellRuntime]);
 
   const activeId = useNotebookStore((s) => s.activeId);
   const activeEntry = useActiveNotebook();
@@ -202,17 +207,33 @@ export function AppShell() {
           onSearchChange={setSearch}
           activeNotebookId={activeId ?? ''}
           context={context}
+          datasourceId={datasourceId}
+          flattenCatalog={selectedDatasource ? !selectedDatasource.capabilities.catalogs : false}
         />
         <main className="min-w-0 flex-1 overflow-auto bg-surface-base">
-          <EditorRuntimeProvider context={context}>
-            <NotebookView context={context} defaultLimit={defaultLimit} />
-          </EditorRuntimeProvider>
+          {datasourceId && (
+            <EditorRuntimeProvider
+              context={context}
+              datasourceId={datasourceId}
+              datasourceKind={selectedDatasource?.kind ?? 'trino'}
+            >
+              <NotebookView
+                context={{ ...context, datasourceId }}
+                defaultLimit={defaultLimit}
+                costEstimateEnabled={selectedDatasource?.capabilities.costEstimate ?? false}
+                trinoLanguage={selectedDatasource?.kind === 'trino'}
+              />
+            </EditorRuntimeProvider>
+          )}
         </main>
       </div>
 
       {/* 画面横断のオーバーレイ群: コマンドパレット、ショートカットヘルプ、
           プレゼンテーションモード（有効時のみ描画）、トースト通知。 */}
-      <CommandPalette context={context} defaultLimit={defaultLimit} />
+      <CommandPalette
+        context={{ ...context, datasourceId }}
+        defaultLimit={defaultLimit}
+      />
       <ShortcutsHelp open={shortcutsHelpOpen} onClose={() => setShortcutsHelpOpen(false)} />
       {presentationMode && <PresentationView />}
       <ToastViewport />

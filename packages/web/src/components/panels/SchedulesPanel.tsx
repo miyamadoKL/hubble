@@ -29,6 +29,8 @@ import {
   useRunScheduleNow,
 } from '../../hooks/useSchedules';
 import { useUiStore } from '../../stores/uiStore';
+import { useDatasources } from '../../hooks/useDatasources';
+import { DatasourceBadge } from '../common/DatasourceBadge';
 import { cn } from '../../utils/cn';
 
 /**
@@ -79,6 +81,7 @@ function nextRunLabel(schedule: Schedule, now: Date): string {
 function ScheduleRow({
   schedule,
   now,
+  datasources,
   onToggleEnabled,
   onRun,
   onEdit,
@@ -88,6 +91,7 @@ function ScheduleRow({
 }: {
   schedule: Schedule;
   now: Date;
+  datasources: ReturnType<typeof useDatasources>['datasources'];
   onToggleEnabled: () => void;
   onRun: () => void;
   onEdit: () => void;
@@ -131,12 +135,13 @@ function ScheduleRow({
       </div>
 
       {/* 最終実行の状態バッジ（未実行なら "never run"）と、次回実行予定の相対表示。 */}
-      <div className="mt-1.5 flex items-center gap-2 pl-9">
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-9">
         {schedule.lastRun ? (
           <ScheduleStatusBadge status={schedule.lastRun.status} />
         ) : (
           <span className="font-mono text-2xs text-ink-subtle">never run</span>
         )}
+        <DatasourceBadge datasourceId={schedule.datasourceId} datasources={datasources} />
         <span className="font-mono text-2xs text-ink-subtle">
           next {nextRunLabel(schedule, now)}
         </span>
@@ -176,6 +181,7 @@ function ScheduleRow({
 export function SchedulesPanel({ search }: { search: string }) {
   // ノートブックの現在の実行コンテキスト（catalog / schema）。新規作成フォームの初期値に使う。
   const context = useUiStore((s) => s.shellContext);
+  const { datasources, selectedId } = useDatasources();
   const list = useSchedules();
   const create = useCreateSchedule();
   const update = useUpdateSchedule();
@@ -314,6 +320,7 @@ export function SchedulesPanel({ search }: { search: string }) {
               key={schedule.id}
               schedule={schedule}
               now={now}
+              datasources={datasources}
               running={runningId === schedule.id}
               onToggleEnabled={() => toggleEnabled(schedule)}
               onRun={() => runSchedule(schedule)}
@@ -332,6 +339,8 @@ export function SchedulesPanel({ search }: { search: string }) {
         open={formOpen}
         schedule={editing}
         context={context}
+        datasources={datasources}
+        defaultDatasourceId={selectedId}
         submitting={create.isPending || update.isPending}
         serverError={serverError}
         onClose={closeForm}

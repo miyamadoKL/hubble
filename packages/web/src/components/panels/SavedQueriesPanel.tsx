@@ -23,6 +23,9 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
+import { useDatasources } from '../../hooks/useDatasources';
+import { DatasourceBadge } from '../common/DatasourceBadge';
+import { trySelectDatasource } from '../../utils/applyDatasource';
 
 /**
  * Saved queries panel (design.md §5: 一覧 / 検索 / お気に入りトグル / 削除 /
@@ -51,6 +54,7 @@ const savedQueriesKey = (q: string) => ['saved-queries', 'list', q] as const;
 function SavedRow({
   query,
   expanded,
+  datasources,
   onToggleExpand,
   onToggleFavorite,
   onInsert,
@@ -59,6 +63,7 @@ function SavedRow({
 }: {
   query: SavedQuery;
   expanded: boolean;
+  datasources: ReturnType<typeof useDatasources>['datasources'];
   onToggleExpand: () => void;
   onToggleFavorite: () => void;
   onInsert: () => void;
@@ -94,7 +99,10 @@ function SavedRow({
           aria-expanded={expanded}
         >
           <p className="truncate text-sm font-medium text-ink-strong">{query.name}</p>
-          <p className="mt-0.5 truncate font-mono text-2xs text-ink-subtle">{oneLine}</p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+            <DatasourceBadge datasourceId={query.datasourceId} datasources={datasources} />
+            <p className="min-w-0 flex-1 truncate font-mono text-2xs text-ink-subtle">{oneLine}</p>
+          </div>
           {query.description && (
             <p className="mt-0.5 truncate text-xs text-ink-muted">{query.description}</p>
           )}
@@ -141,6 +149,13 @@ function SavedRow({
  */
 export function SavedQueriesPanel({ search }: { search: string }) {
   const queryClient = useQueryClient();
+  const { datasources } = useDatasources();
+
+  const applySavedDatasource = (query: SavedQuery) => {
+    if (query.datasourceId) {
+      trySelectDatasource(datasources, query.datasourceId);
+    }
+  };
   // 検索語を 300ms デバウンスし、入力のたびに API を叩かないようにする。
   const debounced = useDebouncedValue(search.trim(), 300);
   // 現在展開中の行 id。null であれば全行折りたたみ状態。
@@ -167,6 +182,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
         statement: q.statement,
         catalog: q.catalog,
         schema: q.schema,
+        datasourceId: q.datasourceId,
         isFavorite: !q.isFavorite,
       }),
     onSuccess: invalidate,
@@ -236,11 +252,16 @@ export function SavedQueriesPanel({ search }: { search: string }) {
           <SavedRow
             key={query.id}
             query={query}
+            datasources={datasources}
             expanded={expandedId === query.id}
             onToggleExpand={() => setExpandedId((id) => (id === query.id ? null : query.id))}
             onToggleFavorite={() => favorite.mutate(query)}
-            onInsert={() => insertAtActiveCursor(query.statement)}
+            onInsert={() => {
+              applySavedDatasource(query);
+              insertAtActiveCursor(query.statement);
+            }}
             onNewCell={() => {
+              applySavedDatasource(query);
               if (addSqlCellWithSource(query.statement)) {
                 toast.success('New SQL cell', `“${query.name}” added.`);
               }
