@@ -48,11 +48,7 @@ test('runs multiple statements sequentially and stops at the first error', async
 test('cancels a heavy running query and lands in the canceled state', async ({ page }) => {
   // A cross join over a large tpch scale factor runs long enough to cancel
   // (design.md §5 キャンセル example).
-  await setEditor(
-    page,
-    0,
-    'SELECT count(*) FROM tpch.sf1000.lineitem CROSS JOIN tpch.tiny.nation',
-  );
+  await setEditor(page, 0, 'SELECT count(*) FROM tpch.sf1000.lineitem CROSS JOIN tpch.tiny.nation');
   // Turn auto-LIMIT off so the statement isn't reshaped (it's an aggregate anyway).
   await runCell(page);
 

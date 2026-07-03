@@ -71,9 +71,7 @@ function resolvePassword(entry: DatasourceEntry, env: Env): string {
   if (entry.passwordEnv !== undefined) {
     const value = env[entry.passwordEnv];
     if (value === undefined) {
-      throw new Error(
-        `datasource '${entry.id}': passwordEnv '${entry.passwordEnv}' is not set`,
-      );
+      throw new Error(`datasource '${entry.id}': passwordEnv '${entry.passwordEnv}' is not set`);
     }
     return value;
   }

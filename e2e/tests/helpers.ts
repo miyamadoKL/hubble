@@ -64,7 +64,11 @@ export function rnd(prefix = ''): string {
  */
 export async function resetWorkspace(
   page: Page,
-  opts: { theme?: 'light' | 'dark'; sidebarTab?: string; context?: { catalog: string; schema: string } } = {},
+  opts: {
+    theme?: 'light' | 'dark';
+    sidebarTab?: string;
+    context?: { catalog: string; schema: string };
+  } = {},
 ): Promise<void> {
   // テーマ、サイドバータブ、既定コンテキストのデフォルト値を決定する。
   const theme = opts.theme ?? 'light';
@@ -153,7 +157,10 @@ export async function setEditor(page: Page, index: number, text: string): Promis
         | {
             setValue: (v: string) => void;
             focus: () => void;
-            getModel: () => { getLineCount: () => number; getLineMaxColumn: (n: number) => number } | null;
+            getModel: () => {
+              getLineCount: () => number;
+              getLineMaxColumn: (n: number) => number;
+            } | null;
             setPosition: (p: { lineNumber: number; column: number }) => void;
           }
         | undefined;
@@ -185,7 +192,9 @@ export async function setEditor(page: Page, index: number, text: string): Promis
 export async function getEditorValue(page: Page, index = 0): Promise<string> {
   return page.evaluate((index) => {
     const hosts = document.querySelectorAll('[data-testid="sql-editor"]');
-    const host = hosts[index] as (Element & { __fableEditor?: { getValue: () => string } }) | undefined;
+    const host = hosts[index] as
+      | (Element & { __fableEditor?: { getValue: () => string } })
+      | undefined;
     return host?.__fableEditor?.getValue() ?? '';
   }, index);
 }
@@ -240,7 +249,9 @@ export async function openPalette(page: Page): Promise<Locator> {
 export async function runPaletteCommand(page: Page, label: string): Promise<void> {
   const input = await openPalette(page);
   await input.fill(label);
-  const option = page.getByRole('dialog', { name: 'Command palette' }).getByText(label, { exact: true });
+  const option = page
+    .getByRole('dialog', { name: 'Command palette' })
+    .getByText(label, { exact: true });
   await expect(option.first()).toBeVisible();
   await option.first().click();
 }
@@ -358,7 +369,9 @@ export async function seedSavedQuery(
   request: APIRequestContext,
   q: SeedSavedQuery,
 ): Promise<string> {
-  const res = await request.post('/api/saved-queries', { data: { catalog: 'tpch', schema: 'tiny', ...q } });
+  const res = await request.post('/api/saved-queries', {
+    data: { catalog: 'tpch', schema: 'tiny', ...q },
+  });
   expect(res.ok()).toBeTruthy();
   return (await res.json()).id as string;
 }

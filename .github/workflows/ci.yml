@@ -67,6 +67,9 @@ jobs:
       - name: Lint (eslint + ast-grep)
         run: pnpm lint
 
+      - name: Format check
+        run: pnpm format:check
+
       # Unit tests for contracts, server and web. These use a fake Trino, so no
       # external services are required. TEST_DATABASE_URL additionally enables
       # the PostgreSQL-backed store/migrate tests against the service above.

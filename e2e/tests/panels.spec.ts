@@ -24,7 +24,10 @@ test('expands the schema tree to columns and inserts at the caret', async ({ pag
   // tpch → tiny → orders → columns.
   await page.getByRole('button', { name: /^tpch/ }).first().click();
   await page.getByRole('button', { name: /^tiny/ }).first().click();
-  await page.getByRole('button', { name: /^orders/ }).first().click();
+  await page
+    .getByRole('button', { name: /^orders/ })
+    .first()
+    .click();
 
   // A column row (totalprice) appears once the table detail loads.
   const totalprice = page.getByRole('button', { name: /^totalprice/ }).first();

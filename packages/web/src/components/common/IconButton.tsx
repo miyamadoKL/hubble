@@ -41,8 +41,10 @@ const base =
 
 // variant ごとの配色（枠線、背景、文字色、hover 時の色）定義。
 const variants: Record<IconButtonVariant, string> = {
-  default: 'border-border-base bg-surface-raised text-ink-muted hover:text-ink-strong hover:bg-surface-sunken',
-  ghost: 'border-transparent bg-transparent text-ink-muted hover:text-ink-strong hover:bg-surface-sunken',
+  default:
+    'border-border-base bg-surface-raised text-ink-muted hover:text-ink-strong hover:bg-surface-sunken',
+  ghost:
+    'border-transparent bg-transparent text-ink-muted hover:text-ink-strong hover:bg-surface-sunken',
   accent: 'border-accent bg-accent text-accent-contrast hover:bg-accent-hover',
   danger: 'border-transparent bg-transparent text-ink-muted hover:text-error hover:bg-error-soft',
 };

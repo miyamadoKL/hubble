@@ -23,10 +23,7 @@ async function ctxFor(email?: string): Promise<APIRequestContext> {
   });
 }
 
-async function runToHistory(
-  api: APIRequestContext,
-  statement: string,
-): Promise<string> {
+async function runToHistory(api: APIRequestContext, statement: string): Promise<string> {
   const res = await api.post('/api/queries', {
     data: { statement, ...TINY, source: 'hubble' },
   });

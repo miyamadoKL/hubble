@@ -84,8 +84,7 @@ export function EditorRuntimeProvider({
     () => ({
       cache,
       getContext: () => contextRef.current,
-      getDatasourceId: () =>
-        useDatasourceStore.getState().selectedId ?? datasourceId,
+      getDatasourceId: () => useDatasourceStore.getState().selectedId ?? datasourceId,
       isTrinoLanguage: () => kindRef.current === 'trino',
     }),
     [cache],

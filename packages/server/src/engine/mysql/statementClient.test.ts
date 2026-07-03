@@ -76,7 +76,11 @@ describe('createMysqlStatementClient', () => {
     expect(first.nextUri).toBeDefined();
     expect(first.stats?.state).toBe('RUNNING');
 
-    const second = await client.advance(first.nextUri!, { source: 'test' }, emptySessionMutations());
+    const second = await client.advance(
+      first.nextUri!,
+      { source: 'test' },
+      emptySessionMutations(),
+    );
     expect(second.data).toHaveLength(5);
     expect(second.nextUri).toBeUndefined();
     expect(second.stats?.state).toBe('FINISHED');

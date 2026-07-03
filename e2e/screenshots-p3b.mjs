@@ -102,7 +102,11 @@ async function main() {
     await page.waitForTimeout(700);
     await page.screenshot({ path: resolve(outDir, 'p3b-running.png') });
     // Cancel so the heavy scan stops streaming.
-    await page.getByRole('button', { name: 'Stop' }).first().click().catch(() => {});
+    await page
+      .getByRole('button', { name: 'Stop' })
+      .first()
+      .click()
+      .catch(() => {});
     await page.waitForTimeout(400);
 
     // (b) Finished grid — a bounded scan (auto-LIMIT back on).
@@ -135,7 +139,10 @@ async function main() {
 
     // (e) EXPLAIN tab — run a plan on the current statement.
     console.log('› (e) explain…');
-    await setEditorContent(page, 'SELECT orderstatus, count(*) FROM tpch.sf1.orders GROUP BY orderstatus');
+    await setEditorContent(
+      page,
+      'SELECT orderstatus, count(*) FROM tpch.sf1.orders GROUP BY orderstatus',
+    );
     await runButton(page).click();
     await waitForGrid(page);
     // Open the Explain tab (auto-runs EXPLAIN on first open).

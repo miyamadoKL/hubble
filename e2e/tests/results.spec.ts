@@ -73,7 +73,11 @@ test('virtual-scrolls a 5000-row result without rendering every row', async ({ p
 });
 
 test('hides and shows a column via the column menu', async ({ page }) => {
-  await setEditor(page, 0, 'SELECT nationkey, name, regionkey FROM tpch.tiny.nation ORDER BY nationkey');
+  await setEditor(
+    page,
+    0,
+    'SELECT nationkey, name, regionkey FROM tpch.tiny.nation ORDER BY nationkey',
+  );
   await runCell(page);
   await expectFinished(page);
   await waitGrid(page);
@@ -136,7 +140,11 @@ test('filters loaded rows by a cell value', async ({ page }) => {
 });
 
 test('downloads CSV and the file content starts with the header row', async ({ page }) => {
-  await setEditor(page, 0, 'SELECT nationkey, name FROM tpch.tiny.nation ORDER BY nationkey LIMIT 3');
+  await setEditor(
+    page,
+    0,
+    'SELECT nationkey, name FROM tpch.tiny.nation ORDER BY nationkey LIMIT 3',
+  );
   await runCell(page);
   await expectFinished(page);
   await waitGrid(page);
@@ -161,14 +169,20 @@ test('downloads CSV and the file content starts with the header row', async ({ p
 });
 
 test('downloads a zip whose single .csv entry has the header row', async ({ page }) => {
-  await setEditor(page, 0, 'SELECT nationkey, name FROM tpch.tiny.nation ORDER BY nationkey LIMIT 3');
+  await setEditor(
+    page,
+    0,
+    'SELECT nationkey, name FROM tpch.tiny.nation ORDER BY nationkey LIMIT 3',
+  );
   await runCell(page);
   await expectFinished(page);
   await waitGrid(page);
 
   // Zip is the default format; click the download link directly.
   const downloadPromise = page.waitForEvent('download');
-  await resultPane(page).getByRole('link', { name: /CSV \(zip\)/ }).click();
+  await resultPane(page)
+    .getByRole('link', { name: /CSV \(zip\)/ })
+    .click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.zip$/);
 
@@ -184,7 +198,11 @@ test('downloads a zip whose single .csv entry has the header row', async ({ page
 
 test('copies the result to the clipboard as TSV', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await setEditor(page, 0, 'SELECT nationkey, name FROM tpch.tiny.nation ORDER BY nationkey LIMIT 2');
+  await setEditor(
+    page,
+    0,
+    'SELECT nationkey, name FROM tpch.tiny.nation ORDER BY nationkey LIMIT 2',
+  );
   await runCell(page);
   await expectFinished(page);
   await waitGrid(page);

@@ -108,7 +108,13 @@ describe('executionStore.runUnit', () => {
 
     emit(src, {
       type: 'error',
-      error: { code: 'TRINO_ERROR', message: 'no such table', trinoErrorName: 'TABLE_NOT_FOUND', line: 1, column: 15 },
+      error: {
+        code: 'TRINO_ERROR',
+        message: 'no such table',
+        trinoErrorName: 'TABLE_NOT_FOUND',
+        line: 1,
+        column: 15,
+      },
     });
     emit(src, { type: 'done', state: 'failed', rowCount: 0, truncated: false });
 
@@ -184,12 +190,9 @@ describe('executionStore.runUnits (sequential batch)', () => {
       .mockResolvedValueOnce({ queryId: 'b2' })
       .mockResolvedValueOnce({ queryId: 'b3' });
 
-    const promise = useExecutionStore.getState().runUnits(
-      'cell-batch',
-      [unit('SELECT 1'), unit('SELECT 2'), unit('SELECT 3')],
-      CTX,
-      OPTS,
-    );
+    const promise = useExecutionStore
+      .getState()
+      .runUnits('cell-batch', [unit('SELECT 1'), unit('SELECT 2'), unit('SELECT 3')], CTX, OPTS);
 
     // Statement 1 finishes ok.
     await flush();
@@ -207,12 +210,9 @@ describe('executionStore.runUnits (sequential batch)', () => {
 
   test('auto-LIMIT is applied to the sent statement when enabled', async () => {
     createQuery.mockResolvedValue({ queryId: 'lim' });
-    useExecutionStore.getState().runUnit(
-      'cell-lim',
-      unit('SELECT * FROM orders'),
-      CTX,
-      { autoLimit: true, limit: 5000 },
-    );
+    useExecutionStore
+      .getState()
+      .runUnit('cell-lim', unit('SELECT * FROM orders'), CTX, { autoLimit: true, limit: 5000 });
     await flush();
     expect(createQuery).toHaveBeenCalledWith(
       expect.objectContaining({ statement: 'SELECT * FROM orders\nLIMIT 5000' }),

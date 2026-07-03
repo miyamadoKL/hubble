@@ -129,7 +129,9 @@ describe('metadata endpoints', () => {
 
   it('GET /api/datasources/:id/catalogs returns datasource-scoped metadata', async () => {
     const ctx = await createTestContext({ scenarios });
-    const res = await ctx.app.request(`/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`);
+    const res = await ctx.app.request(
+      `/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`,
+    );
     expect(res.status).toBe(200);
     const body = catalogsResponseSchema.parse(await res.json());
     expect(body.items.map((c) => c.name)).toEqual(['tpch', 'mysql']);

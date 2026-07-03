@@ -38,7 +38,13 @@ function seriesTypes(opt: Record<string, unknown>): string[] {
 }
 
 describe('buildChartOption — bars', () => {
-  const config: ChartConfig = { type: 'bars', xIndex: 0, yIndices: [1, 2], sort: 'none', limit: 'all' };
+  const config: ChartConfig = {
+    type: 'bars',
+    xIndex: 0,
+    yIndices: [1, 2],
+    sort: 'none',
+    limit: 'all',
+  };
   const opt = buildChartOption({ columns, rows, config, theme })!;
   it('uses a category X axis with the row labels', () => {
     expect((opt.xAxis as { type: string }).type).toBe('category');
@@ -54,7 +60,13 @@ describe('buildChartOption — bars', () => {
 });
 
 describe('buildChartOption — lines', () => {
-  const config: ChartConfig = { type: 'lines', xIndex: 0, yIndices: [1], sort: 'none', limit: 'all' };
+  const config: ChartConfig = {
+    type: 'lines',
+    xIndex: 0,
+    yIndices: [1],
+    sort: 'none',
+    limit: 'all',
+  };
   const opt = buildChartOption({ columns, rows, config, theme })!;
   it('emits line series', () => {
     expect(seriesTypes(opt)).toEqual(['line']);
@@ -62,7 +74,13 @@ describe('buildChartOption — lines', () => {
 });
 
 describe('buildChartOption — timeline', () => {
-  const config: ChartConfig = { type: 'timeline', xIndex: 3, yIndices: [2], sort: 'none', limit: 'all' };
+  const config: ChartConfig = {
+    type: 'timeline',
+    xIndex: 3,
+    yIndices: [2],
+    sort: 'none',
+    limit: 'all',
+  };
   const opt = buildChartOption({ columns, rows, config, theme })!;
   it('uses a time X axis', () => {
     expect((opt.xAxis as { type: string }).type).toBe('time');
@@ -99,7 +117,8 @@ describe('buildChartOption — scatter', () => {
     };
     const opt = buildChartOption({ columns, rows, config, theme })!;
     expect(seriesTypes(opt)).toEqual(['scatter']);
-    const data = (opt.series as Array<{ data: { value: number[]; symbolSize: number }[] }>)[0]!.data;
+    const data = (opt.series as Array<{ data: { value: number[]; symbolSize: number }[] }>)[0]!
+      .data;
     expect(data[0]!.value).toEqual([3, 100.5]);
     // distinct sizes derived from the size column extent
     const sizes = new Set(data.map((d) => d.symbolSize));
@@ -122,11 +141,23 @@ describe('buildChartOption — scatter', () => {
 
 describe('buildChartOption — guards', () => {
   it('returns null when there is no X for a categorical chart', () => {
-    const config: ChartConfig = { type: 'bars', xIndex: null, yIndices: [1], sort: 'none', limit: 'all' };
+    const config: ChartConfig = {
+      type: 'bars',
+      xIndex: null,
+      yIndices: [1],
+      sort: 'none',
+      limit: 'all',
+    };
     expect(buildChartOption({ columns, rows, config, theme })).toBeNull();
   });
   it('returns null when there is no measure', () => {
-    const config: ChartConfig = { type: 'bars', xIndex: 0, yIndices: [], sort: 'none', limit: 'all' };
+    const config: ChartConfig = {
+      type: 'bars',
+      xIndex: 0,
+      yIndices: [],
+      sort: 'none',
+      limit: 'all',
+    };
     expect(buildChartOption({ columns, rows, config, theme })).toBeNull();
   });
 });

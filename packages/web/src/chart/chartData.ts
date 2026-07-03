@@ -239,8 +239,7 @@ export function reconcileConfig(prev: ChartConfig | null, cols: ColumnInfo[]): C
   // 無ければデフォルト設定のY。
   const fallbackY = yIndices[0] ?? fallback.yIndices[0];
   // X軸のフォールバック候補: Y軸と異なるカラムを優先し、無ければ候補の先頭。
-  const fallbackX =
-    xCols.find((c) => c.index !== fallbackY)?.index ?? xCols[0]?.index ?? null;
+  const fallbackX = xCols.find((c) => c.index !== fallbackY)?.index ?? xCols[0]?.index ?? null;
   // 保存済みの xIndex が現在も有効な候補ならそのまま使い、無効ならフォールバックへ。
   const xIndex = prev.xIndex !== null && xs.has(prev.xIndex) ? prev.xIndex : fallbackX;
   return {
@@ -251,11 +250,9 @@ export function reconcileConfig(prev: ChartConfig | null, cols: ColumnInfo[]): C
     sort: prev.sort,
     limit: prev.limit,
     // グルーピングカラムが現在も有効な候補でなければ未選択（null）に戻す。
-    groupIndex:
-      prev.groupIndex != null && groups.has(prev.groupIndex) ? prev.groupIndex : null,
+    groupIndex: prev.groupIndex != null && groups.has(prev.groupIndex) ? prev.groupIndex : null,
     // サイズカラムが現在も有効な数値カラムでなければ未選択（null）に戻す。
-    sizeIndex:
-      prev.sizeIndex != null && measures.has(prev.sizeIndex) ? prev.sizeIndex : null,
+    sizeIndex: prev.sizeIndex != null && measures.has(prev.sizeIndex) ? prev.sizeIndex : null,
   };
 }
 

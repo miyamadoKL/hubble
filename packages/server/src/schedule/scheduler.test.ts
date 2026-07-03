@@ -57,19 +57,15 @@ async function makeHarness(
   const { engines, defaultDatasourceId } = makeEnginesMap(fake);
   const schedules = new ScheduleRepository(db);
   const runs = new ScheduleRunRepository(db, 50);
-  const estimate = new EstimateService(
-    engines,
-    defaultDatasourceId,
-    {
-      mode: configOverrides.guardMode ?? 'warn',
-      maxScanBytes: 0,
-      maxScanRows: 100,
-      onUnknown: 'warn',
-      estimateTimeoutMs: 3000,
-      cacheTtlSeconds: 0,
-      bytesPerSecond: 0,
-    },
-  );
+  const estimate = new EstimateService(engines, defaultDatasourceId, {
+    mode: configOverrides.guardMode ?? 'warn',
+    maxScanBytes: 0,
+    maxScanRows: 100,
+    onUnknown: 'warn',
+    estimateTimeoutMs: 3000,
+    cacheTtlSeconds: 0,
+    bytesPerSecond: 0,
+  });
   const sleeps: number[] = [];
   let nowMs = Date.parse('2026-01-01T00:00:00.000Z');
   const now = (): number => nowMs;

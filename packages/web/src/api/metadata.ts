@@ -38,8 +38,7 @@ export const META_STALE_MS = 5 * 60_000;
 // datasourceId を含め、データソース切り替えでキャッシュが分離される。
 export const metadataQueryKeys = {
   catalogs: (datasourceId: string) => ['metadata', datasourceId, 'catalogs'] as const,
-  schemas: (datasourceId: string, c: string) =>
-    ['metadata', datasourceId, 'schemas', c] as const,
+  schemas: (datasourceId: string, c: string) => ['metadata', datasourceId, 'schemas', c] as const,
   tables: (datasourceId: string, c: string, s: string) =>
     ['metadata', datasourceId, 'tables', c, s] as const,
   table: (datasourceId: string, c: string, s: string, t: string) =>
@@ -70,10 +69,7 @@ export function fetchTables(
   catalog: string,
   schema: string,
 ): Promise<TablesResponse> {
-  return apiFetch(
-    tablesResponseSchema,
-    apiRoutes.datasourceTables(datasourceId, catalog, schema),
-  );
+  return apiFetch(tablesResponseSchema, apiRoutes.datasourceTables(datasourceId, catalog, schema));
 }
 
 /**

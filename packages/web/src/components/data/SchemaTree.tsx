@@ -134,10 +134,7 @@ function TreeRow({
           <ChevronRight
             size={13}
             strokeWidth={2}
-            className={cn(
-              'shrink-0 text-ink-subtle transition-transform',
-              expanded && 'rotate-90',
-            )}
+            className={cn('shrink-0 text-ink-subtle transition-transform', expanded && 'rotate-90')}
           />
         ) : (
           <span className="w-[13px] shrink-0" />
@@ -492,11 +489,7 @@ function CatalogNode({
         <>
           {schemas.isPending && <NodeStatus depth={statusDepth} state="loading" />}
           {schemas.isError && (
-            <NodeStatus
-              depth={statusDepth}
-              state="error"
-              onRetry={() => void schemas.refetch()}
-            />
+            <NodeStatus depth={statusDepth} state="error" onRetry={() => void schemas.refetch()} />
           )}
           {schemas.data && schemas.data.items.length === 0 && (
             <NodeStatus depth={statusDepth} state="empty" emptyLabel="No schemas" />
@@ -560,9 +553,7 @@ export function SchemaTree({
   });
 
   const syntheticCatalog =
-    flattenCatalog && catalogs.data?.items.length === 1
-      ? catalogs.data.items[0]!.name
-      : undefined;
+    flattenCatalog && catalogs.data?.items.length === 1 ? catalogs.data.items[0]!.name : undefined;
 
   // 展開状態のトグル。キーが既に開いていれば閉じ、閉じていれば開く（Set の出し入れ）。
   // 各ノードへはこの関数と expandedKeys をそのまま渡し、状態管理をルートに集約する。

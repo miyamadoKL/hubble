@@ -67,10 +67,7 @@ async function setEditor(page, index, text) {
 }
 
 async function waitEditorReady(page, timeout = 20_000) {
-  await page
-    .locator('[data-testid="sql-editor"][data-ready="true"]')
-    .first()
-    .waitFor({ timeout });
+  await page.locator('[data-testid="sql-editor"][data-ready="true"]').first().waitFor({ timeout });
 }
 
 async function main() {
@@ -99,8 +96,14 @@ async function main() {
     // The variable panel appears once detection runs (debounced via store).
     await page.locator('[data-testid="variable-panel"]').waitFor({ timeout: 10_000 });
     // Fill the number variable to 8 and pick status F.
-    await page.locator('#var-status').selectOption('F').catch(() => {});
-    await page.locator('#var-n').fill('8').catch(() => {});
+    await page
+      .locator('#var-status')
+      .selectOption('F')
+      .catch(() => {});
+    await page
+      .locator('#var-n')
+      .fill('8')
+      .catch(() => {});
     // Run the cell.
     await page.getByRole('button', { name: 'Run cell', exact: true }).first().click();
     await page.locator('[data-testid="result-grid"]').first().waitFor({ timeout: 30_000 });

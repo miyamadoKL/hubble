@@ -22,10 +22,7 @@ import type { ValidationResult } from '../schedule/validator';
  * QueryExecution が Trino の start/advance ループで利用するステートメント実行クライアント。
  * TrinoClient がこの形を満たす（client.ts は書き換えない）。
  */
-export type StatementClient = Pick<
-  TrinoClient,
-  'start' | 'advance' | 'cancel' | 'waitBackoff'
->;
+export type StatementClient = Pick<TrinoClient, 'start' | 'advance' | 'cancel' | 'waitBackoff'>;
 
 /** クエリ実行時にエンジンへ渡すコンテキスト。 */
 export interface ExecutionClientOptions {
@@ -97,7 +94,12 @@ export interface QueryEngine {
   /** テーブル詳細（カラム一覧）を返す。 */
   describeTable(catalog: string, schema: string, table: string): Promise<TableDetail>;
   /** サンプル行を返す。 */
-  sampleTable(catalog: string, schema: string, table: string, limit?: number): Promise<SampleRowsResponse>;
+  sampleTable(
+    catalog: string,
+    schema: string,
+    table: string,
+    limit?: number,
+  ): Promise<SampleRowsResponse>;
 }
 
 /** EstimateService からエンジンへ渡す Query Guard 設定。 */

@@ -48,10 +48,7 @@ describe('metadata fetchers hit datasource-scoped routes', () => {
   test('fetchCatalogs', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(metaEnvelope([{ name: 'tpch' }])));
     const res = await fetchCatalogs(DS);
-    expect(fetchMock).toHaveBeenCalledWith(
-      `/api/datasources/${DS}/catalogs`,
-      expect.anything(),
-    );
+    expect(fetchMock).toHaveBeenCalledWith(`/api/datasources/${DS}/catalogs`, expect.anything());
     expect(res.items).toEqual([{ name: 'tpch' }]);
   });
 

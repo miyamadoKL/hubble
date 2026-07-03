@@ -58,7 +58,9 @@ export function EmptyState({
       </span>
       {/* タイトルと、description が指定されていればその説明文を表示する */}
       <div className="space-y-1">
-        <p className={cn('font-medium text-ink-base', compact ? 'text-sm' : 'text-base')}>{title}</p>
+        <p className={cn('font-medium text-ink-base', compact ? 'text-sm' : 'text-base')}>
+          {title}
+        </p>
         {description && (
           <p className={cn('text-ink-muted', compact ? 'text-xs' : 'text-sm')}>{description}</p>
         )}

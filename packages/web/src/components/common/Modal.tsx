@@ -43,7 +43,15 @@ interface ModalProps {
  * @param footer フッターに表示する内容(任意)。
  * @param className モーダル本体に追加するクラス名(任意)。
  */
-export function Modal({ open, onClose, title, description, children, footer, className }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+  footer,
+  className,
+}: ModalProps) {
   // Escape キーでモーダルを閉じるためのグローバルキーイベントを登録する。
   // open が false のときは何もせず、開いている間だけリスナーを張る。
   useEffect(() => {

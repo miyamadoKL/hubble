@@ -16,13 +16,7 @@
 
 import type { QueryColumn } from '@hubble/contracts';
 import type { ResultRow } from '../execution';
-import {
-  applySortLimit,
-  toLabel,
-  toNumber,
-  toTime,
-  type ChartConfig,
-} from './chartData';
+import { applySortLimit, toLabel, toNumber, toTime, type ChartConfig } from './chartData';
 import type { ChartTheme } from './chartTheme';
 
 /**
@@ -218,13 +212,10 @@ function buildTimeline(args: BuildArgs): EChartsOptionLike | null {
   // 時刻昇順で並べるのが自然なので sortByTime を使う。'none' 以外が指定されて
   // いれば、そのソート指定（測定値基準）を applySortLimit に委ねる。
   const view =
-    config.sort === 'none'
-      ? sortByTime(rows, config.xIndex)
-      : applySortLimit(rows, config);
+    config.sort === 'none' ? sortByTime(rows, config.xIndex) : applySortLimit(rows, config);
   // applySortLimit 側で件数上限が未適用のケース（sortByTimeを使った場合）を
   // ここで別途スライスして揃える。
-  const limited =
-    config.limit === 'all' ? view : view.slice(0, config.limit);
+  const limited = config.limit === 'all' ? view : view.slice(0, config.limit);
 
   const series = config.yIndices.map((yi) => ({
     name: colName(columns, yi),
@@ -380,7 +371,10 @@ function sortByTime(rows: ReadonlyArray<ResultRow>, xIndex: number): ResultRow[]
 // 指定カラムの数値としての最小値と最大値（値域）を求めるヘルパー。
 // 数値化できない値はスキップし、有効な値が1つも無ければ null を返す
 // （散布図のバブルサイズの正規化に使用）。
-function extent(rows: ReadonlyArray<ResultRow>, index: number): { min: number; max: number } | null {
+function extent(
+  rows: ReadonlyArray<ResultRow>,
+  index: number,
+): { min: number; max: number } | null {
   let min = Infinity;
   let max = -Infinity;
   for (const row of rows) {

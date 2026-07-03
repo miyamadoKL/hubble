@@ -40,8 +40,7 @@ export const apiRoutes = {
   metadataRefresh: () => '/api/metadata/refresh',
 
   // Datasource-scoped metadata (Phase 2)
-  datasourceCatalogs: (datasourceId: string) =>
-    `/api/datasources/${enc(datasourceId)}/catalogs`,
+  datasourceCatalogs: (datasourceId: string) => `/api/datasources/${enc(datasourceId)}/catalogs`,
   datasourceSchemas: (datasourceId: string, catalog: string) =>
     `/api/datasources/${enc(datasourceId)}/catalogs/${enc(catalog)}/schemas`,
   datasourceTables: (datasourceId: string, catalog: string, schema: string) =>

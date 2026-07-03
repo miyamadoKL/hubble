@@ -64,7 +64,10 @@ export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: ()
       )}
       {/* 失敗時かつエラーメッセージがある場合のみ、省略表示のエラーメッセージを出す（title でホバー時に全文表示）。 */}
       {failed && meta.errorMessage && (
-        <span className="min-w-0 flex-1 truncate font-mono text-2xs text-error" title={meta.errorMessage}>
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-2xs text-error"
+          title={meta.errorMessage}
+        >
           {meta.errorMessage}
         </span>
       )}

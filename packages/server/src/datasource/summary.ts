@@ -9,7 +9,9 @@ import type { ResolvedDatasource } from './types';
  * @param kind - データソース種別。
  * @returns クライアント向け機能フラグ。
  */
-export function capabilitiesForKind(kind: ResolvedDatasource['type']): DatasourceSummary['capabilities'] {
+export function capabilitiesForKind(
+  kind: ResolvedDatasource['type'],
+): DatasourceSummary['capabilities'] {
   switch (kind) {
     case 'trino':
       return { costEstimate: true, catalogs: true };

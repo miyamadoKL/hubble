@@ -126,7 +126,10 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
       return wrapClientWithUser(downloadClient, user);
     },
 
-    async estimate(params: EngineEstimateParams, guard: EstimateGuardConfig): Promise<EstimateResult> {
+    async estimate(
+      params: EngineEstimateParams,
+      guard: EstimateGuardConfig,
+    ): Promise<EstimateResult> {
       const ctx: TrinoRequestContext = {
         catalog: params.catalog,
         schema: params.schema,
@@ -156,11 +159,7 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
         user: params.principal,
       };
       try {
-        await runToCompletion(
-          scheduledClient,
-          `EXPLAIN (TYPE VALIDATE) ${params.statement}`,
-          ctx,
-        );
+        await runToCompletion(scheduledClient, `EXPLAIN (TYPE VALIDATE) ${params.statement}`, ctx);
         return { ok: true };
       } catch (err) {
         if (err instanceof TrinoQueryError && err.trino.errorType === 'USER_ERROR') {

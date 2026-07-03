@@ -62,7 +62,10 @@ export function parseMysqlLine(message: string): number | undefined {
 }
 
 /** PostgreSQL の position(文字オフセット)から行番号を概算する。 */
-export function pgPositionToLine(statement: string, position: number | undefined): number | undefined {
+export function pgPositionToLine(
+  statement: string,
+  position: number | undefined,
+): number | undefined {
   if (position === undefined || position <= 0) return undefined;
   const prefix = statement.slice(0, position - 1);
   const line = prefix.split('\n').length;

@@ -11,3 +11,6 @@ docs/design.md
 
 # Machine-generated ANTLR output (derived from the Trino grammar). Not hand-edited.
 packages/web/src/trino-lang/generated
+
+# ANTLR 生成物は再生成のたびに差分が出るため対象外。
+packages/web/src/trino-lang/generated/

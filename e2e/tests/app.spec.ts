@@ -31,7 +31,11 @@ test('navigates the sidebar from the command palette', async ({ page }) => {
   const input = page.getByPlaceholder('Type a command…');
   await expect(input).toBeVisible();
   await input.fill('Go to History');
-  await page.getByRole('dialog', { name: 'Command palette' }).getByText('Go to History').first().click();
+  await page
+    .getByRole('dialog', { name: 'Command palette' })
+    .getByText('Go to History')
+    .first()
+    .click();
 
   // The History panel is now the active sidebar section.
   await expect(page.getByRole('heading', { name: 'History', level: 2 })).toBeVisible({
@@ -43,7 +47,11 @@ test('opens the keyboard-shortcuts help modal from the palette', async ({ page }
   await page.keyboard.press('Control+k');
   const input = page.getByPlaceholder('Type a command…');
   await input.fill('Keyboard shortcuts');
-  await page.getByRole('dialog', { name: 'Command palette' }).getByText('Keyboard shortcuts').first().click();
+  await page
+    .getByRole('dialog', { name: 'Command palette' })
+    .getByText('Keyboard shortcuts')
+    .first()
+    .click();
 
   const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
   await expect(help).toBeVisible();

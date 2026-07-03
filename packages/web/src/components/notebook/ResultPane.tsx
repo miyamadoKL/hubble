@@ -84,7 +84,13 @@ function DetailRow({ label, value, mono = true }: DetailRowProps) {
  * ErrorPanel を上部に表示する。EXPLAINタブは初回オープン時に自動的に
  * onExplain を呼び出して実行計画を取得する。
  */
-export function ResultPane({ cellId, cell, explainText, explainRunning, onExplain }: ResultPaneProps) {
+export function ResultPane({
+  cellId,
+  cell,
+  explainText,
+  explainRunning,
+  onExplain,
+}: ResultPaneProps) {
   // 現在選択中のタブ（初期値は Grid）。
   const [tab, setTab] = useState<ResultTab>('grid');
   // 「結果をコピー」ボタンの一時的な成功表示（コピー完了アイコンを1.5秒だけ出す）用フラグ。

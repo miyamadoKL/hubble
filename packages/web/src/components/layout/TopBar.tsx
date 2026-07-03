@@ -165,11 +165,7 @@ export function TopBar({
               </span>
             }
           >
-            <Button
-              variant="primary"
-              icon={running ? Square : Play}
-              onClick={onRunAll}
-            >
+            <Button variant="primary" icon={running ? Square : Play} onClick={onRunAll}>
               {running ? 'Stop' : 'Run'}
             </Button>
           </Tooltip>
@@ -188,7 +184,10 @@ export function TopBar({
             label={theme === 'dark' ? 'Light theme' : 'Dark theme'}
             onClick={() => {
               toggleTheme();
-              toast.info(theme === 'dark' ? 'Light theme' : 'Dark theme', 'Theme preference saved.');
+              toast.info(
+                theme === 'dark' ? 'Light theme' : 'Dark theme',
+                'Theme preference saved.',
+              );
             }}
           />
 

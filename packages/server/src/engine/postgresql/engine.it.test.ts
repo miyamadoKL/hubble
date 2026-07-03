@@ -48,7 +48,11 @@ describe.skipIf(!pgEnabled)('postgresql engine integration', () => {
     expect(first.nextUri).toBeDefined();
     expect(first.stats?.state).toBe('RUNNING');
 
-    const second = await client.advance(first.nextUri!, { source: 'user' }, emptySessionMutations());
+    const second = await client.advance(
+      first.nextUri!,
+      { source: 'user' },
+      emptySessionMutations(),
+    );
     expect(second.data).toHaveLength(3);
     expect(second.nextUri).toBeUndefined();
     expect(second.stats?.state).toBe('FINISHED');

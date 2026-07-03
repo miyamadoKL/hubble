@@ -25,9 +25,7 @@ export interface Principal {
 }
 
 /** {@link PrincipalResolver.resolve} の結果。成功時は principal を、失敗時は理由を持つ。 */
-export type ResolveResult =
-  | { ok: true; principal: Principal }
-  | { ok: false; reason: string };
+export type ResolveResult = { ok: true; principal: Principal } | { ok: false; reason: string };
 
 /**
  * Look up a header value (case-insensitive) from a plain record.

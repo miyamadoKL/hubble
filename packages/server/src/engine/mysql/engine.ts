@@ -120,7 +120,11 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
 
     async describeTable(catalog: string, schema: string, table: string): Promise<TableDetail> {
       assertCatalog(catalog);
-      const rows = await query<{ COLUMN_NAME: string; DATA_TYPE: string; COLUMN_COMMENT: string | null }>(
+      const rows = await query<{
+        COLUMN_NAME: string;
+        DATA_TYPE: string;
+        COLUMN_COMMENT: string | null;
+      }>(
         `SELECT COLUMN_NAME, DATA_TYPE, COLUMN_COMMENT FROM information_schema.COLUMNS
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
          ORDER BY ORDINAL_POSITION`,
@@ -148,9 +152,10 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       const ref = mysqlTableRef(schema, table);
       const safeLimit = Math.max(1, Math.min(limit, 1000));
       try {
-        const [rows, fields] = await pool.query({ sql: `SELECT * FROM ${ref} LIMIT ?`, rowsAsArray: true }, [
-          safeLimit,
-        ]);
+        const [rows, fields] = await pool.query(
+          { sql: `SELECT * FROM ${ref} LIMIT ?`, rowsAsArray: true },
+          [safeLimit],
+        );
         const columns = (fields as { name: string; type?: string }[]).map((f) => ({
           name: f.name,
           type: f.type ?? 'unknown',

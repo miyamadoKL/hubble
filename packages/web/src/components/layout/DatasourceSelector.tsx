@@ -51,9 +51,7 @@ export function DatasourceSelector({
       leading={
         <>
           <Server size={14} strokeWidth={1.75} className="shrink-0 text-ink-subtle" />
-          {selected && (
-            <KindBadge kind={selected.kind} className="shrink-0" />
-          )}
+          {selected && <KindBadge kind={selected.kind} className="shrink-0" />}
         </>
       }
     />
@@ -61,13 +59,7 @@ export function DatasourceSelector({
 }
 
 /** kind を示す小さなバッジ。 */
-function KindBadge({
-  kind,
-  className,
-}: {
-  kind: DatasourceSummary['kind'];
-  className?: string;
-}) {
+function KindBadge({ kind, className }: { kind: DatasourceSummary['kind']; className?: string }) {
   return (
     <span
       className={cn(

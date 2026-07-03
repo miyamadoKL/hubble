@@ -102,9 +102,7 @@ describe('SqlEditor datasource language switch', () => {
     document.body.appendChild(container);
     root = createRoot(container);
 
-    vi.mocked(loadMonaco).mockResolvedValue(
-      monacoNs as unknown as typeof import('monaco-editor'),
-    );
+    vi.mocked(loadMonaco).mockResolvedValue(monacoNs as unknown as typeof import('monaco-editor'));
     vi.mocked(useEditorRuntime).mockImplementation(runtime);
     vi.mocked(useUiStore).mockImplementation(((selector: (s: { theme: string }) => unknown) =>
       selector({ theme: 'dark' })) as typeof useUiStore);

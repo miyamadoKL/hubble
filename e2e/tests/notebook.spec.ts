@@ -148,7 +148,10 @@ test('saves a notebook, reloads, and restores it', async ({ page }) => {
 
   // Reload the page — the workspace restores the saved notebook + its content.
   await page.reload();
-  await page.locator('[data-testid="sql-editor"][data-ready="true"]').first().waitFor({ timeout: 30_000 });
+  await page
+    .locator('[data-testid="sql-editor"][data-ready="true"]')
+    .first()
+    .waitFor({ timeout: 30_000 });
   await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
   await expect.poll(async () => getEditorValue(page, 0)).toContain('42 AS answer');
 });

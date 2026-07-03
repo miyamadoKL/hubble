@@ -104,7 +104,12 @@ for (const backend of dbBackends) {
           enabled: false,
           ...ds,
         });
-        await repo.create('carol', { name: 'on2', statement: 'SELECT 3', cron: '* * * * *', ...ds });
+        await repo.create('carol', {
+          name: 'on2',
+          statement: 'SELECT 3',
+          cron: '* * * * *',
+          ...ds,
+        });
 
         const enabled = await repo.listAllEnabled();
         expect(enabled.map((s) => s.name).sort()).toEqual(['on', 'on2']);

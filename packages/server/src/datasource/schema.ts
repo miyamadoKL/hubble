@@ -40,10 +40,7 @@ export const trinoDatasourceSchema = baseDatasourceSchema.safeExtend({
 });
 
 /** tlsCaFile は tls: true が必須であることを検証する。 */
-function refineTlsCaFile(
-  value: { tls?: boolean; tlsCaFile?: string },
-  ctx: z.RefinementCtx,
-): void {
+function refineTlsCaFile(value: { tls?: boolean; tlsCaFile?: string }, ctx: z.RefinementCtx): void {
   if (value.tlsCaFile !== undefined && value.tls !== true) {
     ctx.addIssue({
       code: 'custom',

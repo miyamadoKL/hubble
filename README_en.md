@@ -9,12 +9,12 @@ charts — rebuilt as a modern, single-language TypeScript app.
 
 ![Hubble SQL Workbench — light theme, a join result in the grid](docs/screenshots/final-light.png)
 
-| Dark theme | GROUP BY → bar chart |
-|---|---|
+| Dark theme                                     | GROUP BY → bar chart                                       |
+| ---------------------------------------------- | ---------------------------------------------------------- |
 | ![Dark theme](docs/screenshots/final-dark.png) | ![Bar chart of a result](docs/screenshots/final-chart.png) |
 
-| Variables + execution |
-|---|
+| Variables + execution                                                                 |
+| ------------------------------------------------------------------------------------- |
 | ![Variable panel driving a parameterised query](docs/screenshots/final-variables.png) |
 
 > Trino-only by design. Multi-engine support and Hue's document sharing /
@@ -90,39 +90,39 @@ Then open <http://localhost:5173>. (`pnpm dev` runs both in parallel.)
 
 ### Environment variables (server)
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `8080` | HTTP port for the BFF |
-| `DB_PATH` | `./data/hubble.db` | SQLite database file |
-| `DATABASE_URL` | — | `postgres://` connection string; when set, persistence uses PostgreSQL and takes precedence over `DB_PATH` |
-| `STATIC_DIR` | — | Built web app dir (e.g. `packages/web/dist`); serves it + SPA fallback |
-| `TRINO_BASE_URL` | `http://127.0.0.1:30080` | Trino coordinator base URL |
-| `TRINO_USER` | `admin` | Value sent as `X-Trino-User` |
-| `TRINO_USERNAME` | `admin` | Basic-auth username |
-| `TRINO_PASSWORD` | `` (empty) | Basic-auth password |
-| `TRINO_SOURCE` | `hubble` | `X-Trino-Source` for user queries |
-| `TRINO_METADATA_SOURCE` | `hubble-metadata` | `X-Trino-Source` for metadata queries |
-| `DEFAULT_CATALOG` | — | Initial catalog for new notebooks |
-| `DEFAULT_SCHEMA` | — | Initial schema for new notebooks |
-| `DEFAULT_LIMIT` | `5000` | Auto-`LIMIT` appended to `SELECT`s without one |
-| `QUERY_MAX_ROWS` | `100000` | Cap on rows buffered server-side per query |
-| `QUERY_CONCURRENCY` | `5` | Max concurrently-tracked queries |
-| `QUERY_TTL_MINUTES` | `30` | Retention of a finished query before sweep |
-| `QUERY_OVERFLOW_MODE` | `truncate` | `truncate` or `cancel` when over `QUERY_MAX_ROWS` |
-| `METADATA_TTL_SECONDS` | `300` | Metadata cache TTL |
-| `APP_VERSION` | `0.1.0` | Reported by `GET /api/config` |
-| `QUERY_GUARD_MODE` | `warn` | Guard mode: `off` disables, `warn` shows estimate only, `enforce` rejects over-limit queries (HTTP 422, code `QUERY_BLOCKED`) |
-| `QUERY_GUARD_MAX_SCAN_BYTES` | `0` (unlimited) | Scan-bytes limit (0 = no limit) |
-| `QUERY_GUARD_MAX_SCAN_ROWS` | `0` (unlimited) | Scan-rows limit (0 = no limit) |
-| `QUERY_GUARD_ON_UNKNOWN` | `warn` | Action when scan cost cannot be estimated: `allow` / `warn` / `block` |
-| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000` | EXPLAIN timeout in ms; exceeded = estimation unavailable |
-| `QUERY_GUARD_CACHE_TTL_SECONDS` | `30` | Estimate-result cache TTL in seconds |
-| `QUERY_GUARD_BYTES_PER_SECOND` | `0` (no hint) | Cluster throughput estimate (bytes/s); when > 0 the UI shows estimated duration |
-| `SCHEDULER_ENABLED` | `true` | Set to `false` to stop the scheduler tick loop (API stays live) |
-| `SCHEDULER_TICK_SECONDS` | `15` | Interval in seconds between due-schedule scans |
-| `SCHEDULER_MAX_CONCURRENT` | `2` | Max schedules running concurrently across the scheduler |
-| `SCHEDULER_RUNS_RETENTION` | `50` | Per-schedule cap on retained run-history rows (older rows are pruned) |
-| `TRINO_SCHEDULED_SOURCE` | `hubble-scheduled` | `X-Trino-Source` sent for scheduled runs |
+| Variable                          | Default                  | Description                                                                                                                   |
+| --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                            | `8080`                   | HTTP port for the BFF                                                                                                         |
+| `DB_PATH`                         | `./data/hubble.db`       | SQLite database file                                                                                                          |
+| `DATABASE_URL`                    | —                        | `postgres://` connection string; when set, persistence uses PostgreSQL and takes precedence over `DB_PATH`                    |
+| `STATIC_DIR`                      | —                        | Built web app dir (e.g. `packages/web/dist`); serves it + SPA fallback                                                        |
+| `TRINO_BASE_URL`                  | `http://127.0.0.1:30080` | Trino coordinator base URL                                                                                                    |
+| `TRINO_USER`                      | `admin`                  | Value sent as `X-Trino-User`                                                                                                  |
+| `TRINO_USERNAME`                  | `admin`                  | Basic-auth username                                                                                                           |
+| `TRINO_PASSWORD`                  | `` (empty)               | Basic-auth password                                                                                                           |
+| `TRINO_SOURCE`                    | `hubble`                 | `X-Trino-Source` for user queries                                                                                             |
+| `TRINO_METADATA_SOURCE`           | `hubble-metadata`        | `X-Trino-Source` for metadata queries                                                                                         |
+| `DEFAULT_CATALOG`                 | —                        | Initial catalog for new notebooks                                                                                             |
+| `DEFAULT_SCHEMA`                  | —                        | Initial schema for new notebooks                                                                                              |
+| `DEFAULT_LIMIT`                   | `5000`                   | Auto-`LIMIT` appended to `SELECT`s without one                                                                                |
+| `QUERY_MAX_ROWS`                  | `100000`                 | Cap on rows buffered server-side per query                                                                                    |
+| `QUERY_CONCURRENCY`               | `5`                      | Max concurrently-tracked queries                                                                                              |
+| `QUERY_TTL_MINUTES`               | `30`                     | Retention of a finished query before sweep                                                                                    |
+| `QUERY_OVERFLOW_MODE`             | `truncate`               | `truncate` or `cancel` when over `QUERY_MAX_ROWS`                                                                             |
+| `METADATA_TTL_SECONDS`            | `300`                    | Metadata cache TTL                                                                                                            |
+| `APP_VERSION`                     | `0.1.0`                  | Reported by `GET /api/config`                                                                                                 |
+| `QUERY_GUARD_MODE`                | `warn`                   | Guard mode: `off` disables, `warn` shows estimate only, `enforce` rejects over-limit queries (HTTP 422, code `QUERY_BLOCKED`) |
+| `QUERY_GUARD_MAX_SCAN_BYTES`      | `0` (unlimited)          | Scan-bytes limit (0 = no limit)                                                                                               |
+| `QUERY_GUARD_MAX_SCAN_ROWS`       | `0` (unlimited)          | Scan-rows limit (0 = no limit)                                                                                                |
+| `QUERY_GUARD_ON_UNKNOWN`          | `warn`                   | Action when scan cost cannot be estimated: `allow` / `warn` / `block`                                                         |
+| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000`                   | EXPLAIN timeout in ms; exceeded = estimation unavailable                                                                      |
+| `QUERY_GUARD_CACHE_TTL_SECONDS`   | `30`                     | Estimate-result cache TTL in seconds                                                                                          |
+| `QUERY_GUARD_BYTES_PER_SECOND`    | `0` (no hint)            | Cluster throughput estimate (bytes/s); when > 0 the UI shows estimated duration                                               |
+| `SCHEDULER_ENABLED`               | `true`                   | Set to `false` to stop the scheduler tick loop (API stays live)                                                               |
+| `SCHEDULER_TICK_SECONDS`          | `15`                     | Interval in seconds between due-schedule scans                                                                                |
+| `SCHEDULER_MAX_CONCURRENT`        | `2`                      | Max schedules running concurrently across the scheduler                                                                       |
+| `SCHEDULER_RUNS_RETENTION`        | `50`                     | Per-schedule cap on retained run-history rows (older rows are pruned)                                                         |
+| `TRINO_SCHEDULED_SOURCE`          | `hubble-scheduled`       | `X-Trino-Source` sent for scheduled runs                                                                                      |
 
 ## Documentation
 
@@ -152,14 +152,14 @@ acceptance audit of every v1 checklist item is in
 
 ## Keyboard shortcuts
 
-| Action | Shortcut |
-|---|---|
-| Run the active cell | Ctrl/Cmd + Enter |
-| Save notebook | Ctrl/Cmd + S |
-| Format SQL | Ctrl/Cmd + I · Ctrl/Cmd + Shift + F |
-| Command palette | Ctrl/Cmd + K |
-| Toggle light / dark theme | Ctrl + Alt + T |
-| Toggle presentation mode | Ctrl/Cmd + Shift + P |
+| Action                    | Shortcut                            |
+| ------------------------- | ----------------------------------- |
+| Run the active cell       | Ctrl/Cmd + Enter                    |
+| Save notebook             | Ctrl/Cmd + S                        |
+| Format SQL                | Ctrl/Cmd + I · Ctrl/Cmd + Shift + F |
+| Command palette           | Ctrl/Cmd + K                        |
+| Toggle light / dark theme | Ctrl + Alt + T                      |
+| Toggle presentation mode  | Ctrl/Cmd + Shift + P                |
 
 (Also available from the command palette → "Keyboard shortcuts".)
 

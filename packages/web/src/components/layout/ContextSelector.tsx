@@ -7,12 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Clock, Database, Search } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import {
-  fetchCatalogs,
-  fetchSchemas,
-  metadataQueryKeys,
-  META_STALE_MS,
-} from '../../api/metadata';
+import { fetchCatalogs, fetchSchemas, metadataQueryKeys, META_STALE_MS } from '../../api/metadata';
 import { readRecentContexts, type ContextValue } from '../../notebook';
 import { Spinner } from '../common/Spinner';
 import { cn } from '../../utils/cn';
@@ -34,7 +29,11 @@ import { cn } from '../../utils/cn';
  * @param onClose - 外側クリックまたは Escape 押下時に呼ばれるコールバック。
  * @param open - ポップオーバーが開いているかどうか。
  */
-function useOutsideClose(ref: React.RefObject<HTMLElement | null>, onClose: () => void, open: boolean) {
+function useOutsideClose(
+  ref: React.RefObject<HTMLElement | null>,
+  onClose: () => void,
+  open: boolean,
+) {
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
@@ -149,7 +148,9 @@ export function ContextSelector({
         onClick={() => (open ? setOpen(false) : openPopover())}
         className={cn(
           'flex h-8 items-center gap-1.5 rounded-md border bg-surface-raised px-2.5 text-sm transition-colors',
-          open ? 'border-accent ring-1 ring-accent/30' : 'border-border-base hover:bg-surface-sunken',
+          open
+            ? 'border-accent ring-1 ring-accent/30'
+            : 'border-border-base hover:bg-surface-sunken',
         )}
       >
         <Database size={14} strokeWidth={1.75} className="shrink-0 text-ink-subtle" />

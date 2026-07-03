@@ -28,9 +28,7 @@ export function metadataRoutes(services: Services): Hono {
   });
 
   app.get('/catalogs/:c/schemas/:s/tables', async (c) => {
-    return c.json(
-      await services.metadata.getTables(c.req.param('c'), c.req.param('s'), defaultId),
-    );
+    return c.json(await services.metadata.getTables(c.req.param('c'), c.req.param('s'), defaultId));
   });
 
   app.get('/catalogs/:c/schemas/:s/tables/:t', async (c) => {

@@ -47,7 +47,7 @@ multi-stage の流れ：
 | 変数         | 既定（イメージ）         |
 | ------------ | ------------------------ |
 | `STATIC_DIR` | `/app/packages/web/dist` |
-| `DB_PATH`    | `/data/hubble.db`     |
+| `DB_PATH`    | `/data/hubble.db`        |
 | `PORT`       | `8080`                   |
 
 `/data` は `VOLUME` 化されており、SQLite（`notebooks` / `saved_queries` / `query_history`）が

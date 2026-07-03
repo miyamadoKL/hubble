@@ -108,10 +108,13 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
           datasourceId: body.datasourceId,
         });
         if (estimate.verdict.decision === 'block') {
-          throw AppError.queryBlocked(estimate.verdict.reasons[0] ?? 'Query blocked by Query Guard', {
-            estimate,
-            limits: guardLimitsSnapshot(services.config),
-          });
+          throw AppError.queryBlocked(
+            estimate.verdict.reasons[0] ?? 'Query blocked by Query Guard',
+            {
+              estimate,
+              limits: guardLimitsSnapshot(services.config),
+            },
+          );
         }
       }
     }
