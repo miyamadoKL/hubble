@@ -37,12 +37,15 @@ export async function runTrinoEstimate(
 ): Promise<EstimateResult> {
   const now = options.now ?? Date.now;
   const start = now();
-  const explain = `EXPLAIN (TYPE IO, FORMAT JSON) ${statement}`;
-
   let status: EstimateStatus;
   let parsed: ReturnType<typeof parseExplainIoJson>;
   try {
-    const cell = await runExplain(explain, ctx, options.client, options.estimateTimeoutMs);
+    const cell = await fetchTrinoIoExplainCell(
+      statement,
+      ctx,
+      options.client,
+      options.estimateTimeoutMs,
+    );
     parsed = cell === undefined ? undefined : parseExplainIoJson(cell);
     // A missing cell or a non-IO-plan cell (Trino echoed an unsupported
     // statement verbatim) means the query cannot be estimated -> allow.
@@ -119,6 +122,19 @@ function classifyEstimateError(err: unknown): EstimateStatus {
  * 付きで、タイムアウト時は実行中のステートメントをキャンセル（DELETE）し、
  * abort を伝播させることで実行を宙ぶらりんにせず確実に後始末する。
  */
+/**
+ * EXPLAIN (TYPE IO, FORMAT JSON) を実行し JSON セルを返す（write check 等で再利用）。
+ */
+export async function fetchTrinoIoExplainCell(
+  statement: string,
+  ctx: TrinoRequestContext,
+  client: StatementClient,
+  timeoutMs: number,
+): Promise<string | undefined> {
+  const explain = `EXPLAIN (TYPE IO, FORMAT JSON) ${statement}`;
+  return runExplain(explain, ctx, client, timeoutMs);
+}
+
 async function runExplain(
   statement: string,
   ctx: TrinoRequestContext,

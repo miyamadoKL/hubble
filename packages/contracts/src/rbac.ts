@@ -6,3 +6,8 @@ import { z } from 'zod';
 export const permissionSchema = z.enum(['query.write', 'query.killAny', 'queries.viewAll']);
 /** 権限の推論型。 */
 export type Permission = z.infer<typeof permissionSchema>;
+
+/**
+ * read-only ロールが書き込み文を実行しようとしたときのエラーコード（HTTP 403）。
+ */
+export const WRITE_NOT_ALLOWED = 'WRITE_NOT_ALLOWED';
