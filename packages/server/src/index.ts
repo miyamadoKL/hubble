@@ -16,6 +16,12 @@
 import { serve } from '@hono/node-server';
 import { createApp, defaultServices } from './app';
 import { loadServerConfig } from './config';
+import {
+  parseReloadIntervalSeconds,
+  startFileReload,
+  type FileReloadHandle,
+} from './config/fileReload';
+import { resolveDatasourcesPath } from './datasource/loader';
 import { staticDirExists } from './http/staticRoutes';
 
 // 起動時に一度だけ環境変数から設定を読み込む（以後は不変な設定値として使い回す）。
@@ -36,6 +42,22 @@ if (config.database.kind === 'postgres') {
 // サービス群を構築する（services.ts の buildServices を参照）。DB マイグレーション
 // もこの中で適用される。
 const services = await defaultServices();
+
+const datasourcesPath = resolveDatasourcesPath(process.env, process.cwd());
+let fileReload: FileReloadHandle | undefined;
+if (datasourcesPath) {
+  const intervalSeconds = parseReloadIntervalSeconds(process.env);
+  fileReload = startFileReload(
+    [{ path: datasourcesPath, reload: () => services.reloadDatasources() }],
+    { intervalSeconds },
+  );
+  if (intervalSeconds > 0) {
+    console.log(`datasource config hot-reload enabled (poll every ${intervalSeconds}s, SIGHUP)`);
+  } else {
+    console.log('datasource config hot-reload enabled (SIGHUP only)');
+  }
+}
+
 // 構築済み Services を注入して Hono アプリ（ルーティング一式）を組み立てる。
 const app = createApp({ services });
 
@@ -74,6 +96,7 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 // Graceful shutdown: スケジューラー停止と Trino/DB クローズ（services.shutdown）を
 // 待ってから HTTP サーバーを閉じ、プロセスを正常終了させる。
 async function shutdown(): Promise<void> {
+  fileReload?.stop();
   await services.shutdown();
   server.close();
   process.exit(0);
