@@ -28,7 +28,10 @@ import type { TrinoRequestContext } from '../trino/types';
 import type { OverflowMode } from '../query/execution';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
-import { disabledEstimate, guardLimitsSnapshot } from '../query/guard';
+import { hasQueryWrite } from '../rbac/check';
+import { effectiveGuard, effectiveGuardLimitsSnapshot } from '../rbac/guard';
+import { assertQueryWriteAllowed } from '../rbac/writeCheck';
+import { disabledEstimate } from '../query/guard';
 import { intParam, parseJsonBody } from './validate';
 import { buildReplayEvents, encodeSseEvent, SSE_KEEPALIVE } from '../query/sse';
 import { streamQueryCsv } from '../query/csv';
@@ -53,12 +56,13 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
   // ステートメントを実行せず EXPLAIN (TYPE IO) 相当のスキャン量見積りだけを行うエンドポイント。
   app.post('/estimate', async (c) => {
     const body = await parseJsonBody(c, estimateRequestSchema);
+    const principal = c.var.principal;
+    const effective = effectiveGuard(services.config, principal.role);
     // mode=off: never touch Trino; return a `disabled` estimate immediately.
     // Query Guard 自体が無効な設定のときは Trino に問い合わせず即座に「無効」を返す。
-    if (services.config.guard.mode === 'off') {
+    if (effective.mode === 'off') {
       return c.json(disabledEstimate());
     }
-    const principal = c.var.principal;
     // 認証済み principal を渡すことで、Trino 側の EXPLAIN もそのユーザーとして impersonate される。
     const result = await services.estimate.estimate({
       statement: body.statement,
@@ -66,6 +70,8 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       schema: body.schema ?? services.config.defaults.schema,
       principal: principal.user,
       datasourceId: body.datasourceId,
+      roleName: principal.role.name,
+      guard: effective,
     });
     return c.json(result);
   });
@@ -86,18 +92,33 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       sessionProperties: body.sessionProperties,
     };
 
+    const { engine } = resolveEngine(
+      services.engines,
+      body.datasourceId,
+      services.defaultDatasourceId,
+    );
+    const effective = effectiveGuard(services.config, principal.role);
+    const ioExplain = engine.ioExplainExecution?.({
+      statement: body.statement,
+      catalog,
+      schema,
+      principal: principal.user,
+    });
+    await assertQueryWriteAllowed({
+      statement: body.statement,
+      role: principal.role,
+      ioExplainClient: ioExplain?.client,
+      ioExplainCtx: ioExplain?.ctx,
+      ioExplainTimeoutMs: services.config.guard.estimateTimeoutMs,
+    });
+
     // Query Guard enforce: estimate (reusing a fresh cached estimate from a
     // just-prior /estimate call so this is usually a no-op) and block before
     // any execution when the verdict says so.
     // enforce モードの時だけ、実行前にもう一度見積りを取り block 判定なら実行させずエラーにする。
     // 見積りサービス側に TTL キャッシュがあるため、直前の /estimate 呼び出しと同一なら
     // Trino への追加問い合わせは実質発生しない。
-    if (services.config.guard.mode === 'enforce') {
-      const { engine } = resolveEngine(
-        services.engines,
-        body.datasourceId,
-        services.defaultDatasourceId,
-      );
+    if (effective.mode === 'enforce') {
       // costEstimate 非対応エンジン(mysql/postgresql)は見積りをスキップして実行へ進む。
       if (engine.capabilities.costEstimate) {
         const estimate = await services.estimate.estimate({
@@ -106,13 +127,15 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
           schema,
           principal: principal.user,
           datasourceId: body.datasourceId,
+          roleName: principal.role.name,
+          guard: effective,
         });
         if (estimate.verdict.decision === 'block') {
           throw AppError.queryBlocked(
             estimate.verdict.reasons[0] ?? 'Query blocked by Query Guard',
             {
               estimate,
-              limits: guardLimitsSnapshot(services.config),
+              limits: effectiveGuardLimitsSnapshot(services.config, principal.role),
             },
           );
         }
@@ -127,6 +150,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       ctx,
       owner: principal.user,
       datasourceId: body.datasourceId,
+      sessionReadOnly: !hasQueryWrite(principal.role),
       maxRows: body.maxRows,
       overflowMode,
       notebookId: body.notebookId,

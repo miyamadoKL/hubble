@@ -22,6 +22,8 @@ import type { Services } from '../services';
 import { resolveEngine } from '../engine/resolve';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
+import { resolveRoleForPrincipal } from '../rbac/resolve';
+import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import type { ScheduleRecord, ScheduleRunRecord } from '../store/schedules';
 import { nextRunIso } from '../schedule/cron';
 import type { ValidationResult } from '../schedule/validator';
@@ -94,6 +96,34 @@ async function toSchedule(services: Services, record: ScheduleRecord): Promise<S
  * @param result - 対象エンジンの `validate()` の結果。
  * @throws {AppError} `result.kind === 'user_error'` のとき、行/列情報付きの 400 VALIDATION_ERROR。
  */
+/**
+ * owner のロールで書き込み文のスケジュール登録を拒否する（query.write 第 1 層）。
+ */
+async function assertScheduleStatementWritable(
+  services: Services,
+  owner: string,
+  statement: string,
+  engine: ReturnType<typeof resolveEngine>['engine'],
+  catalog?: string | null,
+  schema?: string | null,
+): Promise<void> {
+  const identity = owner.includes('@') ? { user: owner, email: owner } : { user: owner };
+  const role = resolveRoleForPrincipal(services.rbac, identity);
+  const ioExplain = engine.ioExplainExecution?.({
+    statement,
+    catalog: catalog ?? undefined,
+    schema: schema ?? undefined,
+    principal: owner,
+  });
+  await assertQueryWriteAllowed({
+    statement,
+    role,
+    ioExplainClient: ioExplain?.client,
+    ioExplainCtx: ioExplain?.ctx,
+    ioExplainTimeoutMs: services.config.guard.estimateTimeoutMs,
+  });
+}
+
 function assertValidationAllowsWrite(result: ValidationResult): void {
   if (result.ok) return;
   if (result.kind === 'unavailable') return; // lenient: allow, re-checked at run time
@@ -147,6 +177,14 @@ export function scheduleRoutes(services: Services): App {
       principal: owner,
     });
     assertValidationAllowsWrite(validation);
+    await assertScheduleStatementWritable(
+      services,
+      owner,
+      body.statement,
+      engine,
+      body.catalog,
+      body.schema,
+    );
     const record = await services.schedules.create(owner, {
       name: body.name,
       statement: body.statement,
@@ -199,6 +237,14 @@ export function scheduleRoutes(services: Services): App {
         principal: owner,
       });
       assertValidationAllowsWrite(validation);
+      await assertScheduleStatementWritable(
+        services,
+        owner,
+        body.statement ?? existing.statement,
+        engine,
+        body.catalog !== undefined ? body.catalog : existing.catalog,
+        body.schema !== undefined ? body.schema : existing.schema,
+      );
     }
 
     const updated = await services.schedules.update(owner, id, body);

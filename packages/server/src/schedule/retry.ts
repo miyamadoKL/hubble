@@ -1,3 +1,4 @@
+import { WRITE_NOT_ALLOWED } from '@hubble/contracts';
 import { AppError, TrinoQueryError, TrinoTransportError } from '../errors';
 import type { RetryPolicy } from '@hubble/contracts';
 
@@ -36,6 +37,8 @@ export function classifyFailure(err: unknown): FailureClass {
   // A Query Guard block is a policy decision, not a transient fault.
   // 日本語: スキャン量見積りに基づく意図的なブロックであり、障害ではない。
   if (isQueryBlocked(err)) return 'deterministic';
+  // RBAC による書き込み拒否は再試行しても同じ結果になる。
+  if (err instanceof AppError && err.detail.code === WRITE_NOT_ALLOWED) return 'deterministic';
   // Transport faults and non-USER_ERROR engine failures are transient.
   // 日本語: ネットワーク断や Trino 側の一時的な不調は再試行すれば成功しうる。
   if (err instanceof TrinoTransportError) return 'transient';
