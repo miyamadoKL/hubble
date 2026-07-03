@@ -42,6 +42,11 @@ export class AppError extends Error {
     return new AppError(400, { code, message });
   }
 
+  /** 日本語: 501 Not Implemented。未対応のデータソース種別や機能に使う。 */
+  static notImplemented(message: string): AppError {
+    return new AppError(501, { code: 'NOT_IMPLEMENTED', message });
+  }
+
   /** 日本語: 409 Conflict。既存リソースとの競合（重複作成など）に使う。 */
   static conflict(message: string): AppError {
     return new AppError(409, { code: 'CONFLICT', message });
