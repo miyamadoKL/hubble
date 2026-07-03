@@ -2,11 +2,7 @@
  * datasources.yaml ホットリロード時のエンジン差し替えロジック。
  */
 import type { ResolvedDatasource } from './types';
-import {
-  buildEngines,
-  createEngineForDatasource,
-  type BuildEnginesOptions,
-} from '../engine/factory';
+import { createEngineForDatasource, type BuildEnginesOptions } from '../engine/factory';
 import type { QueryEngine } from '../engine/types';
 
 export const ENGINE_CLOSE_TIMEOUT_MS = 60_000;
@@ -30,7 +26,9 @@ export function planDatasourceReload(
   nextDatasources: ResolvedDatasource[],
   buildOptions: BuildEnginesOptions,
 ): DatasourceReloadPlan {
-  const { defaultDatasourceId } = buildEngines(nextDatasources, buildOptions);
+  const first = nextDatasources[0];
+  if (!first) throw new Error('At least one datasource must be configured');
+  const defaultDatasourceId = first.id;
   const enginesToSet = new Map<string, QueryEngine>();
   const enginesToClose: QueryEngine[] = [];
   const invalidateDatasourceIds = new Set<string>();
