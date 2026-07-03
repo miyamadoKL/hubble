@@ -108,7 +108,8 @@ export default defineConfig({
       port: SERVER_PORT,
       cwd: '..',
       // CI 以外では既存の起動済みサーバーを再利用する（起動時間短縮のため）。
-      reuseExistingServer: !process.env.CI,
+      // MULTI_DS_E2E 時は DATASOURCES_PATH / デモ DB パスワードが必要なため再利用しない。
+      reuseExistingServer: !process.env.CI && !multiDsE2e,
       // サーバー起動待ちのタイムアウト（ミリ秒）。
       timeout: 60_000,
       env: {
@@ -138,7 +139,7 @@ export default defineConfig({
       command: 'pnpm --filter @hubble/server dev',
       port: AUTH_SERVER_PORT,
       cwd: '..',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: !process.env.CI && !multiDsE2e,
       timeout: 60_000,
       env: {
         PORT: String(AUTH_SERVER_PORT),
