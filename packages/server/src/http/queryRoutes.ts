@@ -18,6 +18,7 @@ import { streamSSE } from 'hono/streaming';
 import { stream } from 'hono/streaming';
 import type { StreamingApi } from 'hono/utils/stream';
 import {
+  CSV_REEXEC_UNAVAILABLE,
   createQueryRequestSchema,
   estimateRequestSchema,
   type QueryRowsPage,
@@ -311,8 +312,26 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const schema = exec.ctx.schema ?? services.config.defaults.schema;
     const needsReexec = needsCsvReexec(exec);
     const allowsReexec = statementAllowsCsvReexec(exec);
+    const csvAuditDetail = {
+      compression: zip ? 'zip' : gzip ? 'gzip' : 'none',
+      needsReexec,
+      allowsReexec,
+      truncated: exec.truncated,
+    } as const;
 
     if (needsReexec && allowsReexec && exec.engine.isClosed()) {
+      await services.audit.record({
+        actor: principal.user,
+        action: 'csv.download',
+        target: exec.queryId,
+        datasource: exec.datasourceId,
+        detail: {
+          ...csvAuditDetail,
+          outcome: 'denied',
+          reason: 'csvReexecUnavailable',
+          errorCode: CSV_REEXEC_UNAVAILABLE,
+        },
+      });
       throw AppError.csvReexecUnavailable(
         'Full CSV download requires re-execution but the original datasource connection is no longer available.',
       );
@@ -346,10 +365,8 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       target: exec.queryId,
       datasource: exec.datasourceId,
       detail: {
-        compression: zip ? 'zip' : gzip ? 'gzip' : 'none',
-        needsReexec,
-        allowsReexec,
-        truncated: exec.truncated,
+        ...csvAuditDetail,
+        outcome: 'allowed',
       },
     });
 

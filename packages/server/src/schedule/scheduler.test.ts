@@ -171,7 +171,14 @@ describe('Scheduler run matrix', () => {
       target: s.id,
       datasource: DEFAULT_DATASOURCE_ID,
     });
-    expect(runAudit?.detail).toMatchObject({ scheduleId: s.id, runOwner: 'alice' });
+    expect(runAudit?.detail).toMatchObject({
+      scheduleId: s.id,
+      runOwner: 'alice',
+      outcome: 'success',
+      success: true,
+      trinoQueryId: expect.stringMatching(/^qok_/),
+      rowCount: 1,
+    });
   });
 
   it('fails immediately on a USER_ERROR (validation) with no retry', async () => {
@@ -202,6 +209,16 @@ describe('Scheduler run matrix', () => {
     expect(runs[0]!.attempt).toBe(1);
     expect(runs[0]!.errorMessage).toContain('mismatched input');
     expect(h.sleeps).toHaveLength(0); // no retry waits
+    const auditRows = await h.audit.listForTest();
+    const runAudit = auditRows.find((row) => row.action === 'schedule.execute');
+    expect(runAudit?.detail).toMatchObject({
+      scheduleId: s.id,
+      outcome: 'failed',
+      success: false,
+      errorType: 'USER_ERROR',
+      rowCount: null,
+      trinoQueryId: null,
+    });
   });
 
   it('retries a transient failure, then succeeds on the next attempt', async () => {
@@ -342,6 +359,20 @@ defaultRole: trino-prod-only
     expect(runs[0]!.errorType).toBe('QUERY_BLOCKED');
     expect(runs[0]!.attempt).toBe(1);
     expect(h.sleeps).toHaveLength(0);
+    const auditRows = await h.audit.listForTest();
+    const runAudit = auditRows.find((row) => row.action === 'schedule.execute');
+    expect(runAudit?.detail).toMatchObject({
+      scheduleId: s.id,
+      outcome: 'blocked',
+      success: false,
+      errorType: 'QUERY_BLOCKED',
+      rowCount: null,
+      trinoQueryId: null,
+      guard: {
+        decision: 'block',
+        scanRows: 1000,
+      },
+    });
   });
 });
 

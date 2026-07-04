@@ -6,7 +6,7 @@ CREATE TABLE audit_log (
   action     TEXT NOT NULL,
   target     TEXT,
   datasource TEXT,
-  detail     JSON NOT NULL,
+  detail     TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 

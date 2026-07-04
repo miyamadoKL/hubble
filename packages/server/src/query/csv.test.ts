@@ -371,6 +371,16 @@ describe('CSV re-exec engine pinning', () => {
     expect(csvRes.status).toBe(422);
     const body = (await csvRes.json()) as ApiError;
     expect(body.error.code).toBe(CSV_REEXEC_UNAVAILABLE);
+    const auditRows = await ctx.services.audit.listForTest();
+    const csvAudit = auditRows.find((row) => row.action === 'csv.download');
+    expect(csvAudit?.detail).toMatchObject({
+      outcome: 'denied',
+      reason: 'csvReexecUnavailable',
+      errorCode: CSV_REEXEC_UNAVAILABLE,
+      needsReexec: true,
+      allowsReexec: true,
+      truncated: true,
+    });
     await ctx.services.shutdown();
   });
 });
