@@ -486,6 +486,7 @@ export class Scheduler {
         catalog: schedule.catalog,
         schema: schedule.schema,
         principal: schedule.owner,
+        roleName: scheduleRole.name,
       });
       if (!validation.ok && validation.kind === 'user_error') {
         // 日本語: SQL 自体が不正 (構文/意味エラー)。何度再試行しても同じ結果になるため
@@ -558,6 +559,7 @@ export class Scheduler {
         const client = engine.executionClient({
           source: 'scheduled',
           user: schedule.owner,
+          roleName: scheduleRole.name,
           sessionReadOnly: !hasQueryWrite(scheduleRole),
         });
         const ctx: TrinoRequestContext = {

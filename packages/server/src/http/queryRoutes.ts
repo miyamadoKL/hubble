@@ -164,6 +164,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       owner: principal.user,
       datasourceId: body.datasourceId,
       sessionReadOnly: !hasQueryWrite(principal.role),
+      roleName: principal.role.name,
       maxRows,
       overflowMode,
       notebookId: body.notebookId,
@@ -385,6 +386,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       const csv = streamQueryCsv(exec, {
         downloadClientOptions: {
           user: exec.ctx.user,
+          roleName: principal.role.name,
           sessionReadOnly: !hasQueryWrite(principal.role),
         },
         signal: ac.signal,

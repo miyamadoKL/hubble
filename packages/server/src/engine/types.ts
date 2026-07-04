@@ -30,6 +30,8 @@ export interface ExecutionClientOptions {
   source: 'user' | 'scheduled';
   /** impersonation 対象の principal（省略時は技術アカウント）。 */
   user?: string;
+  /** RBAC 解決後の role 名。MySQL/PostgreSQL の roleCredentials 選択に使う。 */
+  roleName?: string;
   /**
    * principal が query.write を持たない実行では true。
    * MySQL/PostgreSQL はチェックアウト時にセッション read only を設定し、
@@ -42,6 +44,8 @@ export interface ExecutionClientOptions {
 export interface DownloadClientOptions {
   /** impersonation 対象の principal（省略時は技術アカウント）。 */
   user?: string;
+  /** RBAC 解決後の role 名。MySQL/PostgreSQL の roleCredentials 選択に使う。 */
+  roleName?: string;
   /**
    * principal が query.write を持たないダウンロードでは true。
    * MySQL/PostgreSQL はチェックアウト時にセッション read only を設定する。
@@ -61,6 +65,7 @@ export interface EngineEstimateParams {
   catalog?: string;
   schema?: string;
   principal: string;
+  roleName?: string;
 }
 
 /** スケジュール事前検証の入力。 */
@@ -69,12 +74,15 @@ export interface EngineValidateParams {
   catalog?: string | null;
   schema?: string | null;
   principal: string;
+  roleName?: string;
 }
 
 /** メタデータ取得時の実行コンテキスト。Trino では X-Trino-User に使う。 */
 export interface MetadataOptions {
   /** impersonation 対象の principal（省略時は技術アカウント）。 */
   principal: string;
+  /** RBAC 解決後の role 名。MySQL/PostgreSQL の roleCredentials 選択に使う。 */
+  roleName?: string;
 }
 
 /**

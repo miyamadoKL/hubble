@@ -27,8 +27,9 @@ import type {
 } from '../types';
 import { mysqlTableRef } from '../sql/identifiers';
 import { throwMysqlDriverError } from '../sql/errors';
+import { selectSqlCredential } from '../sql/roleCredentials';
 import { validateWithExplain } from '../sql/validate';
-import { createMysqlPool, type MysqlPoolFactory } from './pool';
+import { createMysqlPool, type MysqlPool, type MysqlPoolFactory } from './pool';
 import { createMysqlStatementClient } from './statementClient';
 
 export interface MysqlEngineOptions {
@@ -44,10 +45,24 @@ export interface MysqlEngineOptions {
 export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
   const { datasource } = options;
   const poolFactory = options.poolFactory ?? createMysqlPool;
-  const pool = poolFactory(datasource);
+  const pools = new Map<string, MysqlPool>();
   const capabilities: DatasourceCapabilities = capabilitiesForKind('mysql');
   const syntheticCatalog = datasource.id;
   let closed = false;
+
+  const poolForRole = (roleName: string | undefined): MysqlPool => {
+    const credential = selectSqlCredential(datasource, roleName);
+    const existing = pools.get(credential.poolKey);
+    if (existing !== undefined) return existing;
+    const pool = poolFactory({
+      ...datasource,
+      username: credential.username,
+      password: credential.password,
+    });
+    pools.set(credential.poolKey, pool);
+    return pool;
+  };
+  poolForRole(undefined);
 
   const assertCatalog = (catalog: string): void => {
     if (catalog !== syntheticCatalog) {
@@ -55,9 +70,9 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
     }
   };
 
-  const query = async <T>(sql: string, params: unknown[] = []): Promise<T[]> => {
+  const query = async <T>(sql: string, params: unknown[] = [], roleName?: string): Promise<T[]> => {
     try {
-      const [rows] = await pool.query({ sql, rowsAsArray: false }, params);
+      const [rows] = await poolForRole(roleName).query({ sql, rowsAsArray: false }, params);
       return rows as T[];
     } catch (err) {
       throwMysqlDriverError(err);
@@ -70,14 +85,14 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
     capabilities,
 
     executionClient(opts: ExecutionClientOptions): StatementClient {
-      return createMysqlStatementClient(pool, {
+      return createMysqlStatementClient(poolForRole(opts.roleName), {
         datasourceReadOnly: datasource.readOnly,
         sessionReadOnly: opts.sessionReadOnly ?? false,
       });
     },
 
     downloadClient(opts: DownloadClientOptions = {}): StatementClient {
-      return createMysqlStatementClient(pool, {
+      return createMysqlStatementClient(poolForRole(opts.roleName), {
         datasourceReadOnly: datasource.readOnly,
         sessionReadOnly: opts.sessionReadOnly ?? false,
       });
@@ -93,7 +108,7 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
     async validate(params: EngineValidateParams): Promise<ValidationResult> {
       return validateWithExplain(
         async (sql) => {
-          await query(sql);
+          await query(sql, [], params.roleName);
         },
         params.statement,
         'mysql',
@@ -112,6 +127,8 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
         `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA
          WHERE SCHEMA_NAME NOT IN ('information_schema','performance_schema','mysql','sys')
          ORDER BY SCHEMA_NAME`,
+        [],
+        opts.roleName,
       );
       return rows.map((r) => ({ name: r.SCHEMA_NAME }));
     },
@@ -124,6 +141,7 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
          WHERE TABLE_SCHEMA = ? AND TABLE_TYPE IN ('BASE TABLE','VIEW')
          ORDER BY TABLE_NAME`,
         [schema],
+        opts.roleName,
       );
       return rows.map((r) => ({ name: r.TABLE_NAME, type: r.TABLE_TYPE }));
     },
@@ -145,6 +163,7 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
          ORDER BY ORDINAL_POSITION`,
         [schema, table],
+        opts.roleName,
       );
       return {
         catalog,
@@ -164,7 +183,7 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
 
     async close(): Promise<void> {
       closed = true;
-      await pool.end();
+      await Promise.all([...pools.values()].map((pool) => pool.end()));
     },
 
     async sampleTable(
@@ -179,7 +198,7 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       const ref = mysqlTableRef(schema, table);
       const safeLimit = Math.max(1, Math.min(limit ?? 10, 1000));
       try {
-        const [rows, fields] = await pool.query(
+        const [rows, fields] = await poolForRole(opts.roleName).query(
           { sql: `SELECT * FROM ${ref} LIMIT ?`, rowsAsArray: true },
           [safeLimit],
         );

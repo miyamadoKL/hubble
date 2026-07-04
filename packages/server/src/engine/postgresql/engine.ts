@@ -24,8 +24,9 @@ import type {
 } from '../types';
 import { pgTableRef } from '../sql/identifiers';
 import { throwPgDriverError } from '../sql/errors';
+import { selectSqlCredential } from '../sql/roleCredentials';
 import { validateWithExplain } from '../sql/validate';
-import { createPgPool, type PgPoolFactory } from './pool';
+import { createPgPool, type PgPool, type PgPoolFactory } from './pool';
 import { createPgStatementClient } from './statementClient';
 
 export interface PostgresqlEngineOptions {
@@ -41,24 +42,41 @@ export interface PostgresqlEngineOptions {
 export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryEngine {
   const { datasource } = options;
   const poolFactory = options.poolFactory ?? createPgPool;
-  const pool = poolFactory(datasource);
+  const pools = new Map<string, PgPool>();
   const capabilities: DatasourceCapabilities = capabilitiesForKind('postgresql');
-  let catalogName: string | undefined;
+  const catalogNames = new Map<string, string>();
   let closed = false;
 
-  const loadCatalogName = async (): Promise<string> => {
+  const poolForRole = (roleName: string | undefined): { poolKey: string; pool: PgPool } => {
+    const credential = selectSqlCredential(datasource, roleName);
+    const existing = pools.get(credential.poolKey);
+    if (existing !== undefined) return { poolKey: credential.poolKey, pool: existing };
+    const pool = poolFactory({
+      ...datasource,
+      username: credential.username,
+      password: credential.password,
+    });
+    pools.set(credential.poolKey, pool);
+    return { poolKey: credential.poolKey, pool };
+  };
+  poolForRole(undefined);
+
+  const loadCatalogName = async (roleName: string | undefined): Promise<string> => {
+    const { poolKey, pool } = poolForRole(roleName);
+    const catalogName = catalogNames.get(poolKey);
     if (catalogName !== undefined) return catalogName;
     try {
       const res = await pool.query<{ name: string }>('SELECT current_database() AS name');
-      catalogName = res.rows[0]?.name ?? datasource.database;
-      return catalogName;
+      const name = res.rows[0]?.name ?? datasource.database;
+      catalogNames.set(poolKey, name);
+      return name;
     } catch (err) {
       throwPgDriverError(err);
     }
   };
 
-  const assertCatalog = async (catalog: string): Promise<void> => {
-    const expected = await loadCatalogName();
+  const assertCatalog = async (catalog: string, roleName: string | undefined): Promise<void> => {
+    const expected = await loadCatalogName(roleName);
     if (catalog !== expected) {
       throw AppError.notFound(`Catalog ${catalog} not found`);
     }
@@ -67,9 +85,10 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
   const query = async <T extends Record<string, unknown>>(
     sql: string,
     params: unknown[] = [],
+    roleName?: string,
   ): Promise<T[]> => {
     try {
-      const res = await pool.query<T>(sql, params);
+      const res = await poolForRole(roleName).pool.query<T>(sql, params);
       return res.rows;
     } catch (err) {
       throwPgDriverError(err, sql);
@@ -82,14 +101,14 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
     capabilities,
 
     executionClient(opts: ExecutionClientOptions): StatementClient {
-      return createPgStatementClient(pool, {
+      return createPgStatementClient(poolForRole(opts.roleName).pool, {
         datasourceReadOnly: datasource.readOnly,
         sessionReadOnly: opts.sessionReadOnly ?? false,
       });
     },
 
     downloadClient(opts: DownloadClientOptions = {}): StatementClient {
-      return createPgStatementClient(pool, {
+      return createPgStatementClient(poolForRole(opts.roleName).pool, {
         datasourceReadOnly: datasource.readOnly,
         sessionReadOnly: opts.sessionReadOnly ?? false,
       });
@@ -105,7 +124,7 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
     async validate(params: EngineValidateParams): Promise<ValidationResult> {
       return validateWithExplain(
         async (sql) => {
-          await query(sql);
+          await query(sql, [], params.roleName);
         },
         params.statement,
         'postgresql',
@@ -114,29 +133,32 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
 
     async listCatalogs(opts: MetadataOptions): Promise<Catalog[]> {
       ignoreMetadataPrincipal(opts);
-      return [{ name: await loadCatalogName() }];
+      return [{ name: await loadCatalogName(opts.roleName) }];
     },
 
     async listSchemas(catalog: string, opts: MetadataOptions): Promise<SchemaItem[]> {
       ignoreMetadataPrincipal(opts);
-      await assertCatalog(catalog);
+      await assertCatalog(catalog, opts.roleName);
       const rows = await query<{ schema_name: string }>(
         `SELECT schema_name FROM information_schema.schemata
          WHERE schema_name NOT LIKE 'pg_toast%'
            AND schema_name NOT LIKE 'pg_temp%'
          ORDER BY schema_name`,
+        [],
+        opts.roleName,
       );
       return rows.map((r) => ({ name: r.schema_name }));
     },
 
     async listTables(catalog: string, schema: string, opts: MetadataOptions): Promise<TableItem[]> {
       ignoreMetadataPrincipal(opts);
-      await assertCatalog(catalog);
+      await assertCatalog(catalog, opts.roleName);
       const rows = await query<{ table_name: string; table_type: string }>(
         `SELECT table_name, table_type FROM information_schema.tables
          WHERE table_schema = $1 AND table_type IN ('BASE TABLE','VIEW')
          ORDER BY table_name`,
         [schema],
+        opts.roleName,
       );
       return rows.map((r) => ({ name: r.table_name, type: r.table_type }));
     },
@@ -148,12 +170,13 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
       opts: MetadataOptions,
     ): Promise<TableDetail> {
       ignoreMetadataPrincipal(opts);
-      await assertCatalog(catalog);
+      await assertCatalog(catalog, opts.roleName);
       const rows = await query<{ column_name: string; data_type: string }>(
         `SELECT column_name, data_type FROM information_schema.columns
          WHERE table_schema = $1 AND table_name = $2
          ORDER BY ordinal_position`,
         [schema, table],
+        opts.roleName,
       );
       return {
         catalog,
@@ -169,7 +192,7 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
 
     async close(): Promise<void> {
       closed = true;
-      await pool.end();
+      await Promise.all([...pools.values()].map((pool) => pool.end()));
     },
 
     async sampleTable(
@@ -180,11 +203,11 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
       opts: MetadataOptions,
     ): Promise<SampleRowsResponse> {
       ignoreMetadataPrincipal(opts);
-      await assertCatalog(catalog);
+      await assertCatalog(catalog, opts.roleName);
       const ref = pgTableRef(schema, table);
       const safeLimit = Math.max(1, Math.min(limit ?? 10, 1000));
       try {
-        const client = await pool.connect();
+        const client = await poolForRole(opts.roleName).pool.connect();
         try {
           const res = await client.query({
             text: `SELECT * FROM ${ref} LIMIT $1`,

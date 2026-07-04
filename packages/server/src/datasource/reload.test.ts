@@ -257,4 +257,35 @@ describe('applyDatasourceReloadSync', () => {
     await Promise.resolve();
     expect(poolEnd).toHaveBeenCalledTimes(1);
   });
+
+  it('closes role credential pools on replaced engines', async () => {
+    const poolEnd = vi.fn(async () => {});
+    const poolFactory = () => ({ end: poolEnd, query: vi.fn(), on: vi.fn() }) as never;
+    const before: ResolvedMysqlDatasource = {
+      ...mysqlDs('mysql-1', 'old'),
+      roleCredentials: {
+        analyst: { username: 'analyst', password: 'secret' },
+      },
+    };
+    const after = mysqlDs('mysql-1', 'new');
+    const engine = createMysqlEngine({ datasource: before, poolFactory });
+    engine.executionClient({ source: 'user', roleName: 'analyst' });
+    const engines = new Map([['mysql-1', engine]]);
+    const datasources = [before];
+    const plan = planDatasourceReload(engines, datasources, [after], {
+      trinoConfig: TEST_TRINO_CONFIG,
+      mysqlPoolFactory: poolFactory,
+    });
+    applyDatasourceReloadSync(
+      {
+        engines,
+        datasources,
+        setDefaultDatasourceId: () => {},
+        invalidateDatasource: () => {},
+      },
+      plan,
+    );
+    await Promise.resolve();
+    expect(poolEnd).toHaveBeenCalledTimes(2);
+  });
 });

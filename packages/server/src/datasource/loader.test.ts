@@ -467,4 +467,93 @@ describe('loadDatasources', () => {
       'datasources.yaml が見つからない。DATASOURCES_PATH で指定するか ./datasources.yaml を作成せよ',
     );
   });
+
+  it('resolves mysql and postgresql roleCredentials from env and files', () => {
+    const pgAnalystPassPath = join(tempDir, 'pg-analyst-pass');
+    writeFileSync(pgAnalystPassPath, 'pg-analyst-pass\n', 'utf8');
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: mysql-a
+    type: mysql
+    username: mysql-default
+    host: mysql.internal
+    database: analytics
+    roleCredentials:
+      analyst:
+        username: mysql-analyst
+        passwordEnv: MYSQL_ANALYST_PASS
+  - id: pg-a
+    type: postgresql
+    username: pg-default
+    host: pg.internal
+    database: app
+    roleCredentials:
+      analyst:
+        username: pg-analyst
+        passwordFile: ${pgAnalystPassPath}
+`,
+    );
+
+    const result = loadDatasources({
+      env: { DATASOURCES_PATH: 'datasources.yaml', MYSQL_ANALYST_PASS: 'mysql-analyst-pass' },
+      cwd: tempDir,
+    });
+
+    expect(result[0]).toMatchObject({
+      roleCredentials: {
+        analyst: { username: 'mysql-analyst', password: 'mysql-analyst-pass' },
+      },
+    });
+    expect(result[1]).toMatchObject({
+      roleCredentials: {
+        analyst: { username: 'pg-analyst', password: 'pg-analyst-pass' },
+      },
+    });
+  });
+
+  it('rejects literal password fields in datasource YAML', () => {
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: mysql-a
+    type: mysql
+    username: u
+    password: plain-text
+    host: localhost
+    database: app
+`,
+    );
+
+    expect(() =>
+      loadDatasources({
+        env: { DATASOURCES_PATH: 'datasources.yaml' },
+        cwd: tempDir,
+      }),
+    ).toThrow(/password/);
+  });
+
+  it('rejects literal password fields in roleCredentials YAML', () => {
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: mysql-a
+    type: mysql
+    username: u
+    host: localhost
+    database: app
+    roleCredentials:
+      analyst:
+        username: analyst
+        password: plain-text
+`,
+    );
+
+    expect(() =>
+      loadDatasources({
+        env: { DATASOURCES_PATH: 'datasources.yaml' },
+        cwd: tempDir,
+      }),
+    ).toThrow(/roleCredentials/);
+  });
 });
