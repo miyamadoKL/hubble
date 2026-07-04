@@ -32,6 +32,7 @@ import type { ScheduleRecord, ScheduleRepository, ScheduleRunRepository } from '
 import { drainStatement } from './execute';
 import { nextRunAfter } from './cron';
 import { backoffMs, classifyFailure, shouldRetry } from './retry';
+import type { AuditLogger } from '../audit';
 
 /**
  * Resolved scheduler settings.
@@ -71,6 +72,8 @@ export interface SchedulerDeps {
   getRbac: () => LoadedRbac;
   /** グローバル Guard 設定（ロール上書きのベース）。 */
   guardConfig: ServerConfig['guard'];
+  /** スケジュール実行の監査ログ。 */
+  audit?: AuditLogger;
   config: SchedulerConfig;
   /** Wall clock (injectable for tests). */
   // 日本語: 省略時は Date.now。テストでは仮想時計を注入して cron 発火判定を制御する。
@@ -517,7 +520,22 @@ export class Scheduler {
           schema: schedule.schema ?? undefined,
           user: schedule.owner,
         };
-        const result = await drainStatement(client, schedule.statement, ctx);
+        const result = await drainStatement(client, schedule.statement, ctx, {
+          audit: this.deps.audit
+            ? {
+                actor: schedule.owner,
+                target: schedule.id,
+                datasource: schedule.datasourceId,
+                detail: {
+                  scheduleId: schedule.id,
+                  runOwner: schedule.owner,
+                  catalog: schedule.catalog ?? null,
+                  schema: schedule.schema ?? null,
+                },
+                record: (event) => this.deps.audit!.record(event),
+              }
+            : undefined,
+        });
         return {
           status: 'success',
           attempt,

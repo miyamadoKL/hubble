@@ -11,6 +11,7 @@ import { loadRbac } from '../rbac/loader';
 import type { LoadedRbac } from '../rbac/types';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { Scheduler, type SchedulerConfig } from './scheduler';
+import { AuditLogger, AuditRepository } from '../audit';
 
 const DEFAULT_GUARD_CONFIG = {
   mode: 'warn' as const,
@@ -56,6 +57,7 @@ interface Harness {
   schedules: ScheduleRepository;
   runs: ScheduleRunRepository;
   scheduler: Scheduler;
+  audit: AuditLogger;
   sleeps: number[];
   now: () => number;
   setNow: (ms: number) => void;
@@ -73,6 +75,7 @@ async function makeHarness(
   const { engines, defaultDatasourceId } = makeEnginesMap(fake);
   const schedules = new ScheduleRepository(db);
   const runs = new ScheduleRunRepository(db, 50);
+  const audit = new AuditLogger(new AuditRepository(db));
   const estimate = new EstimateService(engines, defaultDatasourceId, {
     mode: configOverrides.guardMode ?? 'warn',
     maxScanBytes: 0,
@@ -104,6 +107,7 @@ async function makeHarness(
       ...DEFAULT_GUARD_CONFIG,
       mode: configOverrides.guardMode ?? DEFAULT_GUARD_CONFIG.mode,
     },
+    audit,
     config,
     now,
     sleep: (ms) => {
@@ -118,6 +122,7 @@ async function makeHarness(
     schedules,
     runs,
     scheduler,
+    audit,
     sleeps,
     now,
     setNow: (ms) => {
@@ -158,6 +163,15 @@ describe('Scheduler run matrix', () => {
     expect(runs[0]!.rowCount).toBe(1);
     expect(runs[0]!.trinoQueryId).toMatch(/^qok_/);
     expect(runs[0]!.errorType).toBeNull();
+
+    const auditRows = await h.audit.listForTest();
+    const runAudit = auditRows.find((row) => row.action === 'schedule.execute');
+    expect(runAudit).toMatchObject({
+      actor: 'alice',
+      target: s.id,
+      datasource: DEFAULT_DATASOURCE_ID,
+    });
+    expect(runAudit?.detail).toMatchObject({ scheduleId: s.id, runOwner: 'alice' });
   });
 
   it('fails immediately on a USER_ERROR (validation) with no retry', async () => {

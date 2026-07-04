@@ -155,6 +155,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
 
     const overflowMode: OverflowMode | undefined =
       body.maxRows !== undefined ? services.config.query.overflowMode : undefined;
+    const maxRows = effectiveMaxRows(body.maxRows, services.config.query.maxRows);
     // 実行そのものは services.queries（実行レジストリ）に委譲し、ここでは queryId だけ返す。
     const exec = services.queries.submit({
       statement: body.statement,
@@ -162,10 +163,25 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       owner: principal.user,
       datasourceId: body.datasourceId,
       sessionReadOnly: !hasQueryWrite(principal.role),
-      maxRows: effectiveMaxRows(body.maxRows, services.config.query.maxRows),
+      maxRows,
       overflowMode,
       notebookId: body.notebookId,
       cellId: body.cellId,
+    });
+    await services.audit.record({
+      actor: principal.user,
+      action: 'query.execute',
+      target: exec.queryId,
+      datasource: queryDatasourceId,
+      detail: {
+        catalog: catalog ?? null,
+        schema: schema ?? null,
+        role: principal.role.name,
+        notebookId: body.notebookId ?? null,
+        cellId: body.cellId ?? null,
+        maxRows: maxRows ?? null,
+        hasSessionProperties: Object.keys(body.sessionProperties ?? {}).length > 0,
+      },
     });
     return c.json({ queryId: exec.queryId }, 202);
   });
@@ -323,6 +339,19 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       c.header(CSV_REEXEC_HEADER, 'unavailable');
       if (exec.truncated) c.header(CSV_TRUNCATED_HEADER, 'true');
     }
+
+    await services.audit.record({
+      actor: principal.user,
+      action: 'csv.download',
+      target: exec.queryId,
+      datasource: exec.datasourceId,
+      detail: {
+        compression: zip ? 'zip' : gzip ? 'gzip' : 'none',
+        needsReexec,
+        allowsReexec,
+        truncated: exec.truncated,
+      },
+    });
 
     c.header('Content-Type', zip ? 'application/zip' : 'text/csv; charset=utf-8');
     c.header('Content-Disposition', `attachment; filename="${filename}"`);

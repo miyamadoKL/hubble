@@ -28,6 +28,7 @@ import { buildEngines, type BuildEnginesOptions } from './engine/factory';
 import type { MysqlPoolFactory } from './engine/mysql/pool';
 import type { PgPoolFactory } from './engine/postgresql/pool';
 import type { QueryEngine } from './engine/types';
+import { AuditLogger, AuditRepository } from './audit';
 
 export interface Services {
   config: ServerConfig;
@@ -45,6 +46,7 @@ export interface Services {
   schedules: ScheduleRepository;
   scheduleRuns: ScheduleRunRepository;
   scheduler: Scheduler;
+  audit: AuditLogger;
   reloadDatasources: () => Promise<void>;
   reloadRbac: () => Promise<void>;
   shutdown: () => Promise<void>;
@@ -62,6 +64,7 @@ export interface BuildServicesOptions {
   pgPoolFactory?: PgPoolFactory;
   reloadLogError?: (message: string, err: unknown) => void;
   reloadLogWarn?: (message: string) => void;
+  auditLogError?: (message: string, err: unknown) => void;
 }
 
 export async function buildServices(
@@ -93,6 +96,7 @@ export async function buildServices(
   );
   await backfillOwners(db, config.trino.user);
 
+  const audit = new AuditLogger(new AuditRepository(db), options.auditLogError);
   const history = new HistoryRepository(db);
   const notebooks = new NotebookRepository(db);
   const savedQueries = new SavedQueryRepository(db);
@@ -130,6 +134,7 @@ export async function buildServices(
     estimate,
     getRbac: () => rbacState.current,
     guardConfig: config.guard,
+    audit,
     config: {
       enabled: config.scheduler.enabled,
       tickSeconds: config.scheduler.tickSeconds,
@@ -209,6 +214,7 @@ export async function buildServices(
     schedules,
     scheduleRuns,
     scheduler,
+    audit,
     reloadDatasources,
     reloadRbac,
     shutdown: async () => {
