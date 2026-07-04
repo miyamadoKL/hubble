@@ -25,6 +25,8 @@ import type { ResolvedRole } from '../rbac/types';
 export interface PrincipalIdentity {
   user: string;
   email?: string;
+  /** oauth2-proxy 等が付与するグループ一覧。ヘッダー欠落時は未設定（空配列として扱う）。 */
+  groups?: string[];
 }
 
 export interface Principal extends PrincipalIdentity {
@@ -56,6 +58,22 @@ function header(headers: Record<string, string | undefined>, name: string): stri
     if (k.toLowerCase() === lower) return v;
   }
   return undefined;
+}
+
+/**
+ * Parse a comma-separated SSO groups header into trimmed, non-empty group names.
+ *
+ * カンマ区切りの SSO グループヘッダーをパースする。各要素を trim し、空要素を除去する。
+ * ヘッダー自体が欠落している場合は undefined（RBAC では空配列として扱う）。
+ * @param value - グループヘッダーの生文字列。
+ * @returns パース済みグループ名の配列。ヘッダー欠落時は undefined。
+ */
+export function parseGroupsHeader(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  return value
+    .split(',')
+    .map((group) => group.trim())
+    .filter((group) => group.length > 0);
 }
 
 /**
@@ -141,11 +159,16 @@ export class PrincipalResolver {
     }
     const userHeader = header(headers, this.auth.ssoHeaderUser);
     const emailHeader = header(headers, this.auth.ssoHeaderEmail);
+    const groupsHeader = header(headers, this.auth.ssoHeaderGroups);
     const principal = mapPrincipal(this.auth.userMapping, userHeader, emailHeader);
     if (!principal) {
       // 信頼済みプロキシ経由でも識別ヘッダーが無ければ principal を組み立てられない。
       return { ok: false, reason: 'No SSO identity headers present' };
     }
-    return { ok: true, principal };
+    const groups = parseGroupsHeader(groupsHeader);
+    return {
+      ok: true,
+      principal: groups !== undefined ? { ...principal, groups } : principal,
+    };
   }
 }
