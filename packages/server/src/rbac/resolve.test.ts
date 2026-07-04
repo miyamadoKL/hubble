@@ -175,4 +175,26 @@ defaultRole: member
     const role = resolveRoleForPrincipal(withDatasources, { user: 'alice' });
     expect(role.datasources).toEqual(['trino-prod']);
   });
+
+  it('resolves role permissions and datasource allowlist together', () => {
+    const withDatasources = loadedFromYaml(`roles:
+  analyst:
+    permissions: [query.write, queries.viewAll]
+    datasources: [trino-prod, trino-dev]
+  member:
+    permissions: []
+    datasources: []
+assignments:
+  - email: alice@corp.com
+    role: analyst
+defaultRole: member
+`);
+    const role = resolveRoleForPrincipal(withDatasources, {
+      user: 'alice',
+      email: 'alice@corp.com',
+    });
+    expect(role.name).toBe('analyst');
+    expect([...role.permissions].sort()).toEqual(['queries.viewAll', 'query.write']);
+    expect(role.datasources).toEqual(['trino-prod', 'trino-dev']);
+  });
 });

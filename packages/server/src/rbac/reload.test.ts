@@ -77,6 +77,60 @@ defaultRole: admin
     expect(meResponseSchema.parse(await res.json()).role).toBe('admin');
   });
 
+  it('reflects datasource allowlist changes in GET /api/me after reload', async () => {
+    writeFileSync(
+      join(tempDir, 'datasources.yaml'),
+      `datasources:
+  - id: trino-prod
+    type: trino
+    displayName: Production Trino
+    username: trino
+    baseUrl: http://trino.test
+  - id: trino-dev
+    type: trino
+    displayName: Development Trino
+    username: trino
+    baseUrl: http://trino.test
+`,
+      'utf8',
+    );
+    const rbacPath = join(tempDir, 'rbac.yaml');
+    writeFileSync(
+      rbacPath,
+      `roles:
+  analyst:
+    permissions: [query.write]
+    datasources: [trino-prod]
+defaultRole: analyst
+`,
+      'utf8',
+    );
+    const ctx = await createTestContext({
+      env: { RBAC_PATH: 'rbac.yaml' },
+      cwd: tempDir,
+    });
+    let res = await ctx.app.request('/api/me');
+    expect(meResponseSchema.parse(await res.json()).datasources.map((ds) => ds.id)).toEqual([
+      'trino-prod',
+    ]);
+
+    writeFileSync(
+      rbacPath,
+      `roles:
+  analyst:
+    permissions: [query.write]
+    datasources: [trino-dev]
+defaultRole: analyst
+`,
+      'utf8',
+    );
+    await ctx.services.reloadRbac();
+    res = await ctx.app.request('/api/me');
+    expect(meResponseSchema.parse(await res.json()).datasources.map((ds) => ds.id)).toEqual([
+      'trino-dev',
+    ]);
+  });
+
   it('keeps current config on invalid YAML and recovers after fix', async () => {
     const rbacPath = join(tempDir, 'rbac.yaml');
     writeFileSync(rbacPath, memberRbacYaml(10_000), 'utf8');

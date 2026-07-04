@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { datasourceSummarySchema } from './datasource';
 import { permissionSchema } from './rbac';
 
 /**
@@ -37,6 +38,8 @@ export const meResponseSchema = z.object({
   role: z.string().min(1),
   // ロールに紐づく権限一覧（ソート済みで返す）。
   permissions: z.array(permissionSchema),
+  // 現在のロールでアクセスできるデータソース一覧（YAML の記述順で返す）。
+  datasources: z.array(datasourceSummarySchema),
 });
 /** `GET /api/me` レスポンスの推論型。 */
 export type MeResponse = z.infer<typeof meResponseSchema>;

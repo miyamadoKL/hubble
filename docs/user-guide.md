@@ -435,8 +435,9 @@ Open notebook… / New SQL cell / New Markdown cell / Go to（Data·Saved·Histo
 
 運用者が SSO（oauth2-proxy 前段）を有効にしている場合、
 
-- TopBar の右上に**現在のユーザー**（解決されたプリンシパル。メールはツールチップ）が
-  表示されます。SSO なし（`authMode=none`）の環境では表示されません。
+- TopBar の右上の UserChip に**現在のユーザー**（解決されたプリンシパル。メールはツールチップ）が表示されます。
+  UserChip を開くと、自分に解決された role、permissions、アクセス可能な datasource を確認できます。
+  SSO なし（`authMode=none`）の環境では UserChip は表示されません。
 - セッションが切れたり、プロキシを経由せず直接アクセスしたりすると、全画面に
   **「認証が必要です」** が表示されます。「再読み込み」で SSO のログインフローに戻ります。
 

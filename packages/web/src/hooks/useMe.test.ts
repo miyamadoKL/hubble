@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { UNAUTHENTICATED } from '@hubble/contracts';
 import { ApiClientError } from '../api/client';
-import { isUnauthenticated } from './useMe';
+import { isUnauthenticated, ME_STALE_MS } from './useMe';
 
 describe('isUnauthenticated', () => {
   it('is true for a 401 UNAUTHENTICATED ApiClientError', () => {
@@ -22,5 +22,14 @@ describe('isUnauthenticated', () => {
     expect(isUnauthenticated(new Error('boom'))).toBe(false);
     expect(isUnauthenticated(undefined)).toBe(false);
     expect(isUnauthenticated(null)).toBe(false);
+  });
+});
+
+describe('ME_STALE_MS', () => {
+  // rbac.yaml のホットリロードで /api/me の role、permissions、datasources が
+  // 変わるため、既存タブが無限キャッシュを持ち続けないことを固定する。
+  it('is finite so RBAC changes eventually refetch without a page reload', () => {
+    expect(ME_STALE_MS).toBeGreaterThan(0);
+    expect(Number.isFinite(ME_STALE_MS)).toBe(true);
   });
 });

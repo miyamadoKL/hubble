@@ -279,6 +279,8 @@ MySQL/PostgreSQL データソースは、既定では `datasources.yaml` の dat
 いずれの場合も Trino のようなユーザー単位の principal は DB 側へ伝播しないため、Hubble 側では `rbac.yaml` の `role.datasources` で露出する datasource id を allowlist 制限してください。
 未指定のロールは後方互換のため全 datasource を利用できます。拒否時は datasource の存在有無を
 漏らさないよう HTTP 404 として応答します。
+RBAC 設定を変更した後は、信頼済み proxy ヘッダーで `/api/me` を呼び、解決された `role`、`permissions`、`datasources` を確認してください。
+ブラウザでは TopBar の UserChip から同じ情報を確認できます。
 
 #### MySQL/PostgreSQL の roleCredentials 運用
 
