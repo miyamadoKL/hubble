@@ -22,6 +22,7 @@ import type { Services } from '../services';
 import { resolveEngine } from '../engine/resolve';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
+import { requireDatasourceAccess, schedulePrincipalIdentity } from '../rbac/check';
 import { resolveRoleForPrincipal } from '../rbac/resolve';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import type { ScheduleRecord, ScheduleRunRecord } from '../store/schedules';
@@ -165,6 +166,8 @@ export function scheduleRoutes(services: Services): App {
   app.post('/', async (c) => {
     const owner = c.var.principal.user;
     const body = await parseJsonBody(c, createScheduleRequestSchema);
+    const targetDatasourceId = body.datasourceId ?? services.defaultDatasourceId;
+    requireDatasourceAccess(c.var.principal.role, targetDatasourceId);
     const { datasourceId, engine } = resolveEngine(
       services.engines,
       body.datasourceId,
@@ -214,6 +217,10 @@ export function scheduleRoutes(services: Services): App {
     const existing = await services.schedules.get(owner, id);
     if (!existing) throw AppError.notFound(`Schedule ${id} not found`);
     const body = await parseJsonBody(c, updateScheduleRequestSchema);
+    const disableOnly = Object.keys(body).length === 1 && body.enabled === false;
+    if (!disableOnly) {
+      requireDatasourceAccess(c.var.principal.role, existing.datasourceId);
+    }
 
     // Re-validate when the statement or its execution context changes.
     // 実行に影響しうるフィールドが変更された場合のみ、コストのかかる再検証を行う。
@@ -225,6 +232,9 @@ export function scheduleRoutes(services: Services): App {
       body.datasourceId !== undefined;
     if (statementChanges) {
       const targetDatasourceId = body.datasourceId ?? existing.datasourceId;
+      if (targetDatasourceId !== existing.datasourceId) {
+        requireDatasourceAccess(c.var.principal.role, targetDatasourceId);
+      }
       const { engine } = resolveEngine(
         services.engines,
         targetDatasourceId,
@@ -266,6 +276,8 @@ export function scheduleRoutes(services: Services): App {
     const id = c.req.param('id');
     const record = await services.schedules.get(owner, id);
     if (!record) throw AppError.notFound(`Schedule ${id} not found`);
+    const ownerRole = resolveRoleForPrincipal(services.rbac, schedulePrincipalIdentity(owner));
+    requireDatasourceAccess(ownerRole, record.datasourceId);
     try {
       const { runId } = await services.scheduler.runManual(record);
       return c.json({ runId }, 202);

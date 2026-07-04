@@ -147,4 +147,78 @@ defaultRole: admin
       loadRbac({ env: { RBAC_PATH: join(tempDir, 'missing.yaml') }, cwd: tempDir }),
     ).toThrow(/rbac file .* cannot be read/);
   });
+
+  it('loads role datasources allowlist including wildcard and empty array', () => {
+    const path = writeRbac(
+      tempDir,
+      `roles:
+  all:
+    permissions: [query.write]
+    datasources: ['*']
+  trino-only:
+    permissions: [query.write]
+    datasources: [trino-prod]
+  none:
+    permissions: []
+    datasources: []
+  legacy:
+    permissions: []
+assignments: []
+defaultRole: all
+`,
+    );
+    const rbac = loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir });
+    expect(rbac.roles.get('all')?.datasources).toEqual(['*']);
+    expect(rbac.roles.get('trino-only')?.datasources).toEqual(['trino-prod']);
+    expect(rbac.roles.get('none')?.datasources).toEqual([]);
+    expect(rbac.roles.get('legacy')?.datasources).toBeUndefined();
+  });
+
+  it('rejects null datasources in role definition', () => {
+    const path = writeRbac(
+      tempDir,
+      `roles:
+  bad:
+    permissions: [query.write]
+    datasources: null
+assignments: []
+defaultRole: bad
+`,
+    );
+    expect(() => loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir })).toThrow(
+      /roles\.bad\.datasources/,
+    );
+  });
+
+  it('rejects invalid datasource ids in role datasources', () => {
+    const path = writeRbac(
+      tempDir,
+      `roles:
+  bad:
+    permissions: [query.write]
+    datasources: [Trino-Prod]
+assignments: []
+defaultRole: bad
+`,
+    );
+    expect(() => loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir })).toThrow(
+      /roles\.bad\.datasources\[0\]/,
+    );
+  });
+
+  it('rejects duplicate datasource entries in role datasources', () => {
+    const path = writeRbac(
+      tempDir,
+      `roles:
+  bad:
+    permissions: [query.write]
+    datasources: [trino-prod, trino-prod]
+assignments: []
+defaultRole: bad
+`,
+    );
+    expect(() => loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir })).toThrow(
+      /duplicate datasource 'trino-prod'/,
+    );
+  });
 });

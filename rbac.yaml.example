@@ -12,16 +12,25 @@ roles:
     # query.killAny: Operations ビューから任意ユーザーのクエリを kill
     # queries.viewAll: Operations ビューで全ユーザーの実行中クエリを閲覧
     permissions: [query.write, query.killAny, queries.viewAll]
+    # datasources: ロールが利用できる datasource id の allowlist(任意)
+    # - 未指定: 全 datasource 許可(後方互換)
+    # - ['*']: 明示的に全許可
+    # - [trino-prod, mysql-analytics]: 列挙 id のみ許可
+    # - []: いずれの datasource も許可しない
+    datasources: ['*']
   operator:
     # operator も同様に運用ビューと kill を使える例
     permissions: [query.write, query.killAny, queries.viewAll]
     guard:
       maxScanBytes: 500000000000
+    # Trino のみ許可する例(MySQL/PostgreSQL の共有 credential 露出を抑える)
+    datasources: [trino-prod]
   member:
     permissions: []
     guard:
       maxScanBytes: 50000000000
       onUnknown: block
+    datasources: [trino-prod]
 
 assignments:
   - email: alice@example.com

@@ -205,11 +205,22 @@ owner、データソース、statement 先頭、state、経過時間を 5 秒間
 kill できます。kill 操作はサーバーログに 1 行（実行者、対象 owner、queryId）を残します。
 `rbac.yaml` が無い `unrestricted` 運用ではこれらの権限は付与されず、従来どおりの UI です。
 
+#### datasource 露出の制限（`role.datasources`）
+
+MySQL/PostgreSQL は `datasources.yaml` の単一 credential で全ユーザーのクエリを実行するため、
+DB 側の行/テーブル単位の認可や監査には principal が伝播しません。Hubble 側では
+`rbac.yaml` の各ロールに任意フィールド `datasources` を設定し、クエリ、見積り、メタデータ、
+スケジュールで利用できる datasource id を allowlist で制限できます。未指定時は従来どおり
+全 datasource が許可されます。`GET /api/datasources` もロールに応じて一覧が filter され、
+UI から見えない datasource を選べなくなります。厳密な DB 側の境界が必要な場合は Trino 経由での
+接続を推奨します。
+
 #### 既知の制限（MySQL/PostgreSQL）
 
 MySQL/PostgreSQL は `datasources.yaml` の単一 credential で全ユーザーのクエリを実行するため、
-DB 側の行/テーブル単位の認可や監査にはユーザーが伝播しません。厳密な境界が必要な場合は
-Trino 経由での接続を推奨します。
+DB 側の行/テーブル単位の認可や監査にはユーザーが伝播しません。`role.datasources` は Hubble 上の
+露出 datasource を制限するものであり、許可された MySQL/PostgreSQL へ到達したクエリは依然として
+共有 credential で実行されます。厳密な境界が必要な場合は Trino 経由での接続を推奨します。
 
 ### 環境変数（server）
 

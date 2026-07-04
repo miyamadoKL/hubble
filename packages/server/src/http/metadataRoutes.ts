@@ -10,6 +10,7 @@ import { metadataRefreshRequestSchema, tableDetailSchema } from '@hubble/contrac
 import type { AuthVariables } from '../auth/middleware';
 import type { Services } from '../services';
 import { resolveEngine } from '../engine/resolve';
+import { requireDatasourceAccess } from '../rbac/check';
 import { parseJsonBody } from './validate';
 
 /**
@@ -21,16 +22,19 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
   const defaultId = services.defaultDatasourceId;
 
   app.get('/catalogs', async (c) => {
+    requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
     return c.json(await services.metadata.getCatalogs(principal, defaultId));
   });
 
   app.get('/catalogs/:c/schemas', async (c) => {
+    requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
     return c.json(await services.metadata.getSchemas(c.req.param('c'), principal, defaultId));
   });
 
   app.get('/catalogs/:c/schemas/:s/tables', async (c) => {
+    requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
     return c.json(
       await services.metadata.getTables(c.req.param('c'), c.req.param('s'), principal, defaultId),
@@ -38,6 +42,7 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
   });
 
   app.get('/catalogs/:c/schemas/:s/tables/:t', async (c) => {
+    requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
     const raw = await services.metadata.getTableDetail(
       c.req.param('c'),
@@ -50,6 +55,7 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
   });
 
   app.get('/catalogs/:c/schemas/:s/tables/:t/sample', async (c) => {
+    requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
     const sample = await services.metadata.getSample(
       c.req.param('c'),
@@ -63,6 +69,7 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
   });
 
   app.post('/metadata/refresh', async (c) => {
+    requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
     const body = await parseJsonBody(c, metadataRefreshRequestSchema);
     await services.metadata.refresh(principal, body.catalog, body.schema, defaultId);
@@ -81,6 +88,7 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
   app.get('/:datasourceId/catalogs', async (c) => {
     const principal = c.var.principal.user;
     const datasourceId = c.req.param('datasourceId');
+    requireDatasourceAccess(c.var.principal.role, datasourceId);
     resolveEngine(services.engines, datasourceId, services.defaultDatasourceId);
     return c.json(await services.metadata.getCatalogs(principal, datasourceId));
   });
@@ -88,6 +96,7 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
   app.get('/:datasourceId/catalogs/:c/schemas', async (c) => {
     const principal = c.var.principal.user;
     const datasourceId = c.req.param('datasourceId');
+    requireDatasourceAccess(c.var.principal.role, datasourceId);
     resolveEngine(services.engines, datasourceId, services.defaultDatasourceId);
     return c.json(await services.metadata.getSchemas(c.req.param('c'), principal, datasourceId));
   });
@@ -95,6 +104,7 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
   app.get('/:datasourceId/catalogs/:c/schemas/:s/tables', async (c) => {
     const principal = c.var.principal.user;
     const datasourceId = c.req.param('datasourceId');
+    requireDatasourceAccess(c.var.principal.role, datasourceId);
     resolveEngine(services.engines, datasourceId, services.defaultDatasourceId);
     return c.json(
       await services.metadata.getTables(
@@ -109,6 +119,7 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
   app.get('/:datasourceId/catalogs/:c/schemas/:s/tables/:t', async (c) => {
     const principal = c.var.principal.user;
     const datasourceId = c.req.param('datasourceId');
+    requireDatasourceAccess(c.var.principal.role, datasourceId);
     resolveEngine(services.engines, datasourceId, services.defaultDatasourceId);
     const raw = await services.metadata.getTableDetail(
       c.req.param('c'),
@@ -123,6 +134,7 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
   app.get('/:datasourceId/catalogs/:c/schemas/:s/tables/:t/sample', async (c) => {
     const principal = c.var.principal.user;
     const datasourceId = c.req.param('datasourceId');
+    requireDatasourceAccess(c.var.principal.role, datasourceId);
     resolveEngine(services.engines, datasourceId, services.defaultDatasourceId);
     const sample = await services.metadata.getSample(
       c.req.param('c'),

@@ -4,6 +4,7 @@
 import type { Permission } from '@hubble/contracts';
 import { AppError } from '../errors';
 import type { PrincipalIdentity } from '../auth/principal';
+import type { ResolvedDatasource } from '../datasource/types';
 import type { ResolvedRole } from './types';
 
 /** principal が指定権限を持つか。 */
@@ -23,6 +24,31 @@ export function requirePermission(role: ResolvedRole, permission: Permission): v
 /** principal が query.write を持つか。 */
 export function hasQueryWrite(role: ResolvedRole): boolean {
   return hasPermission(role, 'query.write');
+}
+
+/** ロールが指定 datasource へアクセス可能か。 */
+export function roleAllowsDatasource(role: ResolvedRole, datasourceId: string): boolean {
+  const allowlist = role.datasources;
+  if (allowlist === undefined) return true;
+  if (allowlist.length === 0) return false;
+  if (allowlist.includes('*')) return true;
+  return allowlist.includes(datasourceId);
+}
+
+/**
+ * datasource へのアクセスを要求する。拒否時は存在有無を漏らさない 404 NOT_FOUND。
+ */
+export function requireDatasourceAccess(role: ResolvedRole, datasourceId: string): void {
+  if (roleAllowsDatasource(role, datasourceId)) return;
+  throw AppError.notFound(`Datasource ${datasourceId} not found`);
+}
+
+/** ロールでアクセス可能な datasource だけに絞り込む。 */
+export function filterDatasourcesForRole(
+  datasources: readonly ResolvedDatasource[],
+  role: ResolvedRole,
+): ResolvedDatasource[] {
+  return datasources.filter((ds) => roleAllowsDatasource(role, ds.id));
 }
 
 /**

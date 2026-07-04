@@ -63,6 +63,7 @@ export function resolveRoleForPrincipal(
       name: assignment.role,
       permissions: role.permissions,
       ...(role.guard !== undefined ? { guard: role.guard } : {}),
+      ...(role.datasources !== undefined ? { datasources: role.datasources } : {}),
     };
   }
 
@@ -74,5 +75,6 @@ export function resolveRoleForPrincipal(
     name: rbac.defaultRole,
     permissions: fallback.permissions,
     ...(fallback.guard !== undefined ? { guard: fallback.guard } : {}),
+    ...(fallback.datasources !== undefined ? { datasources: fallback.datasources } : {}),
   };
 }

@@ -4,7 +4,11 @@ import type { SqlDatabase } from '../db/sqlDatabase';
 import { EstimateService } from '../query/estimateService';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
 import { FakeTrino, type FakeScenario } from '../test/fakeTrino';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { loadRbac } from '../rbac/loader';
+import type { LoadedRbac } from '../rbac/types';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { Scheduler, type SchedulerConfig } from './scheduler';
 
@@ -62,6 +66,7 @@ async function makeHarness(
   configOverrides: Partial<SchedulerConfig> = {},
   /** Invoked on each retry backoff sleep (e.g. to swap scenarios mid-run). */
   onSleep?: (callIndex: number, ms: number) => void,
+  getRbac?: () => LoadedRbac,
 ): Promise<Harness> {
   const db = await openMemoryDatabase();
   const fake = new FakeTrino(scenarios);
@@ -94,7 +99,7 @@ async function makeHarness(
     engines,
     defaultDatasourceId,
     estimate,
-    getRbac: () => loadRbac({}),
+    getRbac: getRbac ?? (() => loadRbac({})),
     guardConfig: {
       ...DEFAULT_GUARD_CONFIG,
       mode: configOverrides.guardMode ?? DEFAULT_GUARD_CONFIG.mode,
@@ -254,6 +259,42 @@ describe('Scheduler run matrix', () => {
     expect(runs[0]!.attempt).toBe(3);
     // Two backoff waits between three attempts: 30s and 60s.
     expect(h.sleeps).toEqual([30_000, 60_000]);
+  });
+
+  it('blocks schedule runs when owner role cannot access datasourceId', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-sched-rbac-'));
+    try {
+      writeFileSync(
+        join(dir, 'rbac.yaml'),
+        `roles:
+  trino-prod-only:
+    permissions: [query.write]
+    datasources: [trino-prod]
+assignments:
+  - user: alice
+    role: trino-prod-only
+defaultRole: trino-prod-only
+`,
+        'utf8',
+      );
+      const rbac = () => loadRbac({ env: { RBAC_PATH: join(dir, 'rbac.yaml') }, cwd: dir });
+      h = await makeHarness([VALIDATE_OK], {}, undefined, rbac);
+      const s = await h.schedules.create('alice', {
+        name: 'denied',
+        statement: 'SELECT 1',
+        cron: '* * * * *',
+        datasourceId: DEFAULT_DATASOURCE_ID,
+      });
+      await h.scheduler.runManual(s);
+      await h.scheduler.whenIdle();
+
+      const runs = await h.runs.list(s.id, 10);
+      expect(runs[0]!.status).toBe('blocked');
+      expect(runs[0]!.errorType).toBe('DATASOURCE_ACCESS_DENIED');
+      expect(runs[0]!.attempt).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('blocks (no retry) when Query Guard enforce decides block', async () => {
