@@ -51,6 +51,35 @@ describe('loadServerConfig integer bounds', () => {
     });
   });
 
+  it('defaults export destinations to disabled settings', () => {
+    expect(loadServerConfig({}).export).toEqual({
+      s3: { prefix: 'hubble-exports/' },
+      sheets: {},
+    });
+  });
+
+  it('loads export destination settings from env', () => {
+    expect(
+      loadServerConfig({
+        EXPORT_S3_BUCKET: 'export-bucket',
+        EXPORT_S3_PREFIX: 'exports/',
+        EXPORT_S3_REGION: 'us-west-2',
+        EXPORT_S3_ENDPOINT: 'http://localhost:9000',
+        EXPORT_SHEETS_CREDENTIALS_FILE: '/secure/hubble-sheets.json',
+      }).export,
+    ).toEqual({
+      s3: {
+        bucket: 'export-bucket',
+        prefix: 'exports/',
+        region: 'us-west-2',
+        endpoint: 'http://localhost:9000',
+      },
+      sheets: {
+        credentialsFile: '/secure/hubble-sheets.json',
+      },
+    });
+  });
+
   it('loads notification env including SMTP password indirection', () => {
     const config = loadServerConfig({
       NOTIFY_SLACK_WEBHOOK_URL: 'https://hooks.slack.test/services/T',

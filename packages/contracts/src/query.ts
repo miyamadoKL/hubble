@@ -178,3 +178,44 @@ export const createQueryResponseSchema = z.object({
 });
 /** クエリ作成レスポンスの推論型。 */
 export type CreateQueryResponse = z.infer<typeof createQueryResponseSchema>;
+
+/** エクスポート先の種類。 */
+export const queryExportDestinationSchema = z.enum(['s3', 'sheets']);
+/** エクスポート形式。 */
+export const queryExportFormatSchema = z.enum(['csv', 'xlsx']);
+
+/** `POST /api/queries/:id/export` のリクエストボディ。 */
+export const queryExportRequestSchema = z.discriminatedUnion('destination', [
+  z
+    .object({
+      destination: z.literal('s3'),
+      format: queryExportFormatSchema,
+      gzip: z.boolean().optional(),
+    })
+    .refine((value) => value.format === 'csv' || value.gzip !== true, {
+      path: ['gzip'],
+      message: 'gzip is only supported for csv export',
+    }),
+  z.object({
+    destination: z.literal('sheets'),
+  }),
+]);
+/** クエリエクスポートリクエストの推論型。 */
+export type QueryExportRequest = z.infer<typeof queryExportRequestSchema>;
+
+/** `POST /api/queries/:id/export` のレスポンスボディ。 */
+export const queryExportResponseSchema = z.discriminatedUnion('destination', [
+  z.object({
+    destination: z.literal('s3'),
+    objectKey: z.string().min(1),
+    format: queryExportFormatSchema,
+    gzip: z.boolean().optional(),
+  }),
+  z.object({
+    destination: z.literal('sheets'),
+    spreadsheetId: z.string().min(1),
+    url: z.url(),
+  }),
+]);
+/** クエリエクスポートレスポンスの推論型。 */
+export type QueryExportResponse = z.infer<typeof queryExportResponseSchema>;

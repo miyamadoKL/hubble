@@ -10,6 +10,9 @@ export const auditActionSchema = z.enum([
   'query.kill',
   'query.result.persist',
   'csv.download',
+  'export.xlsx',
+  'export.s3',
+  'export.sheets',
   'schedule.execute',
   'notification.send',
 ]);

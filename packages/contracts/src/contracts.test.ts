@@ -16,6 +16,8 @@ import {
   querySnapshotSchema,
   queryRowsPageSchema,
   createQueryResponseSchema,
+  queryExportRequestSchema,
+  queryExportResponseSchema,
   estimateRequestSchema,
   estimateResultSchema,
   guardConfigSchema,
@@ -330,6 +332,36 @@ describe('query', () => {
 
   it('parses a CreateQueryResponse', () => {
     expect(createQueryResponseSchema.parse({ queryId: 'q1' })).toEqual({ queryId: 'q1' });
+  });
+
+  it('parses query export requests and responses', () => {
+    expect(
+      queryExportRequestSchema.parse({ destination: 's3', format: 'csv', gzip: true }),
+    ).toEqual({
+      destination: 's3',
+      format: 'csv',
+      gzip: true,
+    });
+    expect(
+      queryExportRequestSchema.safeParse({ destination: 's3', format: 'xlsx', gzip: true }).success,
+    ).toBe(false);
+    expect(queryExportRequestSchema.parse({ destination: 'sheets' })).toEqual({
+      destination: 'sheets',
+    });
+    expect(
+      queryExportResponseSchema.parse({
+        destination: 's3',
+        objectKey: 'exports/alice/q1.csv',
+        format: 'csv',
+      }),
+    ).toMatchObject({ destination: 's3' });
+    expect(
+      queryExportResponseSchema.parse({
+        destination: 'sheets',
+        spreadsheetId: 'sheet_1',
+        url: 'https://docs.google.com/spreadsheets/d/sheet_1',
+      }),
+    ).toMatchObject({ destination: 'sheets' });
   });
 });
 
@@ -714,6 +746,8 @@ describe('schedule', () => {
 describe('routes', () => {
   it('builds parameterized paths', () => {
     expect(apiRoutes.queryRows('q1')).toBe('/api/queries/q1/rows');
+    expect(apiRoutes.queryDownloadXlsx('q1')).toBe('/api/queries/q1/download.xlsx');
+    expect(apiRoutes.queryExport('q1')).toBe('/api/queries/q1/export');
     expect(apiRoutes.table('tpch', 'tiny', 'nation')).toBe(
       '/api/catalogs/tpch/schemas/tiny/tables/nation',
     );

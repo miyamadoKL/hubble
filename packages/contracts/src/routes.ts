@@ -64,6 +64,10 @@ export const apiRoutes = {
   queryRows: (id: string) => `/api/queries/${enc(id)}/rows`,
   // 単一クエリの結果を CSV としてダウンロード。
   queryDownloadCsv: (id: string) => `/api/queries/${enc(id)}/download.csv`,
+  // 単一クエリの結果を xlsx としてダウンロード。
+  queryDownloadXlsx: (id: string) => `/api/queries/${enc(id)}/download.xlsx`,
+  // 単一クエリの結果を外部ストレージへエクスポート。
+  queryExport: (id: string) => `/api/queries/${enc(id)}/export`,
 
   // Notebooks
   // ノートブック一覧取得 / 新規作成の基点パス。

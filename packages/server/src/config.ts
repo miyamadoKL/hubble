@@ -70,6 +70,21 @@ export type ResultStoreConfig =
       ttlDays: number;
     };
 
+/** クエリ結果エクスポート設定。 */
+export interface ExportConfig {
+  /** S3 互換ストレージへのエクスポート設定。bucket 未設定なら無効。 */
+  s3: {
+    bucket?: string;
+    prefix: string;
+    region?: string;
+    endpoint?: string;
+  };
+  /** Google Sheets へのエクスポート設定。credentialsFile 未設定なら無効。 */
+  sheets: {
+    credentialsFile?: string;
+  };
+}
+
 /** Server runtime configuration, derived from environment variables. */
 /** 日本語: サーバー実行時設定。`loadServerConfig()` が環境変数から一度だけ構築し、
  * 以後は不変な値としてアプリ全体（Services グラフ）に注入される。 */
@@ -143,6 +158,8 @@ export interface ServerConfig {
   };
   /** 日本語: クエリ結果保存バックエンドの設定（`RESULT_STORE_*`）。 */
   resultStore: ResultStoreConfig;
+  /** 日本語: クエリ結果エクスポート先の設定（`EXPORT_*`）。 */
+  export: ExportConfig;
   /** Query Guard configuration (Query Guard feature). */
   /** 日本語: Query Guard（EXPLAIN (TYPE IO) による事前スキャン量見積もり）機能の設定。
    * `QUERY_GUARD_*` 環境変数群から組み立てる。 */
@@ -331,6 +348,21 @@ export function resolveResultStoreConfig(env: Env): ResultStoreConfig {
   };
 }
 
+/** EXPORT_* 関連の環境変数を解決する。 */
+export function resolveExportConfig(env: Env): ExportConfig {
+  return {
+    s3: {
+      bucket: envOptional(env, 'EXPORT_S3_BUCKET'),
+      prefix: envStr(env, 'EXPORT_S3_PREFIX', 'hubble-exports/'),
+      region: envOptional(env, 'EXPORT_S3_REGION'),
+      endpoint: envOptional(env, 'EXPORT_S3_ENDPOINT'),
+    },
+    sheets: {
+      credentialsFile: envOptional(env, 'EXPORT_SHEETS_CREDENTIALS_FILE'),
+    },
+  };
+}
+
 /**
  * 日本語: 環境変数（既定は `process.env`、テストでは任意のオブジェクトを注入可能）から
  * `ServerConfig` を組み立てるエントリーポイント。各セクション（auth/trino/defaults/
@@ -381,6 +413,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       ttlSeconds: envPositiveInt(env, 'METADATA_TTL_SECONDS', 300),
     },
     resultStore: resolveResultStoreConfig(env),
+    export: resolveExportConfig(env),
     guard: {
       mode: envEnum(env, 'QUERY_GUARD_MODE', ['off', 'warn', 'enforce'] as const, 'warn'),
       maxScanBytes: envNonNegativeInt(env, 'QUERY_GUARD_MAX_SCAN_BYTES', 0),

@@ -15,10 +15,14 @@ import {
   createQueryResponseSchema,
   querySnapshotSchema,
   queryRowsPageSchema,
+  queryExportRequestSchema,
+  queryExportResponseSchema,
   type CreateQueryRequest,
   type CreateQueryResponse,
   type QuerySnapshot,
   type QueryRowsPage,
+  type QueryExportRequest,
+  type QueryExportResponse,
 } from '@hubble/contracts';
 import { apiFetch, apiRoutes } from '../api/client';
 
@@ -86,4 +90,23 @@ export type DownloadFormat = 'csv' | 'zip';
 export function downloadCsvUrl(queryId: string, format: DownloadFormat): string {
   const base = apiRoutes.queryDownloadCsv(queryId);
   return format === 'zip' ? `${base}?compression=zip` : base;
+}
+
+/** Build the xlsx download URL. */
+/** xlsx ダウンロード URL を組み立てる。 */
+export function downloadXlsxUrl(queryId: string): string {
+  return apiRoutes.queryDownloadXlsx(queryId);
+}
+
+/** Export a query result to an external destination. */
+/** クエリ結果を外部 destination へエクスポートする。 */
+export function exportQuery(
+  queryId: string,
+  request: QueryExportRequest,
+): Promise<QueryExportResponse> {
+  const body = queryExportRequestSchema.parse(request);
+  return apiFetch(queryExportResponseSchema, apiRoutes.queryExport(queryId), {
+    method: 'POST',
+    body,
+  });
 }
