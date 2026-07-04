@@ -25,6 +25,14 @@ describe('auth — none mode (default)', () => {
       authMode: 'none',
       role: 'unrestricted',
       permissions: ['query.write'],
+      datasources: [
+        {
+          id: 'trino-default',
+          kind: 'trino',
+          displayName: 'Trino',
+          capabilities: { costEstimate: true, catalogs: true },
+        },
+      ],
     });
   });
 
@@ -76,6 +84,7 @@ defaultRole: member
       const me = meResponseSchema.parse(await res.json());
       expect(me.role).toBe('admin');
       expect(me.permissions).toEqual(['queries.viewAll', 'query.killAny', 'query.write']);
+      expect(me.datasources.map((ds) => ds.id)).toEqual(['trino-default']);
       expect(me).not.toHaveProperty('groups');
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -151,6 +160,67 @@ defaultRole: member
       const me = meResponseSchema.parse(await res.json());
       expect(me.role).toBe('admin');
       expect(me.permissions).toEqual(['queries.viewAll', 'query.killAny', 'query.write']);
+      expect(me.datasources.map((ds) => ds.displayName)).toEqual(['Trino']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('GET /api/me returns only datasources allowed by the resolved role', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-auth-rbac-ds-'));
+    writeFileSync(
+      join(dir, 'datasources.yaml'),
+      `datasources:
+  - id: trino-prod
+    type: trino
+    displayName: Production Trino
+    username: trino
+    baseUrl: http://trino.test
+  - id: trino-dev
+    type: trino
+    displayName: Development Trino
+    username: trino
+    baseUrl: http://trino.test
+`,
+      'utf8',
+    );
+    writeFileSync(
+      join(dir, 'rbac.yaml'),
+      `roles:
+  analyst:
+    permissions: [query.write]
+    datasources: [trino-prod]
+  member:
+    permissions: []
+    datasources: []
+assignments:
+  - email: alice@corp.com
+    role: analyst
+defaultRole: member
+`,
+      'utf8',
+    );
+    const ctx = await createTestContext({
+      env: { AUTH_MODE: 'proxy', RBAC_PATH: 'rbac.yaml' },
+      cwd: dir,
+      remoteAddress: () => '127.0.0.1',
+    });
+    try {
+      const res = await ctx.app.request('/api/me', { headers: ssoHeaders('alice@corp.com') });
+      expect(res.status).toBe(200);
+      const me = meResponseSchema.parse(await res.json());
+      expect(me.role).toBe('analyst');
+      expect(me.datasources).toEqual([
+        {
+          id: 'trino-prod',
+          kind: 'trino',
+          displayName: 'Production Trino',
+          capabilities: { costEstimate: true, catalogs: true },
+        },
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -169,6 +239,14 @@ describe('auth — proxy mode', () => {
       authMode: 'proxy',
       role: 'unrestricted',
       permissions: ['query.write'],
+      datasources: [
+        {
+          id: 'trino-default',
+          kind: 'trino',
+          displayName: 'Trino',
+          capabilities: { costEstimate: true, catalogs: true },
+        },
+      ],
     });
   });
 

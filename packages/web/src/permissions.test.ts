@@ -7,6 +7,7 @@ const operator: MeResponse = {
   authMode: 'proxy',
   role: 'operator',
   permissions: ['queries.viewAll', 'query.killAny', 'query.write'],
+  datasources: [],
 };
 
 const member: MeResponse = {
@@ -14,6 +15,7 @@ const member: MeResponse = {
   authMode: 'proxy',
   role: 'member',
   permissions: [],
+  datasources: [],
 };
 
 describe('hasPermission', () => {

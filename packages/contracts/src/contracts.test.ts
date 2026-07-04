@@ -130,12 +130,14 @@ describe('auth', () => {
         authMode: 'proxy',
         role: 'member',
         permissions: [],
+        datasources: [],
       }),
     ).toEqual({
       user: 'alice',
       authMode: 'proxy',
       role: 'member',
       permissions: [],
+      datasources: [],
     });
     expect(
       meResponseSchema.parse({
@@ -144,6 +146,14 @@ describe('auth', () => {
         authMode: 'proxy',
         role: 'admin',
         permissions: ['query.write'],
+        datasources: [
+          {
+            id: 'trino-prod',
+            kind: 'trino',
+            displayName: 'Trino prod',
+            capabilities: { costEstimate: true, catalogs: true },
+          },
+        ],
       }).email,
     ).toBe('alice@example.com');
   });

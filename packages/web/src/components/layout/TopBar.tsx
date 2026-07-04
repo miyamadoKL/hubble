@@ -191,8 +191,7 @@ export function TopBar({
             }}
           />
 
-          {/* Current user; UserChip renders null in authMode none. */}
-          {/* 現在のユーザー表示。authMode が none のときは UserChip 内部で null を返す。 */}
+          {/* 現在の principal と実効権限を表示する。 */}
           <UserChip />
         </div>
       </header>

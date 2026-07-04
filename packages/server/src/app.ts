@@ -13,7 +13,7 @@
  * 各ルーター/サービス側にあり、このファイルはそれらを正しい順序で組み合わせるだけに留める。
  */
 import { Hono } from 'hono';
-import { apiRoutes, type MeResponse } from '@hubble/contracts';
+import { apiRoutes, meResponseSchema, type MeResponse } from '@hubble/contracts';
 import { loadServerConfig, toAppConfig } from './config';
 import { openDatabase } from './db';
 import { buildServices, type BuildServicesOptions, type Services } from './services';
@@ -26,6 +26,8 @@ import { historyRoutes, notebookRoutes, savedQueryRoutes } from './http/storeRou
 import { scheduleRoutes } from './http/scheduleRoutes';
 import { adminRoutes } from './http/adminRoutes';
 import { registerStaticServing } from './http/staticRoutes';
+import { filterDatasourcesForRole } from './rbac/check';
+import { toDatasourceSummaries } from './datasource/summary';
 
 /** createApp に渡す依存関係。 */
 export interface AppDeps {
@@ -106,9 +108,12 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
       authMode: services.config.auth.mode,
       role: principal.role.name,
       permissions: [...principal.role.permissions].sort(),
+      datasources: toDatasourceSummaries(
+        filterDatasourcesForRole(services.datasources, principal.role),
+      ),
       ...(principal.email ? { email: principal.email } : {}),
     };
-    return c.json(me);
+    return c.json(meResponseSchema.parse(me));
   });
 
   // Mount domain routers. Order matters: more specific prefixes first.
