@@ -168,6 +168,7 @@ total propagation delay is the sum of both.
 | `tls`                          | —        | optional | optional     | Defaults to `false`                                               |
 | `tlsCaFile`                    | —        | optional | optional     | CA file (requires `tls: true`)                                    |
 | `maxConnections`               | —        | optional | optional     | Pool size cap (default 5)                                         |
+| `roleCredentials`              | —        | optional | optional     | Connection credentials per RBAC role (see below)                  |
 
 #### Password reference
 
@@ -179,6 +180,39 @@ Passwords are never written directly into the YAML.
   referencing it as `passwordFile: /etc/hubble/secrets/mysql-password` is
   typical.
 - The two cannot be specified together.
+- Plaintext password fields such as `password` are not allowed on the
+  datasource itself or inside `roleCredentials`.
+
+#### MySQL/PostgreSQL roleCredentials
+
+For MySQL/PostgreSQL, `roleCredentials` can specify a DB connection user per
+RBAC role. If the role resolved at runtime matches a key under
+`roleCredentials`, queries, CSV re-runs, metadata fetches, and scheduled runs
+use that credential. If there is no match, Hubble falls back to the
+datasource-level `username` and `passwordEnv` / `passwordFile`. Connection
+pools are separated by datasource and role; old pools are discarded when
+`datasources.yaml` hot-reloads.
+
+```yaml
+datasources:
+  - id: mysql-analytics
+    type: mysql
+    username: hubble_default
+    passwordEnv: MYSQL_DEFAULT_PASSWORD
+    host: mysql.internal
+    database: analytics
+    roleCredentials:
+      analyst:
+        username: hubble_analyst
+        passwordEnv: MYSQL_ANALYST_PASSWORD
+      operator:
+        username: hubble_operator
+        passwordFile: /etc/hubble/secrets/mysql-operator-password
+```
+
+Configure the required `GRANT`s for DB users such as `hubble_analyst` and
+`hubble_operator` on the DB side. Trino continues to use principal
+impersonation, so this field is only for MySQL/PostgreSQL.
 
 #### readOnly and Query Guard
 
@@ -246,23 +280,19 @@ behaves as before.
 
 #### Restricting datasource exposure (`role.datasources`)
 
-Because MySQL/PostgreSQL run every user's query under the single credential in
-`datasources.yaml`, the principal is not propagated for DB-side row/table-level
-authorization or auditing. On the Hubble side, each role in `rbac.yaml` can set
-an optional `datasources` field to allowlist which datasource ids are usable
-for queries, estimates, metadata, and schedules. When unset, all datasources
-remain allowed, as before. `GET /api/datasources` is also filtered per role, so
-users can't select a datasource they can't see in the UI. Where a strict
-DB-side boundary is required, connecting via Trino is recommended.
+Each role in `rbac.yaml` can set an optional `datasources` field to allowlist
+which datasource ids are usable for queries, estimates, metadata, and
+schedules. When unset, all datasources remain allowed, as before.
+`GET /api/datasources` is also filtered per role, so users can't select a
+datasource they can't see in the UI. To also enforce DB-side `GRANT`s for
+MySQL/PostgreSQL, combine this with datasource-level `roleCredentials`.
 
 #### Known limitations (MySQL/PostgreSQL)
 
-Because MySQL/PostgreSQL run every user's query under the single credential in
-`datasources.yaml`, the user is not propagated for DB-side row/table-level
-authorization or auditing. `role.datasources` only restricts exposure within
-Hubble; queries that reach an allowed MySQL/PostgreSQL datasource still run
-under the shared credential. Where a strict boundary is required, connecting
-via Trino is recommended.
+MySQL/PostgreSQL `roleCredentials` switch credentials by RBAC role. Users who
+belong to the same role share the same DB user, so if DB-side per-user auditing
+is required, consider connecting through Trino or adding DB-side design for
+that requirement.
 
 ### Environment variables (server)
 
