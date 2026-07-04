@@ -17,7 +17,10 @@
  */
 import type { TrinoRequestContext } from '../trino/types';
 import type { HistoryRepository } from '../store/history';
-import type { OverflowMode } from './execution';
+import type { AuditLogger } from '../audit';
+import type { ResultStore } from '../resultStore';
+import { ResultJsonlCapture } from '../resultStore/jsonl';
+import type { OverflowMode, QueryResultObserver } from './execution';
 import { QueryExecution } from './execution';
 import { QueryRegistry } from './registry';
 
@@ -25,6 +28,12 @@ import { QueryRegistry } from './registry';
 export interface QueryServiceParams {
   registry: QueryRegistry;
   history: HistoryRepository;
+  resultStore?: ResultStore;
+  resultKeyPrefix?: string;
+  resultTtlDays?: number;
+  audit?: AuditLogger;
+  logWarn?: (message: string, err?: unknown) => void;
+  now?: () => number;
 }
 
 /** `submit()` に渡すクエリ提出パラメータ（履歴記録に必要な情報を含む）。 */
@@ -68,6 +77,8 @@ export class QueryService {
    * （履歴永続化の完了を待たない）。
    */
   submit(params: SubmitQueryParams): QueryExecution {
+    let capture: ResultJsonlCapture | undefined;
+    const expiresAt = this.resultExpiresAt();
     const exec = this.params.registry.submit({
       statement: params.statement,
       ctx: params.ctx,
@@ -76,6 +87,10 @@ export class QueryService {
       roleName: params.roleName,
       maxRows: params.maxRows,
       overflowMode: params.overflowMode,
+      makeResultObserver: (queryId) => {
+        capture = this.createResultCapture(queryId);
+        return capture ? this.createResultObserver(capture) : undefined;
+      },
     });
 
     // Insert a history row immediately (state at submit time). History
@@ -124,6 +139,70 @@ export class QueryService {
         });
     });
 
+    const resultCapture = capture;
+    if (resultCapture) {
+      void Promise.all([inserted, exec.settled])
+        .then(async () => {
+          if (exec.state !== 'finished') {
+            await resultCapture.abort();
+            return;
+          }
+          await resultCapture.finish();
+          await this.params.history.setResultObject(exec.queryId, resultCapture.key, expiresAt);
+          await this.params.audit?.record({
+            actor: params.owner,
+            action: 'query.result.persist',
+            target: exec.queryId,
+            datasource: exec.datasourceId,
+            detail: {
+              outcome: 'stored',
+              objectKey: resultCapture.key,
+              expiresAt,
+            },
+          });
+        })
+        .catch(async (err: unknown) => {
+          if (this.params.logWarn) {
+            this.params.logWarn('failed to persist query result', err);
+          } else {
+            console.warn('failed to persist query result', err);
+          }
+          await this.params.audit?.record({
+            actor: params.owner,
+            action: 'query.result.persist',
+            target: exec.queryId,
+            datasource: exec.datasourceId,
+            detail: {
+              outcome: 'failed',
+              error: err instanceof Error ? err.message : String(err),
+            },
+          });
+        });
+    }
+
     return exec;
+  }
+
+  private createResultCapture(queryId: string): ResultJsonlCapture | undefined {
+    const store = this.params.resultStore;
+    if (!store?.enabled) return undefined;
+    const prefix = this.params.resultKeyPrefix ?? 'hubble-results/';
+    return new ResultJsonlCapture(store, `${prefix}${queryId}.jsonl.gz`);
+  }
+
+  private createResultObserver(capture: ResultJsonlCapture): QueryResultObserver {
+    return {
+      onColumns: (columns) => capture.writeColumns(columns),
+      onRows: (rows) => capture.writeRows(rows),
+      onSettled: (exec) => {
+        if (exec.state !== 'finished') void capture.abort();
+      },
+    };
+  }
+
+  private resultExpiresAt(): string {
+    const now = this.params.now?.() ?? Date.now();
+    const ttlDays = this.params.resultTtlDays ?? 7;
+    return new Date(now + ttlDays * 24 * 60 * 60 * 1000).toISOString();
   }
 }

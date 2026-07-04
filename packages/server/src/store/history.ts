@@ -28,6 +28,8 @@ interface HistoryRow {
   notebook_id: string | null;
   cell_id: string | null;
   datasource_id: string;
+  result_object_key: string | null;
+  result_expires_at: string | null;
   submitted_at: string;
 }
 
@@ -59,6 +61,29 @@ export interface HistoryUpdate {
   elapsedMs: number;
   trinoQueryId?: string;
   errorMessage?: string;
+}
+
+/** 保存済み結果を参照する内部用履歴行。 */
+export interface HistoryResultRef {
+  id: string;
+  statement: string;
+  catalog?: string;
+  schema?: string;
+  trinoQueryId?: string;
+  state: QueryState;
+  rowCount: number;
+  elapsedMs: number;
+  errorMessage?: string;
+  datasourceId: string;
+  submittedAt: string;
+  resultObjectKey: string;
+  resultExpiresAt: string;
+}
+
+/** 期限切れ掃除対象の結果オブジェクト。 */
+export interface ExpiredHistoryResult {
+  id: string;
+  resultObjectKey: string;
 }
 
 // 履歴に保存する SQL 文の最大長。長大なクエリでテーブルが肥大化しないよう
@@ -120,6 +145,29 @@ export class HistoryRepository {
     );
   }
 
+  /** result_object_key と result_expires_at を保存する。 */
+  async setResultObject(id: string, key: string, expiresAt: string): Promise<void> {
+    await this.db.run(
+      `UPDATE query_history
+       SET result_object_key=?, result_expires_at=?
+       WHERE id=?`,
+      [key, expiresAt, id],
+    );
+  }
+
+  /** 指定 key 群の result 参照を NULL に戻す。 */
+  async clearResultObjects(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    for (const key of keys) {
+      await this.db.run(
+        `UPDATE query_history
+         SET result_object_key=NULL, result_expires_at=NULL
+         WHERE result_object_key=?`,
+        [key],
+      );
+    }
+  }
+
   /** owner が所有する単一の履歴エントリを id で取得する。存在しなければ undefined。 */
   async get(owner: string, id: string): Promise<QueryHistoryEntry | undefined> {
     const rows = await this.db.query<HistoryRow>(
@@ -127,6 +175,29 @@ export class HistoryRepository {
       [id, owner],
     );
     return rows[0] ? rowToEntry(rows[0]) : undefined;
+  }
+
+  /** owner が所有し、保存済み結果を持つ履歴行を取得する。 */
+  async getResultRef(owner: string, id: string): Promise<HistoryResultRef | undefined> {
+    const rows = await this.db.query<HistoryRow>(
+      `SELECT * FROM query_history
+       WHERE id = ? AND owner = ? AND result_object_key IS NOT NULL AND result_expires_at IS NOT NULL`,
+      [id, owner],
+    );
+    return rows[0] ? rowToResultRef(rows[0]) : undefined;
+  }
+
+  /** 期限切れ result 参照を列挙する。 */
+  async listExpiredResults(nowIso: string): Promise<ExpiredHistoryResult[]> {
+    const rows = await this.db.query<{
+      id: string;
+      result_object_key: string;
+    }>(
+      `SELECT id, result_object_key FROM query_history
+       WHERE result_object_key IS NOT NULL AND result_expires_at IS NOT NULL AND result_expires_at <= ?`,
+      [nowIso],
+    );
+    return rows.map((row) => ({ id: row.id, resultObjectKey: row.result_object_key }));
   }
 
   /**
@@ -185,5 +256,29 @@ function rowToEntry(row: HistoryRow): QueryHistoryEntry {
   if (row.notebook_id) entry.notebookId = row.notebook_id;
   if (row.cell_id) entry.cellId = row.cell_id;
   if (row.datasource_id) entry.datasourceId = row.datasource_id;
+  if (row.result_object_key && row.result_expires_at) {
+    entry.resultAvailable = new Date(row.result_expires_at).getTime() > Date.now();
+    entry.resultExpiresAt = row.result_expires_at;
+  }
   return queryHistoryEntrySchema.parse(entry);
+}
+
+function rowToResultRef(row: HistoryRow): HistoryResultRef | undefined {
+  if (!row.result_object_key || !row.result_expires_at) return undefined;
+  const ref: HistoryResultRef = {
+    id: row.id,
+    statement: row.statement,
+    state: row.state as QueryState,
+    rowCount: Number(row.row_count),
+    elapsedMs: Number(row.elapsed_ms),
+    datasourceId: row.datasource_id,
+    submittedAt: row.submitted_at,
+    resultObjectKey: row.result_object_key,
+    resultExpiresAt: row.result_expires_at,
+  };
+  if (row.catalog) ref.catalog = row.catalog;
+  if (row.schema) ref.schema = row.schema;
+  if (row.trino_query_id) ref.trinoQueryId = row.trino_query_id;
+  if (row.error_message) ref.errorMessage = row.error_message;
+  return ref;
 }

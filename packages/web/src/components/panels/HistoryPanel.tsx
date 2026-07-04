@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import type { HistoryResponse, QueryHistoryEntry } from '@hubble/contracts';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { FilePlus2, History, Play, TextCursorInput } from 'lucide-react';
+import { FilePlus2, History, Play, Table2, TextCursorInput } from 'lucide-react';
 import { fetchHistory, HISTORY_PAGE_SIZE } from '../../api/history';
 import { insertAtActiveCursor, addSqlCellWithSource, runActiveSqlCell } from '../../notebook';
 import { nextOffset, filterToStateParam, type HistoryFilter } from './historyPaging';
@@ -26,6 +26,7 @@ import { useDatasources } from '../../hooks/useDatasources';
 import { DatasourceBadge } from '../common/DatasourceBadge';
 import { useDatasourceStore } from '../../stores/datasourceStore';
 import { useUiStore } from '../../stores/uiStore';
+import { executionActions } from '../../execution';
 
 import { trySelectDatasource, toastDatasourceMissing } from '../../utils/applyDatasource';
 
@@ -64,6 +65,7 @@ function HistoryRow({
   onToggle,
   datasources,
   onRerun,
+  onOpenResult,
 }: {
   entry: QueryHistoryEntry;
   now: Date;
@@ -71,6 +73,7 @@ function HistoryRow({
   onToggle: () => void;
   datasources: ReturnType<typeof useDatasources>['datasources'];
   onRerun: (entry: QueryHistoryEntry) => void;
+  onOpenResult: (entry: QueryHistoryEntry) => void;
 }) {
   // SQL 文の改行と連続空白を単一スペースに畳んで、折りたたみ表示用の 1 行要約を作る。
   const oneLine = entry.statement.replace(/\s+/g, ' ').trim();
@@ -166,6 +169,11 @@ function HistoryRow({
             <Button variant="ghost" size="sm" icon={Play} onClick={() => onRerun(entry)}>
               Re-run
             </Button>
+            {entry.resultAvailable && (
+              <Button variant="ghost" size="sm" icon={Table2} onClick={() => onOpenResult(entry)}>
+                Open result
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -245,6 +253,19 @@ export function HistoryPanel() {
     }
   };
 
+  const openPersistedResult = (entry: QueryHistoryEntry) => {
+    if (!entry.resultAvailable) return;
+    if (entry.datasourceId && !trySelectDatasource(datasources, entry.datasourceId)) {
+      toastDatasourceMissing(entry.datasourceId);
+      return;
+    }
+    const cellId = addSqlCellWithSource(entry.statement);
+    if (!cellId) return;
+    void executionActions()
+      .restoreCell(cellId, entry.id)
+      .then(() => toast.success('Opened saved result'));
+  };
+
   return (
     <div className="flex flex-col">
       {/* state フィルタチップの行。押下したフィルタで一覧が絞り込まれる。 */}
@@ -300,6 +321,7 @@ export function HistoryPanel() {
               expanded={expandedId === entry.id}
               onToggle={() => setExpandedId((id) => (id === entry.id ? null : entry.id))}
               onRerun={rerunFromHistory}
+              onOpenResult={openPersistedResult}
             />
           ))}
         </ul>

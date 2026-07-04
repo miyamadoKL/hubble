@@ -1,0 +1,100 @@
+/**
+ * S3 を使うクエリ結果保存バックエンド。
+ */
+import { Readable } from 'node:stream';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  S3Client,
+  type S3ClientConfig,
+} from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
+import type { DeleteExpiredResult, ExpiredResultObject, ResultStore } from './store';
+
+/** S3 ResultStore の設定。 */
+export interface S3ResultStoreOptions {
+  bucket: string;
+  region?: string;
+  endpoint?: string;
+}
+
+/** S3 ResultStore のテスト用注入ポイント。 */
+export interface S3ResultStoreDeps {
+  client?: S3Client;
+  uploadFactory?: (params: { client: S3Client; bucket: string; key: string; body: Readable }) => {
+    done(): Promise<unknown>;
+  };
+}
+
+/** S3 client 設定を構築する。 */
+export function buildS3ClientConfig(options: S3ResultStoreOptions): S3ClientConfig {
+  return {
+    region: options.region,
+    endpoint: options.endpoint,
+    forcePathStyle: options.endpoint !== undefined,
+  };
+}
+
+/** S3 の object key に対して gzip JSONL を読み書きする ResultStore。 */
+export class S3ResultStore implements ResultStore {
+  readonly enabled = true;
+  private readonly client: S3Client;
+  private readonly uploadFactory: NonNullable<S3ResultStoreDeps['uploadFactory']>;
+
+  constructor(
+    private readonly options: S3ResultStoreOptions,
+    deps: S3ResultStoreDeps = {},
+  ) {
+    this.client = deps.client ?? new S3Client(buildS3ClientConfig(options));
+    this.uploadFactory =
+      deps.uploadFactory ??
+      ((params) =>
+        new Upload({
+          client: params.client,
+          params: {
+            Bucket: params.bucket,
+            Key: params.key,
+            Body: params.body,
+            ContentType: 'application/x-ndjson',
+            ContentEncoding: 'gzip',
+          },
+        }));
+  }
+
+  async put(key: string, body: Readable): Promise<void> {
+    await this.uploadFactory({
+      client: this.client,
+      bucket: this.options.bucket,
+      key,
+      body,
+    }).done();
+  }
+
+  async getStream(key: string): Promise<Readable> {
+    const result = await this.client.send(
+      new GetObjectCommand({ Bucket: this.options.bucket, Key: key }),
+    );
+    if (!(result.Body instanceof Readable)) {
+      throw new Error(`S3 object body is not a Node stream: ${key}`);
+    }
+    return result.Body;
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.options.bucket, Key: key }));
+  }
+
+  async deleteExpired(objects: ExpiredResultObject[]): Promise<DeleteExpiredResult> {
+    const deleted: string[] = [];
+    const failed: Array<{ key: string; error: unknown }> = [];
+    for (const object of objects) {
+      try {
+        await this.delete(object.key);
+        deleted.push(object.key);
+      } catch (error) {
+        failed.push({ key: object.key, error });
+      }
+    }
+    return { deleted, failed };
+  }
+}

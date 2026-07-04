@@ -36,6 +36,16 @@ import {
   type TrinoSessionMutations,
 } from '../trino/types';
 
+/** 永続化などのために、受信ページをバッファ上限とは独立して受け取る observer。 */
+export interface QueryResultObserver {
+  /** 列定義が確定したときに呼ばれる。 */
+  onColumns?: (columns: QueryColumn[]) => void;
+  /** Trino から受け取った全行を、truncate 前の状態で受け取る。 */
+  onRows?: (rows: unknown[][]) => void;
+  /** 実行が終端状態に達したときに呼ばれる。 */
+  onSettled?: (exec: QueryExecution) => void;
+}
+
 // バッファが maxRows に到達したときの挙動: 'truncate' はそこで受信を打ち切って
 // バッファするが Trino 側のクエリ自体は最後まで走らせる（rowCount は総数を反映）。
 // 'cancel' はバッファが truncate された時点で Trino クエリ自体を DELETE で止める。
@@ -61,6 +71,8 @@ export interface QueryExecutionInit {
   // 終端状態（finished/failed/canceled）に達した瞬間に一度だけ呼ばれるフック。
   // registry/service 側の履歴更新などに使われる。
   onSettled?: (exec: QueryExecution) => void;
+  /** 受信した結果ページを外部へ渡す observer。 */
+  resultObserver?: QueryResultObserver;
 }
 
 // SSE 配信などに使うイベントリスナーの型。emit() から同期的に呼び出される。
@@ -90,6 +102,7 @@ export class QueryExecution {
   readonly engine: QueryEngine;
   private readonly now: () => number;
   private readonly onSettled?: (exec: QueryExecution) => void;
+  private readonly resultObserver?: QueryResultObserver;
 
   // 可変のライフサイクル状態。state はステートマシンの現在地。
   state: QueryState = 'queued';
@@ -138,6 +151,7 @@ export class QueryExecution {
     this.engine = init.engine;
     this.now = init.now ?? Date.now;
     this.onSettled = init.onSettled;
+    this.resultObserver = init.resultObserver;
     this.submittedAt = this.now();
     // settled は run() が終端状態に到達した時点で resolve される。
     // 呼び出し元（service.ts など）は `await exec.settled` で完了を待てる。
@@ -251,6 +265,7 @@ export class QueryExecution {
   private setColumns(columns: QueryColumn[]): void {
     if (columns.length === 0 || this.columns.length > 0) return;
     this.columns = columns;
+    this.resultObserver?.onColumns?.(columns);
     this.emit({ type: 'columns', columns });
   }
 
@@ -261,6 +276,7 @@ export class QueryExecution {
   // 発火する（切り詰められた分はイベントに含めない）。
   private appendRows(data: unknown[][]): void {
     if (data.length === 0) return;
+    this.resultObserver?.onRows?.(data);
     this.producedRows += data.length;
     const remaining = this.maxRows - this.rows.length;
     if (remaining <= 0) {
@@ -412,6 +428,7 @@ export class QueryExecution {
       csvReexecAllowed: this.csvReexecAllowed(),
     });
     this.settledResolve();
+    this.resultObserver?.onSettled?.(this);
     this.onSettled?.(this);
   }
 }
