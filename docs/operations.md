@@ -170,7 +170,7 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 | `DATABASE_URL`                    | （未設定 = SQLite を使用） | `postgres://` / `postgresql://` 形式の接続文字列。設定すると永続化バックエンドが PostgreSQL になり `DB_PATH` より優先されます。それ以外のスキームは起動時エラー（[§9.4](#94-postgresql-バックエンド)） |
 | `STATIC_DIR`                      | （未設定 = 配信しない）    | web ビルド成果物のディレクトリ。設定時に静的配信 + SPA フォールバック                                                                                                                                  |
 | `TRINO_BASE_URL`                  | `http://127.0.0.1:30080`   | Trino コーディネーターのベース URL                                                                                                                                                                     |
-| `TRINO_USER`                      | `admin`                    | `X-Trino-User` の値（none モードの実行ユーザー兼所有者、proxy モードのメタデータ実行ユーザー）                                                                                                         |
+| `TRINO_USER`                      | `admin`                    | `X-Trino-User` の値（none モードの実行ユーザー兼所有者。proxy モードでは SSO から解決した principal がクエリ・メタデータ双方の impersonation に使われる）                                              |
 | `TRINO_USERNAME`                  | `admin`                    | Trino Basic auth のユーザー名（技術アカウント）                                                                                                                                                        |
 | `TRINO_PASSWORD`                  | （空）                     | Trino Basic auth のパスワード（空文字を明示可）                                                                                                                                                        |
 | `TRINO_SOURCE`                    | `hubble`                   | ユーザークエリの `X-Trino-Source`                                                                                                                                                                      |
@@ -263,11 +263,14 @@ security.refresh-period=1s
 
 ### 6.3 メタデータ実行ユーザーとカタログ可視性
 
-メタデータ取得（カタログ／スキーマ／テーブル一覧、サンプル）は **technical principal
-（`TRINO_USER`）** で実行され、キャッシュは全ユーザーで共有されます。**per-user の
-カタログ可視性の差は v1.1 では非対応**です。ユーザーごとに見えるカタログ・スキーマを
-変えたい場合は、現状では Hubble の technical user に対して Trino access control で
-可視範囲を絞る運用になります。
+Trino データソースのメタデータ取得（カタログ／スキーマ／テーブル一覧、サンプル）は
+リクエスト principal（`X-Trino-User`）で impersonation 実行され、キャッシュは
+principal ごとに独立しています。Trino 側の access control により、ユーザーごとに
+見えるカタログ・スキーマ・サンプル行が異なります。
+
+MySQL/PostgreSQL データソースは `datasources.yaml` の単一 credential で接続するため、
+メタデータ取得でも principal は DB 側へ伝播しません（全ユーザーが同一 DB ユーザーとして
+見えます）。
 
 ---
 

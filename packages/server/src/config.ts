@@ -90,8 +90,8 @@ export interface ServerConfig {
     password: string;
     /** Value sent as `X-Trino-User`. */
     /** 日本語: `TRINO_USER`（既定 `admin`）。AUTH_MODE=none の場合は常にこの値が
-     * principal になる。proxy モードでは impersonation 対象のベースにはならず、
-     * メタデータ取得用の技術 principal として使われる。 */
+     * principal になる。proxy モードでは SSO から解決した principal が
+     * メタデータ取得を含む Trino 実行の X-Trino-User として使われる。 */
     user: string;
     /** `X-Trino-Source` for user queries. */
     /** 日本語: `TRINO_SOURCE`（既定 `hubble`）。ユーザーが発行するクエリに付与し、

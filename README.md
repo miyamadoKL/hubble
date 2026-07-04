@@ -205,6 +205,12 @@ owner、データソース、statement 先頭、state、経過時間を 5 秒間
 kill できます。kill 操作はサーバーログに 1 行（実行者、対象 owner、queryId）を残します。
 `rbac.yaml` が無い `unrestricted` 運用ではこれらの権限は付与されず、従来どおりの UI です。
 
+#### 既知の制限（MySQL/PostgreSQL）
+
+MySQL/PostgreSQL は `datasources.yaml` の単一 credential で全ユーザーのクエリを実行するため、
+DB 側の行/テーブル単位の認可や監査にはユーザーが伝播しません。厳密な境界が必要な場合は
+Trino 経由での接続を推奨します。
+
 ### 環境変数（server）
 
 | 変数                              | 既定値                   | 説明                                                                                             |
