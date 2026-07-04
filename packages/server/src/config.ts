@@ -40,6 +40,8 @@ export interface AuthConfig {
   ssoHeaderUser: string;
   /** Lower-cased header name carrying the SSO email. */
   ssoHeaderEmail: string;
+  /** Lower-cased header name carrying SSO group membership (oauth2-proxy 等)。 */
+  ssoHeaderGroups: string;
   /** Principal derivation strategy. */
   userMapping: UserMapping;
 }
@@ -306,6 +308,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       // 日本語: ヘッダ名は大文字小文字を無視して比較するため、ここで小文字に正規化しておく。
       ssoHeaderUser: envStr(env, 'AUTH_SSO_HEADER_USER', 'x-forwarded-user').toLowerCase(),
       ssoHeaderEmail: envStr(env, 'AUTH_SSO_HEADER_EMAIL', 'x-forwarded-email').toLowerCase(),
+      ssoHeaderGroups: envStr(env, 'AUTH_SSO_HEADER_GROUPS', 'x-forwarded-groups').toLowerCase(),
       userMapping: envEnum(
         env,
         'AUTH_USER_MAPPING',

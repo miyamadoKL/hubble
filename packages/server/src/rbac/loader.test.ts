@@ -108,7 +108,7 @@ defaultRole: admin
 `,
     );
     expect(() => loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir })).toThrow(
-      /exactly one of email, user, or emailDomain must be set/,
+      /exactly one of email, user, emailDomain, or group must be set/,
     );
   });
 

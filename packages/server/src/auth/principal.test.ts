@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { AuthConfig } from '../config';
-import { mapPrincipal, PrincipalResolver } from './principal';
+import { mapPrincipal, parseGroupsHeader, PrincipalResolver } from './principal';
 
 // テスト共通の AuthConfig（proxy モード、ループバックを信頼、email-localpart マッピング）。
 // `over` で個々のテストが必要な項目だけ上書きできる。
@@ -14,6 +14,7 @@ const baseAuth = (over: Partial<AuthConfig> = {}): AuthConfig => ({
   trustedProxyCidrs: '127.0.0.0/8,::1/128',
   ssoHeaderUser: 'x-forwarded-user',
   ssoHeaderEmail: 'x-forwarded-email',
+  ssoHeaderGroups: 'x-forwarded-groups',
   userMapping: 'email-localpart',
   ...over,
 });
@@ -49,6 +50,23 @@ describe('mapPrincipal', () => {
     expect(mapPrincipal('email-localpart', 'alice', undefined)).toBeUndefined();
     expect(mapPrincipal('email', undefined, undefined)).toBeUndefined();
     expect(mapPrincipal('user', '   ', 'a@b.com')).toBeUndefined();
+  });
+});
+
+describe('parseGroupsHeader', () => {
+  it('returns undefined when the header is absent', () => {
+    expect(parseGroupsHeader(undefined)).toBeUndefined();
+  });
+
+  it('splits on commas, trims, and drops empty elements', () => {
+    expect(parseGroupsHeader(' admins@corp.com , engineers , , ')).toEqual([
+      'admins@corp.com',
+      'engineers',
+    ]);
+  });
+
+  it('returns an empty array when the header is blank', () => {
+    expect(parseGroupsHeader('   ,  , ')).toEqual([]);
   });
 });
 
@@ -98,5 +116,48 @@ describe('PrincipalResolver', () => {
       ok: true,
       principal: { user: 'carol' },
     });
+  });
+
+  it('attaches groups from a trusted proxy', () => {
+    const r = new PrincipalResolver(baseAuth());
+    const res = r.resolve(
+      {
+        'x-forwarded-email': 'alice@corp.com',
+        'x-forwarded-groups': 'admins@corp.com, engineers',
+      },
+      '127.0.0.1',
+    );
+    expect(res).toEqual({
+      ok: true,
+      principal: {
+        user: 'alice',
+        email: 'alice@corp.com',
+        groups: ['admins@corp.com', 'engineers'],
+      },
+    });
+  });
+
+  it('omits groups when the groups header is absent (trusted proxy)', () => {
+    const r = new PrincipalResolver(baseAuth());
+    const res = r.resolve({ 'x-forwarded-email': 'alice@corp.com' }, '127.0.0.1');
+    expect(res).toMatchObject({
+      ok: true,
+      principal: { user: 'alice', email: 'alice@corp.com' },
+    });
+    expect(
+      (res as { ok: true; principal: { groups?: string[] } }).principal.groups,
+    ).toBeUndefined();
+  });
+
+  it('ignores groups headers from an untrusted peer', () => {
+    const r = new PrincipalResolver(baseAuth());
+    const res = r.resolve(
+      {
+        'x-forwarded-email': 'evil@corp.com',
+        'x-forwarded-groups': 'admins@corp.com',
+      },
+      '203.0.113.7',
+    );
+    expect(res.ok).toBe(false);
   });
 });

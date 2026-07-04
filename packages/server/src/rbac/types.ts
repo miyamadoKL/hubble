@@ -23,6 +23,7 @@ export interface RbacAssignment {
   email?: string;
   user?: string;
   emailDomain?: string;
+  group?: string;
   role: string;
 }
 

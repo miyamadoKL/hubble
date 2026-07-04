@@ -28,6 +28,8 @@ assignments:
     role: admin
   - user: local-dev
     role: admin
+  - group: admins@example.com
+    role: operator
   - emailDomain: example.com
     role: member
 

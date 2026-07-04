@@ -40,6 +40,86 @@ describe('auth — none mode (default)', () => {
 });
 
 describe('auth — rbac', () => {
+  it('GET /api/me resolves group assignments from trusted SSO groups header', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-auth-rbac-groups-'));
+    const rbacPath = join(dir, 'rbac.yaml');
+    writeFileSync(
+      rbacPath,
+      `roles:
+  admin:
+    permissions: [query.write, query.killAny, queries.viewAll]
+  member:
+    permissions: []
+assignments:
+  - group: admins@corp.com
+    role: admin
+defaultRole: member
+`,
+      'utf8',
+    );
+    const ctx = await createTestContext({
+      env: { AUTH_MODE: 'proxy', RBAC_PATH: rbacPath },
+      cwd: dir,
+      remoteAddress: () => '127.0.0.1',
+    });
+    try {
+      const res = await ctx.app.request('/api/me', {
+        headers: {
+          'x-forwarded-email': 'bob@corp.com',
+          'x-forwarded-groups': 'engineers@corp.com, admins@corp.com',
+        },
+      });
+      expect(res.status).toBe(200);
+      const me = meResponseSchema.parse(await res.json());
+      expect(me.role).toBe('admin');
+      expect(me.permissions).toEqual(['queries.viewAll', 'query.killAny', 'query.write']);
+      expect(me).not.toHaveProperty('groups');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('GET /api/me ignores groups header from an untrusted peer', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-auth-rbac-groups-untrusted-'));
+    const rbacPath = join(dir, 'rbac.yaml');
+    writeFileSync(
+      rbacPath,
+      `roles:
+  admin:
+    permissions: [query.write, query.killAny, queries.viewAll]
+  member:
+    permissions: []
+assignments:
+  - group: admins@corp.com
+    role: admin
+defaultRole: member
+`,
+      'utf8',
+    );
+    const ctx = await createTestContext({
+      env: { AUTH_MODE: 'proxy', RBAC_PATH: rbacPath },
+      cwd: dir,
+      remoteAddress: () => '203.0.113.10',
+    });
+    try {
+      const res = await ctx.app.request('/api/me', {
+        headers: {
+          'x-forwarded-email': 'bob@corp.com',
+          'x-forwarded-groups': 'admins@corp.com',
+        },
+      });
+      expect(res.status).toBe(401);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('GET /api/me returns role and permissions from rbac.yaml', async () => {
     const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
     const { join } = await import('node:path');

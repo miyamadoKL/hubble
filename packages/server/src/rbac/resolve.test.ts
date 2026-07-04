@@ -78,6 +78,82 @@ defaultRole: a
     expect(role.name).toBe('member');
   });
 
+  it('matches group case-insensitively', () => {
+    const withGroup = loadedFromYaml(`roles:
+  admin:
+    permissions: [query.write, query.killAny, queries.viewAll]
+  member:
+    permissions: []
+assignments:
+  - group: Admins@Corp.COM
+    role: admin
+defaultRole: member
+`);
+    const role = resolveRoleForPrincipal(withGroup, {
+      user: 'bob',
+      email: 'bob@corp.com',
+      groups: ['engineers@corp.com', 'admins@corp.com'],
+    });
+    expect(role.name).toBe('admin');
+  });
+
+  it('does not match group assignments when principal has no groups', () => {
+    const withGroup = loadedFromYaml(`roles:
+  admin:
+    permissions: [query.write]
+  member:
+    permissions: []
+assignments:
+  - group: admins@corp.com
+    role: admin
+defaultRole: member
+`);
+    const role = resolveRoleForPrincipal(withGroup, { user: 'bob', email: 'bob@corp.com' });
+    expect(role.name).toBe('member');
+  });
+
+  it('uses the first matching assignment when group and email both match', () => {
+    const ordered = loadedFromYaml(`roles:
+  email-role:
+    permissions: [query.write]
+  group-role:
+    permissions: [query.killAny]
+assignments:
+  - email: alice@corp.com
+    role: email-role
+  - group: admins@corp.com
+    role: group-role
+defaultRole: email-role
+`);
+    const role = resolveRoleForPrincipal(ordered, {
+      user: 'alice',
+      email: 'alice@corp.com',
+      groups: ['admins@corp.com'],
+    });
+    expect(role.name).toBe('email-role');
+  });
+
+  it('uses the first matching assignment when group precedes email', () => {
+    const ordered = loadedFromYaml(`roles:
+  email-role:
+    permissions: [query.write]
+  group-role:
+    permissions: [query.killAny]
+assignments:
+  - group: admins@corp.com
+    role: group-role
+  - email: alice@corp.com
+    role: email-role
+defaultRole: email-role
+`);
+    const role = resolveRoleForPrincipal(ordered, {
+      user: 'alice',
+      email: 'alice@corp.com',
+      groups: ['admins@corp.com'],
+    });
+    expect(role.name).toBe('group-role');
+  });
+
   it('builtInUnrestrictedRole matches legacy behavior', () => {
     const role = builtInUnrestrictedRole();
     expect(role.name).toBe('unrestricted');
