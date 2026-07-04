@@ -17,7 +17,11 @@ import type {
   CreateScheduleRequest,
   UpdateScheduleRequest,
 } from '@hubble/contracts';
-import { cronExpression, defaultRetryPolicy } from '@hubble/contracts';
+import {
+  cronExpression,
+  defaultRetryPolicy,
+  defaultScheduleNotifications,
+} from '@hubble/contracts';
 import { AlertTriangle } from 'lucide-react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
@@ -70,6 +74,13 @@ const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted upperca
 const TEXT_INPUT =
   'w-full rounded-md border border-border-base bg-surface-base px-3 py-2 text-sm text-ink-strong placeholder:text-ink-subtle focus:border-accent focus:outline-none';
 
+function parseEmailRecipients(value: string): string[] {
+  return value
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 /**
  * スケジュールの作成と編集のモーダル本体。
  * `schedule` prop の有無で編集モードか新規作成モードかを判定し（`editing`）、
@@ -97,6 +108,13 @@ export function ScheduleFormModal({
   const [cron, setCron] = useState(schedule?.cron ?? CRON_PRESETS[2]!.cron);
   const [enabled, setEnabled] = useState(schedule?.enabled ?? true);
   const [retry, setRetry] = useState(schedule?.retry ?? defaultRetryPolicy);
+  const initialNotifications = schedule?.notifications ?? defaultScheduleNotifications;
+  const [notifyOnFailure, setNotifyOnFailure] = useState(initialNotifications.onFailure);
+  const [notifySlack, setNotifySlack] = useState(initialNotifications.channels.includes('slack'));
+  const [notifyEmail, setNotifyEmail] = useState(initialNotifications.channels.includes('email'));
+  const [notifyEmailTo, setNotifyEmailTo] = useState(
+    initialNotifications.emailTo?.join(', ') ?? '',
+  );
   const [datasourceId, setDatasourceId] = useState(
     schedule?.datasourceId ?? defaultDatasourceId ?? datasources[0]?.id ?? '',
   );
@@ -110,7 +128,9 @@ export function ScheduleFormModal({
   const check = checkStatement(statement, catalog || undefined, schema || undefined);
   const cronValid = cronExpression.safeParse(cron).success;
   const nameValid = name.trim().length > 0;
-  const canSave = nameValid && check.ok && cronValid && !submitting;
+  const emailRecipients = parseEmailRecipients(notifyEmailTo);
+  const notificationValid = !notifyOnFailure || !notifyEmail || emailRecipients.length > 0;
+  const canSave = nameValid && check.ok && cronValid && notificationValid && !submitting;
 
   // リトライ設定の数値入力（文字列）をコントラクト定義の範囲にクランプしてから state に反映する。
   const setRetryField = (field: keyof typeof RETRY_BOUNDS, raw: string) => {
@@ -123,6 +143,14 @@ export function ScheduleFormModal({
   // 未指定として送信する（編集時は null、新規作成時は undefined と、契約の差異に合わせる）。
   const submit = () => {
     if (!canSave) return;
+    const notifications = {
+      onFailure: notifyOnFailure,
+      channels: [
+        ...(notifySlack ? (['slack'] as const) : []),
+        ...(notifyEmail ? (['email'] as const) : []),
+      ],
+      ...(emailRecipients.length > 0 ? { emailTo: emailRecipients } : {}),
+    };
     if (editing && schedule) {
       const body: UpdateScheduleRequest = {
         name: name.trim(),
@@ -132,6 +160,7 @@ export function ScheduleFormModal({
         cron,
         enabled,
         retry,
+        notifications,
         datasourceId: datasourceId || undefined,
       };
       onUpdate(body);
@@ -144,6 +173,7 @@ export function ScheduleFormModal({
         cron,
         enabled,
         retry,
+        notifications,
         datasourceId: datasourceId || undefined,
       };
       onCreate(body);
@@ -328,6 +358,62 @@ export function ScheduleFormModal({
               onChange={setRetryField}
             />
           </div>
+        </fieldset>
+
+        {/* Notifications */}
+        <fieldset className="flex flex-col gap-2 rounded-md border border-border-subtle px-3 py-2.5">
+          <legend className={FIELD_LABEL}>Failure notifications</legend>
+          <label className="flex items-center gap-2.5">
+            <input
+              type="checkbox"
+              checked={notifyOnFailure}
+              aria-label="Notify on failure"
+              onChange={(e) => setNotifyOnFailure(e.target.checked)}
+              className="h-4 w-4 rounded border-border-base text-accent focus:ring-accent"
+            />
+            <span className="text-sm text-ink-base">Notify after final failure</span>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex items-center gap-2.5 rounded-md bg-surface-sunken px-3 py-2">
+              <input
+                type="checkbox"
+                checked={notifySlack}
+                disabled={!notifyOnFailure}
+                aria-label="Slack notification"
+                onChange={(e) => setNotifySlack(e.target.checked)}
+                className="h-4 w-4 rounded border-border-base text-accent focus:ring-accent disabled:opacity-50"
+              />
+              <span className="text-sm text-ink-base">Slack</span>
+            </label>
+            <label className="flex items-center gap-2.5 rounded-md bg-surface-sunken px-3 py-2">
+              <input
+                type="checkbox"
+                checked={notifyEmail}
+                disabled={!notifyOnFailure}
+                aria-label="Email notification"
+                onChange={(e) => setNotifyEmail(e.target.checked)}
+                className="h-4 w-4 rounded border-border-base text-accent focus:ring-accent disabled:opacity-50"
+              />
+              <span className="text-sm text-ink-base">Email</span>
+            </label>
+          </div>
+          {notifyOnFailure && notifyEmail && (
+            <label className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>Email recipients</span>
+              <input
+                value={notifyEmailTo}
+                aria-label="Email recipients"
+                onChange={(e) => setNotifyEmailTo(e.target.value)}
+                placeholder="ops@example.com, data@example.com"
+                className={cn(TEXT_INPUT, !notificationValid && 'border-error focus:border-error')}
+              />
+              {!notificationValid && (
+                <p role="alert" className="font-mono text-2xs text-error">
+                  Add at least one email recipient.
+                </p>
+              )}
+            </label>
+          )}
         </fieldset>
 
         {/* Enabled */}

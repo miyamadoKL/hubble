@@ -194,6 +194,19 @@ export interface ServerConfig {
      * 実行履歴 (`schedule_runs`) の件数上限。超過分は古い順に削除される。 */
     runsRetention: number;
   };
+  /** スケジュール失敗通知の送信設定。 */
+  notification: {
+    /** Slack incoming webhook URL。 */
+    slackWebhookUrl?: string;
+    /** SMTP 送信設定。 */
+    smtp: {
+      host?: string;
+      port: number;
+      user?: string;
+      password?: string;
+      from?: string;
+    };
+  };
   /** 日本語: `APP_VERSION`（既定 `0.1.0`）。`GET /api/config` で公開されるバージョン表示用文字列。 */
   version: string;
 }
@@ -325,6 +338,7 @@ export function resolveResultStoreConfig(env: Env): ResultStoreConfig {
  * 型変換、デフォルト適用、不正値検出を行う。
  */
 export function loadServerConfig(env: Env = process.env): ServerConfig {
+  const smtpPasswordEnv = envOptional(env, 'NOTIFY_SMTP_PASSWORD_ENV');
   return {
     port: envPositiveInt(env, 'PORT', 8080),
     database: resolveDatabaseConfig(env),
@@ -386,6 +400,16 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       tickSeconds: envPositiveInt(env, 'SCHEDULER_TICK_SECONDS', 15),
       maxConcurrent: envPositiveInt(env, 'SCHEDULER_MAX_CONCURRENT', 2),
       runsRetention: envPositiveInt(env, 'SCHEDULER_RUNS_RETENTION', 50),
+    },
+    notification: {
+      slackWebhookUrl: envOptional(env, 'NOTIFY_SLACK_WEBHOOK_URL'),
+      smtp: {
+        host: envOptional(env, 'NOTIFY_SMTP_HOST'),
+        port: envPositiveInt(env, 'NOTIFY_SMTP_PORT', 587),
+        user: envOptional(env, 'NOTIFY_SMTP_USER'),
+        password: smtpPasswordEnv ? envOptional(env, smtpPasswordEnv) : undefined,
+        from: envOptional(env, 'NOTIFY_SMTP_FROM'),
+      },
     },
     version: envStr(env, 'APP_VERSION', '0.1.0'),
   };

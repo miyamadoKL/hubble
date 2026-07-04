@@ -304,6 +304,12 @@ MySQL/PostgreSQL の `roleCredentials` は RBAC role 単位の credential 切り
 | `SCHEDULER_TICK_SECONDS`          | `15`                 | due なスケジュールをスキャンする間隔（秒）                                                                                                   |
 | `SCHEDULER_MAX_CONCURRENT`        | `2`                  | スケジューラー全体で同時実行できる数の上限                                                                                                   |
 | `SCHEDULER_RUNS_RETENTION`        | `50`                 | スケジュールごとに保持する実行履歴の上限件数（古い行は自動プルーン）                                                                         |
+| `NOTIFY_SLACK_WEBHOOK_URL`        | —                    | スケジュール確定失敗通知で使う Slack incoming webhook URL                                                                                    |
+| `NOTIFY_SMTP_HOST`                | —                    | スケジュール確定失敗通知で使う SMTP ホスト                                                                                                   |
+| `NOTIFY_SMTP_PORT`                | `587`                | SMTP ポート。`465` は implicit TLS、それ以外は STARTTLS 任意                                                                                 |
+| `NOTIFY_SMTP_USER`                | —                    | SMTP 認証ユーザー                                                                                                                            |
+| `NOTIFY_SMTP_PASSWORD_ENV`        | —                    | SMTP パスワードを読む環境変数名                                                                                                              |
+| `NOTIFY_SMTP_FROM`                | —                    | SMTP の From アドレス                                                                                                                        |
 | `AUTH_SSO_HEADER_GROUPS`          | `x-forwarded-groups` | SSO グループ membership ヘッダー名（`rbac.yaml` の `group` 割り当てに使用）                                                                  |
 
 ## ドキュメント

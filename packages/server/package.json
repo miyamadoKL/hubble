@@ -20,6 +20,7 @@
     "hono": "4.12.25",
     "mysql2": "3.14.1",
     "nanoid": "^5.1.11",
+    "nodemailer": "^9.0.3",
     "pg": "8.13.1",
     "pg-cursor": "2.13.1",
     "tsx": "4.22.4",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "25.9.3",
+    "@types/nodemailer": "^8.0.1",
     "@types/pg": "8.11.10",
     "@types/yauzl": "^2.10.3",
     "@types/yazl": "^2.4.6",

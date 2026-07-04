@@ -31,6 +31,8 @@ import type { QueryEngine } from './engine/types';
 import { AuditLogger, AuditRepository } from './audit';
 import { createResultStore, type ResultStore } from './resultStore';
 import { ResultExpiryService } from './resultStore/cleanup';
+import { NotificationService } from './notification/service';
+import type { FailureNotificationSender } from './notification/service';
 
 export interface Services {
   config: ServerConfig;
@@ -51,6 +53,7 @@ export interface Services {
   audit: AuditLogger;
   resultStore: ResultStore;
   resultExpiry: ResultExpiryService;
+  notifications: FailureNotificationSender;
   reloadDatasources: () => Promise<void>;
   reloadRbac: () => Promise<void>;
   shutdown: () => Promise<void>;
@@ -72,6 +75,8 @@ export interface BuildServicesOptions {
   resultStore?: ResultStore;
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
+  notificationLogWarn?: (message: string, detail?: unknown) => void;
+  notificationSender?: FailureNotificationSender;
 }
 
 export async function buildServices(
@@ -105,6 +110,13 @@ export async function buildServices(
 
   const audit = new AuditLogger(new AuditRepository(db), options.auditLogError);
   const resultStore = options.resultStore ?? createResultStore(config.resultStore);
+  const notifications =
+    options.notificationSender ??
+    new NotificationService(config.notification, {
+      fetchImpl: options.fetchImpl,
+      audit,
+      logWarn: options.notificationLogWarn,
+    });
   const history = new HistoryRepository(db);
   const notebooks = new NotebookRepository(db);
   const savedQueries = new SavedQueryRepository(db);
@@ -153,6 +165,7 @@ export async function buildServices(
     getRbac: () => rbacState.current,
     guardConfig: config.guard,
     audit,
+    notifications,
     config: {
       enabled: config.scheduler.enabled,
       tickSeconds: config.scheduler.tickSeconds,
@@ -243,6 +256,7 @@ export async function buildServices(
     audit,
     resultStore,
     resultExpiry,
+    notifications,
     reloadDatasources,
     reloadRbac,
     shutdown: async () => {

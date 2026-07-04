@@ -12,6 +12,7 @@ import type { LoadedRbac } from '../rbac/types';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { Scheduler, type SchedulerConfig } from './scheduler';
 import { AuditLogger, AuditRepository } from '../audit';
+import type { FailureNotificationInput, FailureNotificationSender } from '../notification/service';
 
 const DEFAULT_GUARD_CONFIG = {
   mode: 'warn' as const,
@@ -58,6 +59,7 @@ interface Harness {
   runs: ScheduleRunRepository;
   scheduler: Scheduler;
   audit: AuditLogger;
+  notifications: FailureNotificationInput[];
   sleeps: number[];
   now: () => number;
   setNow: (ms: number) => void;
@@ -69,6 +71,7 @@ async function makeHarness(
   /** Invoked on each retry backoff sleep (e.g. to swap scenarios mid-run). */
   onSleep?: (callIndex: number, ms: number) => void,
   getRbac?: () => LoadedRbac,
+  notificationSender?: FailureNotificationSender,
 ): Promise<Harness> {
   const db = await openMemoryDatabase();
   const fake = new FakeTrino(scenarios);
@@ -76,6 +79,14 @@ async function makeHarness(
   const schedules = new ScheduleRepository(db);
   const runs = new ScheduleRunRepository(db, 50);
   const audit = new AuditLogger(new AuditRepository(db));
+  const notifications: FailureNotificationInput[] = [];
+  const notifier =
+    notificationSender ??
+    ({
+      sendFailure: async (input) => {
+        notifications.push(input);
+      },
+    } satisfies FailureNotificationSender);
   const estimate = new EstimateService(engines, defaultDatasourceId, {
     mode: configOverrides.guardMode ?? 'warn',
     maxScanBytes: 0,
@@ -108,6 +119,7 @@ async function makeHarness(
       mode: configOverrides.guardMode ?? DEFAULT_GUARD_CONFIG.mode,
     },
     audit,
+    notifications: notifier,
     config,
     now,
     sleep: (ms) => {
@@ -123,6 +135,7 @@ async function makeHarness(
     runs,
     scheduler,
     audit,
+    notifications,
     sleeps,
     now,
     setNow: (ms) => {
@@ -179,6 +192,31 @@ describe('Scheduler run matrix', () => {
       trinoQueryId: expect.stringMatching(/^qok_/),
       rowCount: 1,
     });
+    expect(h.notifications).toHaveLength(0);
+  });
+
+  it('does not notify when a run succeeds even if failure notifications are enabled', async () => {
+    h = await makeHarness([
+      VALIDATE_OK,
+      {
+        match: 'SELECT_OK_NOTIFY',
+        trinoId: 'qoknotify',
+        pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+      },
+    ]);
+    const s = await h.schedules.create('alice', {
+      name: 'ok notify',
+      statement: 'SELECT_OK_NOTIFY',
+      cron: '* * * * *',
+      notifications: { onFailure: true, channels: ['slack'] },
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    await h.scheduler.runManual(s);
+    await h.scheduler.whenIdle();
+
+    const runs = await h.runs.list(s.id, 10);
+    expect(runs[0]!.status).toBe('success');
+    expect(h.notifications).toHaveLength(0);
   });
 
   it('fails immediately on a USER_ERROR (validation) with no retry', async () => {
@@ -249,6 +287,7 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT_FLAKY',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
+      notifications: { onFailure: true, channels: ['slack'] },
       datasourceId: DEFAULT_DATASOURCE_ID,
     });
     await h.scheduler.runManual(s);
@@ -260,6 +299,7 @@ describe('Scheduler run matrix', () => {
     expect(runs[0]!.rowCount).toBe(1);
     expect(runs[0]!.trinoQueryId).toMatch(/^qflakyok_/);
     expect(h.sleeps).toEqual([30_000]); // one backoff before the single retry
+    expect(h.notifications).toHaveLength(0);
   });
 
   it('fails after exhausting maxAttempts on a persistent transient fault', async () => {
@@ -279,6 +319,7 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT_DOWN',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
+      notifications: { onFailure: true, channels: ['slack'] },
       datasourceId: DEFAULT_DATASOURCE_ID,
     });
     await h.scheduler.runManual(s);
@@ -290,6 +331,13 @@ describe('Scheduler run matrix', () => {
     expect(runs[0]!.attempt).toBe(3);
     // Two backoff waits between three attempts: 30s and 60s.
     expect(h.sleeps).toEqual([30_000, 60_000]);
+    expect(h.notifications).toHaveLength(1);
+    expect(h.notifications[0]).toMatchObject({
+      schedule: { id: s.id, name: 'down', owner: 'alice' },
+      runId: runs[0]!.id,
+      errorType: 'INTERNAL_ERROR',
+      errorMessage: 'temporary engine fault',
+    });
   });
 
   it('blocks schedule runs when owner role cannot access datasourceId', async () => {

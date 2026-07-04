@@ -33,6 +33,7 @@ import { drainStatement } from './execute';
 import { nextRunAfter } from './cron';
 import { backoffMs, classifyFailure, shouldRetry } from './retry';
 import type { AuditJson, AuditLogger } from '../audit';
+import type { FailureNotificationSender } from '../notification/service';
 
 /**
  * Resolved scheduler settings.
@@ -74,6 +75,8 @@ export interface SchedulerDeps {
   guardConfig: ServerConfig['guard'];
   /** スケジュール実行の監査ログ。 */
   audit?: AuditLogger;
+  /** スケジュール失敗時の外部通知。 */
+  notifications?: FailureNotificationSender;
   config: SchedulerConfig;
   /** Wall clock (injectable for tests). */
   // 日本語: 省略時は Date.now。テストでは仮想時計を注入して cron 発火判定を制御する。
@@ -327,7 +330,7 @@ export class Scheduler {
     // Execute in the background; the route returns immediately with the run id.
     // 日本語: ルートハンドラは runId を待たずに即座にレスポンスを返すため、
     // 実際の検証、実行、リトライはここから非同期 (fire-and-forget) で進める。
-    const p = this.executeRun(schedule, runId)
+    const p = this.executeRun(schedule, runId, scheduledForIso)
       .catch((err: unknown) => {
         console.error(`scheduler: unexpected error in manual run ${schedule.id}`, err);
       })
@@ -349,14 +352,18 @@ export class Scheduler {
       scheduledFor: scheduledForIso,
       startedAt: new Date(this.now()).toISOString(),
     });
-    await this.executeRun(schedule, runId);
+    await this.executeRun(schedule, runId, scheduledForIso);
   }
 
   /**
    * Drive validation, guard, execution, and retries for a single run, then
    * persist the terminal outcome. Never throws (failures are recorded).
    */
-  private async executeRun(schedule: ScheduleRecord, runId: string): Promise<void> {
+  private async executeRun(
+    schedule: ScheduleRecord,
+    runId: string,
+    scheduledForIso: string,
+  ): Promise<void> {
     const startMs = this.now();
     // 検証〜実行〜リトライの全ループはここに委譲し、確定した最終結果 (RunOutcome) を受け取る。
     const outcome = await this.attemptWithRetries(schedule);
@@ -375,6 +382,32 @@ export class Scheduler {
       finishedAt,
     });
     await this.recordScheduleOutcome(schedule, runId, outcome, elapsedMs);
+    if (outcome.status === 'failed') {
+      // 通知送信はスケジュール実行の確定処理をブロックしない。
+      void this.sendFailureNotification(schedule, runId, outcome, scheduledForIso, finishedAt);
+    }
+  }
+
+  private async sendFailureNotification(
+    schedule: ScheduleRecord,
+    runId: string,
+    outcome: RunOutcome,
+    scheduledForIso: string,
+    finishedAt: string,
+  ): Promise<void> {
+    if (!this.deps.notifications) return;
+    try {
+      await this.deps.notifications.sendFailure({
+        schedule,
+        runId,
+        errorType: outcome.errorType,
+        errorMessage: outcome.errorMessage,
+        scheduledFor: scheduledForIso,
+        finishedAt,
+      });
+    } catch (err) {
+      console.warn(`scheduler: notification failed for schedule ${schedule.id}`, err);
+    }
   }
 
   private async recordScheduleOutcome(

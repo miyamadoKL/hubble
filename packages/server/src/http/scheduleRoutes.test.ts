@@ -87,6 +87,11 @@ describe('schedule routes', () => {
         cron: '0 0 * * *',
         catalog: 'tpch',
         schema: 'tiny',
+        notifications: {
+          onFailure: true,
+          channels: ['email'],
+          emailTo: ['ops@example.com'],
+        },
       }),
     });
     expect(createRes.status).toBe(201);
@@ -96,6 +101,11 @@ describe('schedule routes', () => {
     expect(created.nextRunAt).not.toBeNull();
     expect(created.lastRun).toBeNull();
     expect(created.retry).toEqual({ maxAttempts: 3, backoffSeconds: 60, backoffMultiplier: 2 });
+    expect(created.notifications).toEqual({
+      onFailure: true,
+      channels: ['email'],
+      emailTo: ['ops@example.com'],
+    });
 
     const list = (await (await ctx.app.request('/api/schedules')).json()) as unknown[];
     expect(list).toHaveLength(1);

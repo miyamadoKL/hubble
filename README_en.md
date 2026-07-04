@@ -332,6 +332,12 @@ that requirement.
 | `SCHEDULER_TICK_SECONDS`          | `15`                 | Interval in seconds between due-schedule scans                                                                                                            |
 | `SCHEDULER_MAX_CONCURRENT`        | `2`                  | Max schedules running concurrently across the scheduler                                                                                                   |
 | `SCHEDULER_RUNS_RETENTION`        | `50`                 | Per-schedule cap on retained run-history rows (older rows are auto-pruned)                                                                                |
+| `NOTIFY_SLACK_WEBHOOK_URL`        | —                    | Slack incoming webhook URL for final schedule-failure notifications                                                                                       |
+| `NOTIFY_SMTP_HOST`                | —                    | SMTP host for final schedule-failure notifications                                                                                                        |
+| `NOTIFY_SMTP_PORT`                | `587`                | SMTP port. `465` uses implicit TLS; other ports use STARTTLS when available                                                                               |
+| `NOTIFY_SMTP_USER`                | —                    | SMTP auth user                                                                                                                                            |
+| `NOTIFY_SMTP_PASSWORD_ENV`        | —                    | Environment variable name that contains the SMTP password                                                                                                 |
+| `NOTIFY_SMTP_FROM`                | —                    | SMTP From address                                                                                                                                         |
 | `AUTH_SSO_HEADER_GROUPS`          | `x-forwarded-groups` | SSO group-membership header name (used by `rbac.yaml`'s `group` assignment)                                                                               |
 
 ## Documentation

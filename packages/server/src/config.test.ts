@@ -50,4 +50,26 @@ describe('loadServerConfig integer bounds', () => {
       ttlDays: 30,
     });
   });
+
+  it('loads notification env including SMTP password indirection', () => {
+    const config = loadServerConfig({
+      NOTIFY_SLACK_WEBHOOK_URL: 'https://hooks.slack.test/services/T',
+      NOTIFY_SMTP_HOST: 'smtp.example.com',
+      NOTIFY_SMTP_PORT: '465',
+      NOTIFY_SMTP_USER: 'hubble',
+      NOTIFY_SMTP_PASSWORD_ENV: 'SMTP_PASSWORD',
+      SMTP_PASSWORD: 'secret',
+      NOTIFY_SMTP_FROM: 'hubble@example.com',
+    });
+    expect(config.notification).toEqual({
+      slackWebhookUrl: 'https://hooks.slack.test/services/T',
+      smtp: {
+        host: 'smtp.example.com',
+        port: 465,
+        user: 'hubble',
+        password: 'secret',
+        from: 'hubble@example.com',
+      },
+    });
+  });
 });
