@@ -4,7 +4,7 @@
  * TEST_DATABASE_URL 設定時は PostgreSQL も追加）でパラメタライズし、両方言で
  * 同じ SQL が同じ結果になることを保証する。
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { dbBackends } from '../test/dbBackends';
 import { DEFAULT_DATASOURCE_ID } from '../test/testEngine';
@@ -23,6 +23,7 @@ for (const backend of dbBackends) {
     let db: SqlDatabase;
 
     afterEach(async () => {
+      vi.restoreAllMocks();
       if (db) {
         // pg backends persist across cases; clean the new tables explicitly.
         // PostgreSQL バックエンドはケース間で状態が持ち越されるため、
@@ -157,6 +158,54 @@ for (const backend of dbBackends) {
         expect(created.datasourceId).toBe('custom-trino');
         const fetched = await repo.get('alice', created.id);
         expect(fetched?.datasourceId).toBe('custom-trino');
+      });
+
+      it('warns when a stored principal snapshot is not valid JSON', async () => {
+        const db2 = await open();
+        const repo = new ScheduleRepository(db2);
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const created = await repo.create('alice', {
+          name: 'bad-json-principal',
+          statement: 'SELECT 1',
+          cron: '0 0 * * *',
+          ...ds,
+        });
+        await db2.run('UPDATE schedules SET principal_snapshot = ? WHERE id = ?', [
+          '{not-json',
+          created.id,
+        ]);
+
+        const fetched = await repo.get('alice', created.id);
+
+        expect(fetched?.principalSnapshot).toBeNull();
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          `schedule principal_snapshot ignored: schedule_id=${created.id} reason=json-parse`,
+        );
+      });
+
+      it('warns when a stored principal snapshot fails schema validation', async () => {
+        const db2 = await open();
+        const repo = new ScheduleRepository(db2);
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const created = await repo.create('alice', {
+          name: 'bad-shape-principal',
+          statement: 'SELECT 1',
+          cron: '0 0 * * *',
+          ...ds,
+        });
+        await db2.run('UPDATE schedules SET principal_snapshot = ? WHERE id = ?', [
+          JSON.stringify({ user: '' }),
+          created.id,
+        ]);
+
+        const fetched = await repo.get('alice', created.id);
+
+        expect(fetched?.principalSnapshot).toBeNull();
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          `schedule principal_snapshot ignored: schedule_id=${created.id} reason=schema-validate`,
+        );
       });
     });
 

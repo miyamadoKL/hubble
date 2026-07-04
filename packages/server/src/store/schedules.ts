@@ -130,15 +130,33 @@ interface ScheduleRow {
   updated_at: string;
 }
 
-function parsePrincipalSnapshot(raw: string | null): SchedulePrincipalSnapshot | null {
+type InvalidPrincipalSnapshotReason = 'json-parse' | 'schema-validate';
+
+function warnInvalidPrincipalSnapshot(
+  scheduleId: string,
+  reason: InvalidPrincipalSnapshotReason,
+): void {
+  console.warn(`schedule principal_snapshot ignored: schedule_id=${scheduleId} reason=${reason}`);
+}
+
+function parsePrincipalSnapshot(
+  scheduleId: string,
+  raw: string | null,
+): SchedulePrincipalSnapshot | null {
   if (raw === null) return null;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    const result = schedulePrincipalSnapshotSchema.safeParse(parsed);
-    return result.success ? result.data : null;
+    parsed = JSON.parse(raw) as unknown;
   } catch {
+    warnInvalidPrincipalSnapshot(scheduleId, 'json-parse');
     return null;
   }
+  const result = schedulePrincipalSnapshotSchema.safeParse(parsed);
+  if (!result.success) {
+    warnInvalidPrincipalSnapshot(scheduleId, 'schema-validate');
+    return null;
+  }
+  return result.data;
 }
 
 function serializePrincipalSnapshot(snapshot: PrincipalIdentity | null | undefined): string | null {
@@ -175,7 +193,7 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
       backoffMultiplier: Number(row.retry_backoff_multiplier),
     }),
     datasourceId: row.datasource_id,
-    principalSnapshot: parsePrincipalSnapshot(row.principal_snapshot),
+    principalSnapshot: parsePrincipalSnapshot(row.id, row.principal_snapshot),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
