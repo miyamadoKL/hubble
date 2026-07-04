@@ -392,7 +392,7 @@ export class Scheduler {
 
     const scheduleRole = resolveRoleForPrincipal(
       this.deps.getRbac(),
-      schedulePrincipalIdentity(schedule.owner),
+      schedulePrincipalIdentity(schedule.owner, schedule.principalSnapshot),
     );
     if (!roleAllowsDatasource(scheduleRole, schedule.datasourceId)) {
       return {

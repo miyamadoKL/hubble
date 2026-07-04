@@ -22,6 +22,7 @@ import type { Services } from '../services';
 import { resolveEngine } from '../engine/resolve';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
+import type { PrincipalIdentity } from '../auth/principal';
 import { requireDatasourceAccess, schedulePrincipalIdentity } from '../rbac/check';
 import { resolveRoleForPrincipal } from '../rbac/resolve';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
@@ -102,19 +103,18 @@ async function toSchedule(services: Services, record: ScheduleRecord): Promise<S
  */
 async function assertScheduleStatementWritable(
   services: Services,
-  owner: string,
+  principal: PrincipalIdentity,
   statement: string,
   engine: ReturnType<typeof resolveEngine>['engine'],
   catalog?: string | null,
   schema?: string | null,
 ): Promise<void> {
-  const identity = owner.includes('@') ? { user: owner, email: owner } : { user: owner };
-  const role = resolveRoleForPrincipal(services.rbac, identity);
+  const role = resolveRoleForPrincipal(services.rbac, principal);
   const ioExplain = engine.ioExplainExecution?.({
     statement,
     catalog: catalog ?? undefined,
     schema: schema ?? undefined,
-    principal: owner,
+    principal: principal.user,
   });
   await assertQueryWriteAllowed({
     statement,
@@ -182,7 +182,7 @@ export function scheduleRoutes(services: Services): App {
     assertValidationAllowsWrite(validation);
     await assertScheduleStatementWritable(
       services,
-      owner,
+      c.var.principal,
       body.statement,
       engine,
       body.catalog,
@@ -197,6 +197,7 @@ export function scheduleRoutes(services: Services): App {
       enabled: body.enabled,
       retry: body.retry,
       datasourceId,
+      principalSnapshot: c.var.principal,
     });
     return c.json(await toSchedule(services, record), 201);
   });
@@ -249,7 +250,7 @@ export function scheduleRoutes(services: Services): App {
       assertValidationAllowsWrite(validation);
       await assertScheduleStatementWritable(
         services,
-        owner,
+        c.var.principal,
         body.statement ?? existing.statement,
         engine,
         body.catalog !== undefined ? body.catalog : existing.catalog,
@@ -257,7 +258,10 @@ export function scheduleRoutes(services: Services): App {
       );
     }
 
-    const updated = await services.schedules.update(owner, id, body);
+    const updated = await services.schedules.update(owner, id, {
+      ...body,
+      principalSnapshot: c.var.principal,
+    });
     if (!updated) throw AppError.notFound(`Schedule ${id} not found`);
     return c.json(await toSchedule(services, updated));
   });
@@ -276,7 +280,10 @@ export function scheduleRoutes(services: Services): App {
     const id = c.req.param('id');
     const record = await services.schedules.get(owner, id);
     if (!record) throw AppError.notFound(`Schedule ${id} not found`);
-    const ownerRole = resolveRoleForPrincipal(services.rbac, schedulePrincipalIdentity(owner));
+    const ownerRole = resolveRoleForPrincipal(
+      services.rbac,
+      schedulePrincipalIdentity(owner, record.principalSnapshot),
+    );
     requireDatasourceAccess(ownerRole, record.datasourceId);
     try {
       const { runId } = await services.scheduler.runManual(record);
