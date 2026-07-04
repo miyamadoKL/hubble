@@ -216,14 +216,27 @@ function envStrAllowEmpty(env: Env, key: string, fallback: string): string {
 
 // 整数値を読む。パース不能な値は起動時エラーとして即座に落とす（サイレントに
 // 不正な設定のまま起動してしまうことを防ぐ）。
-function envInt(env: Env, key: string, fallback: number): number {
+function envInt(env: Env, key: string, fallback: number, min?: number): number {
   const v = env[key];
   if (v === undefined || v === '') return fallback;
   const n = Number.parseInt(v, 10);
   if (Number.isNaN(n)) {
     throw new Error(`Invalid integer for env var ${key}: ${JSON.stringify(v)}`);
   }
+  if (min !== undefined && n < min) {
+    throw new Error(`Invalid integer for env var ${key}: ${JSON.stringify(v)} (minimum: ${min})`);
+  }
   return n;
+}
+
+// 1 以上の整数を要求する版（PORT、QUERY_CONCURRENCY など）。
+function envPositiveInt(env: Env, key: string, fallback: number): number {
+  return envInt(env, key, fallback, 1);
+}
+
+// 0 以上の整数を要求する版（0 = 無制限/無効の意味を持つ設定向け）。
+function envNonNegativeInt(env: Env, key: string, fallback: number): number {
+  return envInt(env, key, fallback, 0);
 }
 
 // 値が無ければ undefined を返す（DEFAULT_CATALOG のように「未設定なら機能自体を
@@ -298,7 +311,7 @@ export function resolveDatabaseConfig(env: Env): DatabaseConfig {
  */
 export function loadServerConfig(env: Env = process.env): ServerConfig {
   return {
-    port: envInt(env, 'PORT', 8080),
+    port: envPositiveInt(env, 'PORT', 8080),
     database: resolveDatabaseConfig(env),
     staticDir: envOptional(env, 'STATIC_DIR'),
     auth: {
@@ -328,12 +341,12 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
     defaults: {
       catalog: envOptional(env, 'DEFAULT_CATALOG'),
       schema: envOptional(env, 'DEFAULT_SCHEMA'),
-      limit: envInt(env, 'DEFAULT_LIMIT', 5000),
+      limit: envPositiveInt(env, 'DEFAULT_LIMIT', 5000),
     },
     query: {
-      maxRows: envInt(env, 'QUERY_MAX_ROWS', 100_000),
-      concurrency: envInt(env, 'QUERY_CONCURRENCY', 5),
-      ttlMinutes: envInt(env, 'QUERY_TTL_MINUTES', 30),
+      maxRows: envPositiveInt(env, 'QUERY_MAX_ROWS', 100_000),
+      concurrency: envPositiveInt(env, 'QUERY_CONCURRENCY', 5),
+      ttlMinutes: envPositiveInt(env, 'QUERY_TTL_MINUTES', 30),
       overflowMode: envEnum(
         env,
         'QUERY_OVERFLOW_MODE',
@@ -342,27 +355,27 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       ),
     },
     metadata: {
-      ttlSeconds: envInt(env, 'METADATA_TTL_SECONDS', 300),
+      ttlSeconds: envPositiveInt(env, 'METADATA_TTL_SECONDS', 300),
     },
     guard: {
       mode: envEnum(env, 'QUERY_GUARD_MODE', ['off', 'warn', 'enforce'] as const, 'warn'),
-      maxScanBytes: envInt(env, 'QUERY_GUARD_MAX_SCAN_BYTES', 0),
-      maxScanRows: envInt(env, 'QUERY_GUARD_MAX_SCAN_ROWS', 0),
+      maxScanBytes: envNonNegativeInt(env, 'QUERY_GUARD_MAX_SCAN_BYTES', 0),
+      maxScanRows: envNonNegativeInt(env, 'QUERY_GUARD_MAX_SCAN_ROWS', 0),
       onUnknown: envEnum(
         env,
         'QUERY_GUARD_ON_UNKNOWN',
         ['allow', 'warn', 'block'] as const,
         'warn',
       ),
-      estimateTimeoutMs: envInt(env, 'QUERY_GUARD_ESTIMATE_TIMEOUT_MS', 3000),
-      cacheTtlSeconds: envInt(env, 'QUERY_GUARD_CACHE_TTL_SECONDS', 30),
-      bytesPerSecond: envInt(env, 'QUERY_GUARD_BYTES_PER_SECOND', 0),
+      estimateTimeoutMs: envPositiveInt(env, 'QUERY_GUARD_ESTIMATE_TIMEOUT_MS', 3000),
+      cacheTtlSeconds: envNonNegativeInt(env, 'QUERY_GUARD_CACHE_TTL_SECONDS', 30),
+      bytesPerSecond: envNonNegativeInt(env, 'QUERY_GUARD_BYTES_PER_SECOND', 0),
     },
     scheduler: {
       enabled: envBool(env, 'SCHEDULER_ENABLED', true),
-      tickSeconds: envInt(env, 'SCHEDULER_TICK_SECONDS', 15),
-      maxConcurrent: envInt(env, 'SCHEDULER_MAX_CONCURRENT', 2),
-      runsRetention: envInt(env, 'SCHEDULER_RUNS_RETENTION', 50),
+      tickSeconds: envPositiveInt(env, 'SCHEDULER_TICK_SECONDS', 15),
+      maxConcurrent: envPositiveInt(env, 'SCHEDULER_MAX_CONCURRENT', 2),
+      runsRetention: envPositiveInt(env, 'SCHEDULER_RUNS_RETENTION', 50),
     },
     version: envStr(env, 'APP_VERSION', '0.1.0'),
   };
