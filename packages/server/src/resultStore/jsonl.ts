@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import type { QueryColumn } from '@hubble/contracts';
 import { csvRecord } from '../query/csv';
+import type { QueryResultEvent } from '../query/resultEvents';
 import type { ResultStore } from './store';
 
 type ResultJsonlLine =
@@ -129,6 +130,26 @@ export async function* streamPersistedCsv(stream: Readable): AsyncGenerator<stri
     }
     yield `${csvRecord(line.row)}\r\n`;
   }
+}
+
+/** gzip JSONL を serializer 非依存の結果イベントへ変換する。 */
+export async function* streamPersistedResultEvents(
+  stream: Readable,
+): AsyncGenerator<QueryResultEvent> {
+  let columnsWritten = false;
+  for await (const line of readResultLines(stream)) {
+    if (line.kind === 'columns') {
+      columnsWritten = true;
+      yield { type: 'columns', columns: line.columns };
+      continue;
+    }
+    if (!columnsWritten) {
+      columnsWritten = true;
+      yield { type: 'columns', columns: [] };
+    }
+    yield { type: 'row', row: line.row };
+  }
+  if (!columnsWritten) yield { type: 'columns', columns: [] };
 }
 
 async function* readResultLines(stream: Readable): AsyncGenerator<ResultJsonlLine> {

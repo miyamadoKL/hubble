@@ -11,7 +11,8 @@
  * `../query/execution` や `../query/guard`、`../query/sse`、`../query/csv` に委譲する。
  * `app.ts` から `app.route('/api/queries', queryRoutes(services))` としてマウントされる。
  */
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
+import { createGzip } from 'node:zlib';
 import { ZipFile } from 'yazl';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -21,10 +22,15 @@ import {
   CSV_REEXEC_UNAVAILABLE,
   createQueryRequestSchema,
   estimateRequestSchema,
+  queryExportRequestSchema,
+  queryExportResponseSchema,
   type QuerySnapshot,
   type QueryRowsPage,
+  type QueryExportRequest,
+  type QueryExportResponse,
 } from '@hubble/contracts';
 import type { Services } from '../services';
+import type { ExportConfig } from '../config';
 import { resolveEngine } from '../engine/resolve';
 import type { TrinoRequestContext } from '../trino/types';
 import type { OverflowMode } from '../query/execution';
@@ -41,15 +47,23 @@ import {
   CSV_REEXEC_HEADER,
   CSV_TRUNCATED_HEADER,
   needsCsvReexec,
+  csvRecord,
   statementAllowsCsvReexec,
   streamQueryCsv,
 } from '../query/csv';
 import type { HistoryResultRef } from '../store/history';
 import {
   readPersistedResultMetadata,
+  streamPersistedResultEvents,
   readPersistedRowsPage,
   streamPersistedCsv,
 } from '../resultStore/jsonl';
+import { streamQueryResultEvents, type QueryResultEventSource } from '../query/resultEvents';
+import { writeXlsx, XLSX_CONTENT_TYPE, XLSX_MAX_DATA_ROWS } from '../query/xlsx';
+import { buildExportObjectKey, S3ExportUploader } from '../query/exportS3';
+import { SheetsExporter } from '../query/exportSheets';
+import type { AuditAction } from '../audit';
+import type { QueryResultEvent } from '../query/resultEvents';
 
 // SSE 接続が生きていることをクライアント側の中間プロキシ等に伝えるための keepalive 送信間隔。
 const KEEPALIVE_INTERVAL_MS = 15_000;
@@ -250,6 +264,91 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const ref = await usablePersistedResult(c);
     if (!ref) throw AppError.notFound(`Query ${c.req.param('id')} not found`);
     return ref;
+  };
+
+  const resolveExportEvents = async (
+    c: { req: { param: (k: string) => string }; var: AuthVariables },
+    exec: ReturnType<typeof services.registry.get> | undefined,
+  ): Promise<{
+    events: AsyncGenerator<QueryResultEvent>;
+    source: QueryResultEventSource;
+    target: string;
+    datasourceId: string;
+    rowCount?: number;
+  }> => {
+    const id = c.req.param('id');
+    const principal = c.var.principal;
+    const persisted = await usablePersistedResult(c, { optional: exec !== undefined });
+    if (persisted) {
+      return {
+        events: streamPersistedResultEvents(
+          await services.resultStore.getStream(persisted.resultObjectKey),
+        ),
+        source: 'resultStore',
+        target: persisted.id,
+        datasourceId: persisted.datasourceId,
+        rowCount: persisted.rowCount,
+      };
+    }
+    if (!exec) throw AppError.notFound(`Query ${id} not found`);
+
+    const needsReexec = needsCsvReexec(exec);
+    const allowsReexec = statementAllowsCsvReexec(exec);
+    if (needsReexec && allowsReexec && exec.engine.isClosed()) {
+      throw AppError.csvReexecUnavailable(
+        'Full export requires re-execution but the original datasource connection is no longer available.',
+      );
+    }
+
+    if (needsReexec && allowsReexec) {
+      requireDatasourceAccess(principal.role, exec.datasourceId);
+      const catalog = exec.ctx.catalog ?? services.config.defaults.catalog;
+      const schema = exec.ctx.schema ?? services.config.defaults.schema;
+      const ioExplain = exec.engine.ioExplainExecution?.({
+        statement: exec.statement,
+        catalog,
+        schema,
+        principal: principal.user,
+      });
+      await assertQueryWriteAllowed({
+        statement: exec.statement,
+        role: principal.role,
+        ioExplainClient: ioExplain?.client,
+        ioExplainCtx: ioExplain?.ctx,
+        ioExplainTimeoutMs: services.config.guard.estimateTimeoutMs,
+      });
+    }
+
+    const resolved = streamQueryResultEvents(exec, {
+      downloadClientOptions: {
+        user: exec.ctx.user,
+        roleName: principal.role.name,
+        sessionReadOnly: !hasQueryWrite(principal.role),
+      },
+    });
+    return {
+      events: resolved.events,
+      source: resolved.source,
+      target: exec.queryId,
+      datasourceId: exec.datasourceId,
+      rowCount: exec.isTerminal ? exec.rowCount : undefined,
+    };
+  };
+
+  const recordExportDenied = async (input: {
+    actor: string;
+    action: AuditAction;
+    target?: string;
+    datasource?: string;
+    err: unknown;
+  }): Promise<void> => {
+    await services.audit.record({
+      actor: input.actor,
+      action: input.action,
+      target: input.target,
+      datasource: input.datasource,
+      detail: buildExportDeniedDetail(input.err),
+    });
   };
 
   // GET /api/queries/:id — snapshot.
@@ -530,6 +629,122 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     });
   });
 
+  // GET /api/queries/:id/download.xlsx
+  // CSV と同じ行ソースを使い、Excel xlsx としてストリーミングダウンロードする。
+  app.get('/:id/download.xlsx', async (c) => {
+    const id = c.req.param('id');
+    const exec = maybeOwnedExec(id, c);
+    const principal = c.var.principal;
+    let resolved: Awaited<ReturnType<typeof resolveExportEvents>>;
+    try {
+      resolved = await resolveExportEvents(c, exec);
+      assertXlsxLimit(resolved.rowCount);
+    } catch (err) {
+      await recordExportDenied({
+        actor: principal.user,
+        action: 'export.xlsx',
+        target: exec?.queryId ?? id,
+        datasource: exec?.datasourceId,
+        err,
+      });
+      throw err;
+    }
+
+    await services.audit.record({
+      actor: principal.user,
+      action: 'export.xlsx',
+      target: resolved.target,
+      datasource: resolved.datasourceId,
+      detail: {
+        outcome: 'allowed',
+        source: resolved.source,
+        delivery: 'download',
+      },
+    });
+
+    c.header('Content-Type', XLSX_CONTENT_TYPE);
+    c.header('Content-Disposition', `attachment; filename="${id}.xlsx"`);
+    c.header('Cache-Control', 'no-store');
+    return stream(c, async (rawStream) => {
+      const ac = new AbortController();
+      rawStream.onAbort(() => ac.abort());
+      const xlsx = new PassThrough();
+      const writer = writeXlsx(resolved.events, xlsx).catch((err) => {
+        xlsx.destroy(err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      });
+      await Promise.all([pipeNodeReadable(rawStream, xlsx, ac.signal), writer]);
+    });
+  });
+
+  // POST /api/queries/:id/export
+  // クエリ結果を S3 または Google Sheets へ同期的にエクスポートする。
+  app.post('/:id/export', async (c) => {
+    const body = await parseJsonBody(c, queryExportRequestSchema);
+    const id = c.req.param('id');
+    const exec = maybeOwnedExec(id, c);
+    const principal = c.var.principal;
+    const auditAction = body.destination === 's3' ? 'export.s3' : 'export.sheets';
+    let resolved: Awaited<ReturnType<typeof resolveExportEvents>> | undefined;
+
+    try {
+      resolved = await resolveExportEvents(c, exec);
+      if (body.destination === 's3') {
+        if (body.format === 'xlsx') assertXlsxLimit(resolved.rowCount);
+        const response = await exportToS3({
+          config: services.config.export.s3,
+          request: body,
+          owner: principal.user,
+          queryId: id,
+          events: resolved.events,
+          now: new Date(),
+        });
+        await services.audit.record({
+          actor: principal.user,
+          action: 'export.s3',
+          target: resolved.target,
+          datasource: resolved.datasourceId,
+          detail: {
+            outcome: 'allowed',
+            source: resolved.source,
+            format: response.format,
+            gzip: response.gzip ?? false,
+            objectKey: response.objectKey,
+          },
+        });
+        return c.json(queryExportResponseSchema.parse(response));
+      }
+
+      const response = await exportToSheets({
+        config: services.config.export.sheets,
+        email: principal.email,
+        queryId: id,
+        events: resolved.events,
+      });
+      await services.audit.record({
+        actor: principal.user,
+        action: 'export.sheets',
+        target: resolved.target,
+        datasource: resolved.datasourceId,
+        detail: {
+          outcome: 'allowed',
+          source: resolved.source,
+          spreadsheetId: response.spreadsheetId,
+        },
+      });
+      return c.json(queryExportResponseSchema.parse(response));
+    } catch (err) {
+      await services.audit.record({
+        actor: principal.user,
+        action: auditAction,
+        target: resolved?.target ?? exec?.queryId ?? id,
+        datasource: resolved?.datasourceId ?? exec?.datasourceId,
+        detail: buildExportDeniedDetail(err),
+      });
+      throw err;
+    }
+  });
+
   return app;
 }
 
@@ -621,5 +836,136 @@ async function writeCsvDownload(
   for await (const chunk of csv) {
     if (options.signal.aborted) break;
     await rawStream.write(chunk);
+  }
+}
+
+function assertXlsxLimit(rowCount: number | undefined): void {
+  if (rowCount === undefined || rowCount <= XLSX_MAX_DATA_ROWS) return;
+  throw new AppError(413, {
+    code: 'RESULT_TOO_LARGE',
+    message:
+      'xlsx export is limited to 1,048,576 worksheet rows. Use CSV export for larger results.',
+  });
+}
+
+function buildExportDeniedDetail(err: unknown): Record<string, string> {
+  if (err instanceof AppError) {
+    return {
+      outcome: 'denied',
+      errorCode: err.detail.code,
+      error: err.detail.message,
+    };
+  }
+  return {
+    outcome: 'denied',
+    error: err instanceof Error ? err.message : String(err),
+  };
+}
+
+async function pipeNodeReadable(
+  rawStream: StreamingApi,
+  source: Readable,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    for await (const chunk of source) {
+      if (signal.aborted) break;
+      const buffer =
+        chunk instanceof Uint8Array
+          ? chunk
+          : Buffer.from(typeof chunk === 'string' ? chunk : String(chunk));
+      await rawStream.write(buffer);
+    }
+  } finally {
+    if (signal.aborted) source.destroy();
+  }
+}
+
+async function exportToS3(input: {
+  config: ExportConfig['s3'];
+  request: Extract<QueryExportRequest, { destination: 's3' }>;
+  owner: string;
+  queryId: string;
+  events: AsyncGenerator<QueryResultEvent>;
+  now: Date;
+}): Promise<Extract<QueryExportResponse, { destination: 's3' }>> {
+  const gzip = input.request.format === 'csv' && input.request.gzip === true;
+  const extension = input.request.format === 'xlsx' ? 'xlsx' : gzip ? 'csv.gz' : 'csv';
+  const key = buildExportObjectKey({
+    prefix: input.config.prefix,
+    owner: input.owner,
+    queryId: input.queryId,
+    timestamp: input.now,
+    extension,
+  });
+  const uploader = new S3ExportUploader(input.config);
+  await uploader.upload({
+    key,
+    contentType: input.request.format === 'xlsx' ? XLSX_CONTENT_TYPE : 'text/csv; charset=utf-8',
+    contentEncoding: gzip ? 'gzip' : undefined,
+    bodyWriter: async (stream) => {
+      if (input.request.format === 'xlsx') {
+        await writeXlsx(input.events, stream);
+        return;
+      }
+      await writeCsvEvents(input.events, stream, { gzip });
+    },
+  });
+  return {
+    destination: 's3',
+    objectKey: key,
+    format: input.request.format,
+    ...(gzip ? { gzip } : {}),
+  };
+}
+
+async function exportToSheets(input: {
+  config: ExportConfig['sheets'];
+  email?: string;
+  queryId: string;
+  events: AsyncGenerator<QueryResultEvent>;
+}): Promise<Extract<QueryExportResponse, { destination: 'sheets' }>> {
+  const exporter = new SheetsExporter(input.config);
+  const result = await exporter.export({
+    title: `Hubble ${input.queryId}`,
+    email: input.email,
+    events: input.events,
+  });
+  return {
+    destination: 'sheets',
+    spreadsheetId: result.spreadsheetId,
+    url: result.url,
+  };
+}
+
+async function writeCsvEvents(
+  events: AsyncGenerator<QueryResultEvent>,
+  stream: PassThrough,
+  options: { gzip: boolean },
+): Promise<void> {
+  const destination = options.gzip ? createGzip() : stream;
+  if (options.gzip) destination.pipe(stream);
+  try {
+    for await (const chunk of csvFromEvents(events)) {
+      if (!destination.write(chunk)) {
+        await new Promise((resolve) => destination.once('drain', resolve));
+      }
+    }
+  } finally {
+    destination.end();
+  }
+}
+
+async function* csvFromEvents(events: AsyncGenerator<QueryResultEvent>): AsyncGenerator<string> {
+  let headerWritten = false;
+  for await (const event of events) {
+    if (event.type === 'columns') {
+      if (event.columns.length > 0)
+        yield `${csvRecord(event.columns.map((column) => column.name))}\r\n`;
+      headerWritten = true;
+      continue;
+    }
+    if (!headerWritten) headerWritten = true;
+    yield `${csvRecord(event.row)}\r\n`;
   }
 }

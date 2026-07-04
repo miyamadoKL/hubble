@@ -70,7 +70,7 @@ export {
   type CellBlock,
 } from './guardRegistry';
 // api: クエリのライフサイクルに関する型付き API ラッパー。
-export { downloadCsvUrl, type DownloadFormat } from './api';
+export { downloadCsvUrl, downloadXlsxUrl, exportQuery, type DownloadFormat } from './api';
 // clipboard: 結果グリッドの TSV/HTML クリップボードコピー。
 export { copyResultToClipboard, buildTsv, buildHtml } from './clipboard';
 // errorOffset: ステートメント相対のエラー座標をセル全体のソース座標へ補正する。

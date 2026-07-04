@@ -8,7 +8,9 @@ import {
   BarChart3,
   Check,
   Clipboard,
+  CloudUpload,
   Download,
+  FileSpreadsheet,
   FileText,
   Info,
   Table2,
@@ -26,9 +28,12 @@ import { formatBytes, formatDuration, formatInt } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import { CSV_REEXEC_UNAVAILABLE } from '@hubble/contracts';
 import { Tooltip } from '../common/Tooltip';
+import { toast } from '../common/Toast';
 import {
   copyResultToClipboard,
   downloadCsvUrl,
+  downloadXlsxUrl,
+  exportQuery,
   isCellRunning,
   type CellExecution,
   type DownloadFormat,
@@ -159,6 +164,8 @@ export function ResultPane({
             truncated={cell.truncated}
             csvReexecAllowed={cell.csvReexecAllowed}
           />
+          <XlsxDownload queryId={cell.queryId} disabled={!cell.queryId || running} />
+          <ExternalExport queryId={cell.queryId} disabled={!cell.queryId || running} />
         </div>
       </div>
 
@@ -351,4 +358,83 @@ function CsvDownload({
     return <Tooltip label={tooltip}>{control}</Tooltip>;
   }
   return control;
+}
+
+/** xlsx download as plain `a[href]` so the server streams it. */
+/**
+ * xlsx ダウンロードリンク。
+ * サーバー側の streaming writer を使うため、CSV と同じく `a[href]` で直接開く。
+ */
+function XlsxDownload({ queryId, disabled }: { queryId: string; disabled: boolean }) {
+  const href = disabled ? undefined : downloadXlsxUrl(queryId);
+  return (
+    <a
+      href={href}
+      download={disabled ? undefined : `result-${queryId}.xlsx`}
+      aria-disabled={disabled}
+      className={cn(
+        'inline-flex h-6 items-center gap-1 rounded-md border border-border-base px-2 text-2xs font-medium',
+        disabled
+          ? 'pointer-events-none text-ink-subtle opacity-40'
+          : 'text-ink-muted hover:bg-surface-sunken hover:text-ink-strong',
+      )}
+    >
+      <FileSpreadsheet size={13} strokeWidth={1.75} />
+      XLSX
+    </a>
+  );
+}
+
+type ExternalExportAction = 's3-csv' | 's3-xlsx' | 'sheets';
+
+/**
+ * S3 と Google Sheets への外部エクスポートメニュー。
+ */
+function ExternalExport({ queryId, disabled }: { queryId: string; disabled: boolean }) {
+  const [action, setAction] = useState<ExternalExportAction>('s3-csv');
+  const [busy, setBusy] = useState(false);
+
+  const runExport = async (next: ExternalExportAction) => {
+    setAction(next);
+    if (disabled || busy) return;
+    setBusy(true);
+    try {
+      const response =
+        next === 'sheets'
+          ? await exportQuery(queryId, { destination: 'sheets' })
+          : await exportQuery(queryId, {
+              destination: 's3',
+              format: next === 's3-xlsx' ? 'xlsx' : 'csv',
+              gzip: next === 's3-csv' ? true : undefined,
+            });
+      if (response.destination === 's3') {
+        toast.success('Exported to S3', response.objectKey);
+      } else {
+        toast.success('Exported to Google Sheets', response.url);
+        window.open(response.url, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err) {
+      toast.error('Export failed', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={cn(disabled && 'pointer-events-none opacity-40')}>
+      <Dropdown<ExternalExportAction>
+        value={action}
+        onChange={runExport}
+        leading={<CloudUpload size={13} strokeWidth={1.75} />}
+        options={[
+          { value: 's3-csv', label: 'S3 CSV' },
+          { value: 's3-xlsx', label: 'S3 XLSX' },
+          { value: 'sheets', label: 'Google Sheets' },
+        ]}
+        ariaLabel="Export result"
+        align="end"
+        className="h-6 text-2xs"
+      />
+    </div>
+  );
 }

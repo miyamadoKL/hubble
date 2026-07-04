@@ -11,12 +11,14 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@hono/node-server": "2.0.4",
     "@aws-sdk/client-s3": "^3.947.0",
     "@aws-sdk/lib-storage": "^3.947.0",
+    "@hono/node-server": "2.0.4",
     "@hubble/contracts": "workspace:*",
     "better-sqlite3": "12.10.0",
     "cron-parser": "^5.5.0",
+    "exceljs": "^4.4.0",
+    "googleapis": "^173.0.0",
     "hono": "4.12.25",
     "mysql2": "3.14.1",
     "nanoid": "^5.1.11",

@@ -32,7 +32,8 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 - **Monaco editor** with a Trino grammar (ANTLR): syntax highlighting, schema-aware
   completion (FQN + columns + CTEs), hover, real-time error markers, formatting.
 - **Live results** — virtualized grid (fixed header, 28px rows), column show/hide +
-  search, client-side filter/sort, CSV download (gzip optional), TSV/HTML copy.
+  search, client-side filter/sort, CSV/XLSX download, S3 and Google Sheets export,
+  TSV/HTML copy.
 - **Optional result persistence** — set `RESULT_STORE=s3` to store completed
   query results as gzip JSONL in S3 and reopen them from history without
   re-running the query. The default is `RESULT_STORE=none`, which keeps only the
@@ -51,8 +52,9 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 - **Query Scheduler** — runs saved SQL on a cron schedule. Validates syntax and
   semantics with Trino's `EXPLAIN (TYPE VALIDATE)` at registration and before each
   run; retries on connection failures with geometric back-off.
-- **Audit log** — records query execution, CSV downloads, admin kills, and
-  scheduled runs in `audit_log`, including denied or failed outcomes.
+- **Audit log** — records query execution, CSV/XLSX downloads, S3 and Google
+  Sheets exports, admin kills, and scheduled runs in `audit_log`, including
+  denied or failed outcomes.
 
 ## Architecture
 
@@ -320,6 +322,11 @@ that requirement.
 | `QUERY_TTL_MINUTES`               | `30`                 | Retention of a finished query before sweep                                                                                                                |
 | `QUERY_OVERFLOW_MODE`             | `truncate`           | Behavior when `QUERY_MAX_ROWS` is exceeded (`truncate` or `cancel`)                                                                                       |
 | `METADATA_TTL_SECONDS`            | `300`                | Metadata cache TTL                                                                                                                                        |
+| `EXPORT_S3_BUCKET`                | —                    | Bucket name for result-pane S3 export. When unset, the S3 export API rejects requests with HTTP 501                                                       |
+| `EXPORT_S3_PREFIX`                | `hubble-exports/`    | Object key prefix for S3 export. The final key is `<prefix>/<owner>/<queryId>-<timestamp>.<ext>`                                                          |
+| `EXPORT_S3_REGION`                | —                    | Region for the S3 export client                                                                                                                           |
+| `EXPORT_S3_ENDPOINT`              | —                    | S3-compatible endpoint. When set, path-style requests are used                                                                                            |
+| `EXPORT_SHEETS_CREDENTIALS_FILE`  | —                    | Path to the service-account JSON used for Google Sheets export. When unset, the Google Sheets export API rejects requests with HTTP 501                   |
 | `APP_VERSION`                     | `0.1.0`              | Version returned by `GET /api/config`                                                                                                                     |
 | `QUERY_GUARD_MODE`                | `warn`               | Query Guard mode (`off` disables / `warn` shows the estimate only / `enforce` rejects over-limit queries with HTTP 422)                                   |
 | `QUERY_GUARD_MAX_SCAN_BYTES`      | `0` (unlimited)      | Scan-bytes limit (0 = no limit)                                                                                                                           |

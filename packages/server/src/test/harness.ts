@@ -120,6 +120,12 @@ export async function createTestContext(
     query: { ...baseConfig.query, ...options.configOverrides?.query },
     metadata: { ...baseConfig.metadata, ...options.configOverrides?.metadata },
     resultStore: options.configOverrides?.resultStore ?? baseConfig.resultStore,
+    export: {
+      ...baseConfig.export,
+      ...options.configOverrides?.export,
+      s3: { ...baseConfig.export.s3, ...options.configOverrides?.export?.s3 },
+      sheets: { ...baseConfig.export.sheets, ...options.configOverrides?.export?.sheets },
+    },
     defaults: { ...baseConfig.defaults, ...options.configOverrides?.defaults },
     guard: { ...baseConfig.guard, ...options.configOverrides?.guard },
     notification: {
