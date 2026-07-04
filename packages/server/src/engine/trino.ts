@@ -112,6 +112,7 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
   const scheduledClient = createTrinoClient(datasource, trinoConfig, tags.scheduled, options);
   const downloadClient = createTrinoClient(datasource, trinoConfig, tags.download, options);
   const metadata = new MetadataSource(metadataClient, tags.metadata);
+  let closed = false;
 
   return {
     datasourceId: datasource.id,
@@ -217,7 +218,13 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
       return metadata.fetchSample(catalog, schema, table, limit);
     },
 
-    async close(): Promise<void> {},
+    isClosed(): boolean {
+      return closed;
+    },
+
+    async close(): Promise<void> {
+      closed = true;
+    },
   };
 }
 

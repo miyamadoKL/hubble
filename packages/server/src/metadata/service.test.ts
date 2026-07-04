@@ -56,6 +56,9 @@ class FakeEngine implements QueryEngine {
     throw new Error('not used');
   }
   async close(): Promise<void> {}
+  isClosed(): boolean {
+    return false;
+  }
 }
 
 function svc(engine: FakeEngine, ttlMs: number, clock: { t: number }): MetadataService {

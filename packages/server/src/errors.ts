@@ -7,7 +7,7 @@
  * エラーエンベロープに変換する。Trino が返すエラー
  * （`TrinoError`）を `AppError` に変換するユーティリティもここに置く。
  */
-import type { ApiErrorDetail } from '@hubble/contracts';
+import { CSV_REEXEC_UNAVAILABLE, type ApiErrorDetail } from '@hubble/contracts';
 import type { TrinoError } from './trino/types';
 
 /**
@@ -74,6 +74,11 @@ export class AppError extends Error {
    */
   static queryBlocked(message: string, details: Record<string, unknown>): AppError {
     return new AppError(422, { code: 'QUERY_BLOCKED', message, details });
+  }
+
+  /** 日本語: CSV 完全ダウンロードに再実行が必要だが、安全上または接続状態の理由で不可。 */
+  static csvReexecUnavailable(message: string): AppError {
+    return new AppError(422, { code: CSV_REEXEC_UNAVAILABLE, message });
   }
 }
 

@@ -45,6 +45,7 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
   const pool = poolFactory(datasource);
   const capabilities: DatasourceCapabilities = capabilitiesForKind('mysql');
   const syntheticCatalog = datasource.id;
+  let closed = false;
 
   const assertCatalog = (catalog: string): void => {
     if (catalog !== syntheticCatalog) {
@@ -146,7 +147,12 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       };
     },
 
+    isClosed(): boolean {
+      return closed;
+    },
+
     async close(): Promise<void> {
+      closed = true;
       await pool.end();
     },
 

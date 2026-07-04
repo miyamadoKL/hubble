@@ -42,6 +42,7 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
   const pool = poolFactory(datasource);
   const capabilities: DatasourceCapabilities = capabilitiesForKind('postgresql');
   let catalogName: string | undefined;
+  let closed = false;
 
   const loadCatalogName = async (): Promise<string> => {
     if (catalogName !== undefined) return catalogName;
@@ -151,7 +152,12 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
       };
     },
 
+    isClosed(): boolean {
+      return closed;
+    },
+
     async close(): Promise<void> {
+      closed = true;
       await pool.end();
     },
 

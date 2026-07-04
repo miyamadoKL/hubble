@@ -131,6 +131,12 @@ export interface QueryEngine {
   ): Promise<SampleRowsResponse>;
 
   close(): Promise<void>;
+
+  /**
+   * エンジンが close 済みか。ホットリロード後の CSV 再実行可否判定に使う。
+   * @returns close() 呼び出し後は true。
+   */
+  isClosed(): boolean;
 }
 
 /** EstimateService からエンジンへ渡す Query Guard 設定。 */
