@@ -19,7 +19,7 @@ export function builtInUnrestrictedRole(): ResolvedRole {
 
 function assignmentMatches(
   assignment: RbacAssignment,
-  principal: { user: string; email?: string },
+  principal: { user: string; email?: string; groups?: string[] },
 ): boolean {
   if (assignment.email !== undefined) {
     if (principal.email === undefined) return false;
@@ -35,6 +35,12 @@ function assignmentMatches(
     const domain = principal.email.slice(at + 1);
     return domain.toLowerCase() === assignment.emailDomain.toLowerCase();
   }
+  if (assignment.group !== undefined) {
+    const groups = principal.groups ?? [];
+    if (groups.length === 0) return false;
+    const target = assignment.group.toLowerCase();
+    return groups.some((group) => group.toLowerCase() === target);
+  }
   return false;
 }
 
@@ -45,7 +51,7 @@ function assignmentMatches(
  */
 export function resolveRoleForPrincipal(
   rbac: LoadedRbac,
-  principal: { user: string; email?: string },
+  principal: { user: string; email?: string; groups?: string[] },
 ): ResolvedRole {
   for (const assignment of rbac.assignments) {
     if (!assignmentMatches(assignment, principal)) continue;

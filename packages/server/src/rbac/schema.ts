@@ -45,15 +45,18 @@ const assignmentSchema = z
     email: z.string().min(1).optional(),
     user: z.string().min(1).optional(),
     emailDomain: z.string().min(1).optional(),
+    group: z.string().min(1).optional(),
     role: roleNameSchema,
   })
   .strict()
   .superRefine((value, ctx) => {
-    const keys = [value.email, value.user, value.emailDomain].filter((v) => v !== undefined);
+    const keys = [value.email, value.user, value.emailDomain, value.group].filter(
+      (v) => v !== undefined,
+    );
     if (keys.length !== 1) {
       ctx.addIssue({
         code: 'custom',
-        message: 'exactly one of email, user, or emailDomain must be set',
+        message: 'exactly one of email, user, emailDomain, or group must be set',
         path: ['email'],
       });
     }
