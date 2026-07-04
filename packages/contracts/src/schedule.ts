@@ -103,19 +103,29 @@ export type ScheduleNotificationChannel = z.infer<typeof scheduleNotificationCha
 /**
  * スケジュール失敗時の外部通知設定。
  */
-export const scheduleNotificationsSchema = z.object({
-  // 確定失敗時に通知するかどうか。
-  onFailure: z.boolean().default(false),
-  // 通知に使うチャネル。
-  channels: z
-    .array(scheduleNotificationChannelSchema)
-    .default([])
-    .refine((channels) => new Set(channels).size === channels.length, {
-      message: 'Duplicate notification channels are not allowed',
-    }),
-  // email チャネルの宛先。
-  emailTo: z.array(z.string().email()).optional(),
-});
+export const scheduleNotificationsSchema = z
+  .object({
+    // 確定失敗時に通知するかどうか。
+    onFailure: z.boolean().default(false),
+    // 通知に使うチャネル。
+    channels: z
+      .array(scheduleNotificationChannelSchema)
+      .default([])
+      .refine((channels) => new Set(channels).size === channels.length, {
+        message: 'Duplicate notification channels are not allowed',
+      }),
+    // email チャネルの宛先。
+    emailTo: z.array(z.string().email()).max(10).optional(),
+  })
+  .superRefine((notifications, ctx) => {
+    if (notifications.channels.includes('email') && (notifications.emailTo?.length ?? 0) === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['emailTo'],
+        message: 'emailTo is required when email notifications are enabled',
+      });
+    }
+  });
 /** スケジュール通知設定の推論型。 */
 export type ScheduleNotifications = z.infer<typeof scheduleNotificationsSchema>;
 

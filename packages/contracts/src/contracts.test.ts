@@ -633,6 +633,44 @@ describe('schedule', () => {
     ).toBe(false);
   });
 
+  it('requires email recipients when email notifications are selected', () => {
+    expect(
+      scheduleNotificationsSchema.safeParse({ onFailure: true, channels: ['email'] }).success,
+    ).toBe(false);
+    expect(
+      scheduleNotificationsSchema.safeParse({
+        onFailure: true,
+        channels: ['email'],
+        emailTo: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      scheduleNotificationsSchema.safeParse({
+        onFailure: true,
+        channels: ['email'],
+        emailTo: ['ops@example.com'],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('limits email notification recipients to ten addresses', () => {
+    const emailTo = Array.from({ length: 10 }, (_, i) => `ops${i}@example.com`);
+    expect(
+      scheduleNotificationsSchema.safeParse({
+        onFailure: true,
+        channels: ['email'],
+        emailTo,
+      }).success,
+    ).toBe(true);
+    expect(
+      scheduleNotificationsSchema.safeParse({
+        onFailure: true,
+        channels: ['email'],
+        emailTo: [...emailTo, 'extra@example.com'],
+      }).success,
+    ).toBe(false);
+  });
+
   it('validates the cron shape (5 fields)', () => {
     expect(cronExpression.safeParse('* * * * *').success).toBe(true);
     expect(cronExpression.safeParse('*/5 0 * * 1-5').success).toBe(true);

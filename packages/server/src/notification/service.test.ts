@@ -87,6 +87,25 @@ describe('NotificationService', () => {
     });
   });
 
+  it('truncates the failure reason by code point', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => ({ ok: true, status: 200 }) as Response);
+    const service = new NotificationService(
+      {
+        slackWebhookUrl: 'https://hooks.slack.test/services/T',
+        smtp: { port: 587 },
+      },
+      { fetchImpl },
+    );
+
+    await service.sendFailure({ ...input(), errorMessage: '😀'.repeat(501) });
+
+    const [, init] = fetchImpl.mock.calls[0]!;
+    const body = JSON.parse(String((init as unknown as RequestInit).body)) as { text: string };
+    const reason = body.text.split('Reason: ')[1] ?? '';
+    expect(Array.from(reason)).toHaveLength(500);
+    expect(reason).not.toContain('�');
+  });
+
   it('sends email through an injected transport only when email is selected', async () => {
     const sendMail = vi.fn(async () => ({}));
     const fetchImpl = vi.fn<typeof fetch>(async () => ({ ok: true, status: 200 }) as Response);

@@ -1,3 +1,7 @@
+/**
+ * スケジュール失敗通知を外部チャネルへ送るサービス層。
+ * スケジューラーから確定失敗だけを受け取り、Slack と email の送信処理、監査ログ記録、失敗時の warn ログをここに閉じ込める。
+ */
 import nodemailer from 'nodemailer';
 import type { ScheduleNotificationChannel } from '@hubble/contracts';
 import type { ServerConfig } from '../config';
@@ -14,22 +18,35 @@ interface MailSender {
 }
 
 export interface FailureNotificationInput {
+  /** 失敗が確定したスケジュール。 */
   schedule: ScheduleRecord;
+  /** 失敗した run の id。 */
   runId: string;
+  /** エンジンまたは実行基盤から得たエラー種別。 */
   errorType: string | null;
+  /** 通知本文に載せる失敗理由。本文側で上限文字数に切り詰める。 */
   errorMessage: string | null;
+  /** cron 上の予定実行時刻。 */
   scheduledFor: string;
+  /** run が失敗として確定した時刻。 */
   finishedAt: string;
 }
 
+/** スケジューラーから見た失敗通知送信の抽象。 */
 export interface FailureNotificationSender {
+  /** 確定失敗した run の通知を送信する。 */
   sendFailure(input: FailureNotificationInput): Promise<void>;
 }
 
+/** 通知サービスの外部依存。テストでは fetch、メール送信、監査ログを差し替える。 */
 export interface NotificationServiceDeps {
+  /** Slack webhook 呼び出しに使う fetch 実装。 */
   fetchImpl?: typeof fetch;
+  /** email 送信に使う transport。未指定時は nodemailer から作る。 */
   mailSender?: MailSender;
+  /** 通知送信結果を記録する監査ログ。 */
   audit?: AuditLogger;
+  /** 通知失敗時の warn ログ出力。 */
   logWarn?: (message: string, detail?: unknown) => void;
 }
 
@@ -162,5 +179,6 @@ export class NotificationService implements FailureNotificationSender {
 }
 
 function truncate(value: string): string {
-  return value.length > MAX_REASON_LENGTH ? value.slice(0, MAX_REASON_LENGTH) : value;
+  const chars = Array.from(value);
+  return chars.length > MAX_REASON_LENGTH ? chars.slice(0, MAX_REASON_LENGTH).join('') : value;
 }
