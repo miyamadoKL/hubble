@@ -77,6 +77,7 @@ async function toSchedule(services: Services, record: ScheduleRecord): Promise<S
     cron: record.cron,
     enabled: record.enabled,
     retry: record.retry,
+    notifications: record.notifications,
     datasourceId: record.datasourceId,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -197,6 +198,7 @@ export function scheduleRoutes(services: Services): App {
       cron: body.cron,
       enabled: body.enabled,
       retry: body.retry,
+      notifications: body.notifications,
       datasourceId,
       principalSnapshot: c.var.principal,
     });

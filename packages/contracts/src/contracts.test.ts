@@ -33,6 +33,7 @@ import {
   createScheduleRequestSchema,
   updateScheduleRequestSchema,
   retryPolicySchema,
+  scheduleNotificationsSchema,
   cronExpression,
   apiRoutes,
 } from './index';
@@ -589,6 +590,7 @@ describe('schedule', () => {
     cron: '0 0 * * *',
     enabled: true,
     retry: { maxAttempts: 3, backoffSeconds: 60, backoffMultiplier: 2 },
+    notifications: { onFailure: false, channels: [] },
     datasourceId: 'trino-default',
     createdAt: ISO,
     updatedAt: ISO,
@@ -620,6 +622,55 @@ describe('schedule', () => {
     expect(retryPolicySchema.safeParse({ backoffMultiplier: 0 }).success).toBe(false);
   });
 
+  it('applies notification defaults and rejects duplicate channels', () => {
+    expect(scheduleNotificationsSchema.parse({})).toEqual({
+      onFailure: false,
+      channels: [],
+    });
+    expect(
+      scheduleNotificationsSchema.safeParse({ onFailure: true, channels: ['slack', 'slack'] })
+        .success,
+    ).toBe(false);
+  });
+
+  it('requires email recipients when email notifications are selected', () => {
+    expect(
+      scheduleNotificationsSchema.safeParse({ onFailure: true, channels: ['email'] }).success,
+    ).toBe(false);
+    expect(
+      scheduleNotificationsSchema.safeParse({
+        onFailure: true,
+        channels: ['email'],
+        emailTo: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      scheduleNotificationsSchema.safeParse({
+        onFailure: true,
+        channels: ['email'],
+        emailTo: ['ops@example.com'],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('limits email notification recipients to ten addresses', () => {
+    const emailTo = Array.from({ length: 10 }, (_, i) => `ops${i}@example.com`);
+    expect(
+      scheduleNotificationsSchema.safeParse({
+        onFailure: true,
+        channels: ['email'],
+        emailTo,
+      }).success,
+    ).toBe(true);
+    expect(
+      scheduleNotificationsSchema.safeParse({
+        onFailure: true,
+        channels: ['email'],
+        emailTo: [...emailTo, 'extra@example.com'],
+      }).success,
+    ).toBe(false);
+  });
+
   it('validates the cron shape (5 fields)', () => {
     expect(cronExpression.safeParse('* * * * *').success).toBe(true);
     expect(cronExpression.safeParse('*/5 0 * * 1-5').success).toBe(true);
@@ -634,6 +685,11 @@ describe('schedule', () => {
         name: 'x',
         statement: 'SELECT 1',
         cron: '* * * * *',
+        notifications: {
+          onFailure: true,
+          channels: ['email'],
+          emailTo: ['ops@example.com'],
+        },
       }).success,
     ).toBe(true);
     expect(

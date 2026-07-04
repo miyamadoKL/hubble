@@ -11,6 +11,7 @@ export const auditActionSchema = z.enum([
   'query.result.persist',
   'csv.download',
   'schedule.execute',
+  'notification.send',
 ]);
 
 export type AuditAction = z.infer<typeof auditActionSchema>;

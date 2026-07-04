@@ -122,6 +122,14 @@ export async function createTestContext(
     resultStore: options.configOverrides?.resultStore ?? baseConfig.resultStore,
     defaults: { ...baseConfig.defaults, ...options.configOverrides?.defaults },
     guard: { ...baseConfig.guard, ...options.configOverrides?.guard },
+    notification: {
+      ...baseConfig.notification,
+      ...options.configOverrides?.notification,
+      smtp: {
+        ...baseConfig.notification.smtp,
+        ...options.configOverrides?.notification?.smtp,
+      },
+    },
     scheduler: {
       ...baseConfig.scheduler,
       // Default: tick loop off so route/CRUD tests are deterministic.

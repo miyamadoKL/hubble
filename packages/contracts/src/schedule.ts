@@ -95,6 +95,44 @@ export type RetryPolicy = z.infer<typeof retryPolicySchema>;
  */
 export const defaultRetryPolicy: RetryPolicy = retryPolicySchema.parse({});
 
+/** 通知の送信先チャネル。 */
+export const scheduleNotificationChannelSchema = z.enum(['slack', 'email']);
+/** 通知の送信先チャネル型。 */
+export type ScheduleNotificationChannel = z.infer<typeof scheduleNotificationChannelSchema>;
+
+/**
+ * スケジュール失敗時の外部通知設定。
+ */
+export const scheduleNotificationsSchema = z
+  .object({
+    // 確定失敗時に通知するかどうか。
+    onFailure: z.boolean().default(false),
+    // 通知に使うチャネル。
+    channels: z
+      .array(scheduleNotificationChannelSchema)
+      .default([])
+      .refine((channels) => new Set(channels).size === channels.length, {
+        message: 'Duplicate notification channels are not allowed',
+      }),
+    // email チャネルの宛先。
+    emailTo: z.array(z.string().email()).max(10).optional(),
+  })
+  .superRefine((notifications, ctx) => {
+    if (notifications.channels.includes('email') && (notifications.emailTo?.length ?? 0) === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['emailTo'],
+        message: 'emailTo is required when email notifications are enabled',
+      });
+    }
+  });
+/** スケジュール通知設定の推論型。 */
+export type ScheduleNotifications = z.infer<typeof scheduleNotificationsSchema>;
+
+/** リクエストで省略された場合に使われる通知設定。 */
+export const defaultScheduleNotifications: ScheduleNotifications =
+  scheduleNotificationsSchema.parse({});
+
 /**
  * Compact summary of the most recent run, embedded in a `Schedule` response.
  * 直近実行の簡易サマリ。`Schedule` レスポンスに埋め込んで一覧表示などに使う。
@@ -163,6 +201,8 @@ export const scheduleSchema = z.object({
   enabled: z.boolean(),
   // リトライポリシー。
   retry: retryPolicySchema,
+  // 確定失敗時の外部通知設定。
+  notifications: scheduleNotificationsSchema,
   // 作成日時。
   createdAt: isoTimestamp,
   // 最終更新日時。
@@ -194,6 +234,8 @@ export const createScheduleRequestSchema = z.object({
   enabled: z.boolean().optional(),
   // 省略時は defaultRetryPolicy が適用される。
   retry: retryPolicySchema.optional(),
+  // 省略時は通知しない。
+  notifications: scheduleNotificationsSchema.optional(),
   /** Target datasource id. Omitted = default at create time. */
   // 実行先データソース id。省略時は作成時に既定データソースを保存する。
   datasourceId: z.string().optional(),
@@ -220,6 +262,7 @@ export const updateScheduleRequestSchema = z
     cron: cronExpression.optional(),
     enabled: z.boolean().optional(),
     retry: retryPolicySchema.optional(),
+    notifications: scheduleNotificationsSchema.optional(),
     datasourceId: z.string().optional(),
   })
   // 更新対象フィールドが 1 つも指定されていない空リクエストを拒否する。

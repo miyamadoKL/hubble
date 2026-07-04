@@ -15,8 +15,17 @@
  * `lastRun` の付与）への変換や、cron スケジューラーのポーリングを担当する。
  */
 import { z } from 'zod';
-import type { RetryPolicy, ScheduleRunStatus, ScheduleRunSummary } from '@hubble/contracts';
-import { retryPolicySchema } from '@hubble/contracts';
+import type {
+  RetryPolicy,
+  ScheduleNotifications,
+  ScheduleRunStatus,
+  ScheduleRunSummary,
+} from '@hubble/contracts';
+import {
+  defaultScheduleNotifications,
+  retryPolicySchema,
+  scheduleNotificationsSchema,
+} from '@hubble/contracts';
 import type { PrincipalIdentity } from '../auth/principal';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
@@ -54,6 +63,8 @@ export interface ScheduleRecord {
   enabled: boolean;
   /** 失敗時の再試行ポリシー（最大試行回数、待機時間、倍率）。 */
   retry: RetryPolicy;
+  /** 確定失敗時の外部通知設定。 */
+  notifications: ScheduleNotifications;
   /** 実行先データソース id（作成/更新時に解決して永続化）。 */
   datasourceId: string;
   /**
@@ -79,6 +90,8 @@ export interface CreateScheduleInput {
   cron: string;
   enabled?: boolean;
   retry?: RetryPolicy;
+  /** 確定失敗時の外部通知設定。 */
+  notifications?: ScheduleNotifications;
   /** 実行先データソース id（ルート層で省略時は既定に解決済み）。 */
   datasourceId: string;
   /** 作成時点の principal。email/group assignment を実行時にも再現するため保存する。 */
@@ -99,6 +112,7 @@ export interface UpdateScheduleInput {
   cron?: string;
   enabled?: boolean;
   retry?: RetryPolicy;
+  notifications?: ScheduleNotifications;
   datasourceId?: string;
   /**
    * owner 本人がスケジュールを更新した時点の principal。
@@ -124,6 +138,7 @@ interface ScheduleRow {
   retry_max_attempts: number;
   retry_backoff_seconds: number;
   retry_backoff_multiplier: number;
+  notifications: string | null;
   datasource_id: string;
   principal_snapshot: string | null;
   created_at: string;
@@ -131,6 +146,7 @@ interface ScheduleRow {
 }
 
 type InvalidPrincipalSnapshotReason = 'json-parse' | 'schema-validate';
+type InvalidNotificationsReason = 'json-parse' | 'schema-validate';
 
 function warnInvalidPrincipalSnapshot(
   scheduleId: string,
@@ -170,6 +186,31 @@ function serializePrincipalSnapshot(snapshot: PrincipalIdentity | null | undefin
   );
 }
 
+function warnInvalidNotifications(scheduleId: string, reason: InvalidNotificationsReason): void {
+  console.warn(`schedule notifications ignored: schedule_id=${scheduleId} reason=${reason}`);
+}
+
+function parseNotifications(scheduleId: string, raw: string | null): ScheduleNotifications {
+  if (raw === null) return defaultScheduleNotifications;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    warnInvalidNotifications(scheduleId, 'json-parse');
+    return defaultScheduleNotifications;
+  }
+  const result = scheduleNotificationsSchema.safeParse(parsed);
+  if (!result.success) {
+    warnInvalidNotifications(scheduleId, 'schema-validate');
+    return defaultScheduleNotifications;
+  }
+  return result.data;
+}
+
+function serializeNotifications(notifications: ScheduleNotifications | undefined): string {
+  return JSON.stringify(scheduleNotificationsSchema.parse(notifications ?? {}));
+}
+
 // DB 行（snake_case でフラットな retry_* 列）をドメインオブジェクト
 // `ScheduleRecord`（camelCase でネストした retry object）へ変換する。
 function rowToSchedule(row: ScheduleRow): ScheduleRecord {
@@ -192,6 +233,7 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
       backoffSeconds: Number(row.retry_backoff_seconds),
       backoffMultiplier: Number(row.retry_backoff_multiplier),
     }),
+    notifications: parseNotifications(row.id, row.notifications),
     datasourceId: row.datasource_id,
     principalSnapshot: parsePrincipalSnapshot(row.id, row.principal_snapshot),
     createdAt: row.created_at,
@@ -263,6 +305,7 @@ export class ScheduleRepository {
       cron: input.cron,
       enabled: input.enabled ?? true,
       retry,
+      notifications: input.notifications ?? defaultScheduleNotifications,
       datasourceId: input.datasourceId,
       principalSnapshot: input.principalSnapshot ?? null,
       createdAt: nowIso,
@@ -272,8 +315,8 @@ export class ScheduleRepository {
       `INSERT INTO schedules
          (id, owner, name, statement, catalog, schema, cron, enabled,
           retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
-          datasource_id, principal_snapshot, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          notifications, datasource_id, principal_snapshot, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertParams(record),
     );
     return record;
@@ -301,6 +344,7 @@ export class ScheduleRepository {
       cron: input.cron ?? existing.cron,
       enabled: input.enabled ?? existing.enabled,
       retry: input.retry ?? existing.retry,
+      notifications: input.notifications ?? existing.notifications,
       datasourceId: input.datasourceId ?? existing.datasourceId,
       principalSnapshot:
         input.principalSnapshot !== undefined
@@ -312,7 +356,7 @@ export class ScheduleRepository {
       `UPDATE schedules SET
          name = ?, statement = ?, catalog = ?, schema = ?, cron = ?, enabled = ?,
          retry_max_attempts = ?, retry_backoff_seconds = ?, retry_backoff_multiplier = ?,
-         datasource_id = ?, principal_snapshot = ?, updated_at = ?
+         notifications = ?, datasource_id = ?, principal_snapshot = ?, updated_at = ?
        WHERE id = ? AND owner = ?`,
       [
         merged.name,
@@ -324,6 +368,7 @@ export class ScheduleRepository {
         merged.retry.maxAttempts,
         merged.retry.backoffSeconds,
         merged.retry.backoffMultiplier,
+        serializeNotifications(merged.notifications),
         merged.datasourceId,
         serializePrincipalSnapshot(merged.principalSnapshot),
         merged.updatedAt,
@@ -364,6 +409,7 @@ function insertParams(s: ScheduleRecord): SqlParam[] {
     s.retry.maxAttempts,
     s.retry.backoffSeconds,
     s.retry.backoffMultiplier,
+    serializeNotifications(s.notifications),
     s.datasourceId,
     serializePrincipalSnapshot(s.principalSnapshot),
     s.createdAt,
