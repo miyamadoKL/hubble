@@ -25,8 +25,10 @@ export const createQueryRequestSchema = z.object({
   /** Trino session properties forwarded as `X-Trino-Session`. */
   // Trino セッションプロパティ。`X-Trino-Session` ヘッダーとして転送される。
   sessionProperties: z.record(z.string(), z.string()).optional(),
-  /** Overrides `X-Trino-Source` (default 'hubble'). */
-  // `X-Trino-Source` ヘッダーの値を上書きする（既定値は 'hubble'）。
+  /**
+   * @deprecated Server ignores client-specified source; X-Trino-Source is set by the engine.
+   */
+  // 非推奨。サーバーはクライアント指定を無視し、エンジンが X-Trino-Source を決める。
   source: z.string().optional(),
   // このクエリがどのノートブックから実行されたか（履歴記録用）。
   notebookId: z.string().optional(),

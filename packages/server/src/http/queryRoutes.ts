@@ -32,6 +32,7 @@ import { hasQueryWrite } from '../rbac/check';
 import { effectiveGuard, effectiveGuardLimitsSnapshot } from '../rbac/guard';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import { disabledEstimate } from '../query/guard';
+import { effectiveMaxRows, validateSessionProperties } from './queryRequest';
 import { intParam, parseJsonBody } from './validate';
 import { buildReplayEvents, encodeSseEvent, SSE_KEEPALIVE } from '../query/sse';
 import {
@@ -89,13 +90,13 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const principal = c.var.principal;
     const catalog = body.catalog ?? services.config.defaults.catalog;
     const schema = body.schema ?? services.config.defaults.schema;
+    // body.source は非推奨。クライアント指定は無視し、エンジンの X-Trino-Source を使う。
     const ctx: TrinoRequestContext = {
       catalog,
       schema,
-      source: body.source,
       // Impersonate the authenticated principal for this user query.
       user: principal.user,
-      sessionProperties: body.sessionProperties,
+      sessionProperties: validateSessionProperties(body.sessionProperties),
     };
 
     const { engine } = resolveEngine(
@@ -157,7 +158,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       owner: principal.user,
       datasourceId: body.datasourceId,
       sessionReadOnly: !hasQueryWrite(principal.role),
-      maxRows: body.maxRows,
+      maxRows: effectiveMaxRows(body.maxRows, services.config.query.maxRows),
       overflowMode,
       notebookId: body.notebookId,
       cellId: body.cellId,
