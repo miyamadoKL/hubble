@@ -2,10 +2,12 @@
 
 [日本語](README.md) | **English**
 
-A Trino-focused query editor that preserves the **Notebook** experience of
-[cloudera/hue](https://github.com/cloudera/hue) — multiple cells, per-cell
+A multi-datasource SQL workbench for **Trino** (first-class), **MySQL**, and
+**PostgreSQL** that preserves the **Notebook** experience of
+[cloudera/hue](https://github.com/cloudera/hue): multiple cells, per-cell
 execution and results, variable substitution, schema browsing, history and
-charts — rebuilt as a modern, single-language TypeScript app.
+charts. SQL completion (ANTLR) and Query Guard pre-execution estimates are
+Trino-only. Rebuilt as a modern, single-language TypeScript app.
 
 ![Hubble SQL Workbench — light theme, a join result in the grid](docs/screenshots/final-light.png)
 
@@ -17,10 +19,11 @@ charts — rebuilt as a modern, single-language TypeScript app.
 | ------------------------------------------------------------------------------------- |
 | ![Variable panel driving a parameterised query](docs/screenshots/final-variables.png) |
 
-> Trino-only by design. Multi-engine support and Hue's document sharing /
-> permissions remain non-goals (see `docs/design.md`). Authentication (SSO via
-> oauth2-proxy + impersonation) and scheduled runs are supported
-> (`docs/operations.md` §7 / §12).
+> Multi-datasource support (Trino, MySQL, PostgreSQL) and RBAC are available
+> (see the Japanese README sections on datasource and RBAC configuration).
+> Hue's document sharing remains a non-goal (see `docs/design.md`).
+> Authentication (SSO via oauth2-proxy + impersonation) and scheduled runs are
+> supported (`docs/operations.md` §7 / §12).
 
 ## Highlights
 
@@ -52,7 +55,7 @@ A pnpm-workspace monorepo, TypeScript throughout:
 ```
 packages/
   contracts/   # zod schemas + types — the API/type contract; server & web depend on it
-  server/      # Hono BFF: Trino /v1/statement proxy, SSE, CSV stream, SQLite/PostgreSQL persistence
+  server/      # Hono BFF: multi-datasource query proxy (Trino / MySQL / PostgreSQL), SSE, CSV stream, SQLite/PostgreSQL persistence
   web/         # React 19 + Vite + Tailwind v4; Monaco editor; ECharts; zustand + TanStack Query
 e2e/           # Playwright E2E suites (editor / execution / results / notebook / panels / chart / app) against a live Trino (tpch)
 ```
@@ -72,8 +75,10 @@ See `docs/design.md` for the full design, data model and API contract.
 
 ## Getting started
 
-Prerequisites: **Node ≥ 24**, **pnpm 11**, and a reachable **Trino** (the e2e suite
-and screenshots assume the `tpch` catalog, e.g. a local Trino on `:30080`).
+Prerequisites: **Node ≥ 24**, **pnpm 11**, and a reachable SQL engine (the default
+dev setup uses **Trino**; the e2e suite and screenshots assume the `tpch` catalog,
+e.g. a local Trino on `:30080`). MySQL and PostgreSQL can be added per the datasource
+configuration sections in the Japanese README.
 
 ```bash
 pnpm install
