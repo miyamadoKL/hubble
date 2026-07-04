@@ -270,7 +270,10 @@ principal ごとに独立しています。Trino 側の access control により
 
 MySQL/PostgreSQL データソースは `datasources.yaml` の単一 credential で接続するため、
 メタデータ取得でも principal は DB 側へ伝播しません（全ユーザーが同一 DB ユーザーとして
-見えます）。
+見えます）。shared credential は DB 側へ principal が伝播しないため、Hubble 側では
+`rbac.yaml` の `role.datasources` で露出する datasource id を allowlist 制限してください。
+未指定のロールは後方互換のため全 datasource を利用できます。拒否時は datasource の存在有無を
+漏らさないよう HTTP 404 として応答します。
 
 ---
 

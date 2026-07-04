@@ -6,7 +6,9 @@
  */
 import { Hono } from 'hono';
 import { datasourcesResponseSchema } from '@hubble/contracts';
+import type { AuthVariables } from '../auth/middleware';
 import type { Services } from '../services';
+import { filterDatasourcesForRole } from '../rbac/check';
 import { toDatasourceSummaries } from '../datasource/summary';
 
 /**
@@ -14,12 +16,13 @@ import { toDatasourceSummaries } from '../datasource/summary';
  * @param services - DI コンテナ。`services.datasources` の解決済み一覧をサマリーに変換して返す。
  * @returns `/api/datasources` にマウントする Hono サブアプリケーション。
  */
-export function datasourceRoutes(services: Services): Hono {
-  const app = new Hono();
+export function datasourceRoutes(services: Services): Hono<{ Variables: AuthVariables }> {
+  const app = new Hono<{ Variables: AuthVariables }>();
 
   app.get('/', (c) => {
+    const visible = filterDatasourcesForRole(services.datasources, c.var.principal.role);
     const response = datasourcesResponseSchema.parse({
-      datasources: toDatasourceSummaries(services.datasources),
+      datasources: toDatasourceSummaries(visible),
     });
     return c.json(response);
   });

@@ -22,7 +22,7 @@ import type { TrinoRequestContext } from '../trino/types';
 import type { EstimateService } from '../query/estimateService';
 import type { QueryEngine } from '../engine/types';
 import { getEngineOrUndefined } from '../engine/resolve';
-import { hasQueryWrite, schedulePrincipalIdentity } from '../rbac/check';
+import { hasQueryWrite, roleAllowsDatasource, schedulePrincipalIdentity } from '../rbac/check';
 import { effectiveGuardLimits } from '../rbac/guard';
 import { resolveRoleForPrincipal } from '../rbac/resolve';
 import type { LoadedRbac } from '../rbac/types';
@@ -394,6 +394,16 @@ export class Scheduler {
       this.deps.getRbac(),
       schedulePrincipalIdentity(schedule.owner),
     );
+    if (!roleAllowsDatasource(scheduleRole, schedule.datasourceId)) {
+      return {
+        status: 'blocked',
+        attempt: 1,
+        trinoQueryId: null,
+        errorType: 'DATASOURCE_ACCESS_DENIED',
+        errorMessage: `Datasource '${schedule.datasourceId}' is not allowed for this role`,
+        rowCount: null,
+      };
+    }
     const effective = effectiveGuardLimits(this.deps.guardConfig, scheduleRole);
 
     // 日本語: 無限ループに見えるが、各分岐は必ず return するか (確定的失敗/成功/blocked)、

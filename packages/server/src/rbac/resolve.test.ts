@@ -159,4 +159,20 @@ defaultRole: email-role
     expect(role.name).toBe('unrestricted');
     expect([...role.permissions]).toEqual<Permission[]>(['query.write']);
   });
+
+  it('carries datasources allowlist from resolved role definition', () => {
+    const withDatasources = loadedFromYaml(`roles:
+  trino-only:
+    permissions: [query.write]
+    datasources: [trino-prod]
+  member:
+    permissions: []
+assignments:
+  - user: alice
+    role: trino-only
+defaultRole: member
+`);
+    const role = resolveRoleForPrincipal(withDatasources, { user: 'alice' });
+    expect(role.datasources).toEqual(['trino-prod']);
+  });
 });

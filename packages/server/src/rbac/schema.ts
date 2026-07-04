@@ -3,6 +3,7 @@
  */
 import { z } from 'zod';
 import { guardModeSchema, guardOnUnknownSchema, permissionSchema } from '@hubble/contracts';
+import { datasourceIdPattern } from '../datasource/schema';
 
 /** ロール名の許容パターン（小文字英字始まり、最大 63 文字）。 */
 export const roleNamePattern = /^[a-z][a-z0-9-]{0,62}$/;
@@ -33,10 +34,33 @@ export const roleGuardSchema = z
   })
   .strict();
 
+const datasourceAllowlistEntrySchema = z.union([
+  z.literal('*'),
+  z.string().regex(datasourceIdPattern, 'must match /^[a-z][a-z0-9-]{0,62}$/ or be "*"'),
+]);
+
+const roleDatasourcesSchema = z
+  .array(datasourceAllowlistEntrySchema)
+  .superRefine((entries, ctx) => {
+    const seen = new Set<string>();
+    for (const [index, entry] of entries.entries()) {
+      if (seen.has(entry)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `duplicate datasource '${entry}'`,
+          path: [index],
+        });
+      }
+      seen.add(entry);
+    }
+  })
+  .optional();
+
 const roleDefinitionSchema = z
   .object({
     permissions: uniquePermissionsSchema,
     guard: roleGuardSchema.optional(),
+    datasources: roleDatasourcesSchema,
   })
   .strict();
 

@@ -10,7 +10,7 @@ import { parse as parseYaml } from 'yaml';
 import type { ZodError } from 'zod';
 import type { Permission } from '@hubble/contracts';
 import { rbacFileSchema, type RbacFile } from './schema';
-import type { LoadedRbac, RoleGuardOverrides } from './types';
+import type { LoadedRbac, RoleDatasourcesAllowlist, RoleGuardOverrides } from './types';
 import { builtInUnrestrictedRole, UNRESTRICTED_ROLE_NAME } from './resolve';
 
 type Env = Record<string, string | undefined>;
@@ -47,12 +47,17 @@ function formatZodIssues(issues: ZodError['issues']): string {
 function toLoadedRbac(file: RbacFile): LoadedRbac {
   const roles = new Map<
     string,
-    { permissions: ReadonlySet<Permission>; guard?: RoleGuardOverrides }
+    {
+      permissions: ReadonlySet<Permission>;
+      guard?: RoleGuardOverrides;
+      datasources?: RoleDatasourcesAllowlist;
+    }
   >();
   for (const [name, definition] of Object.entries(file.roles)) {
     roles.set(name, {
       permissions: new Set(definition.permissions),
       ...(definition.guard !== undefined ? { guard: definition.guard } : {}),
+      ...(definition.datasources !== undefined ? { datasources: definition.datasources } : {}),
     });
   }
   return {

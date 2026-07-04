@@ -28,7 +28,7 @@ import type { TrinoRequestContext } from '../trino/types';
 import type { OverflowMode } from '../query/execution';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
-import { hasQueryWrite } from '../rbac/check';
+import { hasQueryWrite, requireDatasourceAccess } from '../rbac/check';
 import { effectiveGuard, effectiveGuardLimitsSnapshot } from '../rbac/guard';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import { disabledEstimate } from '../query/guard';
@@ -64,6 +64,8 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
   app.post('/estimate', async (c) => {
     const body = await parseJsonBody(c, estimateRequestSchema);
     const principal = c.var.principal;
+    const estimateDatasourceId = body.datasourceId ?? services.defaultDatasourceId;
+    requireDatasourceAccess(principal.role, estimateDatasourceId);
     const effective = effectiveGuard(services.config, principal.role);
     // mode=off: never touch Trino; return a `disabled` estimate immediately.
     // Query Guard 自体が無効な設定のときは Trino に問い合わせず即座に「無効」を返す。
@@ -99,6 +101,8 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       sessionProperties: validateSessionProperties(body.sessionProperties),
     };
 
+    const queryDatasourceId = body.datasourceId ?? services.defaultDatasourceId;
+    requireDatasourceAccess(principal.role, queryDatasourceId);
     const { engine } = resolveEngine(
       services.engines,
       body.datasourceId,
