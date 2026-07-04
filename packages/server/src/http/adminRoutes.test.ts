@@ -157,6 +157,14 @@ describe('admin queries API', () => {
     expect(logSpy).toHaveBeenCalledWith(
       `[rbac] admin kill: actor=killer targetOwner=bob queryId=${queryId}`,
     );
+    const auditRows = await ctx.services.audit.listForTest();
+    const killAudit = auditRows.find((row) => row.action === 'query.kill');
+    expect(killAudit).toMatchObject({
+      actor: 'killer',
+      target: queryId,
+      datasource: 'trino-default',
+    });
+    expect(killAudit?.detail).toMatchObject({ targetOwner: 'bob' });
     logSpy.mockRestore();
     await ctx.services.shutdown();
   });

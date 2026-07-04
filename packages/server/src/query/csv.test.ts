@@ -77,6 +77,15 @@ describe('CSV download endpoint', () => {
     expect(csvRes.status).toBe(200);
     expect(csvRes.headers.get('content-type')).toContain('text/csv');
     expect(csvRes.headers.get('content-disposition')).toContain('attachment');
+    const auditRows = await ctx.services.audit.listForTest();
+    expect(auditRows.some((row) => row.action === 'csv.download' && row.target === queryId)).toBe(
+      true,
+    );
+    expect(auditRows.find((row) => row.action === 'csv.download')?.detail).toMatchObject({
+      compression: 'none',
+      needsReexec: false,
+      allowsReexec: true,
+    });
     const body = await csvRes.text();
     expect(body.charCodeAt(0)).not.toBe(0xfeff); // no BOM
     const lines = body.split('\r\n').filter((l) => l !== '');
@@ -362,6 +371,16 @@ describe('CSV re-exec engine pinning', () => {
     expect(csvRes.status).toBe(422);
     const body = (await csvRes.json()) as ApiError;
     expect(body.error.code).toBe(CSV_REEXEC_UNAVAILABLE);
+    const auditRows = await ctx.services.audit.listForTest();
+    const csvAudit = auditRows.find((row) => row.action === 'csv.download');
+    expect(csvAudit?.detail).toMatchObject({
+      outcome: 'denied',
+      reason: 'csvReexecUnavailable',
+      errorCode: CSV_REEXEC_UNAVAILABLE,
+      needsReexec: true,
+      allowsReexec: true,
+      truncated: true,
+    });
     await ctx.services.shutdown();
   });
 });

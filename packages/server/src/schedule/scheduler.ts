@@ -32,6 +32,7 @@ import type { ScheduleRecord, ScheduleRepository, ScheduleRunRepository } from '
 import { drainStatement } from './execute';
 import { nextRunAfter } from './cron';
 import { backoffMs, classifyFailure, shouldRetry } from './retry';
+import type { AuditJson, AuditLogger } from '../audit';
 
 /**
  * Resolved scheduler settings.
@@ -71,6 +72,8 @@ export interface SchedulerDeps {
   getRbac: () => LoadedRbac;
   /** グローバル Guard 設定（ロール上書きのベース）。 */
   guardConfig: ServerConfig['guard'];
+  /** スケジュール実行の監査ログ。 */
+  audit?: AuditLogger;
   config: SchedulerConfig;
   /** Wall clock (injectable for tests). */
   // 日本語: 省略時は Date.now。テストでは仮想時計を注入して cron 発火判定を制御する。
@@ -97,6 +100,7 @@ interface RunOutcome {
   errorType: string | null;
   errorMessage: string | null;
   rowCount: number | null;
+  guard?: Record<string, AuditJson>;
 }
 
 // 日本語: SchedulerDeps.sleep 省略時の既定実装。実際に ms ミリ秒待ってから解決する。
@@ -357,6 +361,8 @@ export class Scheduler {
     // 検証〜実行〜リトライの全ループはここに委譲し、確定した最終結果 (RunOutcome) を受け取る。
     const outcome = await this.attemptWithRetries(schedule);
     const finishedMs = this.now();
+    const elapsedMs = Math.max(finishedMs - startMs, 0);
+    const finishedAt = new Date(finishedMs).toISOString();
     // 成功/失敗/blocked いずれの結果でも同じ finish() で確定させ、経過時間も記録する。
     await this.deps.runs.finish(runId, schedule.id, {
       status: outcome.status,
@@ -365,8 +371,41 @@ export class Scheduler {
       errorType: outcome.errorType,
       errorMessage: outcome.errorMessage,
       rowCount: outcome.rowCount,
-      elapsedMs: Math.max(finishedMs - startMs, 0),
-      finishedAt: new Date(finishedMs).toISOString(),
+      elapsedMs,
+      finishedAt,
+    });
+    await this.recordScheduleOutcome(schedule, runId, outcome, elapsedMs);
+  }
+
+  private async recordScheduleOutcome(
+    schedule: ScheduleRecord,
+    runId: string,
+    outcome: RunOutcome,
+    elapsedMs: number,
+  ): Promise<void> {
+    if (!this.deps.audit) return;
+    const detail: Record<string, AuditJson> = {
+      scheduleId: schedule.id,
+      runId,
+      runOwner: schedule.owner,
+      catalog: schedule.catalog ?? null,
+      schema: schedule.schema ?? null,
+      outcome: outcome.status,
+      success: outcome.status === 'success',
+      attempt: outcome.attempt,
+      trinoQueryId: outcome.trinoQueryId,
+      rowCount: outcome.rowCount,
+      errorType: outcome.errorType,
+      errorMessage: outcome.errorMessage,
+      elapsedMs,
+    };
+    if (outcome.guard) detail.guard = outcome.guard;
+    await this.deps.audit.record({
+      actor: schedule.owner,
+      action: 'schedule.execute',
+      target: schedule.id,
+      datasource: schedule.datasourceId,
+      detail,
     });
   }
 
@@ -499,6 +538,15 @@ export class Scheduler {
             errorType: 'QUERY_BLOCKED',
             errorMessage: estimate.verdict.reasons.join('; ') || 'Blocked by Query Guard',
             rowCount: null,
+            guard: {
+              status: estimate.status,
+              decision: estimate.verdict.decision,
+              reasons: estimate.verdict.reasons,
+              scanRows: estimate.scanRows,
+              scanBytes: estimate.scanBytes,
+              estimatedSeconds: estimate.estimatedSeconds,
+              elapsedMs: estimate.elapsedMs,
+            },
           };
         }
       }

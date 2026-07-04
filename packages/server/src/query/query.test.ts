@@ -39,6 +39,16 @@ describe('query lifecycle (happy path)', () => {
     const ctx = await createTestContext({ scenarios: [nationScenario(25)] });
     const queryId = await submit(ctx.app, { statement: 'SELECT * FROM nation', catalog: 'tpch' });
 
+    const auditRows = await ctx.services.audit.listForTest();
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({
+      actor: 'admin',
+      action: 'query.execute',
+      target: queryId,
+      datasource: 'trino-default',
+    });
+    expect(auditRows[0]!.detail).toMatchObject({ catalog: 'tpch', schema: null });
+
     await ctx.services.registry.get(queryId)!.settled;
 
     const snapRes = await ctx.app.request(`/api/queries/${queryId}`);

@@ -59,6 +59,16 @@ export function adminRoutes(services: Services): Hono<{ Variables: AuthVariables
     const actor = c.var.principal.user;
     const targetOwner = exec.ctx.user ?? 'unknown';
     console.log(`[rbac] admin kill: actor=${actor} targetOwner=${targetOwner} queryId=${queryId}`);
+    await services.audit.record({
+      actor,
+      action: 'query.kill',
+      target: queryId,
+      datasource: exec.datasourceId,
+      detail: {
+        targetOwner,
+        state: exec.state,
+      },
+    });
 
     await exec.requestCancel();
     return c.json(exec.snapshot());

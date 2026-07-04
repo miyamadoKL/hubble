@@ -1,5 +1,6 @@
 import { emptySessionMutations, type TrinoRequestContext } from '../trino/types';
 import type { StatementClient } from '../engine/types';
+import type { AuditEventInput, AuditJson } from '../audit';
 
 /**
  * このファイルは Query Scheduling 機能の「実行」ステップを担う `drainStatement` を
@@ -16,6 +17,16 @@ export interface DrainResult {
   rowCount: number;
 }
 
+export interface DrainStatementOptions {
+  audit?: {
+    actor: string;
+    target: string;
+    datasource?: string;
+    detail?: Record<string, AuditJson>;
+    record: (event: AuditEventInput) => Promise<void>;
+  };
+}
+
 /**
  * Run a statement to completion against Trino, counting result rows without
  * buffering them (Query Scheduling feature: a scheduled run records `row_count`
@@ -26,7 +37,22 @@ export async function drainStatement(
   client: StatementClient,
   statement: string,
   ctx: TrinoRequestContext,
+  options: DrainStatementOptions = {},
 ): Promise<DrainResult> {
+  if (options.audit) {
+    try {
+      await options.audit.record({
+        actor: options.audit.actor,
+        action: 'schedule.execute',
+        target: options.audit.target,
+        datasource: options.audit.datasource,
+        detail: options.audit.detail ?? {},
+      });
+    } catch (err) {
+      // 監査ログの失敗でスケジュール本体を失敗させない。
+      console.error('audit log write failed; continuing scheduled execution', err);
+    }
+  }
   // 日本語: このスケジュール実行専用にセッションプロパティ等の変更を追跡する空の
   // mutations オブジェクトを用意する (結果を誰にも返さないため、変更内容自体は
   // 呼び出し元では使わないが client.start/advance のシグネチャ上必要)。

@@ -47,6 +47,8 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 - **Query Scheduler** — runs saved SQL on a cron schedule. Validates syntax and
   semantics with Trino's `EXPLAIN (TYPE VALIDATE)` at registration and before each
   run; retries on connection failures with geometric back-off.
+- **Audit log** — records query execution, CSV downloads, admin kills, and
+  scheduled runs in `audit_log`, including denied or failed outcomes.
 
 ## Architecture
 

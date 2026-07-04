@@ -11,6 +11,7 @@ import { loadRbac } from '../rbac/loader';
 import type { LoadedRbac } from '../rbac/types';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { Scheduler, type SchedulerConfig } from './scheduler';
+import { AuditLogger, AuditRepository } from '../audit';
 
 const DEFAULT_GUARD_CONFIG = {
   mode: 'warn' as const,
@@ -56,6 +57,7 @@ interface Harness {
   schedules: ScheduleRepository;
   runs: ScheduleRunRepository;
   scheduler: Scheduler;
+  audit: AuditLogger;
   sleeps: number[];
   now: () => number;
   setNow: (ms: number) => void;
@@ -73,6 +75,7 @@ async function makeHarness(
   const { engines, defaultDatasourceId } = makeEnginesMap(fake);
   const schedules = new ScheduleRepository(db);
   const runs = new ScheduleRunRepository(db, 50);
+  const audit = new AuditLogger(new AuditRepository(db));
   const estimate = new EstimateService(engines, defaultDatasourceId, {
     mode: configOverrides.guardMode ?? 'warn',
     maxScanBytes: 0,
@@ -104,6 +107,7 @@ async function makeHarness(
       ...DEFAULT_GUARD_CONFIG,
       mode: configOverrides.guardMode ?? DEFAULT_GUARD_CONFIG.mode,
     },
+    audit,
     config,
     now,
     sleep: (ms) => {
@@ -118,6 +122,7 @@ async function makeHarness(
     schedules,
     runs,
     scheduler,
+    audit,
     sleeps,
     now,
     setNow: (ms) => {
@@ -158,6 +163,22 @@ describe('Scheduler run matrix', () => {
     expect(runs[0]!.rowCount).toBe(1);
     expect(runs[0]!.trinoQueryId).toMatch(/^qok_/);
     expect(runs[0]!.errorType).toBeNull();
+
+    const auditRows = await h.audit.listForTest();
+    const runAudit = auditRows.find((row) => row.action === 'schedule.execute');
+    expect(runAudit).toMatchObject({
+      actor: 'alice',
+      target: s.id,
+      datasource: DEFAULT_DATASOURCE_ID,
+    });
+    expect(runAudit?.detail).toMatchObject({
+      scheduleId: s.id,
+      runOwner: 'alice',
+      outcome: 'success',
+      success: true,
+      trinoQueryId: expect.stringMatching(/^qok_/),
+      rowCount: 1,
+    });
   });
 
   it('fails immediately on a USER_ERROR (validation) with no retry', async () => {
@@ -188,6 +209,16 @@ describe('Scheduler run matrix', () => {
     expect(runs[0]!.attempt).toBe(1);
     expect(runs[0]!.errorMessage).toContain('mismatched input');
     expect(h.sleeps).toHaveLength(0); // no retry waits
+    const auditRows = await h.audit.listForTest();
+    const runAudit = auditRows.find((row) => row.action === 'schedule.execute');
+    expect(runAudit?.detail).toMatchObject({
+      scheduleId: s.id,
+      outcome: 'failed',
+      success: false,
+      errorType: 'USER_ERROR',
+      rowCount: null,
+      trinoQueryId: null,
+    });
   });
 
   it('retries a transient failure, then succeeds on the next attempt', async () => {
@@ -328,6 +359,20 @@ defaultRole: trino-prod-only
     expect(runs[0]!.errorType).toBe('QUERY_BLOCKED');
     expect(runs[0]!.attempt).toBe(1);
     expect(h.sleeps).toHaveLength(0);
+    const auditRows = await h.audit.listForTest();
+    const runAudit = auditRows.find((row) => row.action === 'schedule.execute');
+    expect(runAudit?.detail).toMatchObject({
+      scheduleId: s.id,
+      outcome: 'blocked',
+      success: false,
+      errorType: 'QUERY_BLOCKED',
+      rowCount: null,
+      trinoQueryId: null,
+      guard: {
+        decision: 'block',
+        scanRows: 1000,
+      },
+    });
   });
 });
 
