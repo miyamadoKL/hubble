@@ -105,6 +105,19 @@ function builtInFallback(): LoadedRbac {
 }
 
 /**
+ * ホットリロード監視用の rbac ファイルパスを返す。
+ *
+ * ファイルの有無にかかわらず常にパスを返す（起動時に無くても監視対象にする）。
+ */
+export function resolveRbacPath(env: Env, cwd: string): string {
+  const explicitPath = env.RBAC_PATH;
+  if (explicitPath !== undefined && explicitPath !== '') {
+    return resolve(cwd, explicitPath);
+  }
+  return resolve(cwd, 'rbac.yaml');
+}
+
+/**
  * 宣言的 RBAC 設定を読み込み、解決済み設定を返す。
  *
  * - `RBAC_PATH` が設定されていればそのファイルを必須として読む

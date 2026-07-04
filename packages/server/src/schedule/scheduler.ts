@@ -67,8 +67,8 @@ export interface SchedulerDeps {
   defaultDatasourceId: string;
   // Query Guard のスキャン量見積りサービス (enforce モードで使用)。
   estimate: EstimateService;
-  /** ロール解決と実効 Guard マージに使う RBAC 設定。 */
-  rbac: LoadedRbac;
+  /** 現在の RBAC 設定を返す getter（実行時ロール解決用）。 */
+  getRbac: () => LoadedRbac;
   /** グローバル Guard 設定（ロール上書きのベース）。 */
   guardConfig: ServerConfig['guard'];
   config: SchedulerConfig;
@@ -391,7 +391,7 @@ export class Scheduler {
     }
 
     const scheduleRole = resolveRoleForPrincipal(
-      this.deps.rbac,
+      this.deps.getRbac(),
       schedulePrincipalIdentity(schedule.owner),
     );
     const effective = effectiveGuardLimits(this.deps.guardConfig, scheduleRole);

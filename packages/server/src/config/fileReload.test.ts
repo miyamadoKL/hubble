@@ -50,4 +50,51 @@ describe('startFileReload', () => {
     expect(reloadCalls).toBe(1);
     handle.stop();
   });
+
+  it('reloads when a missing file appears', async () => {
+    const handle = startFileReload(
+      [
+        {
+          path: '/cfg/rbac.yaml',
+          reload: () => {
+            reloadCalls += 1;
+          },
+        },
+      ],
+      {
+        intervalSeconds: 30,
+        statImpl: (p) => (mtimes.has(p) ? { mtimeMs: mtimes.get(p)! } : null),
+      },
+    );
+    mtimes.set('/cfg/rbac.yaml', 1000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reloadCalls).toBe(1);
+    handle.stop();
+  });
+
+  it('warns once when a file disappears and does not reload', async () => {
+    const warnings: string[] = [];
+    const handle = startFileReload(
+      [
+        {
+          path: '/cfg/datasources.yaml',
+          reload: () => {
+            reloadCalls += 1;
+          },
+        },
+      ],
+      {
+        intervalSeconds: 30,
+        statImpl: (p) => (mtimes.has(p) ? { mtimeMs: mtimes.get(p)! } : null),
+        log: (m) => warnings.push(m),
+      },
+    );
+    mtimes.delete('/cfg/datasources.yaml');
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reloadCalls).toBe(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('missing');
+    handle.stop();
+  });
 });

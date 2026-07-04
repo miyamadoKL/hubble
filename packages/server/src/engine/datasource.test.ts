@@ -302,7 +302,7 @@ describe('schedule datasource persistence', () => {
       engines,
       defaultDatasourceId,
       estimate,
-      rbac: loadRbac({}),
+      getRbac: () => loadRbac({}),
       guardConfig: {
         mode: 'off',
         maxScanBytes: 0,
