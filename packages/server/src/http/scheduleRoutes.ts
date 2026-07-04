@@ -216,8 +216,11 @@ export function scheduleRoutes(services: Services): App {
     const id = c.req.param('id');
     const existing = await services.schedules.get(owner, id);
     if (!existing) throw AppError.notFound(`Schedule ${id} not found`);
-    requireDatasourceAccess(c.var.principal.role, existing.datasourceId);
     const body = await parseJsonBody(c, updateScheduleRequestSchema);
+    const disableOnly = Object.keys(body).length === 1 && body.enabled === false;
+    if (!disableOnly) {
+      requireDatasourceAccess(c.var.principal.role, existing.datasourceId);
+    }
 
     // Re-validate when the statement or its execution context changes.
     // 実行に影響しうるフィールドが変更された場合のみ、コストのかかる再検証を行う。

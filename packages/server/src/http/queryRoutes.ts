@@ -303,6 +303,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     }
 
     if (needsReexec && allowsReexec) {
+      requireDatasourceAccess(principal.role, exec.datasourceId);
       const ioExplain = engine.ioExplainExecution?.({
         statement: exec.statement,
         catalog,

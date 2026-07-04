@@ -25,6 +25,17 @@ const nationScenario: FakeScenario = {
   ],
 };
 
+/** 1 行 1 ページで truncated を作るシナリオ。 */
+function manyRowScenario(rowCount: number): FakeScenario {
+  const columns = [{ name: 'id', type: 'bigint' }];
+  const pages = Array.from({ length: rowCount }, (_, i) => ({
+    columns: i === 0 ? columns : undefined,
+    data: [[i]],
+    state: i === rowCount - 1 ? 'FINISHED' : 'RUNNING',
+  }));
+  return { match: 'many', trinoId: 'many', pages };
+}
+
 const catalogScenario: FakeScenario = {
   match: 'system.metadata.catalogs',
   trinoId: 'catalogs',
@@ -261,7 +272,52 @@ describe('role.datasources enforcement', () => {
     await ctx.services.shutdown();
   });
 
-  it('returns 404 when patching an existing schedule after datasource access is lost', async () => {
+  it('returns 404 for CSV download re-exec when role no longer allows the query datasource', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-ds-rbac-csv-'));
+    try {
+      writeDatasources(dir);
+      writeFileSync(
+        join(dir, 'rbac.yaml'),
+        `roles:
+  none:
+    permissions: [query.write]
+    datasources: []
+assignments:
+  - user: runner
+    role: none
+defaultRole: none
+`,
+        'utf8',
+      );
+      const ctx = await createTestContext({
+        cwd: dir,
+        env: { AUTH_MODE: 'proxy', AUTH_USER_MAPPING: 'user', TRINO_SECRET: 'hidden' },
+        remoteAddress: () => '127.0.0.1',
+        scenarios: [manyRowScenario(12)],
+      });
+      const exec = ctx.services.registry.submit({
+        statement: 'SELECT * FROM many',
+        ctx: { user: 'runner', catalog: 'tpch', schema: 'tiny' },
+        datasourceId: 'trino-prod',
+        maxRows: 3,
+      });
+      await exec.settled;
+      expect(exec.truncated).toBe(true);
+
+      const postsBefore = ctx.fake.requests.filter((r) => r.method === 'POST').length;
+      const csvRes = await ctx.app.request(`/api/queries/${exec.queryId}/download.csv`, {
+        headers: proxyHeaders('runner'),
+      });
+      expect(csvRes.status).toBe(404);
+      expect(ctx.fake.requests.filter((r) => r.method === 'POST').length).toBe(postsBefore);
+
+      await ctx.services.shutdown();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows disable-only PATCH but rejects re-enable when datasource access is lost', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'hubble-ds-rbac-patch-'));
     try {
       writeDatasources(dir);
@@ -291,12 +347,19 @@ defaultRole: none
         enabled: false,
         datasourceId: 'trino-prod',
       });
-      const patchRes = await ctx.app.request(`/api/schedules/${record.id}`, {
+      const disableRes = await ctx.app.request(`/api/schedules/${record.id}`, {
+        method: 'PATCH',
+        headers: proxyHeaders('runner'),
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(disableRes.status).toBe(200);
+
+      const enableRes = await ctx.app.request(`/api/schedules/${record.id}`, {
         method: 'PATCH',
         headers: proxyHeaders('runner'),
         body: JSON.stringify({ enabled: true }),
       });
-      expect(patchRes.status).toBe(404);
+      expect(enableRes.status).toBe(404);
       await ctx.services.shutdown();
     } finally {
       rmSync(dir, { recursive: true, force: true });
