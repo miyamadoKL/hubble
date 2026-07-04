@@ -36,6 +36,7 @@ export function startFileReload(
   const log = options.log ?? (() => {});
   const logError = options.logError ?? (() => {});
   const lastMtime = new Map<string, number>();
+  const missingWarned = new Set<string>();
   for (const file of files) {
     const st = stat(file.path);
     if (st) lastMtime.set(file.path, st.mtimeMs);
@@ -60,10 +61,23 @@ export function startFileReload(
     let changed = false;
     for (const file of files) {
       const st = stat(file.path);
-      if (!st) continue;
       const prev = lastMtime.get(file.path);
+      if (!st) {
+        if (prev !== undefined) {
+          lastMtime.delete(file.path);
+          if (!missingWarned.has(file.path)) {
+            missingWarned.add(file.path);
+            log(`config file '${file.path}' is missing; keeping current config`);
+          }
+        }
+        continue;
+      }
+      if (missingWarned.has(file.path)) {
+        missingWarned.delete(file.path);
+      }
       if (prev === undefined) {
         lastMtime.set(file.path, st.mtimeMs);
+        changed = true;
         continue;
       }
       if (st.mtimeMs !== prev) {
