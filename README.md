@@ -204,13 +204,15 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo u
 （`AUTH_SSO_HEADER_GROUPS`、既定 `x-forwarded-groups`）のメンバーシップと照合します。
 Google Workspace のグループを使う場合は、oauth2-proxy の Google provider で
 グループ解決を有効にする必要があります。
-スケジュール実行時のロール解決は owner 文字列のみを使います
-（`{ user: owner, email: owner に '@' が含まれるとき }`）。そのため
-`AUTH_USER_MAPPING=email-localpart` では email 系 assignment がスケジュール実行に
-効きません。`group` 割り当てもスケジュール実行には適用されず `defaultRole` 等へ
-落ちます。スケジュールでもロールを固定したい運用では `email` / `user` での割り当てを
-使ってください。email 系 assignment をスケジュールでも使う場合は owner をメールアドレス
-形式で保存するか、`user` / `email` マッピングを使ってください。
+スケジュール実行時のロール解決は、スケジュールの作成/更新時に保存された
+principal スナップショット（user、email、groups）を使います。
+作成/更新時点で email や groups が解決されていれば、email 系 assignment と
+`group` assignment はスケジュール実行にも適用されます。
+`principal_snapshot` がない旧レコードは、従来どおり owner 文字列のみから
+`{ user: owner, email: owner に '@' が含まれるとき }` を復元します。
+この場合、email localpart の owner では email 系 assignment が効かず、`group`
+assignment も適用されません。
+owner がスケジュールを再保存すると、その時点の principal でスナップショットが更新されます。
 設定変更はプロセス再起動後に反映されます。
 
 #### 運用ビュー（Operations）

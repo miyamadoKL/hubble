@@ -220,14 +220,15 @@ matched against membership in the `X-Forwarded-Groups` header
 (`AUTH_SSO_HEADER_GROUPS`, default `x-forwarded-groups`) supplied by
 oauth2-proxy or similar. To use Google Workspace groups, group resolution must
 be enabled in oauth2-proxy's Google provider.
-Role resolution for scheduled runs uses only the owner string
-(`{ user: owner, email: owner when it contains '@' }`). So with
-`AUTH_USER_MAPPING=email-localpart`, email-based assignments don't take effect
-for scheduled runs. `group` assignments likewise don't apply to scheduled runs
-and fall back to `defaultRole` etc. For deployments that need a fixed role for
-scheduled runs too, use `email` / `user` assignments. To use email-based
-assignment for scheduled runs as well, store the owner in email-address form,
-or use the `user` / `email` mapping.
+Role resolution for scheduled runs uses the principal snapshot (`user`,
+`email`, `groups`) saved when the schedule is created or updated. If `email`
+or `groups` were resolved at save time, email-based assignments and `group`
+assignments also apply to scheduled runs. Legacy records without
+`principal_snapshot` keep the previous owner-string fallback
+(`{ user: owner, email: owner when it contains '@' }`), so an email-localpart
+owner still won't match email-based assignments, and `group` assignments don't
+apply. When the owner saves the schedule again, the snapshot is refreshed from
+the current principal.
 Configuration changes take effect after a process restart.
 
 #### Operations view

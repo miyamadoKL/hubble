@@ -14,10 +14,20 @@
  * リポジトリ層であり、上位の routes 層が契約型 `Schedule`（`nextRunAt` /
  * `lastRun` の付与）への変換や、cron スケジューラーのポーリングを担当する。
  */
+import { z } from 'zod';
 import type { RetryPolicy, ScheduleRunStatus, ScheduleRunSummary } from '@hubble/contracts';
 import { retryPolicySchema } from '@hubble/contracts';
+import type { PrincipalIdentity } from '../auth/principal';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
+
+const schedulePrincipalSnapshotSchema = z.object({
+  user: z.string().min(1),
+  email: z.string().min(1).optional(),
+  groups: z.array(z.string().min(1)).optional(),
+});
+
+export type SchedulePrincipalSnapshot = z.infer<typeof schedulePrincipalSnapshotSchema>;
 
 /**
  * A schedule as stored, without the response-only derived fields (`nextRunAt`,
@@ -46,6 +56,11 @@ export interface ScheduleRecord {
   retry: RetryPolicy;
   /** 実行先データソース id（作成/更新時に解決して永続化）。 */
   datasourceId: string;
+  /**
+   * 作成/更新時点の principal スナップショット。旧レコードでは null で、その場合は
+   * owner 文字列からの従来フォールバックを使う。
+   */
+  principalSnapshot: SchedulePrincipalSnapshot | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -66,6 +81,8 @@ export interface CreateScheduleInput {
   retry?: RetryPolicy;
   /** 実行先データソース id（ルート層で省略時は既定に解決済み）。 */
   datasourceId: string;
+  /** 作成時点の principal。email/group assignment を実行時にも再現するため保存する。 */
+  principalSnapshot?: PrincipalIdentity;
 }
 
 /**
@@ -83,6 +100,11 @@ export interface UpdateScheduleInput {
   enabled?: boolean;
   retry?: RetryPolicy;
   datasourceId?: string;
+  /**
+   * owner 本人がスケジュールを更新した時点の principal。
+   * 今回はそれ以外の契機で email/groups を再解決しない。
+   */
+  principalSnapshot?: PrincipalIdentity;
 }
 
 /**
@@ -103,8 +125,49 @@ interface ScheduleRow {
   retry_backoff_seconds: number;
   retry_backoff_multiplier: number;
   datasource_id: string;
+  principal_snapshot: string | null;
   created_at: string;
   updated_at: string;
+}
+
+type InvalidPrincipalSnapshotReason = 'json-parse' | 'schema-validate';
+
+function warnInvalidPrincipalSnapshot(
+  scheduleId: string,
+  reason: InvalidPrincipalSnapshotReason,
+): void {
+  console.warn(`schedule principal_snapshot ignored: schedule_id=${scheduleId} reason=${reason}`);
+}
+
+function parsePrincipalSnapshot(
+  scheduleId: string,
+  raw: string | null,
+): SchedulePrincipalSnapshot | null {
+  if (raw === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    warnInvalidPrincipalSnapshot(scheduleId, 'json-parse');
+    return null;
+  }
+  const result = schedulePrincipalSnapshotSchema.safeParse(parsed);
+  if (!result.success) {
+    warnInvalidPrincipalSnapshot(scheduleId, 'schema-validate');
+    return null;
+  }
+  return result.data;
+}
+
+function serializePrincipalSnapshot(snapshot: PrincipalIdentity | null | undefined): string | null {
+  if (!snapshot) return null;
+  return JSON.stringify(
+    schedulePrincipalSnapshotSchema.parse({
+      user: snapshot.user,
+      ...(snapshot.email !== undefined ? { email: snapshot.email } : {}),
+      ...(snapshot.groups !== undefined ? { groups: snapshot.groups } : {}),
+    }),
+  );
 }
 
 // DB 行（snake_case でフラットな retry_* 列）をドメインオブジェクト
@@ -130,6 +193,7 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
       backoffMultiplier: Number(row.retry_backoff_multiplier),
     }),
     datasourceId: row.datasource_id,
+    principalSnapshot: parsePrincipalSnapshot(row.id, row.principal_snapshot),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -200,6 +264,7 @@ export class ScheduleRepository {
       enabled: input.enabled ?? true,
       retry,
       datasourceId: input.datasourceId,
+      principalSnapshot: input.principalSnapshot ?? null,
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -207,8 +272,8 @@ export class ScheduleRepository {
       `INSERT INTO schedules
          (id, owner, name, statement, catalog, schema, cron, enabled,
           retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
-          datasource_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          datasource_id, principal_snapshot, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertParams(record),
     );
     return record;
@@ -237,13 +302,17 @@ export class ScheduleRepository {
       enabled: input.enabled ?? existing.enabled,
       retry: input.retry ?? existing.retry,
       datasourceId: input.datasourceId ?? existing.datasourceId,
+      principalSnapshot:
+        input.principalSnapshot !== undefined
+          ? input.principalSnapshot
+          : existing.principalSnapshot,
       updatedAt: new Date().toISOString(),
     };
     await this.db.run(
       `UPDATE schedules SET
          name = ?, statement = ?, catalog = ?, schema = ?, cron = ?, enabled = ?,
          retry_max_attempts = ?, retry_backoff_seconds = ?, retry_backoff_multiplier = ?,
-         datasource_id = ?, updated_at = ?
+         datasource_id = ?, principal_snapshot = ?, updated_at = ?
        WHERE id = ? AND owner = ?`,
       [
         merged.name,
@@ -256,6 +325,7 @@ export class ScheduleRepository {
         merged.retry.backoffSeconds,
         merged.retry.backoffMultiplier,
         merged.datasourceId,
+        serializePrincipalSnapshot(merged.principalSnapshot),
         merged.updatedAt,
         id,
         owner,
@@ -295,6 +365,7 @@ function insertParams(s: ScheduleRecord): SqlParam[] {
     s.retry.backoffSeconds,
     s.retry.backoffMultiplier,
     s.datasourceId,
+    serializePrincipalSnapshot(s.principalSnapshot),
     s.createdAt,
     s.updatedAt,
   ];
