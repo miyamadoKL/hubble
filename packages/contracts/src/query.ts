@@ -25,8 +25,10 @@ export const createQueryRequestSchema = z.object({
   /** Trino session properties forwarded as `X-Trino-Session`. */
   // Trino セッションプロパティ。`X-Trino-Session` ヘッダーとして転送される。
   sessionProperties: z.record(z.string(), z.string()).optional(),
-  /** Overrides `X-Trino-Source` (default 'hubble'). */
-  // `X-Trino-Source` ヘッダーの値を上書きする（既定値は 'hubble'）。
+  /**
+   * @deprecated Server ignores client-specified source; X-Trino-Source is set by the engine.
+   */
+  // 非推奨。サーバーはクライアント指定を無視し、エンジンが X-Trino-Source を決める。
   source: z.string().optional(),
   // このクエリがどのノートブックから実行されたか（履歴記録用）。
   notebookId: z.string().optional(),
@@ -42,6 +44,12 @@ export const createQueryRequestSchema = z.object({
 
 /** クエリ実行リクエストの推論型。 */
 export type CreateQueryRequest = z.infer<typeof createQueryRequestSchema>;
+
+/**
+ * 打ち切り結果の CSV 完全ダウンロードに再実行が必要だが、
+ * ステートメント分類またはデータソース状態の理由で再実行できないときのエラーコード（HTTP 422）。
+ */
+export const CSV_REEXEC_UNAVAILABLE = 'CSV_REEXEC_UNAVAILABLE';
 
 /**
  * Lifecycle state of a query.
@@ -131,6 +139,12 @@ export const querySnapshotSchema = z.object({
   /** Datasource this query runs against. */
   // このクエリが実行されたデータソース id。
   datasourceId: z.string().optional(),
+  /**
+   * True when a truncated or in-flight CSV download may re-execute the statement
+   * for full results (read-confirmed statement and pinned engine still open).
+   */
+  // 打ち切りまたは実行中の CSV で全文取得のための再実行が可能かどうか。
+  csvReexecAllowed: z.boolean().optional(),
 });
 /** クエリスナップショットの推論型。 */
 export type QuerySnapshot = z.infer<typeof querySnapshotSchema>;

@@ -69,6 +69,7 @@ export function createMysqlStatementClient(
     if (exec.released) return;
     exec.released = true;
     executions.delete(exec.queryId);
+    exec.reader.dispose();
     await restoreAndRelease(exec);
   };
 
@@ -77,6 +78,7 @@ export function createMysqlStatementClient(
     if (exec.released) return;
     exec.released = true;
     executions.delete(exec.queryId);
+    exec.reader.dispose();
     exec.conn.destroy();
   };
 
@@ -101,6 +103,7 @@ export function createMysqlStatementClient(
       const queryId = nextQueryId('mysql');
       let conn: PoolConnection | undefined;
       let sessionReadOnlyApplied = false;
+      let reader: RowStreamReader | undefined;
       try {
         ({ conn, sessionReadOnlyApplied } = await checkout());
         const threadId = conn.threadId ?? 0;
@@ -120,7 +123,7 @@ export function createMysqlStatementClient(
           setTimeout(resolve, 0);
         });
 
-        const reader = new RowStreamReader(stream);
+        reader = new RowStreamReader(stream, { batchSize: batchSize() });
         const { rows, done } = await reader.readBatch(batchSize());
         const exec: MysqlExecution = {
           queryId,
@@ -138,6 +141,7 @@ export function createMysqlStatementClient(
         const nextUri = done ? undefined : queryId;
         return buildPage(queryId, columns, rows, nextUri, exec.rowCount);
       } catch (err) {
+        reader?.dispose();
         if (conn) {
           if (sessionReadOnlyApplied) {
             await applyMysqlSessionReadOnly(conn, options.datasourceReadOnly).catch(() => {});

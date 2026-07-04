@@ -8,6 +8,7 @@
 import type { EstimateResult, EstimateStatus } from '@hubble/contracts';
 import { AppError, TrinoQueryError, TrinoTransportError } from '../errors';
 import { parseExplainIoJson } from '../query/explainIo';
+import { parseExplainStatement } from '../query/explainStatement';
 import { computeVerdict, type GuardLimits } from '../query/guardVerdict';
 import type { StatementClient } from './types';
 import type { TrinoRequestContext } from '../trino/types';
@@ -37,11 +38,15 @@ export async function runTrinoEstimate(
 ): Promise<EstimateResult> {
   const now = options.now ?? Date.now;
   const start = now();
+  // EXPLAIN ANALYZE は IO explain の対象外なので、内側ステートメントだけ見積もる。
+  const explainParsed = parseExplainStatement(statement);
+  const estimateStatement =
+    explainParsed?.hasAnalyze && explainParsed.inner.length > 0 ? explainParsed.inner : statement;
   let status: EstimateStatus;
   let parsed: ReturnType<typeof parseExplainIoJson>;
   try {
     const cell = await fetchTrinoIoExplainCell(
-      statement,
+      estimateStatement,
       ctx,
       options.client,
       options.estimateTimeoutMs,

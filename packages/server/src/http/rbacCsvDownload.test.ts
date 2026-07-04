@@ -8,8 +8,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FieldPacket } from 'mysql2/promise';
 import type { FieldDef } from 'pg';
-import type { ApiError } from '@hubble/contracts';
-import { WRITE_NOT_ALLOWED } from '@hubble/contracts';
+import { CSV_REEXEC_HEADER } from '../query/csv';
 import { createTestContext } from '../test/harness';
 import { emptySessionMutations } from '../trino/types';
 import { createMysqlEngine } from '../engine/mysql/engine';
@@ -143,26 +142,43 @@ function proxyHeaders(user: string): Record<string, string> {
 }
 
 describe('CSV download write enforcement', () => {
-  it('returns 403 WRITE_NOT_ALLOWED before re-exec for INSERT owned by readonly user', async () => {
+  it('does not re-exec INSERT for readonly user (buffered rows only)', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'hubble-rbac-csv-'));
     writeRbac(tempDir);
     const ctx = await createTestContext({
       cwd: tempDir,
       env: { AUTH_MODE: 'proxy', AUTH_USER_MAPPING: 'user' },
       remoteAddress: () => '127.0.0.1',
+      scenarios: [
+        {
+          match: 'insert',
+          trinoId: 'insert',
+          pages: [
+            {
+              columns: [{ name: 'n', type: 'bigint' }],
+              data: [[1], [2]],
+              state: 'FINISHED',
+            },
+          ],
+        },
+      ],
     });
 
     const exec = ctx.services.registry.submit({
-      statement: 'INSERT INTO t VALUES (1)',
+      statement: 'INSERT INTO t SELECT * FROM insert',
       ctx: { source: 'test', user: 'reader' },
+      maxRows: 1,
     });
+    await exec.settled;
+    expect(exec.truncated).toBe(true);
 
+    const postsBefore = ctx.fake.requests.filter((r) => r.method === 'POST').length;
     const res = await ctx.app.request(`/api/queries/${exec.queryId}/download.csv`, {
       headers: proxyHeaders('reader'),
     });
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as ApiError;
-    expect(body.error.code).toBe(WRITE_NOT_ALLOWED);
+    expect(res.status).toBe(200);
+    expect(res.headers.get(CSV_REEXEC_HEADER)).toBe('unavailable');
+    expect(ctx.fake.requests.filter((r) => r.method === 'POST').length).toBe(postsBefore);
 
     await ctx.services.shutdown();
   });

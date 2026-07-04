@@ -32,9 +32,16 @@ import { hasQueryWrite } from '../rbac/check';
 import { effectiveGuard, effectiveGuardLimitsSnapshot } from '../rbac/guard';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import { disabledEstimate } from '../query/guard';
+import { effectiveMaxRows, validateSessionProperties } from './queryRequest';
 import { intParam, parseJsonBody } from './validate';
 import { buildReplayEvents, encodeSseEvent, SSE_KEEPALIVE } from '../query/sse';
-import { streamQueryCsv } from '../query/csv';
+import {
+  CSV_REEXEC_HEADER,
+  CSV_TRUNCATED_HEADER,
+  needsCsvReexec,
+  statementAllowsCsvReexec,
+  streamQueryCsv,
+} from '../query/csv';
 
 // SSE 接続が生きていることをクライアント側の中間プロキシ等に伝えるための keepalive 送信間隔。
 const KEEPALIVE_INTERVAL_MS = 15_000;
@@ -83,13 +90,13 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const principal = c.var.principal;
     const catalog = body.catalog ?? services.config.defaults.catalog;
     const schema = body.schema ?? services.config.defaults.schema;
+    // body.source は非推奨。クライアント指定は無視し、エンジンの X-Trino-Source を使う。
     const ctx: TrinoRequestContext = {
       catalog,
       schema,
-      source: body.source,
       // Impersonate the authenticated principal for this user query.
       user: principal.user,
-      sessionProperties: body.sessionProperties,
+      sessionProperties: validateSessionProperties(body.sessionProperties),
     };
 
     const { engine } = resolveEngine(
@@ -151,7 +158,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       owner: principal.user,
       datasourceId: body.datasourceId,
       sessionReadOnly: !hasQueryWrite(principal.role),
-      maxRows: body.maxRows,
+      maxRows: effectiveMaxRows(body.maxRows, services.config.query.maxRows),
       overflowMode,
       notebookId: body.notebookId,
       cellId: body.cellId,
@@ -279,26 +286,38 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const csvName = `${exec.queryId}.csv`;
     const filename = zip ? `${exec.queryId}.zip` : `${csvName}${gzip ? '.gz' : ''}`;
 
-    const { engine } = resolveEngine(
-      services.engines,
-      exec.datasourceId,
-      services.defaultDatasourceId,
-    );
+    const engine = exec.engine;
     const catalog = exec.ctx.catalog ?? services.config.defaults.catalog;
     const schema = exec.ctx.schema ?? services.config.defaults.schema;
-    const ioExplain = engine.ioExplainExecution?.({
-      statement: exec.statement,
-      catalog,
-      schema,
-      principal: principal.user,
-    });
-    await assertQueryWriteAllowed({
-      statement: exec.statement,
-      role: principal.role,
-      ioExplainClient: ioExplain?.client,
-      ioExplainCtx: ioExplain?.ctx,
-      ioExplainTimeoutMs: services.config.guard.estimateTimeoutMs,
-    });
+    const needsReexec = needsCsvReexec(exec);
+    const allowsReexec = statementAllowsCsvReexec(exec);
+
+    if (needsReexec && allowsReexec && exec.engine.isClosed()) {
+      throw AppError.csvReexecUnavailable(
+        'Full CSV download requires re-execution but the original datasource connection is no longer available.',
+      );
+    }
+
+    if (needsReexec && allowsReexec) {
+      const ioExplain = engine.ioExplainExecution?.({
+        statement: exec.statement,
+        catalog,
+        schema,
+        principal: principal.user,
+      });
+      await assertQueryWriteAllowed({
+        statement: exec.statement,
+        role: principal.role,
+        ioExplainClient: ioExplain?.client,
+        ioExplainCtx: ioExplain?.ctx,
+        ioExplainTimeoutMs: services.config.guard.estimateTimeoutMs,
+      });
+    }
+
+    if (needsReexec && !allowsReexec) {
+      c.header(CSV_REEXEC_HEADER, 'unavailable');
+      if (exec.truncated) c.header(CSV_TRUNCATED_HEADER, 'true');
+    }
 
     c.header('Content-Type', zip ? 'application/zip' : 'text/csv; charset=utf-8');
     c.header('Content-Disposition', `attachment; filename="${filename}"`);
@@ -313,10 +332,10 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
       const csv = streamQueryCsv(exec, {
-        client: engine.downloadClient({
+        downloadClientOptions: {
           user: exec.ctx.user,
           sessionReadOnly: !hasQueryWrite(principal.role),
-        }),
+        },
         signal: ac.signal,
       });
 

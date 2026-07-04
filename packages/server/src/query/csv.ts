@@ -14,9 +14,20 @@
  * 呼び出し、返された AsyncGenerator をレスポンスストリームへ接続する。
  * Trino との通信は execution.ts と同様に `TrinoClient` に委譲する。
  */
-import type { StatementClient } from '../engine/types';
+import type { DownloadClientOptions, StatementClient } from '../engine/types';
+import { AppError } from '../errors';
+import { classifyStatementWrite } from '../rbac/writeCheck';
 import { emptySessionMutations, type TrinoColumn, type TrinoRequestContext } from '../trino/types';
 import type { QueryExecution } from './execution';
+
+/** バッファのみで済むか、全文取得のための再実行が必要か。 */
+export function needsCsvReexec(exec: QueryExecution): boolean {
+  return !exec.isTerminal || exec.truncated;
+}
+
+/** 再実行が必要だがバッファのみ返す場合に付与するレスポンスヘッダー名。 */
+export const CSV_REEXEC_HEADER = 'X-Hubble-Csv-Reexec';
+export const CSV_TRUNCATED_HEADER = 'X-Hubble-Csv-Truncated';
 
 /** `X-Trino-Source` used by CSV re-execution queries (kept out of history). */
 // CSV ダウンロードのための再実行クエリに付与するソース識別子。
@@ -130,9 +141,13 @@ export async function* streamCsv(
 }
 
 export interface CsvDownloadDeps {
-  /** Client used to issue the dedicated re-execution query (download source tag). */
-  // 再実行クエリの発行に使うステートメントクライアント。
-  client: StatementClient;
+  /**
+   * 再実行クエリの発行に使うステートメントクライアント。
+   * 省略時は `exec.downloadClient()` で開始時に固定したエンジンから生成する。
+   */
+  client?: StatementClient;
+  /** ダウンロード用クライアント生成時のオプション（client 省略時のみ使用）。 */
+  downloadClientOptions?: DownloadClientOptions;
   /** Aborts the re-execution fetch when the HTTP client disconnects. */
   // HTTP クライアントが切断された際に再実行クエリを中断させるための signal。
   signal?: AbortSignal;
@@ -163,15 +178,33 @@ export interface CsvDownloadDeps {
  *   再実行は `hubble-download` ソースを使い、クエリ履歴には記録されない。
  * - HTTP クライアントの切断（Abort）は DELETE で再実行クエリをキャンセルする。
  */
+/** 読み取り確認済みステートメントか（再実行の前提条件）。 */
+export function statementAllowsCsvReexec(exec: QueryExecution): boolean {
+  return classifyStatementWrite(exec.statement) === 'allow';
+}
+
 export function streamQueryCsv(
   exec: QueryExecution,
   deps: CsvDownloadDeps,
   opts: { flushEvery?: number } = {},
 ): AsyncGenerator<string> {
-  if (exec.isTerminal && !exec.truncated) {
+  if (!needsCsvReexec(exec)) {
     return streamCsv(exec, opts);
   }
+  if (!statementAllowsCsvReexec(exec)) {
+    return streamCsv(exec, opts);
+  }
+  if (exec.engine.isClosed()) {
+    throw AppError.csvReexecUnavailable(
+      'Full CSV download requires re-execution but the original datasource connection is no longer available.',
+    );
+  }
   return streamCsvReexec(exec, deps, opts);
+}
+
+/** 再実行用クライアントを解決する（固定エンジン由来）。 */
+function resolveReexecClient(exec: QueryExecution, deps: CsvDownloadDeps): StatementClient {
+  return deps.client ?? exec.downloadClient(deps.downloadClientOptions);
 }
 
 /**
@@ -188,7 +221,8 @@ export async function* streamCsvReexec(
   opts: { flushEvery?: number } = {},
 ): AsyncGenerator<string> {
   const flushEvery = opts.flushEvery ?? 500;
-  const { client, signal } = deps;
+  const client = resolveReexecClient(exec, deps);
+  const { signal } = deps;
   // Inherit the original execution context but force the download source so the
   // re-run is attributable and excluded from history.
   // 元の実行コンテキストを引き継ぎつつ、ソースだけを download 用に上書きし、

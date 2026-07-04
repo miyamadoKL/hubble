@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Catalog, DatasourceKind } from '@hubble/contracts';
 import { MetadataService } from './service';
-import type { QueryEngine } from '../engine/types';
+import type { MetadataOptions, QueryEngine } from '../engine/types';
 
 /** A counting fake engine with controllable results. */
 class FakeEngine implements QueryEngine {
@@ -34,7 +34,8 @@ class FakeEngine implements QueryEngine {
   async validate(): Promise<{ ok: true }> {
     return { ok: true };
   }
-  async listCatalogs(): Promise<Catalog[]> {
+  async listCatalogs(opts: MetadataOptions): Promise<Catalog[]> {
+    this.lastPrincipal = opts.principal;
     this.catalogCalls += 1;
     if (this.failNext) {
       this.failNext = false;
@@ -42,7 +43,8 @@ class FakeEngine implements QueryEngine {
     }
     return Promise.resolve(this.catalogs);
   }
-  async listSchemas(): Promise<{ name: string }[]> {
+  async listSchemas(_catalog: string, opts: MetadataOptions): Promise<{ name: string }[]> {
+    this.lastPrincipal = opts.principal;
     this.schemaCalls += 1;
     return Promise.resolve([{ name: 's1' }]);
   }
@@ -55,8 +57,15 @@ class FakeEngine implements QueryEngine {
   async sampleTable(): Promise<never> {
     throw new Error('not used');
   }
+
+  lastPrincipal?: string;
   async close(): Promise<void> {}
+  isClosed(): boolean {
+    return false;
+  }
 }
+
+const PRINCIPAL = 'alice';
 
 function svc(engine: FakeEngine, ttlMs: number, clock: { t: number }): MetadataService {
   const engines = new Map<string, QueryEngine>([[engine.datasourceId, engine]]);
@@ -69,13 +78,14 @@ describe('MetadataService TTL', () => {
     const clock = { t: 1000 };
     const service = svc(engine, 5000, clock);
 
-    const first = await service.getCatalogs();
+    const first = await service.getCatalogs(PRINCIPAL);
     expect(first.source).toBe('live');
     expect(first.stale).toBe(false);
     expect(engine.catalogCalls).toBe(1);
+    expect(engine.lastPrincipal).toBe(PRINCIPAL);
 
     clock.t += 1000; // within TTL
-    const second = await service.getCatalogs();
+    const second = await service.getCatalogs(PRINCIPAL);
     expect(second.source).toBe('cache');
     expect(second.stale).toBe(false);
     expect(engine.catalogCalls).toBe(1); // no re-fetch
@@ -88,12 +98,12 @@ describe('MetadataService stale-while-revalidate', () => {
     const clock = { t: 0 };
     const service = svc(engine, 1000, clock);
 
-    await service.getCatalogs(); // populate
+    await service.getCatalogs(PRINCIPAL); // populate
     expect(engine.catalogCalls).toBe(1);
 
     clock.t += 5000; // now stale
     engine.catalogs = [{ name: 'tpch' }, { name: 'mysql' }];
-    const stale = await service.getCatalogs();
+    const stale = await service.getCatalogs(PRINCIPAL);
     expect(stale.source).toBe('cache');
     expect(stale.stale).toBe(true);
     expect(stale.items).toHaveLength(1); // old value served
@@ -101,7 +111,7 @@ describe('MetadataService stale-while-revalidate', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(engine.catalogCalls).toBe(2);
 
-    const fresh = await service.getCatalogs();
+    const fresh = await service.getCatalogs(PRINCIPAL);
     expect(fresh.source).toBe('cache');
     expect(fresh.stale).toBe(false);
     expect(fresh.items).toHaveLength(2);
@@ -111,15 +121,33 @@ describe('MetadataService stale-while-revalidate', () => {
     const engine = new FakeEngine();
     const clock = { t: 0 };
     const service = svc(engine, 1000, clock);
-    await service.getCatalogs();
+    await service.getCatalogs(PRINCIPAL);
 
     clock.t += 5000;
     engine.failNext = true;
-    const stale = await service.getCatalogs();
+    const stale = await service.getCatalogs(PRINCIPAL);
     expect(stale.stale).toBe(true);
     await new Promise((r) => setTimeout(r, 0));
-    const retry = await service.getCatalogs();
+    const retry = await service.getCatalogs(PRINCIPAL);
     expect(retry.items).toHaveLength(1);
+  });
+});
+
+describe('MetadataService per-principal cache', () => {
+  it('keeps separate caches for different principals', async () => {
+    const engine = new FakeEngine();
+    const clock = { t: 0 };
+    const service = svc(engine, 100000, clock);
+
+    await service.getCatalogs('alice');
+    expect(engine.catalogCalls).toBe(1);
+
+    await service.getCatalogs('bob');
+    expect(engine.catalogCalls).toBe(2);
+
+    const aliceAgain = await service.getCatalogs('alice');
+    expect(aliceAgain.source).toBe('cache');
+    expect(engine.catalogCalls).toBe(2);
   });
 });
 
@@ -128,14 +156,14 @@ describe('MetadataService.refresh', () => {
     const engine = new FakeEngine();
     const clock = { t: 0 };
     const service = svc(engine, 100000, clock);
-    await service.getCatalogs();
+    await service.getCatalogs(PRINCIPAL);
     expect(engine.catalogCalls).toBe(1);
 
     engine.catalogs = [{ name: 'x' }];
-    await service.refresh();
+    await service.refresh(PRINCIPAL);
     expect(engine.catalogCalls).toBe(2);
 
-    const after = await service.getCatalogs();
+    const after = await service.getCatalogs(PRINCIPAL);
     expect(after.source).toBe('cache');
     expect(after.items).toEqual([{ name: 'x' }]);
   });

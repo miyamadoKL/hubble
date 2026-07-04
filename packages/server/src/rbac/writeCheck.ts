@@ -4,6 +4,7 @@
 import { WRITE_NOT_ALLOWED } from '@hubble/contracts';
 import { AppError } from '../errors';
 import { classifyIoPlanWrites } from '../query/explainIo';
+import { parseExplainStatement } from '../query/explainStatement';
 import { fetchTrinoIoExplainCell } from '../engine/trinoEstimate';
 import type { StatementClient } from '../engine/types';
 import type { TrinoRequestContext } from '../trino/types';
@@ -23,7 +24,7 @@ const WRITE_PREFIX_KEYWORDS = new Set([
   'GRANT',
 ]);
 
-const READ_FAST_KEYWORDS = new Set(['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'USE']);
+const READ_FAST_KEYWORDS = new Set(['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'USE']);
 
 /** ステートメント先頭の書き込み意図分類。 */
 export type StatementWriteClassification = 'allow' | 'deny' | 'explain';
@@ -159,6 +160,15 @@ export function classifyStatementWrite(statement: string): StatementWriteClassif
   if (WRITE_PREFIX_KEYWORDS.has(first)) return 'deny';
 
   if (first === 'SET' && tokens[1] === 'SESSION') return 'allow';
+
+  if (first === 'EXPLAIN') {
+    const parsed = parseExplainStatement(statement);
+    if (parsed?.hasAnalyze && parsed.inner.length > 0) {
+      return classifyStatementWrite(parsed.inner);
+    }
+    return 'allow';
+  }
+
   if (READ_FAST_KEYWORDS.has(first)) return 'allow';
 
   return 'explain';

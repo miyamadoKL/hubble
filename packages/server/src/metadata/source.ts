@@ -60,21 +60,21 @@ export class MetadataSource {
   }
 
   /** カタログ一覧を取得する (`system.metadata.catalogs` を名前順で全件取得)。 */
-  async fetchCatalogs(): Promise<Catalog[]> {
+  async fetchCatalogs(principal: string): Promise<Catalog[]> {
     const { rows } = await runToCompletion(
       this.client,
       'SELECT catalog_name FROM system.metadata.catalogs ORDER BY catalog_name',
-      this.ctx(),
+      this.ctx({ user: principal }),
     );
     return rows.map((r) => ({ name: toStr(r[0]) }));
   }
 
   /** 指定カタログのスキーマ一覧を取得する (`<catalog>.information_schema.schemata`)。 */
-  async fetchSchemas(catalog: string): Promise<SchemaItem[]> {
+  async fetchSchemas(catalog: string, principal: string): Promise<SchemaItem[]> {
     const { rows } = await runToCompletion(
       this.client,
       `SELECT schema_name FROM ${quoteIdent(catalog)}.information_schema.schemata ORDER BY schema_name`,
-      this.ctx(),
+      this.ctx({ user: principal }),
     );
     return rows.map((r) => ({ name: toStr(r[0]) }));
   }
@@ -84,12 +84,12 @@ export class MetadataSource {
    * (`<catalog>.information_schema.tables` を table_schema でフィルタ)。
    * table_type (BASE TABLE/VIEW 等) は空文字なら省略する。
    */
-  async fetchTables(catalog: string, schema: string): Promise<TableItem[]> {
+  async fetchTables(catalog: string, schema: string, principal: string): Promise<TableItem[]> {
     const { rows } = await runToCompletion(
       this.client,
       `SELECT table_name, table_type FROM ${quoteIdent(catalog)}.information_schema.tables ` +
         `WHERE table_schema = ${quoteString(schema)} ORDER BY table_name`,
-      this.ctx(),
+      this.ctx({ user: principal }),
     );
     return rows.map((r) => {
       const item: TableItem = { name: toStr(r[0]) };
@@ -105,13 +105,18 @@ export class MetadataSource {
    * フィルタし、ordinal_position 順 = テーブル定義上の並び順で返す)。
    * comment は null/空文字なら省略する。
    */
-  async fetchColumns(catalog: string, schema: string, table: string): Promise<Column[]> {
+  async fetchColumns(
+    catalog: string,
+    schema: string,
+    table: string,
+    principal: string,
+  ): Promise<Column[]> {
     const { rows } = await runToCompletion(
       this.client,
       `SELECT column_name, data_type, comment FROM ${quoteIdent(catalog)}.information_schema.columns ` +
         `WHERE table_schema = ${quoteString(schema)} AND table_name = ${quoteString(table)} ` +
         `ORDER BY ordinal_position`,
-      this.ctx(),
+      this.ctx({ user: principal }),
     );
     return rows.map((r) => {
       const col: Column = { name: toStr(r[0]), type: toStr(r[1]) };
@@ -134,12 +139,17 @@ export class MetadataSource {
     catalog: string,
     schema: string,
     table: string,
-    limit = 10,
+    limit: number,
+    principal: string,
   ): Promise<SampleRowsResponse> {
     const statement = `SELECT * FROM ${quoteIdent(catalog)}.${quoteIdent(schema)}.${quoteIdent(
       table,
     )} LIMIT ${limit}`;
-    const { columns, rows } = await runToCompletion(this.client, statement, this.ctx());
+    const { columns, rows } = await runToCompletion(
+      this.client,
+      statement,
+      this.ctx({ user: principal }),
+    );
     return {
       columns: toColumns(columns),
       rows,

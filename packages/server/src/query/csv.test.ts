@@ -1,6 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { afterEach, describe, it, expect } from 'vitest';
 import { gunzipSync } from 'node:zlib';
-import { csvField, csvRecord, streamCsvReexec } from './csv';
+import { CSV_REEXEC_UNAVAILABLE } from '@hubble/contracts';
+import type { ApiError } from '@hubble/contracts';
+import {
+  CSV_REEXEC_HEADER,
+  CSV_TRUNCATED_HEADER,
+  csvField,
+  csvRecord,
+  streamCsvReexec,
+} from './csv';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 
@@ -187,14 +198,7 @@ describe('CSV full-result re-execution (C-2)', () => {
     // assert the teardown DELETE fires (Hono's in-process request doesn't model
     // a real client disconnect reliably).
     const ac = new AbortController();
-    const gen = streamCsvReexec(
-      exec,
-      {
-        client: ctx.services.engines.get(ctx.services.defaultDatasourceId)!.downloadClient(),
-        signal: ac.signal,
-      },
-      { flushEvery: 1 },
-    );
+    const gen = streamCsvReexec(exec, { signal: ac.signal }, { flushEvery: 1 });
     // Pull the first chunk (flushEvery=1 yields after page 1, parked at a live
     // nextUri), then abort and close the generator to trigger its finally{}
     // teardown DELETE.
@@ -204,6 +208,161 @@ describe('CSV full-result re-execution (C-2)', () => {
 
     const deletes = ctx.fake.requests.filter((r) => r.method === 'DELETE');
     expect(deletes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('does not re-exec side-effect statements when truncated (buffered rows only)', async () => {
+    const ctx = await createTestContext({
+      scenarios: [manyRowScenario(12)],
+      configOverrides: { query: { maxRows: 3 } as never },
+    });
+    const res = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: 'INSERT INTO t SELECT * FROM many',
+        maxRows: 3,
+      }),
+    });
+    const { queryId } = (await res.json()) as { queryId: string };
+    const exec = ctx.services.registry.get(queryId)!;
+    await exec.settled;
+    expect(exec.truncated).toBe(true);
+
+    const postsBefore = ctx.fake.requests.filter((r) => r.method === 'POST').length;
+    const csvRes = await ctx.app.request(`/api/queries/${queryId}/download.csv`);
+    expect(csvRes.status).toBe(200);
+    expect(csvRes.headers.get(CSV_REEXEC_HEADER)).toBe('unavailable');
+    expect(csvRes.headers.get(CSV_TRUNCATED_HEADER)).toBe('true');
+    const body = await csvRes.text();
+    const lines = body.split('\r\n').filter((l) => l !== '');
+    expect(lines).toHaveLength(4); // header + 3 buffered rows
+    const postsAfter = ctx.fake.requests.filter((r) => r.method === 'POST').length;
+    expect(postsAfter).toBe(postsBefore);
+  });
+});
+
+let reloadTempDir: string | undefined;
+
+afterEach(() => {
+  if (reloadTempDir) {
+    rmSync(reloadTempDir, { recursive: true, force: true });
+    reloadTempDir = undefined;
+  }
+});
+
+describe('CSV re-exec engine pinning', () => {
+  it('uses the pinned engine after datasource id is removed from the registry', async () => {
+    reloadTempDir = mkdtempSync(join(tmpdir(), 'hubble-csv-reload-'));
+    writeFileSync(
+      join(reloadTempDir, 'datasources.yaml'),
+      `datasources:
+  - id: trino-a
+    type: trino
+    username: admin
+    baseUrl: http://trino.test
+`,
+      'utf8',
+    );
+    const ctx = await createTestContext({
+      env: { DATASOURCES_PATH: 'datasources.yaml' },
+      cwd: reloadTempDir,
+      scenarios: [manyRowScenario(15)],
+      configOverrides: { query: { maxRows: 4 } as never },
+    });
+    const res = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: 'SELECT * FROM many',
+        datasourceId: 'trino-a',
+        maxRows: 4,
+      }),
+    });
+    const { queryId } = (await res.json()) as { queryId: string };
+    const exec = ctx.services.registry.get(queryId)!;
+    await exec.settled;
+    expect(exec.truncated).toBe(true);
+    const pinnedEngine = exec.engine;
+
+    writeFileSync(
+      join(reloadTempDir, 'datasources.yaml'),
+      `datasources:
+  - id: trino-a
+    type: trino
+    username: admin
+    baseUrl: http://trino.test
+  - id: trino-b
+    type: trino
+    username: admin
+    baseUrl: http://trino.test
+`,
+      'utf8',
+    );
+    await ctx.services.reloadDatasources();
+    expect(ctx.services.engines.has('trino-a')).toBe(true);
+    expect(ctx.services.defaultDatasourceId).toBe('trino-a');
+
+    const postsBefore = ctx.fake.requests.filter((r) => r.method === 'POST').length;
+    const csvRes = await ctx.app.request(`/api/queries/${queryId}/download.csv`);
+    expect(csvRes.status).toBe(200);
+    const lines = (await csvRes.text()).split('\r\n').filter((l) => l !== '');
+    expect(lines).toHaveLength(16);
+    const reexecPost = ctx.fake.requests
+      .slice(postsBefore)
+      .find((r) => r.method === 'POST' && r.headers['x-trino-source'] === 'hubble-download');
+    expect(reexecPost).toBeDefined();
+    expect(pinnedEngine.isClosed()).toBe(false);
+    await ctx.services.shutdown();
+  });
+
+  it('returns CSV_REEXEC_UNAVAILABLE when the pinned engine was closed by reload', async () => {
+    reloadTempDir = mkdtempSync(join(tmpdir(), 'hubble-csv-reload-'));
+    writeFileSync(
+      join(reloadTempDir, 'datasources.yaml'),
+      `datasources:
+  - id: trino-a
+    type: trino
+    username: admin
+    baseUrl: http://trino.test
+`,
+      'utf8',
+    );
+    const ctx = await createTestContext({
+      env: { DATASOURCES_PATH: 'datasources.yaml' },
+      cwd: reloadTempDir,
+      scenarios: [manyRowScenario(10)],
+      configOverrides: { query: { maxRows: 2 } as never },
+    });
+    const res = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: 'SELECT * FROM many',
+        datasourceId: 'trino-a',
+        maxRows: 2,
+      }),
+    });
+    const { queryId } = (await res.json()) as { queryId: string };
+    await ctx.services.registry.get(queryId)!.settled;
+
+    writeFileSync(
+      join(reloadTempDir, 'datasources.yaml'),
+      `datasources:
+  - id: trino-a
+    type: trino
+    username: admin
+    baseUrl: http://trino-reloaded.test
+`,
+      'utf8',
+    );
+    await ctx.services.reloadDatasources();
+    expect(ctx.services.registry.get(queryId)!.engine.isClosed()).toBe(true);
+
+    const csvRes = await ctx.app.request(`/api/queries/${queryId}/download.csv`);
+    expect(csvRes.status).toBe(422);
+    const body = (await csvRes.json()) as ApiError;
+    expect(body.error.code).toBe(CSV_REEXEC_UNAVAILABLE);
+    await ctx.services.shutdown();
   });
 });
 

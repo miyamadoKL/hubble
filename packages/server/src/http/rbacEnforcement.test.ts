@@ -139,6 +139,33 @@ describe('RBAC query.write enforcement', () => {
     await ctx.services.shutdown();
   });
 
+  it('allows EXPLAIN ANALYZE SELECT for readonly role', async () => {
+    const ctx = await rbacCtx({ scenarios: [nationScenario] });
+    const res = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: proxyHeaders('reader'),
+      body: JSON.stringify({
+        statement: 'EXPLAIN ANALYZE SELECT * FROM nation',
+        catalog: 'tpch',
+      }),
+    });
+    expect(res.status).toBe(202);
+    await ctx.services.shutdown();
+  });
+
+  it('denies EXPLAIN ANALYZE INSERT for readonly role', async () => {
+    const ctx = await rbacCtx();
+    const res = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: proxyHeaders('reader'),
+      body: JSON.stringify({ statement: 'EXPLAIN ANALYZE INSERT INTO t VALUES (1)' }),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as ApiError;
+    expect(body.error.code).toBe(WRITE_NOT_ALLOWED);
+    await ctx.services.shutdown();
+  });
+
   it('blocks CTAS detected by IO explain for readonly role', async () => {
     const ctx = await rbacCtx({
       scenarios: [explainScenario('CREATE TABLE out AS', ioPlanCell({ writes: true }))],

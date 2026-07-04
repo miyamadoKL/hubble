@@ -137,6 +137,7 @@ export class QueryRegistry {
       maxRows: params.maxRows ?? this.defaultMaxRows,
       overflowMode: params.overflowMode ?? this.defaultOverflowMode,
       client,
+      engine,
       now: this.now,
       onSettled: (e) => {
         this.onSettled?.(e);

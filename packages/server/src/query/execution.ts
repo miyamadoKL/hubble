@@ -26,7 +26,8 @@ import type {
   QueryStats,
 } from '@hubble/contracts';
 import { AppError, toErrorResponse } from '../errors';
-import type { StatementClient } from '../engine/types';
+import type { DownloadClientOptions, QueryEngine, StatementClient } from '../engine/types';
+import { classifyStatementWrite } from '../rbac/writeCheck';
 import {
   emptySessionMutations,
   toQueryColumns,
@@ -51,6 +52,8 @@ export interface QueryExecutionInit {
   maxRows: number;
   overflowMode: OverflowMode;
   client: StatementClient;
+  /** クエリ開始時に固定した実行先エンジン（CSV 再実行もこの参照を使う）。 */
+  engine: QueryEngine;
   /** Wall-clock time source (injectable for tests). */
   // テスト時に時刻を差し替えられるようにするための注入ポイント。
   now?: () => number;
@@ -84,6 +87,7 @@ export class QueryExecution {
   readonly submittedAt: number;
 
   private readonly client: StatementClient;
+  readonly engine: QueryEngine;
   private readonly now: () => number;
   private readonly onSettled?: (exec: QueryExecution) => void;
 
@@ -131,6 +135,7 @@ export class QueryExecution {
     this.maxRows = init.maxRows;
     this.overflowMode = init.overflowMode;
     this.client = init.client;
+    this.engine = init.engine;
     this.now = init.now ?? Date.now;
     this.onSettled = init.onSettled;
     this.submittedAt = this.now();
@@ -154,6 +159,19 @@ export class QueryExecution {
   // 終端状態（これ以上ステートが変化しない）かどうか。
   get isTerminal(): boolean {
     return this.state === 'finished' || this.state === 'failed' || this.state === 'canceled';
+  }
+
+  /**
+   * 打ち切りまたは実行中の CSV で全文取得のための再実行が可能か。
+   * 読み取り確認済み（allow）かつ、開始時に固定したエンジンが未 close のときのみ true。
+   */
+  csvReexecAllowed(): boolean {
+    return classifyStatementWrite(this.statement) === 'allow' && !this.engine.isClosed();
+  }
+
+  /** 開始時に固定したエンジンから CSV 再実行用クライアントを取得する。 */
+  downloadClient(opts: DownloadClientOptions = {}): StatementClient {
+    return this.engine.downloadClient(opts);
   }
 
   /** Read a page of buffered rows. */
@@ -208,6 +226,7 @@ export class QueryExecution {
     if (this.columns.length > 0) snap.columns = this.columns;
     if (this.error) snap.error = this.error;
     if (this.finishedAt) snap.finishedAt = new Date(this.finishedAt).toISOString();
+    snap.csvReexecAllowed = this.csvReexecAllowed();
     return snap;
   }
 
@@ -385,7 +404,13 @@ export class QueryExecution {
     if (error) this.error = error;
     this.setState(state);
     if (error) this.emit({ type: 'error', error });
-    this.emit({ type: 'done', state, rowCount: this.producedRows, truncated: this.truncated });
+    this.emit({
+      type: 'done',
+      state,
+      rowCount: this.producedRows,
+      truncated: this.truncated,
+      csvReexecAllowed: this.csvReexecAllowed(),
+    });
     this.settledResolve();
     this.onSettled?.(this);
   }

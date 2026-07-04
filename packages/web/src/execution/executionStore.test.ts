@@ -78,11 +78,36 @@ describe('executionStore.runUnit', () => {
     const src = lastSource();
 
     emit(src, { type: 'rows', offset: 0, rows: [[1]] });
-    emit(src, { type: 'done', state: 'finished', rowCount: 100, truncated: true });
+    emit(src, {
+      type: 'done',
+      state: 'finished',
+      rowCount: 100,
+      truncated: true,
+      csvReexecAllowed: false,
+    });
 
     const cell = useExecutionStore.getState().cells['cell-trunc']!;
     expect(cell.truncated).toBe(true);
     expect(cell.rowCount).toBe(100);
+    expect(cell.csvReexecAllowed).toBe(false);
+  });
+
+  test('csvReexecAllowed from done event propagates to the cell record', async () => {
+    createQuery.mockResolvedValue({ queryId: 'qid-reexec' });
+    useExecutionStore.getState().runUnit('cell-reexec', unit('SELECT 1'), CTX, OPTS);
+    await flush();
+    const src = lastSource();
+
+    emit(src, {
+      type: 'done',
+      state: 'finished',
+      rowCount: 5,
+      truncated: true,
+      csvReexecAllowed: true,
+    });
+
+    const cell = useExecutionStore.getState().cells['cell-reexec']!;
+    expect(cell.csvReexecAllowed).toBe(true);
   });
 
   test('rows chunks append by offset (replay overlap tolerated)', async () => {

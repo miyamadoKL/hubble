@@ -51,6 +51,31 @@ describe('query lifecycle (happy path)', () => {
     expect(snap.finishedAt).toBeDefined();
   });
 
+  it('ignores client source spoofing and uses engine source tag', async () => {
+    const ctx = await createTestContext({ scenarios: [nationScenario(4)] });
+    const queryId = await submit(ctx.app, {
+      statement: 'SELECT * FROM nation',
+      catalog: 'tpch',
+      source: 'hubble-scheduled',
+    });
+    await ctx.services.registry.get(queryId)!.settled;
+    const post = ctx.fake.requests.find((r) => r.method === 'POST');
+    expect(post?.headers['x-trino-source']).toBe('hubble');
+  });
+
+  it('rejects invalid session property keys with 400', async () => {
+    const ctx = await createTestContext({ scenarios: [nationScenario(1)] });
+    const res = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: 'SELECT * FROM nation',
+        sessionProperties: { 'bad=key': 'x' },
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it('forwards catalog/schema headers to Trino', async () => {
     const ctx = await createTestContext({ scenarios: [nationScenario(4)] });
     const queryId = await submit(ctx.app, {
@@ -140,6 +165,22 @@ describe('row paging', () => {
 });
 
 describe('maxRows truncate', () => {
+  it('clamps request maxRows to server QUERY_MAX_ROWS', async () => {
+    const ctx = await createTestContext({
+      scenarios: [nationScenario(25)],
+      env: { QUERY_MAX_ROWS: '10' },
+    });
+    const queryId = await submit(ctx.app, {
+      statement: 'SELECT * FROM nation',
+      catalog: 'tpch',
+      maxRows: 999,
+    });
+    const exec = ctx.services.registry.get(queryId)!;
+    await exec.settled;
+    expect(exec.bufferedCount).toBe(10);
+    expect(exec.truncated).toBe(true);
+  });
+
   it('stops buffering at maxRows but still finishes', async () => {
     const ctx = await createTestContext({ scenarios: [nationScenario(25)] });
     const queryId = await submit(ctx.app, {

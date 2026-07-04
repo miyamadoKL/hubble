@@ -75,6 +75,7 @@ export function buildReplayEvents(exec: QueryExecution): QueryEvent[] {
       state: exec.state,
       rowCount: exec.rowCount,
       truncated: exec.truncated,
+      csvReexecAllowed: exec.csvReexecAllowed(),
     });
   }
   return events;

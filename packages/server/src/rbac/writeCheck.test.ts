@@ -32,6 +32,19 @@ describe('classifyStatementWrite', () => {
   it('allows a single trailing semicolon', () => {
     expect(classifyStatementWrite('SELECT 1;')).toBe('allow');
   });
+
+  it('allows plain EXPLAIN', () => {
+    expect(classifyStatementWrite('EXPLAIN SELECT 1')).toBe('allow');
+  });
+
+  it('classifies EXPLAIN ANALYZE via inner statement', () => {
+    expect(classifyStatementWrite('EXPLAIN ANALYZE SELECT 1')).toBe('allow');
+    expect(classifyStatementWrite('EXPLAIN ANALYZE INSERT INTO t VALUES (1)')).toBe('deny');
+  });
+
+  it('classifies EXPLAIN with INCLUDE ANALYZE option via inner statement', () => {
+    expect(classifyStatementWrite('EXPLAIN (INCLUDE ANALYZE) DELETE FROM t')).toBe('deny');
+  });
 });
 
 describe('assertQueryWriteAllowed', () => {

@@ -61,6 +61,9 @@ export const doneEventSchema = z.object({
   rowCount: z.number().int().nonnegative(),
   // maxRows 上限により結果が切り詰められたかどうか。
   truncated: z.boolean(),
+  /** Whether full CSV download may re-execute this statement (see QuerySnapshot). */
+  // 全文 CSV ダウンロードのための再実行が許可されるか（QuerySnapshot と同義）。
+  csvReexecAllowed: z.boolean().optional(),
 });
 
 // 上記すべてのイベント種別をまとめた discriminated union。SSE ストリームで

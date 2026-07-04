@@ -16,10 +16,12 @@ import { AppError } from '../../errors';
 import { capabilitiesForKind } from '../../datasource/summary';
 import type { ResolvedMysqlDatasource } from '../../datasource/types';
 import type { ValidationResult } from '../../schedule/validator';
+import { ignoreMetadataPrincipal } from '../types';
 import type {
   DownloadClientOptions,
   EngineValidateParams,
   ExecutionClientOptions,
+  MetadataOptions,
   QueryEngine,
   StatementClient,
 } from '../types';
@@ -45,6 +47,7 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
   const pool = poolFactory(datasource);
   const capabilities: DatasourceCapabilities = capabilitiesForKind('mysql');
   const syntheticCatalog = datasource.id;
+  let closed = false;
 
   const assertCatalog = (catalog: string): void => {
     if (catalog !== syntheticCatalog) {
@@ -97,11 +100,13 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       );
     },
 
-    async listCatalogs(): Promise<Catalog[]> {
+    async listCatalogs(opts: MetadataOptions): Promise<Catalog[]> {
+      ignoreMetadataPrincipal(opts);
       return [{ name: syntheticCatalog }];
     },
 
-    async listSchemas(catalog: string): Promise<SchemaItem[]> {
+    async listSchemas(catalog: string, opts: MetadataOptions): Promise<SchemaItem[]> {
+      ignoreMetadataPrincipal(opts);
       assertCatalog(catalog);
       const rows = await query<{ SCHEMA_NAME: string }>(
         `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA
@@ -111,7 +116,8 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       return rows.map((r) => ({ name: r.SCHEMA_NAME }));
     },
 
-    async listTables(catalog: string, schema: string): Promise<TableItem[]> {
+    async listTables(catalog: string, schema: string, opts: MetadataOptions): Promise<TableItem[]> {
+      ignoreMetadataPrincipal(opts);
       assertCatalog(catalog);
       const rows = await query<{ TABLE_NAME: string; TABLE_TYPE: string }>(
         `SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES
@@ -122,7 +128,13 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       return rows.map((r) => ({ name: r.TABLE_NAME, type: r.TABLE_TYPE }));
     },
 
-    async describeTable(catalog: string, schema: string, table: string): Promise<TableDetail> {
+    async describeTable(
+      catalog: string,
+      schema: string,
+      table: string,
+      opts: MetadataOptions,
+    ): Promise<TableDetail> {
+      ignoreMetadataPrincipal(opts);
       assertCatalog(catalog);
       const rows = await query<{
         COLUMN_NAME: string;
@@ -146,7 +158,12 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       };
     },
 
+    isClosed(): boolean {
+      return closed;
+    },
+
     async close(): Promise<void> {
+      closed = true;
       await pool.end();
     },
 
@@ -154,11 +171,13 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
       catalog: string,
       schema: string,
       table: string,
-      limit = 10,
+      limit: number | undefined,
+      opts: MetadataOptions,
     ): Promise<SampleRowsResponse> {
+      ignoreMetadataPrincipal(opts);
       assertCatalog(catalog);
       const ref = mysqlTableRef(schema, table);
-      const safeLimit = Math.max(1, Math.min(limit, 1000));
+      const safeLimit = Math.max(1, Math.min(limit ?? 10, 1000));
       try {
         const [rows, fields] = await pool.query(
           { sql: `SELECT * FROM ${ref} LIMIT ?`, rowsAsArray: true },

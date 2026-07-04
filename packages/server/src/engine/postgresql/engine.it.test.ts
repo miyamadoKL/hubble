@@ -69,11 +69,11 @@ describe.skipIf(!pgEnabled)('postgresql engine integration', () => {
   });
 
   it('lists catalogs and schemas from information_schema', async () => {
-    const catalogs = await engine.listCatalogs();
+    const catalogs = await engine.listCatalogs({ principal: 'tester' });
     expect(catalogs).toHaveLength(1);
     expect(catalogs[0]!.name).toBe(ds.database);
 
-    const schemas = await engine.listSchemas(catalogs[0]!.name);
+    const schemas = await engine.listSchemas(catalogs[0]!.name, { principal: 'tester' });
     expect(schemas.some((s) => s.name === 'public')).toBe(true);
   });
 

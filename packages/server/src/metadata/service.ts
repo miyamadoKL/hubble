@@ -40,7 +40,10 @@ interface CacheEntry<T> {
  * - `refresh()` forces a synchronous re-fetch and updates the cache.
  *
  * `QueryEngine` に対する TTL + stale-while-revalidate キャッシュ。
- * データソースごとに独立したキャッシュを保持する（キーに `datasourceId` を含める）。
+ * データソースと principal ごとに独立したキャッシュを保持する（キーに
+ * `datasourceId` と principal を含める）。エントリの自動削除（TTL sweep）は
+ * 行わず、stale 判定のみ。ユーザー数が増えるとメモリ使用量も増えるため、
+ * データソース設定のリロード時に `invalidateDatasource` で一括破棄する。
  *
  * - フレッシュヒット（TTL 内）: キャッシュから即座に返す
  *   `{source:'cache', stale:false}`。
@@ -77,9 +80,9 @@ export class MetadataService {
     }
   }
 
-  /** データソース id と階層キーを連結したキャッシュキーを組み立てる。 */
-  private cacheKey(datasourceId: string, key: string): string {
-    return `${datasourceId}:${key}`;
+  /** データソース id、principal、階層キーを連結したキャッシュキーを組み立てる。 */
+  private cacheKey(datasourceId: string, principal: string, key: string): string {
+    return `${datasourceId}:${principal}:${key}`;
   }
 
   /** リクエストの datasourceId を解決し、対応するエンジンを返す。 */
@@ -105,10 +108,11 @@ export class MetadataService {
   private async resolve<T>(
     map: Map<string, CacheEntry<T>>,
     datasourceId: string,
+    principal: string,
     key: string,
     fetcher: () => Promise<T>,
   ): Promise<MetadataResponse<T extends Array<infer U> ? U : never>> {
-    const cacheKey = this.cacheKey(datasourceId, key);
+    const cacheKey = this.cacheKey(datasourceId, principal, key);
     const entry = map.get(cacheKey);
     if (entry && !this.isStale(entry)) {
       // フレッシュヒット: キャッシュ済みの値をそのまま返す。
@@ -157,26 +161,38 @@ export class MetadataService {
   }
 
   /** カタログ一覧を取得する（キャッシュキーは固定の `'_'`、カタログ単位に分かれないため）。 */
-  getCatalogs(datasourceId?: string): Promise<MetadataResponse<Catalog>> {
+  getCatalogs(principal: string, datasourceId?: string): Promise<MetadataResponse<Catalog>> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
-    return this.resolve(this.catalogs, id, '_', () => engine.listCatalogs());
+    const opts = { principal };
+    return this.resolve(this.catalogs, id, principal, '_', () => engine.listCatalogs(opts));
   }
 
   /** 指定カタログのスキーマ一覧を取得する。キャッシュキーはカタログ名。 */
-  getSchemas(catalog: string, datasourceId?: string): Promise<MetadataResponse<SchemaItem>> {
+  getSchemas(
+    catalog: string,
+    principal: string,
+    datasourceId?: string,
+  ): Promise<MetadataResponse<SchemaItem>> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
-    return this.resolve(this.schemas, id, catalog, () => engine.listSchemas(catalog));
+    const opts = { principal };
+    return this.resolve(this.schemas, id, principal, catalog, () =>
+      engine.listSchemas(catalog, opts),
+    );
   }
 
   /** 指定カタログ/スキーマのテーブル一覧を取得する。キャッシュキーは `"catalog schema"`。 */
   getTables(
     catalog: string,
     schema: string,
+    principal: string,
     datasourceId?: string,
   ): Promise<MetadataResponse<TableItem>> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
     const key = `${catalog} ${schema}`;
-    return this.resolve(this.tables, id, key, () => engine.listTables(catalog, schema));
+    const opts = { principal };
+    return this.resolve(this.tables, id, principal, key, () =>
+      engine.listTables(catalog, schema, opts),
+    );
   }
 
   /**
@@ -188,12 +204,14 @@ export class MetadataService {
     catalog: string,
     schema: string,
     table: string,
+    principal: string,
     datasourceId?: string,
   ): Promise<TableDetail> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
     const key = `${catalog} ${schema} ${table}`;
-    const res = await this.resolve(this.columns, id, key, async () => {
-      const detail = await engine.describeTable(catalog, schema, table);
+    const opts = { principal };
+    const res = await this.resolve(this.columns, id, principal, key, async () => {
+      const detail = await engine.describeTable(catalog, schema, table, opts);
       return detail.columns;
     });
     return { catalog, schema, name: table, columns: res.items };
@@ -206,11 +224,12 @@ export class MetadataService {
     catalog: string,
     schema: string,
     table: string,
+    principal: string,
     limit = 10,
     datasourceId?: string,
   ): Promise<SampleRowsResponse> {
     const { engine } = this.resolveDatasource(datasourceId);
-    return engine.sampleTable(catalog, schema, table, limit);
+    return engine.sampleTable(catalog, schema, table, limit, { principal });
   }
 
   /**
@@ -222,19 +241,28 @@ export class MetadataService {
    * スキーマ一覧、catalog+schema ならそのスキーマのテーブル一覧を更新する。
    * TTL 判定を経ずに即座に fetch する点が通常の get*() と異なる。
    */
-  async refresh(catalog?: string, schema?: string, datasourceId?: string): Promise<void> {
+  async refresh(
+    principal: string,
+    catalog?: string,
+    schema?: string,
+    datasourceId?: string,
+  ): Promise<void> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
+    const opts = { principal };
     if (!catalog) {
-      const items = await engine.listCatalogs();
-      this.catalogs.set(this.cacheKey(id, '_'), { items, updatedAt: this.now() });
+      const items = await engine.listCatalogs(opts);
+      this.catalogs.set(this.cacheKey(id, principal, '_'), { items, updatedAt: this.now() });
       return;
     }
     if (!schema) {
-      const items = await engine.listSchemas(catalog);
-      this.schemas.set(this.cacheKey(id, catalog), { items, updatedAt: this.now() });
+      const items = await engine.listSchemas(catalog, opts);
+      this.schemas.set(this.cacheKey(id, principal, catalog), { items, updatedAt: this.now() });
       return;
     }
-    const items = await engine.listTables(catalog, schema);
-    this.tables.set(this.cacheKey(id, `${catalog} ${schema}`), { items, updatedAt: this.now() });
+    const items = await engine.listTables(catalog, schema, opts);
+    this.tables.set(this.cacheKey(id, principal, `${catalog} ${schema}`), {
+      items,
+      updatedAt: this.now(),
+    });
   }
 }
