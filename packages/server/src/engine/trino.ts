@@ -216,6 +216,8 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
     ): Promise<SampleRowsResponse> {
       return metadata.fetchSample(catalog, schema, table, limit);
     },
+
+    async close(): Promise<void> {},
   };
 }
 

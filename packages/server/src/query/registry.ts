@@ -74,7 +74,7 @@ export class QueryRegistry {
   // queryId をキーに実行中/終了済みの QueryExecution を保持するマップ。
   private readonly executions = new Map<string, QueryExecution>();
   private readonly engines: Map<string, QueryEngine>;
-  private readonly defaultDatasourceId: string;
+  private defaultDatasourceId: string;
   private readonly defaultMaxRows: number;
   private readonly concurrency: number;
   private readonly ttlMs: number;
@@ -222,6 +222,10 @@ export class QueryRegistry {
   // 現在レジストリが保持している実行の総数（実行中か終了済みかを問わず）。
   size(): number {
     return this.executions.size;
+  }
+
+  setDefaultDatasourceId(id: string): void {
+    this.defaultDatasourceId = id;
   }
 
   /** Cancel all running queries and stop the sweep timer (shutdown). */

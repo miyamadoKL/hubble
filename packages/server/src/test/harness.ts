@@ -53,6 +53,8 @@ export async function createTestContext(
     startScheduler?: boolean;
     /** datasources.yaml 探索の作業ディレクトリ（テスト用）。 */
     cwd?: string;
+    reloadLogError?: (message: string, err: unknown) => void;
+    reloadLogWarn?: (message: string) => void;
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
@@ -88,6 +90,8 @@ export async function createTestContext(
     // sleepImpl を渡して記録し、制御する。
     sleepImpl: options.sleepImpl ?? (() => Promise.resolve()),
     schedulerSleep: () => Promise.resolve(),
+    reloadLogError: options.reloadLogError,
+    reloadLogWarn: options.reloadLogWarn,
   });
   // 日本語: enabled=false でもクラッシュ復旧 (abortOrphans) は必ず走るため、
   // tick ループを使わないテストでも start() は呼んでおく必要がある。

@@ -59,11 +59,23 @@ export class MetadataService {
 
   constructor(
     private readonly engines: Map<string, QueryEngine>,
-    private readonly defaultDatasourceId: string,
+    private defaultDatasourceId: string,
     private readonly ttlMs: number,
-    // テスト用にクロックを差し替えられるようにする（既定は Date.now）。
     private readonly now: () => number = Date.now,
   ) {}
+
+  setDefaultDatasourceId(id: string): void {
+    this.defaultDatasourceId = id;
+  }
+
+  invalidateDatasource(datasourceId: string): void {
+    const prefix = `${datasourceId}:`;
+    for (const map of [this.catalogs, this.schemas, this.tables, this.columns]) {
+      for (const key of [...map.keys()]) {
+        if (key.startsWith(prefix)) map.delete(key);
+      }
+    }
+  }
 
   /** データソース id と階層キーを連結したキャッシュキーを組み立てる。 */
   private cacheKey(datasourceId: string, key: string): string {

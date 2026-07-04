@@ -224,19 +224,20 @@ function fallbackFromTrinoConfig(trino: ServerConfig['trino']): ResolvedDatasour
  * @param options - 環境変数と Trino 設定。
  * @returns 解決済みデータソース一覧。
  */
+export function resolveDatasourcesPath(env: Env, cwd: string): string | undefined {
+  const explicitPath = env.DATASOURCES_PATH;
+  if (explicitPath !== undefined && explicitPath !== '') {
+    return resolve(cwd, explicitPath);
+  }
+  const defaultPath = resolve(cwd, 'datasources.yaml');
+  if (existsSync(defaultPath)) return defaultPath;
+  return undefined;
+}
+
 export function loadDatasources(options: LoadDatasourcesOptions): ResolvedDatasource[] {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
-  const explicitPath = env.DATASOURCES_PATH;
-
-  if (explicitPath !== undefined && explicitPath !== '') {
-    return loadFromFile(resolve(cwd, explicitPath), env);
-  }
-
-  const defaultPath = resolve(cwd, 'datasources.yaml');
-  if (existsSync(defaultPath)) {
-    return loadFromFile(defaultPath, env);
-  }
-
+  const filePath = resolveDatasourcesPath(env, cwd);
+  if (filePath !== undefined) return loadFromFile(filePath, env);
   return fallbackFromTrinoConfig(options.trino);
 }

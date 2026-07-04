@@ -55,6 +55,7 @@ class FakeEngine implements QueryEngine {
   async sampleTable(): Promise<never> {
     throw new Error('not used');
   }
+  async close(): Promise<void> {}
 }
 
 function svc(engine: FakeEngine, ttlMs: number, clock: { t: number }): MetadataService {
