@@ -1,7 +1,8 @@
 /**
  * TopBar 右端に表示する「現在のユーザー」チップコンポーネント。
- * principal を常時表示し、クリック時に実効ロール、権限、アクセス可能な
- * データソースを表示する。
+ * 認証済みユーザーのイニシャルとユーザー名を表示する。認証なしモード
+ * （authMode === 'none'）では何も表示しない。
+ * クリック時には実効ロール、権限、アクセス可能なデータソースを表示する。
  */
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Database, ShieldCheck } from 'lucide-react';
@@ -9,13 +10,15 @@ import { useMe } from '../../hooks/useMe';
 import { cn } from '../../utils/cn';
 
 /**
- * Current-user chip for the TopBar. Shows the resolved principal and opens a
- * compact popover with the effective RBAC role, permissions, and datasources.
+ * Current-user chip for the TopBar. Shows the resolved principal. Hidden
+ * entirely in `authMode === 'none'`, where there is no meaningful user identity.
+ * Clicking it opens a compact popover with the effective RBAC role,
+ * permissions, and datasources.
  */
 /**
  * 現在ログイン中のユーザーを示すチップを描画する。props は取らず、
  * `useMe` フックでサーバーから解決済みの principal 情報を取得して表示する。
- * 未取得時は何も描画しない。
+ * 未取得時、または authMode が 'none'（認証なし運用）の場合は何も描画しない。
  */
 export function UserChip() {
   const [open, setOpen] = useState(false);
@@ -40,8 +43,8 @@ export function UserChip() {
     };
   }, [open]);
 
-  // 未取得のときはチップ自体を表示しない。
-  if (!me) return null;
+  // 未取得、または認証なしモードのときはチップ自体を表示しない。
+  if (!me || me.authMode === 'none') return null;
 
   // アバター代わりに表示するユーザー名の頭文字（大文字化）。
   const initial = me.user.charAt(0).toUpperCase();
