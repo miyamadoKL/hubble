@@ -24,6 +24,8 @@ import { ChartPanel } from './ChartPanel';
 import { ErrorPanel } from './ErrorPanel';
 import { formatBytes, formatDuration, formatInt } from '../../utils/format';
 import { cn } from '../../utils/cn';
+import { CSV_REEXEC_UNAVAILABLE } from '@hubble/contracts';
+import { Tooltip } from '../common/Tooltip';
 import {
   copyResultToClipboard,
   downloadCsvUrl,
@@ -151,7 +153,12 @@ export function ResultPane({
             disabled={cell.rows.length === 0}
             onClick={onCopy}
           />
-          <CsvDownload queryId={cell.queryId} disabled={!cell.queryId} />
+          <CsvDownload
+            queryId={cell.queryId}
+            disabled={!cell.queryId || running}
+            truncated={cell.truncated}
+            csvReexecAllowed={cell.csvReexecAllowed}
+          />
         </div>
       </div>
 
@@ -289,14 +296,28 @@ function ExplainView({
  * サーバー側でストリーミング配信させるため、あえて素の `a[href]` タグを使い、
  * fetch＋blob化などのバッファリングを避けている。
  */
-function CsvDownload({ queryId, disabled }: { queryId: string; disabled: boolean }) {
+function CsvDownload({
+  queryId,
+  disabled,
+  truncated,
+  csvReexecAllowed,
+}: {
+  queryId: string;
+  disabled: boolean;
+  truncated: boolean;
+  csvReexecAllowed: boolean;
+}) {
   // 現在選択中のダウンロード形式（zip圧縮 or 生CSV）。
   const [format, setFormat] = useState<DownloadFormat>('zip');
   // ダウンロード先URL。disabled中はhrefを設定せずクリックを実質無効化する。
   const href = disabled ? undefined : downloadCsvUrl(queryId, format);
   // ダウンロードファイルの拡張子をフォーマットに応じて決定する。
   const ext = format === 'zip' ? 'zip' : 'csv';
-  return (
+  const partialOnly = truncated && !csvReexecAllowed;
+  const tooltip = partialOnly
+    ? `Download includes buffered rows only (${CSV_REEXEC_UNAVAILABLE}: full download cannot re-run this statement)`
+    : undefined;
+  const control = (
     <div className="flex items-center">
       <a
         href={href}
@@ -326,4 +347,8 @@ function CsvDownload({ queryId, disabled }: { queryId: string; disabled: boolean
       />
     </div>
   );
+  if (tooltip) {
+    return <Tooltip label={tooltip}>{control}</Tooltip>;
+  }
+  return control;
 }

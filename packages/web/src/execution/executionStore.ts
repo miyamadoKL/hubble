@@ -75,6 +75,11 @@ export interface CellExecution {
    * サーバーが maxRows で結果を打ち切った場合に true。
    */
   truncated: boolean;
+  /**
+   * True when a truncated CSV download may re-execute the statement for full results.
+   * 打ち切り時に全文 CSV の再実行が可能か（サーバー snapshot/done 由来）。
+   */
+  csvReexecAllowed: boolean;
   /** 実行開始時刻（ミリ秒エポック）。経過時間の算出に使う。 */
   startedAt: number;
   /** 終了時刻（ミリ秒エポック）。未終了なら undefined。 */
@@ -326,6 +331,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
                 state: event.state,
                 rowCount: Math.max(prev.rowCount, event.rowCount),
                 truncated: event.truncated,
+                csvReexecAllowed: event.csvReexecAllowed ?? false,
                 finishedAt: Date.now(),
               }));
               if (runtimeFor(cellId).generation === generation) {
@@ -381,6 +387,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
       rows: [],
       rowCount: 0,
       truncated: false,
+      csvReexecAllowed: false,
       startedAt: Date.now(),
       statement,
       unitStart,
@@ -519,6 +526,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
         rowCount: snapshot.rowCount,
         error: snapshot.error,
         truncated: snapshot.truncated,
+        csvReexecAllowed: snapshot.csvReexecAllowed ?? false,
         startedAt: Date.parse(snapshot.submittedAt) || Date.now(),
         finishedAt: snapshot.finishedAt ? Date.parse(snapshot.finishedAt) : undefined,
         statement: '',
