@@ -30,6 +30,7 @@ import type {
   EngineValidateParams,
   EstimateGuardConfig,
   ExecutionClientOptions,
+  MetadataOptions,
   QueryEngine,
   StatementClient,
 } from './types';
@@ -192,17 +193,22 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
       }
     },
 
-    listCatalogs(): Promise<Catalog[]> {
-      return metadata.fetchCatalogs();
+    listCatalogs(opts: MetadataOptions): Promise<Catalog[]> {
+      return metadata.fetchCatalogs(opts.principal);
     },
-    listSchemas(catalog: string): Promise<SchemaItem[]> {
-      return metadata.fetchSchemas(catalog);
+    listSchemas(catalog: string, opts: MetadataOptions): Promise<SchemaItem[]> {
+      return metadata.fetchSchemas(catalog, opts.principal);
     },
-    listTables(catalog: string, schema: string): Promise<TableItem[]> {
-      return metadata.fetchTables(catalog, schema);
+    listTables(catalog: string, schema: string, opts: MetadataOptions): Promise<TableItem[]> {
+      return metadata.fetchTables(catalog, schema, opts.principal);
     },
-    describeTable(catalog: string, schema: string, table: string): Promise<TableDetail> {
-      return metadata.fetchColumns(catalog, schema, table).then((columns) => ({
+    describeTable(
+      catalog: string,
+      schema: string,
+      table: string,
+      opts: MetadataOptions,
+    ): Promise<TableDetail> {
+      return metadata.fetchColumns(catalog, schema, table, opts.principal).then((columns) => ({
         catalog,
         schema,
         name: table,
@@ -213,9 +219,10 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
       catalog: string,
       schema: string,
       table: string,
-      limit?: number,
+      limit: number | undefined,
+      opts: MetadataOptions,
     ): Promise<SampleRowsResponse> {
-      return metadata.fetchSample(catalog, schema, table, limit);
+      return metadata.fetchSample(catalog, schema, table, limit ?? 10, opts.principal);
     },
 
     isClosed(): boolean {

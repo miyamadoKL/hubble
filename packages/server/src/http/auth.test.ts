@@ -343,16 +343,26 @@ describe('auth — Trino impersonation (X-Trino-User)', () => {
     expect(ctx.services.config.trino.user).toBe('admin');
   });
 
-  it('metadata queries keep using the technical user', async () => {
-    const ctx = await proxyCtx('127.0.0.1');
-    // The catalogs request triggers a metadata-source Trino query; we only assert
-    // on the X-Trino-User of any such request (the response itself may error).
+  it('metadata queries impersonate the resolved principal', async () => {
+    const scenarios: FakeScenario[] = [
+      {
+        match: 'system.metadata.catalogs',
+        pages: [
+          {
+            columns: [{ name: 'catalog_name', type: 'varchar' }],
+            data: [['tpch']],
+            state: 'FINISHED',
+          },
+        ],
+      },
+    ];
+    const ctx = await proxyCtx('127.0.0.1', scenarios);
     await ctx.app.request('/api/catalogs', { headers: ssoHeaders('alice@corp.com') });
     const metaReq = ctx.fake.requests.find(
       (r) => r.headers['x-trino-source'] === 'hubble-metadata',
     );
-    if (metaReq) {
-      expect(metaReq.headers['x-trino-user']).toBe(ctx.services.config.trino.user);
-    }
+    expect(metaReq).toBeDefined();
+    expect(metaReq?.headers['x-trino-user']).toBe('alice');
+    expect(ctx.services.config.trino.user).toBe('admin');
   });
 });

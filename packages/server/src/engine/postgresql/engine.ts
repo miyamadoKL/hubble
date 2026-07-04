@@ -13,10 +13,12 @@ import { AppError } from '../../errors';
 import { capabilitiesForKind } from '../../datasource/summary';
 import type { ResolvedPostgresqlDatasource } from '../../datasource/types';
 import type { ValidationResult } from '../../schedule/validator';
+import { ignoreMetadataPrincipal } from '../types';
 import type {
   DownloadClientOptions,
   EngineValidateParams,
   ExecutionClientOptions,
+  MetadataOptions,
   QueryEngine,
   StatementClient,
 } from '../types';
@@ -110,11 +112,13 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
       );
     },
 
-    async listCatalogs(): Promise<Catalog[]> {
+    async listCatalogs(opts: MetadataOptions): Promise<Catalog[]> {
+      ignoreMetadataPrincipal(opts);
       return [{ name: await loadCatalogName() }];
     },
 
-    async listSchemas(catalog: string): Promise<SchemaItem[]> {
+    async listSchemas(catalog: string, opts: MetadataOptions): Promise<SchemaItem[]> {
+      ignoreMetadataPrincipal(opts);
       await assertCatalog(catalog);
       const rows = await query<{ schema_name: string }>(
         `SELECT schema_name FROM information_schema.schemata
@@ -125,7 +129,8 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
       return rows.map((r) => ({ name: r.schema_name }));
     },
 
-    async listTables(catalog: string, schema: string): Promise<TableItem[]> {
+    async listTables(catalog: string, schema: string, opts: MetadataOptions): Promise<TableItem[]> {
+      ignoreMetadataPrincipal(opts);
       await assertCatalog(catalog);
       const rows = await query<{ table_name: string; table_type: string }>(
         `SELECT table_name, table_type FROM information_schema.tables
@@ -136,7 +141,13 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
       return rows.map((r) => ({ name: r.table_name, type: r.table_type }));
     },
 
-    async describeTable(catalog: string, schema: string, table: string): Promise<TableDetail> {
+    async describeTable(
+      catalog: string,
+      schema: string,
+      table: string,
+      opts: MetadataOptions,
+    ): Promise<TableDetail> {
+      ignoreMetadataPrincipal(opts);
       await assertCatalog(catalog);
       const rows = await query<{ column_name: string; data_type: string }>(
         `SELECT column_name, data_type FROM information_schema.columns
@@ -165,11 +176,13 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
       catalog: string,
       schema: string,
       table: string,
-      limit = 10,
+      limit: number | undefined,
+      opts: MetadataOptions,
     ): Promise<SampleRowsResponse> {
+      ignoreMetadataPrincipal(opts);
       await assertCatalog(catalog);
       const ref = pgTableRef(schema, table);
-      const safeLimit = Math.max(1, Math.min(limit, 1000));
+      const safeLimit = Math.max(1, Math.min(limit ?? 10, 1000));
       try {
         const client = await pool.connect();
         try {

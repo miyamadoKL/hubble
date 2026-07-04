@@ -159,3 +159,38 @@ describe('metadata endpoints', () => {
     expect(after).toBeGreaterThan(before);
   });
 });
+
+describe('metadata principal impersonation', () => {
+  const ssoHeaders = (email: string) => ({ 'x-forwarded-email': email });
+
+  it('sends X-Trino-User as the request principal for catalogs', async () => {
+    const ctx = await createTestContext({
+      env: { AUTH_MODE: 'proxy' },
+      remoteAddress: () => '127.0.0.1',
+      scenarios,
+    });
+    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('alice@corp.com') });
+    const metaReq = ctx.fake.requests.find(
+      (r) => r.headers['x-trino-source'] === 'hubble-metadata',
+    );
+    expect(metaReq?.headers['x-trino-user']).toBe('alice');
+  });
+
+  it('keeps separate metadata caches per principal', async () => {
+    const ctx = await createTestContext({
+      env: { AUTH_MODE: 'proxy' },
+      remoteAddress: () => '127.0.0.1',
+      scenarios,
+    });
+    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('alice@corp.com') });
+    const alicePosts = ctx.fake.requests.filter((r) => r.method === 'POST').length;
+
+    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('bob@corp.com') });
+    const bobPosts = ctx.fake.requests.filter((r) => r.method === 'POST').length;
+    expect(bobPosts).toBeGreaterThan(alicePosts);
+
+    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('alice@corp.com') });
+    const aliceAgainPosts = ctx.fake.requests.filter((r) => r.method === 'POST').length;
+    expect(aliceAgainPosts).toBe(bobPosts);
+  });
+});

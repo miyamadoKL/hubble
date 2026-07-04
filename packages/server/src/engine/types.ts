@@ -71,6 +71,20 @@ export interface EngineValidateParams {
   principal: string;
 }
 
+/** メタデータ取得時の実行コンテキスト。Trino では X-Trino-User に使う。 */
+export interface MetadataOptions {
+  /** impersonation 対象の principal（省略時は技術アカウント）。 */
+  principal: string;
+}
+
+/**
+ * MySQL/PostgreSQL 共有 credential 用。principal は DB へ伝播しないが
+ * QueryEngine インターフェース互換のため受け取る。
+ */
+export function ignoreMetadataPrincipal(opts: MetadataOptions): void {
+  void opts.principal;
+}
+
 /**
  * データソースごとのクエリエンジン。
  * 既存 Trino 実装の必要十分な抽象であり、MySQL/PostgreSQL は Phase 3 で拡張する。
@@ -115,19 +129,25 @@ export interface QueryEngine {
   ioExplainExecution?(params: EngineEstimateParams): IoExplainExecution | undefined;
 
   /** カタログ一覧を返す。 */
-  listCatalogs(): Promise<Catalog[]>;
+  listCatalogs(opts: MetadataOptions): Promise<Catalog[]>;
   /** スキーマ一覧を返す。 */
-  listSchemas(catalog: string): Promise<SchemaItem[]>;
+  listSchemas(catalog: string, opts: MetadataOptions): Promise<SchemaItem[]>;
   /** テーブル一覧を返す。 */
-  listTables(catalog: string, schema: string): Promise<TableItem[]>;
+  listTables(catalog: string, schema: string, opts: MetadataOptions): Promise<TableItem[]>;
   /** テーブル詳細（カラム一覧）を返す。 */
-  describeTable(catalog: string, schema: string, table: string): Promise<TableDetail>;
+  describeTable(
+    catalog: string,
+    schema: string,
+    table: string,
+    opts: MetadataOptions,
+  ): Promise<TableDetail>;
   /** サンプル行を返す。 */
   sampleTable(
     catalog: string,
     schema: string,
     table: string,
-    limit?: number,
+    limit: number | undefined,
+    opts: MetadataOptions,
   ): Promise<SampleRowsResponse>;
 
   close(): Promise<void>;
