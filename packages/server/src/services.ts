@@ -20,6 +20,8 @@ import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
 import { Scheduler } from './schedule/scheduler';
 import { backfillOwners } from './db/backfill';
 import { loadDatasources } from './datasource/loader';
+import { loadRbac } from './rbac/loader';
+import type { LoadedRbac } from './rbac/types';
 import type { ResolvedDatasource } from './datasource/types';
 import { buildEngines } from './engine/factory';
 import type { QueryEngine } from './engine/types';
@@ -27,6 +29,8 @@ import type { QueryEngine } from './engine/types';
 /** All long-lived services the HTTP layer depends on. */
 export interface Services {
   config: ServerConfig;
+  /** 宣言的に設定された RBAC（ロール解決に使用）。 */
+  rbac: LoadedRbac;
   /** 宣言的に設定されたデータソース一覧。 */
   datasources: ResolvedDatasource[];
   /** データソース id から引ける QueryEngine マップ。 */
@@ -66,6 +70,7 @@ export async function buildServices(
   options: BuildServicesOptions = {},
 ): Promise<Services> {
   const env = options.env ?? process.env;
+  const rbac = loadRbac({ env, cwd: options.cwd });
   const datasources = loadDatasources({ env, trino: config.trino, cwd: options.cwd });
   const { engines, defaultDatasourceId } = buildEngines(datasources, {
     trinoConfig: config.trino,
@@ -136,6 +141,7 @@ export async function buildServices(
 
   return {
     config,
+    rbac,
     datasources,
     engines,
     defaultDatasourceId,

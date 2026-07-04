@@ -91,8 +91,20 @@ pnpm --filter @hubble/web dev
 `DATASOURCES_PATH` でファイルパスを指定でき、未設定時はカレントディレクトリの
 `datasources.yaml` を探します。ファイルが無い場合は従来どおり `TRINO_*` 環境変数から
 単一の Trino データソース（id: `trino-default`）を合成します。一覧は
-`GET /api/datasources` で取得できます（接続先や認証情報は含みません）。設定変更は
-プロセス再起動後に反映されます。
+`GET /api/datasources` で取得できます（接続先や認証情報は含みません）。
+
+#### ホットリロード
+
+`datasources.yaml` を使っている場合、プロセス再起動なしで設定を反映できます。
+
+- **ポーリング**: 環境変数 `CONFIG_RELOAD_INTERVAL_SECONDS`（既定 30、0 で無効）ごとに
+  ファイルの更新時刻を確認し、変化があればリロードします。
+- **SIGHUP**: シグナル受信時に即時リロードします（ポーリング間隔 0 でも有効）。
+- **エラー時**: リロード中に YAML 不正やバリデーションエラーが起きた場合は現行設定を維持し、
+  ログにエラーを出して次のポーリングへ進みます（起動時の読み込み失敗は従来どおり起動エラー）。
+
+k8s の ConfigMap 更新は kubelet の同期遅延（既定で最大 1 分程度）に加え、上記の
+ポーリング間隔が乗算されます。反映までの遅延は両方の合算になる点に注意してください。
 
 #### 種別ごとのフィールド
 
@@ -157,42 +169,52 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo u
 定義ファイルは `deploy/compose/datasources.demo.yaml` です。ホストから DB に直接つなぐ場合は
 `127.0.0.1:3307`（MySQL）と `127.0.0.1:5434`（PostgreSQL）が公開されます。
 
+### RBAC（ロール定義）
+
+ロールと権限は `rbac.yaml` で宣言します（例は `rbac.yaml.example`）。
+`RBAC_PATH` でファイルパスを指定でき、未設定時はカレントディレクトリの
+`rbac.yaml` を探します。ファイルが無い場合は組み込みロール `unrestricted`
+（`query.write` のみ）が全員に割り当てられ、従来どおり全ユーザーが書き込み可能です。
+Phase A ではロールは `GET /api/me` に露出するだけで、権限の強制は Phase B 以降です。
+設定変更はプロセス再起動後に反映されます。
+
 ### 環境変数（server）
 
-| 変数                              | 既定値                   | 説明                                                                                            |
-| --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------- |
-| `DATASOURCES_PATH`                | —                        | データソース定義 YAML のパス。未設定時は `./datasources.yaml` を探し、無ければ `TRINO_*` で合成 |
-| `PORT`                            | `8080`                   | BFF が待ち受ける HTTP ポート                                                                    |
-| `DB_PATH`                         | `./data/hubble.db`       | SQLite データベースファイル                                                                     |
-| `DATABASE_URL`                    | —                        | `postgres://` 形式の接続文字列。設定すると永続化が PostgreSQL になり `DB_PATH` より優先         |
-| `STATIC_DIR`                      | —                        | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う  |
-| `TRINO_BASE_URL`                  | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL                                                              |
-| `TRINO_USER`                      | `admin`                  | `X-Trino-User` として送る値                                                                     |
-| `TRINO_USERNAME`                  | `admin`                  | Basic 認証のユーザー名                                                                          |
-| `TRINO_PASSWORD`                  | ``（空）                 | Basic 認証のパスワード                                                                          |
-| `TRINO_SOURCE`                    | `hubble`                 | ユーザークエリ向けの `X-Trino-Source`                                                           |
-| `TRINO_METADATA_SOURCE`           | `hubble-metadata`        | メタデータクエリ向けの `X-Trino-Source`                                                         |
-| `DEFAULT_CATALOG`                 | —                        | 新規 notebook の初期カタログ                                                                    |
-| `DEFAULT_SCHEMA`                  | —                        | 新規 notebook の初期スキーマ                                                                    |
-| `DEFAULT_LIMIT`                   | `5000`                   | `LIMIT` のない `SELECT` に自動付与する `LIMIT`                                                  |
-| `QUERY_MAX_ROWS`                  | `100000`                 | クエリごとに server 側でバッファする行数の上限                                                  |
-| `QUERY_CONCURRENCY`               | `5`                      | 同時に追跡するクエリ数の上限                                                                    |
-| `QUERY_TTL_MINUTES`               | `30`                     | 完了したクエリを掃除するまでの保持時間                                                          |
-| `QUERY_OVERFLOW_MODE`             | `truncate`               | `QUERY_MAX_ROWS` 超過時の挙動（`truncate` または `cancel`）                                     |
-| `METADATA_TTL_SECONDS`            | `300`                    | メタデータキャッシュの TTL                                                                      |
-| `APP_VERSION`                     | `0.1.0`                  | `GET /api/config` が返すバージョン                                                              |
-| `QUERY_GUARD_MODE`                | `warn`                   | Query Guard モード（`off`=無効 / `warn`=推定表示のみ / `enforce`=上限超過時に HTTP 422 で拒否） |
-| `QUERY_GUARD_MAX_SCAN_BYTES`      | `0`（無制限）            | スキャンバイト数の上限（0 = 無制限）                                                            |
-| `QUERY_GUARD_MAX_SCAN_ROWS`       | `0`（無制限）            | スキャン行数の上限（0 = 無制限）                                                                |
-| `QUERY_GUARD_ON_UNKNOWN`          | `warn`                   | 統計が無く推定不能なときの扱い（`allow` / `warn` / `block`）                                    |
-| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000`                   | EXPLAIN のタイムアウト（ミリ秒）                                                                |
-| `QUERY_GUARD_CACHE_TTL_SECONDS`   | `30`                     | 推定結果キャッシュの TTL（秒）                                                                  |
-| `QUERY_GUARD_BYTES_PER_SECOND`    | `0`（目安なし）          | クラスタースループット目安（バイト/秒）。0 より大きい値を設定すると UI に所要時間の目安を表示   |
-| `SCHEDULER_ENABLED`               | `true`                   | `false` にするとスケジューラーの tick ループを停止（API は生きたまま）                          |
-| `SCHEDULER_TICK_SECONDS`          | `15`                     | due なスケジュールをスキャンする間隔（秒）                                                      |
-| `SCHEDULER_MAX_CONCURRENT`        | `2`                      | スケジューラー全体で同時実行できる数の上限                                                      |
-| `SCHEDULER_RUNS_RETENTION`        | `50`                     | スケジュールごとに保持する実行履歴の上限件数（古い行は自動プルーン）                            |
-| `TRINO_SCHEDULED_SOURCE`          | `hubble-scheduled`       | スケジュール実行の `X-Trino-Source`                                                             |
+| 変数                              | 既定値                   | 説明                                                                                             |
+| --------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
+| `DATASOURCES_PATH`                | —                        | データソース定義 YAML のパス。未設定時は `./datasources.yaml` を探し、無ければ `TRINO_*` で合成  |
+| `RBAC_PATH`                       | —                        | RBAC 定義 YAML のパス。未設定時は `./rbac.yaml` を探し、無ければ `unrestricted` ロールで後方互換 |
+| `PORT`                            | `8080`                   | BFF が待ち受ける HTTP ポート                                                                     |
+| `DB_PATH`                         | `./data/hubble.db`       | SQLite データベースファイル                                                                      |
+| `DATABASE_URL`                    | —                        | `postgres://` 形式の接続文字列。設定すると永続化が PostgreSQL になり `DB_PATH` より優先          |
+| `STATIC_DIR`                      | —                        | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う   |
+| `TRINO_BASE_URL`                  | `http://127.0.0.1:30080` | Trino コーディネーターのベース URL                                                               |
+| `TRINO_USER`                      | `admin`                  | `X-Trino-User` として送る値                                                                      |
+| `TRINO_USERNAME`                  | `admin`                  | Basic 認証のユーザー名                                                                           |
+| `TRINO_PASSWORD`                  | ``（空）                 | Basic 認証のパスワード                                                                           |
+| `TRINO_SOURCE`                    | `hubble`                 | ユーザークエリ向けの `X-Trino-Source`                                                            |
+| `TRINO_METADATA_SOURCE`           | `hubble-metadata`        | メタデータクエリ向けの `X-Trino-Source`                                                          |
+| `DEFAULT_CATALOG`                 | —                        | 新規 notebook の初期カタログ                                                                     |
+| `DEFAULT_SCHEMA`                  | —                        | 新規 notebook の初期スキーマ                                                                     |
+| `DEFAULT_LIMIT`                   | `5000`                   | `LIMIT` のない `SELECT` に自動付与する `LIMIT`                                                   |
+| `QUERY_MAX_ROWS`                  | `100000`                 | クエリごとに server 側でバッファする行数の上限                                                   |
+| `QUERY_CONCURRENCY`               | `5`                      | 同時に追跡するクエリ数の上限                                                                     |
+| `QUERY_TTL_MINUTES`               | `30`                     | 完了したクエリを掃除するまでの保持時間                                                           |
+| `QUERY_OVERFLOW_MODE`             | `truncate`               | `QUERY_MAX_ROWS` 超過時の挙動（`truncate` または `cancel`）                                      |
+| `METADATA_TTL_SECONDS`            | `300`                    | メタデータキャッシュの TTL                                                                       |
+| `APP_VERSION`                     | `0.1.0`                  | `GET /api/config` が返すバージョン                                                               |
+| `QUERY_GUARD_MODE`                | `warn`                   | Query Guard モード（`off`=無効 / `warn`=推定表示のみ / `enforce`=上限超過時に HTTP 422 で拒否）  |
+| `QUERY_GUARD_MAX_SCAN_BYTES`      | `0`（無制限）            | スキャンバイト数の上限（0 = 無制限）                                                             |
+| `QUERY_GUARD_MAX_SCAN_ROWS`       | `0`（無制限）            | スキャン行数の上限（0 = 無制限）                                                                 |
+| `QUERY_GUARD_ON_UNKNOWN`          | `warn`                   | 統計が無く推定不能なときの扱い（`allow` / `warn` / `block`）                                     |
+| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000`                   | EXPLAIN のタイムアウト（ミリ秒）                                                                 |
+| `QUERY_GUARD_CACHE_TTL_SECONDS`   | `30`                     | 推定結果キャッシュの TTL（秒）                                                                   |
+| `QUERY_GUARD_BYTES_PER_SECOND`    | `0`（目安なし）          | クラスタースループット目安（バイト/秒）。0 より大きい値を設定すると UI に所要時間の目安を表示    |
+| `SCHEDULER_ENABLED`               | `true`                   | `false` にするとスケジューラーの tick ループを停止（API は生きたまま）                           |
+| `SCHEDULER_TICK_SECONDS`          | `15`                     | due なスケジュールをスキャンする間隔（秒）                                                       |
+| `SCHEDULER_MAX_CONCURRENT`        | `2`                      | スケジューラー全体で同時実行できる数の上限                                                       |
+| `SCHEDULER_RUNS_RETENTION`        | `50`                     | スケジュールごとに保持する実行履歴の上限件数（古い行は自動プルーン）                             |
+| `TRINO_SCHEDULED_SOURCE`          | `hubble-scheduled`       | スケジュール実行の `X-Trino-Source`                                                              |
 
 ## ドキュメント
 

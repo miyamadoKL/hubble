@@ -21,6 +21,7 @@ build/
 .env.*
 !.env.example
 /datasources.yaml
+/rbac.yaml
 
 # Test / coverage
 coverage/

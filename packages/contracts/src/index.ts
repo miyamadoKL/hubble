@@ -14,6 +14,8 @@ export * from './common';
 export * from './error';
 // 認証モードと `GET /api/me` の契約
 export * from './auth';
+// RBAC 権限名の契約
+export * from './rbac';
 // アプリ設定（`GET /api/config`）の契約
 export * from './config';
 // データソース一覧（`GET /api/datasources`）の契約

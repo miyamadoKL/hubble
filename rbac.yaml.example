@@ -1,0 +1,30 @@
+# Declarative RBAC for Hubble.
+# Copy to rbac.yaml or point RBAC_PATH at your file.
+# rbac.yaml is git-ignored (like .env); only this example is tracked.
+# Changes take effect after process restart (no hot reload).
+#
+# Phase A: roles are resolved and exposed via GET /api/me.
+# Permission enforcement begins in Phase B.
+
+roles:
+  admin:
+    permissions: [query.write, query.killAny, queries.viewAll]
+  operator:
+    permissions: [query.write, query.killAny, queries.viewAll]
+    guard:
+      maxScanBytes: 500000000000
+  member:
+    permissions: []
+    guard:
+      maxScanBytes: 50000000000
+      onUnknown: block
+
+assignments:
+  - email: alice@example.com
+    role: admin
+  - user: local-dev
+    role: admin
+  - emailDomain: example.com
+    role: member
+
+defaultRole: member

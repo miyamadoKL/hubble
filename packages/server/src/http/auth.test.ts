@@ -20,7 +20,12 @@ describe('auth — none mode (default)', () => {
     const res = await ctx.app.request('/api/me');
     expect(res.status).toBe(200);
     const me = meResponseSchema.parse(await res.json());
-    expect(me).toEqual({ user: ctx.services.config.trino.user, authMode: 'none' });
+    expect(me).toEqual({
+      user: ctx.services.config.trino.user,
+      authMode: 'none',
+      role: 'unrestricted',
+      permissions: ['query.write'],
+    });
   });
 
   it('serves the API without any auth headers', async () => {
@@ -34,13 +39,57 @@ describe('auth — none mode (default)', () => {
   });
 });
 
+describe('auth — rbac', () => {
+  it('GET /api/me returns role and permissions from rbac.yaml', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-auth-rbac-'));
+    const rbacPath = join(dir, 'rbac.yaml');
+    writeFileSync(
+      rbacPath,
+      `roles:
+  admin:
+    permissions: [query.write, query.killAny, queries.viewAll]
+  member:
+    permissions: []
+assignments:
+  - email: alice@corp.com
+    role: admin
+defaultRole: member
+`,
+      'utf8',
+    );
+    const ctx = await createTestContext({
+      env: { AUTH_MODE: 'proxy', RBAC_PATH: rbacPath },
+      cwd: dir,
+      remoteAddress: () => '127.0.0.1',
+    });
+    try {
+      const res = await ctx.app.request('/api/me', { headers: ssoHeaders('alice@corp.com') });
+      expect(res.status).toBe(200);
+      const me = meResponseSchema.parse(await res.json());
+      expect(me.role).toBe('admin');
+      expect(me.permissions).toEqual(['queries.viewAll', 'query.killAny', 'query.write']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('auth — proxy mode', () => {
   it('GET /api/me resolves the principal from trusted SSO headers', async () => {
     const ctx = await proxyCtx();
     const res = await ctx.app.request('/api/me', { headers: ssoHeaders('alice@corp.com') });
     expect(res.status).toBe(200);
     const me = meResponseSchema.parse(await res.json());
-    expect(me).toEqual({ user: 'alice', email: 'alice@corp.com', authMode: 'proxy' });
+    expect(me).toEqual({
+      user: 'alice',
+      email: 'alice@corp.com',
+      authMode: 'proxy',
+      role: 'unrestricted',
+      permissions: ['query.write'],
+    });
   });
 
   it('returns 401 UNAUTHENTICATED when SSO headers are missing', async () => {
