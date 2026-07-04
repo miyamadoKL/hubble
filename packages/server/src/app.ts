@@ -24,6 +24,7 @@ import { datasourceMetadataRoutes, metadataRoutes } from './http/metadataRoutes'
 import { queryRoutes } from './http/queryRoutes';
 import { historyRoutes, notebookRoutes, savedQueryRoutes } from './http/storeRoutes';
 import { scheduleRoutes } from './http/scheduleRoutes';
+import { adminRoutes } from './http/adminRoutes';
 import { registerStaticServing } from './http/staticRoutes';
 
 /** createApp に渡す依存関係。 */
@@ -105,6 +106,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   // 日本語: ドメインごとのルーターをマウントする。Hono は前方一致でマッチするため、
   // より具体的なプレフィックス（/api/queries 等）を先に、包括的な metadataRoutes
   // （/api 直下に catalogs/metadata を生やす）を最後に登録する。
+  app.route('/api/admin', adminRoutes(services));
   app.route('/api/queries', queryRoutes(services));
   app.route('/api/notebooks', notebookRoutes(services));
   app.route('/api/saved-queries', savedQueryRoutes(services));

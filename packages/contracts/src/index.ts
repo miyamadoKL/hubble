@@ -24,6 +24,8 @@ export * from './datasource';
 export * from './metadata';
 // クエリ実行（`POST /api/queries` など）の契約
 export * from './query';
+// 管理 API（Operations ビュー）の契約
+export * from './admin';
 // Query Guard のスキャン見積もりの契約
 export * from './estimate';
 // クエリ進捗を配信する SSE イベントの契約

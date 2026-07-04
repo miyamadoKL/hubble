@@ -228,6 +228,11 @@ export class QueryRegistry {
     this.defaultDatasourceId = id;
   }
 
+  /** 保持中の全 QueryExecution を返す（管理 API 用）。 */
+  listAll(): QueryExecution[] {
+    return [...this.executions.values()];
+  }
+
   /** Cancel all running queries and stop the sweep timer (shutdown). */
   // サーバーシャットダウン時の後始末: スイープタイマーを止め、まだ終端状態に
   // 達していない全クエリに対してキャンセルを要求し、全て完了するのを待つ。

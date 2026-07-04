@@ -81,6 +81,10 @@ export const apiRoutes = {
   // クエリ実行履歴一覧取得。
   history: () => '/api/history',
 
+  // Admin (RBAC operations view)
+  adminQueries: () => '/api/admin/queries',
+  adminQuery: (id: string) => `/api/admin/queries/${enc(id)}`,
+
   // Schedules (Query Scheduling feature)
   // スケジュール一覧取得 / 新規作成の基点パス。
   schedules: () => '/api/schedules',

@@ -183,6 +183,15 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo u
 形式で保存するか、`user` / `email` マッピングを使ってください。
 設定変更はプロセス再起動後に反映されます。
 
+#### 運用ビュー（Operations）
+
+`queries.viewAll` 権限を持つユーザーにだけ、サイドバーに Operations ビューが表示されます。
+全ユーザーの実行中クエリ（TTL 内に保持されている終了済みクエリを含む）を一覧し、
+owner、データソース、statement 先頭、state、経過時間を 5 秒間隔で更新します。
+`query.killAny` 権限を持つユーザーは、確認ダイアログ経由で任意ユーザーのクエリを
+kill できます。kill 操作はサーバーログに 1 行（実行者、対象 owner、queryId）を残します。
+`rbac.yaml` が無い `unrestricted` 運用ではこれらの権限は付与されず、従来どおりの UI です。
+
 ### 環境変数（server）
 
 | 変数                              | 既定値                   | 説明                                                                                             |

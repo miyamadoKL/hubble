@@ -8,8 +8,12 @@
 
 roles:
   admin:
+    # query.write: 書き込み SQL の実行を許可
+    # query.killAny: Operations ビューから任意ユーザーのクエリを kill
+    # queries.viewAll: Operations ビューで全ユーザーの実行中クエリを閲覧
     permissions: [query.write, query.killAny, queries.viewAll]
   operator:
+    # operator も同様に運用ビューと kill を使える例
     permissions: [query.write, query.killAny, queries.viewAll]
     guard:
       maxScanBytes: 500000000000
