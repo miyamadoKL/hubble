@@ -2,7 +2,9 @@
 # Copy to datasources.yaml or point DATASOURCES_PATH at your file.
 # datasources.yaml is git-ignored (like .env); only this example is tracked.
 # Secrets are referenced via passwordEnv or passwordFile, not stored in YAML.
-# Changes take effect after process restart (no hot reload).
+# This file is required (server refuses to start without it) and supports hot
+# reload: changes take effect without a restart, via mtime polling
+# (CONFIG_RELOAD_INTERVAL_SECONDS, default 30s) or SIGHUP.
 
 datasources:
   - id: trino-prod
@@ -11,7 +13,11 @@ datasources:
     username: admin
     passwordEnv: TRINO_PASSWORD
     baseUrl: http://trino:8080
-    source: hubble
+    # X-Trino-Source tags, one per use case (resource-group separation in
+    # Trino). All three are optional; shown defaults apply when omitted.
+    source: hubble                     # user queries (default: hubble)
+    metadataSource: hubble-metadata    # catalog/schema/table metadata fetches (default: hubble-metadata)
+    scheduledSource: hubble-scheduled  # query scheduler runs (default: hubble-scheduled)
 
   - id: mysql-analytics
     type: mysql

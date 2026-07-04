@@ -8,7 +8,9 @@ Kubernetes へデプロイする運用者向けの手順書です。単一プロ
 
 > Hubble は **server（Hono BFF）+ web（React）** の単一プロセスアプリです。`STATIC_DIR` に
 > web のビルド成果物を指すと server が静的配信も担うため、コンテナは 1 つで完結します。
-> 永続化は SQLite（`DB_PATH`）、データソースは Trino のみです。
+> 永続化は PostgreSQL（`DATABASE_URL`、1st/production 推奨）または SQLite（`DB_PATH`、
+> non-production）、データソースは Trino / MySQL / PostgreSQL のマルチデータソースに
+> 対応します（接続情報は `datasources.yaml`、[`operations.md` §1](operations.md#1-アーキテクチャ概要)）。
 
 ---
 
@@ -50,21 +52,30 @@ multi-stage の流れ：
 | `DB_PATH`    | `/data/hubble.db`        |
 | `PORT`       | `8080`                   |
 
-`/data` は `VOLUME` 化されており、SQLite（`notebooks` / `saved_queries` / `query_history`）が
-コンテナ再作成をまたいで永続化されます。
+イメージは `DATABASE_URL` を既定で設定しないため、単体 `docker run` では
+`DB_PATH`（SQLite、non-production 想定）が使われます。`/data` は `VOLUME` 化されており、
+SQLite（`notebooks` / `saved_queries` / `query_history`）がコンテナ再作成をまたいで
+永続化されます。**production では `-e DATABASE_URL=postgres://...` を渡して PostgreSQL に
+してください**（[`operations.md` §9](operations.md#9-データ管理)）。
+
+`datasources.yaml` は必須です。単体 `docker run` ではファイルをコンテナへマウントし、
+`DATASOURCES_PATH` で参照します。
 
 ### 2.2 起動
 
 ```bash
 docker run --rm \
   -p 8080:8080 \
-  -v hubble-data:/data \
-  -e TRINO_BASE_URL=http://trino.internal:8080 \
+  -v "$(pwd)/datasources.yaml:/etc/hubble/datasources.yaml:ro" \
+  -e DATASOURCES_PATH=/etc/hubble/datasources.yaml \
+  -e DATABASE_URL=postgres://hubble:***@postgres.internal:5432/hubble \
   -e TRINO_USER=hubble-svc \
-  -e TRINO_USERNAME=hubble-svc \
-  -e TRINO_PASSWORD=*** \
   hubble:0.1.0
 ```
+
+`TRINO_USER` は全 Trino データソース共通の impersonation ユーザーで、Trino 接続先
+（`baseUrl`/`username`/`passwordEnv`|`passwordFile`/`source` 系）は `datasources.yaml`
+側に書きます（README のデータソース設定を参照）。
 
 ### 2.3 動作確認
 
@@ -94,15 +105,20 @@ curl -s http://localhost:8080/api/catalogs
 docker compose up --build
 ```
 
-- `hubble` サービス — `Dockerfile` をビルドし `:8080` を公開。SQLite は名前付きボリューム
-  `hubble-data`（`/data`）に永続化。
+- `hubble` サービス: `Dockerfile` をビルドし `:8080` を公開。永続化は既定で PostgreSQL
+  （`postgres` サービス、`DATABASE_URL`）。
 - `trino` サービス — `trinodb/trino` 公式イメージ。`deploy/docker/trino/etc/catalog/tpch.properties`
   で tpch カタログのみ追加（他は公式デフォルト）。公式イメージ組込みの healthcheck により、
   `hubble` は `depends_on: service_healthy` で待機。
+- `postgres` サービス: Hubble 自身の永続化（notebooks / saved queries / query history）用
+  PostgreSQL。名前付きボリューム `hubble-postgres-data` に永続化。クエリ対象データの
+  postgresql データソースとは別物。
 
-Hubble → Trino はサービス名で接続します（既定 `TRINO_BASE_URL=http://trino:8080`）。
-ローカルの `.env`（git 管理外）があれば `env_file` で読み込まれ、任意の変数を上書きできます
-（外部 Trino を使う場合は `.env` に `TRINO_BASE_URL=...` を置く）。
+Hubble → Trino の接続情報は `deploy/compose/datasources.yaml`（`DATASOURCES_PATH` でマウント）
+に定義されており、既定はサービス名接続（`baseUrl: http://trino:8080`）です。外部 Trino を
+使う場合はそのファイルの `baseUrl` / `username` / `passwordEnv` を書き換えるか、
+`DATASOURCES_PATH` で別ファイルを指してください。ローカルの `.env`（git 管理外）があれば
+`env_file` で読み込まれ、`TRINO_PASSWORD` や `DATABASE_URL` など任意の変数を上書きできます。
 
 確認：
 
@@ -124,24 +140,30 @@ docker compose down -v        # ボリューム（SQLite データ）も削除
 
 `deploy/k8s/` に kustomize ベースのサンプルがあります。構成リソース：
 
-| リソース          | 役割                                                               |
-| ----------------- | ------------------------------------------------------------------ |
-| `namespace.yaml`  | namespace `hubble`                                                 |
-| `configmap.yaml`  | 非機密の環境変数（`TRINO_BASE_URL` 等）                            |
-| `secret.yaml`     | `TRINO_PASSWORD`（**プレースホルダ**。実値に差し替えること）       |
-| `pvc.yaml`        | SQLite 用 PVC（`ReadWriteOnce`、`/data` にマウント）               |
-| `deployment.yaml` | Deployment（**replicas=1**、`/api/healthz` で liveness/readiness） |
-| `service.yaml`    | Service（`ClusterIP`、`:80` → コンテナ `:8080`）                   |
+| リソース          | 役割                                                                                                                                |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `namespace.yaml`  | namespace `hubble`                                                                                                                  |
+| `configmap.yaml`  | 非機密の環境変数 + `datasources.yaml` 本体（ConfigMap のキーとしてマウント）                                                        |
+| `secret.yaml`     | `TRINO_PASSWORD`（`datasources.yaml` の `passwordEnv` 参照先）と `DATABASE_URL`（**いずれもプレースホルダ**。実値に差し替えること） |
+| `pvc.yaml`        | SQLite 用 PVC（`ReadWriteOnce`、`/data` にマウント）。**non-production 向け、既定の `kustomization.yaml` には含まれない**           |
+| `deployment.yaml` | Deployment（既定 **replicas=1**、`RollingUpdate`、`/api/healthz` で liveness/readiness）                                            |
+| `service.yaml`    | Service（`ClusterIP`、`:80` → コンテナ `:8080`）                                                                                    |
 
-> 上記サンプルは SQLite 前提です。永続化に外部 PostgreSQL を使う場合は `pvc.yaml` が
-> 不要になり、`replicas=1` の制約も外せます（[§5](#5-sqlite-の永続化と-replicas1-の制約)）。
-> `DATABASE_URL` は接続情報を含むため、`secret.yaml` 経由で渡してください（例）。
->
-> ```yaml
-> # deploy/k8s/secret.yaml（例）。実値に差し替えること。
-> # stringData:
-> #   DATABASE_URL: postgres://hubble:CHANGE_ME@postgres.hubble.svc:5432/hubble
-> ```
+既定は PostgreSQL（`DATABASE_URL`、`secret.yaml`）が永続化バックエンドです。DB を外部の
+PostgreSQL が一元管理するため `replicas` を 1 に固定する必要はなく、`RollingUpdate` で
+複数レプリカに増やせます（増やす場合は `deployment.yaml` の `replicas` を変更）。
+`DATABASE_URL` の例：
+
+```yaml
+# deploy/k8s/secret.yaml
+stringData:
+  DATABASE_URL: postgres://hubble:CHANGE_ME@postgres.hubble.svc:5432/hubble
+```
+
+non-production で SQLite（`DB_PATH` + PVC）を使う場合は `pvc.yaml` を
+`kustomization.yaml` の `resources` に追加し、`deployment.yaml` の PVC マウント（コメント
+アウト済み）を有効化してください（[§5](#5-永続化バックエンドと-replicas-の制約)）。この
+場合のみ `replicas=1` / `Recreate` が必須です。
 
 ### 4.1 レンダリングと検証
 
@@ -187,8 +209,8 @@ kubectl -n hubble rollout status deploy/hubble
 kubectl -n hubble port-forward svc/hubble 8080:80   # ローカルから確認する場合
 ```
 
-`TRINO_PASSWORD` は `secret.yaml` のプレースホルダを実値に差し替えるか、外部の
-シークレット管理（sealed-secrets / external-secrets 等）で注入してください。
+`TRINO_PASSWORD` / `DATABASE_URL` は `secret.yaml` のプレースホルダを実値に差し替えるか、
+外部のシークレット管理（sealed-secrets / external-secrets 等）で注入してください。
 SSO を前段に置く場合（`AUTH_MODE=proxy`）は [`operations.md` §7](operations.md#7-認証-auth_modeproxy)
 を参照し、oauth2-proxy などを Service の前段に配置します。
 
@@ -212,23 +234,32 @@ sudo k3s ctr images import hubble-0.1.0.tar
 
 ---
 
-## 5. SQLite の永続化と replicas=1 の制約
+## 5. 永続化バックエンドと replicas の制約
 
-Hubble の永続化は**単一の SQLite ファイル**（`DB_PATH`）です。これは要約データ
-（notebooks / saved_queries / query_history）のみを保持し、結果の行データは保存しません
-（[`operations.md` §9](operations.md#9-データ管理sqlite)）。
+Hubble の永続化は PostgreSQL（`DATABASE_URL`、1st/production 推奨）または SQLite
+（`DB_PATH`、non-production）です。どちらも要約データ（notebooks / saved_queries /
+query_history）のみを保持し、結果の行データは保存しません
+（[`operations.md` §9](operations.md#9-データ管理)）。
 
-- **同じ DB を複数プロセスで開かないこと**。Kubernetes では **replicas を 1 に固定**し、
-  PVC は `ReadWriteOnce`、ロールアウト戦略は `Recreate`（旧 Pod が PVC を解放してから
-  新 Pod が attach）にしています。`RollingUpdate` や replicas>1 は DB 競合・破損の原因です。
-- Hubble は水平スケールしません。負荷はデータソース（Trino）側でスケールさせます。
+### PostgreSQL（既定、production 推奨）
+
+DB を外部の PostgreSQL が一元管理するため、**`replicas` を 1 に固定する必要はありません**。
+`deployment.yaml` は既定で `replicas: 1` + `RollingUpdate` ですが、負荷に応じて `replicas`
+を増やしても DB 競合は起きません。PVC も不要です。バックアップは `pg_dump` / `pg_restore`
+を使ってください（[`operations.md` §9.1](operations.md#91-postgresql-バックエンド主)）。
+
+### SQLite（non-production 向け）
+
+SQLite は**単一ファイル**（`DB_PATH`）を使うため、複数プロセスから同時に開けません。
+SQLite を使う場合のみ、次が**必須**です。
+
+- Kubernetes では **replicas を 1 に固定**し、PVC は `ReadWriteOnce`、ロールアウト戦略は
+  `Recreate`（旧 Pod が PVC を解放してから新 Pod が attach）にする（`pvc.yaml` を
+  `kustomization.yaml` に追加し、`deployment.yaml` のコメントアウト済み設定を有効化）。
+  `RollingUpdate` や replicas>1 は DB 競合や破損の原因です。
+- Hubble は水平スケールしません。負荷はデータソース（Trino 等）側でスケールさせます。
 - バックアップは稼働中ならオンラインバックアップ（`sqlite3 … ".backup"`）が安全です
-  （[`operations.md` §9.2](operations.md#92-バックアップ)）。
-
-> **PostgreSQL を使う場合**: 永続化バックエンドを PostgreSQL（`DATABASE_URL`）にすると
-> 上記の `PVC` は不要になり、ロールアウト戦略や `replicas=1` の制約も外せます（DB を
-> 外部の PostgreSQL が一元管理するため）。`replicas=1` / `ReadWriteOnce` の PVC が必要なのは
-> SQLite を使う場合のみです。詳細は [`operations.md` §9.4](operations.md#94-postgresql-バックエンド)。
+  （[`operations.md` §9.2](operations.md#92-sqlitenon-production-向け)）。
 
 ---
 
