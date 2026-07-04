@@ -744,9 +744,12 @@ SQL の構文は 2 段階で検証されます。
 
 実行はスケジュールの所有者 principal（`X-Trino-User`）で行われ、`X-Trino-Source` に
 `hubble-scheduled`（`datasources.yaml` の該当 Trino エントリの `scheduledSource` で変更可）
-を付与します。ロール解決は owner
-文字列のみを使うため、`rbac.yaml` の `group` 割り当てはスケジュール実行に適用されません
-（`email` / `user` 割り当てを使うか、owner をメール形式で保存してください。README の RBAC 節参照）。
+を付与します。
+ロール解決は、スケジュールの作成/更新時に保存された principal スナップショット（user、email、groups）を使います。
+作成/更新時点で email や groups が解決されていれば、email 系 assignment と `group` assignment はスケジュール実行にも適用されます。
+`principal_snapshot` がない旧レコードは、従来どおり owner 文字列のみから `{ user: owner, email: owner に '@' が含まれるとき }` を復元します。
+この場合、email localpart の owner では email 系 assignment が効かず、`group` assignment も適用されません。
+owner がスケジュールを再保存すると、その時点の principal でスナップショットが更新されます。
 **結果の行データは
 保存されません**（完了ステータス・試行回数・rowCount・elapsedMs・trinoQueryId・エラーのみ
 記録）。履歴はスケジュールごとに直近 `SCHEDULER_RUNS_RETENTION`（既定 50）件を保持し、
