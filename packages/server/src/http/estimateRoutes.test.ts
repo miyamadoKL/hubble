@@ -95,6 +95,37 @@ describe('POST /api/queries/estimate', () => {
     expect(result.verdict.decision).toBe('block');
   });
 
+  it('estimates inner statement for EXPLAIN ANALYZE SELECT', async () => {
+    const ctx = await createTestContext({
+      scenarios: [explainScenario('lineitem', lineitemCell)],
+      configOverrides: {
+        guard: {
+          mode: 'enforce',
+          maxScanBytes: 0,
+          maxScanRows: 1_000_000,
+          onUnknown: 'warn',
+          estimateTimeoutMs: 3000,
+          cacheTtlSeconds: 30,
+          bytesPerSecond: 0,
+        },
+      },
+    });
+    const { status, json } = await postEstimate(ctx.app, {
+      statement: 'EXPLAIN ANALYZE SELECT * FROM lineitem',
+      catalog: 'tpch',
+      schema: 'sf1',
+    });
+    expect(status).toBe(200);
+    const result = estimateResultSchema.parse(json) as EstimateResult;
+    expect(result.status).toBe('estimated');
+    expect(result.verdict.decision).toBe('block');
+    const explainBody = ctx.fake.requests.find(
+      (r) => r.method === 'POST' && (r.body ?? '').includes('EXPLAIN (TYPE IO'),
+    )?.body;
+    expect(explainBody).toContain('SELECT * FROM lineitem');
+    expect(explainBody).not.toContain('EXPLAIN ANALYZE');
+  });
+
   it('allows a small table under the limit', async () => {
     const ctx = await createTestContext({
       scenarios: [explainScenario('nation', nationCell)],
