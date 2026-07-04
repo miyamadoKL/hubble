@@ -1,8 +1,9 @@
 # Hubble SQL Workbench 利用ガイド
 
-このドキュメントは **Hubble SQL Workbench**（以下 Hubble）を使って Trino にクエリを
-投げる分析者・エンジニア向けの操作マニュアルです。Hue の Notebook を使ったことが
-ある方なら、ほぼ同じ感覚で使えます。
+このドキュメントは **Hubble SQL Workbench**（以下 Hubble）を使って SQL を実行する
+分析者とエンジニア向けの操作マニュアルです。Trino、MySQL、PostgreSQL のいずれかに
+接続してクエリを投げられます。Hue の Notebook を使ったことがある方なら、ほぼ同じ
+感覚で使えます。
 
 - 運用者（ホスト担当）向けの導入・設定は [`operations.md`](operations.md) を参照してください。
 - 画面・機能の設計背景は [`design.md`](design.md) を参照してください。
@@ -11,9 +12,11 @@
 
 ## 1. はじめに
 
-Hubble は **Trino 専用**のクエリエディターです。複数のセルを持つ Notebook に SQL を
-書き、セルごとに実行して結果をグリッド・チャートで確認できます。クエリ・結果・
-履歴はブラウザではなくサーバー側に保存され、別の端末からでも同じ Notebook を開けます。
+Hubble は Trino、MySQL、PostgreSQL に対応した SQL ワークベンチです。Trino を
+第一級サポートとし、SQL 補完 (ANTLR) と Query Guard の事前見積りは Trino のみ
+対応です。複数のセルを持つ Notebook に SQL を書き、セルごとに実行して結果を
+グリッドとチャートで確認できます。クエリ、結果、履歴はブラウザではなくサーバー側に
+保存され、別の端末からでも同じ Notebook を開けます。
 
 おおまかな使い方の流れは次のとおりです。
 
