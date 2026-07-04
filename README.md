@@ -180,10 +180,17 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo u
 `rbac.yaml` を探します。ファイルが無い場合は組み込みロール `unrestricted`
 （`query.write` のみ）が全員に割り当てられ、従来どおり全ユーザーが書き込み可能です。
 `query.write` 権限の有無で書き込み文の実行を拒否し、ロールごとに Query Guard 上限を
-上書きできます。スケジュール実行時のロール解決は owner 文字列のみを使います
+上書きできます。割り当てキーは `email` / `user` / `emailDomain` / `group` のいずれか
+1 つです。`group` は oauth2-proxy 等が付与する `X-Forwarded-Groups` ヘッダー
+（`AUTH_SSO_HEADER_GROUPS`、既定 `x-forwarded-groups`）のメンバーシップと照合します。
+Google Workspace のグループを使う場合は、oauth2-proxy の Google provider で
+グループ解決を有効にする必要があります。
+スケジュール実行時のロール解決は owner 文字列のみを使います
 （`{ user: owner, email: owner に '@' が含まれるとき }`）。そのため
 `AUTH_USER_MAPPING=email-localpart` では email 系 assignment がスケジュール実行に
-効きません。email 系 assignment をスケジュールでも使う場合は owner をメールアドレス
+効きません。`group` 割り当てもスケジュール実行には適用されず `defaultRole` 等へ
+落ちます。スケジュールでもロールを固定したい運用では `email` / `user` での割り当てを
+使ってください。email 系 assignment をスケジュールでも使う場合は owner をメールアドレス
 形式で保存するか、`user` / `email` マッピングを使ってください。
 設定変更はプロセス再起動後に反映されます。
 

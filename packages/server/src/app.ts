@@ -90,6 +90,8 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   app.route('/api/datasources', datasourceMetadataRoutes(services));
   // 認証ミドルウェアが解決した principal をそのまま返すだけの薄いエンドポイント。
   // TopBar のユーザー表示や 401 時のフォールバック UI 判定に使われる。
+  // groups は IdP 側のメンバーシップ情報であり、クライアントに露出する必要がないため
+  // MeResponse には含めない（ロール解決にのみ利用する）。
   app.get(apiRoutes.me(), (c) => {
     const principal = c.var.principal;
     const me: MeResponse = {
