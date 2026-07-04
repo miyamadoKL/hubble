@@ -21,6 +21,7 @@ import {
   CSV_REEXEC_UNAVAILABLE,
   createQueryRequestSchema,
   estimateRequestSchema,
+  type QuerySnapshot,
   type QueryRowsPage,
 } from '@hubble/contracts';
 import type { Services } from '../services';
@@ -43,6 +44,12 @@ import {
   statementAllowsCsvReexec,
   streamQueryCsv,
 } from '../query/csv';
+import type { HistoryResultRef } from '../store/history';
+import {
+  readPersistedResultMetadata,
+  readPersistedRowsPage,
+  streamPersistedCsv,
+} from '../resultStore/jsonl';
 
 // SSE 接続が生きていることをクライアント側の中間プロキシ等に伝えるための keepalive 送信間隔。
 const KEEPALIVE_INTERVAL_MS = 15_000;
@@ -206,20 +213,92 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return exec;
   };
 
+  const maybeOwnedExec = (
+    id: string,
+    c: { var: AuthVariables },
+  ): ReturnType<typeof services.registry.get> => {
+    const exec = services.registry.get(id);
+    if (!exec) return undefined;
+    if (exec.ctx.user !== undefined && exec.ctx.user !== c.var.principal.user) {
+      throw AppError.notFound(`Query ${id} not found`);
+    }
+    return exec;
+  };
+
+  const usablePersistedResult = async (
+    c: { req: { param: (k: string) => string }; var: AuthVariables },
+    opts: { optional?: boolean } = {},
+  ): Promise<HistoryResultRef | undefined> => {
+    const id = c.req.param('id');
+    const ref = await services.history.getResultRef(c.var.principal.user, id);
+    if (!ref) {
+      if (opts.optional) return undefined;
+      throw AppError.notFound(`Query ${id} not found`);
+    }
+    if (new Date(ref.resultExpiresAt).getTime() <= Date.now()) {
+      if (opts.optional) return undefined;
+      throw AppError.notFound(`Query ${id} not found`);
+    }
+    requireDatasourceAccess(c.var.principal.role, ref.datasourceId);
+    return ref;
+  };
+
+  const requirePersistedResult = async (c: {
+    req: { param: (k: string) => string };
+    var: AuthVariables;
+  }): Promise<HistoryResultRef> => {
+    const ref = await usablePersistedResult(c);
+    if (!ref) throw AppError.notFound(`Query ${c.req.param('id')} not found`);
+    return ref;
+  };
+
   // GET /api/queries/:id — snapshot.
   // 実行の現在状態（ステータス、行数、エラー等）をポーリング取得するためのスナップショット API。
-  app.get('/:id', (c) => {
-    const exec = ownedExec(c);
-    return c.json(exec.snapshot());
+  app.get('/:id', async (c) => {
+    const exec = maybeOwnedExec(c.req.param('id'), c);
+    if (exec) return c.json(exec.snapshot());
+
+    const ref = await requirePersistedResult(c);
+    const metadata = await readPersistedResultMetadata(
+      await services.resultStore.getStream(ref.resultObjectKey),
+    );
+    const snapshot: QuerySnapshot = {
+      queryId: ref.id,
+      state: ref.state,
+      rowCount: ref.rowCount,
+      truncated: false,
+      submittedAt: ref.submittedAt,
+      datasourceId: ref.datasourceId,
+      csvReexecAllowed: false,
+    };
+    if (ref.trinoQueryId) snapshot.trinoQueryId = ref.trinoQueryId;
+    if (ref.errorMessage) snapshot.error = { code: 'QUERY_ERROR', message: ref.errorMessage };
+    if (metadata.columns.length > 0) snapshot.columns = metadata.columns;
+    return c.json(snapshot);
   });
 
   // GET /api/queries/:id/rows?offset&limit — page of buffered rows.
   // バッファ済みの結果行をオフセット/リミット指定でページングして返す。
-  app.get('/:id/rows', (c) => {
-    const exec = ownedExec(c);
+  app.get('/:id/rows', async (c) => {
+    const exec = maybeOwnedExec(c.req.param('id'), c);
     const offset = intParam(c.req.query('offset'), 0);
     // limit は 1〜10,000 の範囲にクランプし、過大なリクエストでメモリを圧迫しないようにする。
     const limit = Math.min(Math.max(intParam(c.req.query('limit'), 100), 1), 10_000);
+    if (!exec) {
+      const ref = await requirePersistedResult(c);
+      const persisted = await readPersistedRowsPage(
+        await services.resultStore.getStream(ref.resultObjectKey),
+        Math.max(offset, 0),
+        limit,
+      );
+      const page: QueryRowsPage = {
+        offset: Math.max(offset, 0),
+        rows: persisted.rows,
+        totalBuffered: persisted.totalRows,
+        complete: true,
+      };
+      return c.json(page);
+    }
     const page: QueryRowsPage = {
       offset,
       rows: exec.getRows(offset, limit),
@@ -300,13 +379,44 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
   // GET /api/queries/:id/download.csv?compression=gzip|zip
   // 結果全体を CSV としてストリーミングダウンロードするエンドポイント。無圧縮/gzip/zip を選択可能。
   app.get('/:id/download.csv', async (c) => {
-    const exec = ownedExec(c);
+    const id = c.req.param('id');
+    const exec = maybeOwnedExec(id, c);
     const principal = c.var.principal;
     const compression = c.req.query('compression');
     const gzip = compression === 'gzip';
     const zip = compression === 'zip';
-    const csvName = `${exec.queryId}.csv`;
-    const filename = zip ? `${exec.queryId}.zip` : `${csvName}${gzip ? '.gz' : ''}`;
+    const csvName = `${id}.csv`;
+    const filename = zip ? `${id}.zip` : `${csvName}${gzip ? '.gz' : ''}`;
+
+    const persisted = await usablePersistedResult(c, { optional: exec !== undefined });
+    if (persisted) {
+      await services.audit.record({
+        actor: principal.user,
+        action: 'csv.download',
+        target: persisted.id,
+        datasource: persisted.datasourceId,
+        detail: {
+          compression: zip ? 'zip' : gzip ? 'gzip' : 'none',
+          source: 'resultStore',
+          outcome: 'allowed',
+        },
+      });
+      c.header('Content-Type', zip ? 'application/zip' : 'text/csv; charset=utf-8');
+      c.header('Content-Disposition', `attachment; filename="${filename}"`);
+      if (gzip) c.header('Content-Encoding', 'gzip');
+      c.header('Cache-Control', 'no-store');
+
+      return stream(c, async (rawStream) => {
+        const ac = new AbortController();
+        rawStream.onAbort(() => ac.abort());
+        const csv = streamPersistedCsv(
+          await services.resultStore.getStream(persisted.resultObjectKey),
+        );
+        await writeCsvDownload(rawStream, csvName, csv, { zip, gzip, signal: ac.signal });
+      });
+    }
+
+    if (!exec) throw AppError.notFound(`Query ${id} not found`);
 
     const engine = exec.engine;
     const catalog = exec.ctx.catalog ?? services.config.defaults.catalog;
@@ -481,3 +591,35 @@ async function* csvBytes(csv: AsyncGenerator<string>, signal: AbortSignal): Asyn
 // Re-export so app.ts can register a not-found that throws AppError consistently.
 // app.ts の not-found ハンドラが同じ AppError 型でエラーを投げられるよう、ここから再エクスポートする。
 export { AppError };
+
+async function writeCsvDownload(
+  rawStream: StreamingApi,
+  csvName: string,
+  csv: AsyncGenerator<string>,
+  options: { zip: boolean; gzip: boolean; signal: AbortSignal },
+): Promise<void> {
+  if (options.zip) {
+    await pipeZip(rawStream, csvName, csv, options.signal);
+    return;
+  }
+  if (options.gzip) {
+    const gz = new CompressionStream('gzip');
+    const writer = gz.writable.getWriter();
+    const encoder = new TextEncoder();
+    const pumped = rawStream.pipe(gz.readable);
+    try {
+      for await (const chunk of csv) {
+        if (options.signal.aborted) break;
+        await writer.write(encoder.encode(chunk));
+      }
+    } finally {
+      await writer.close();
+      await pumped;
+    }
+    return;
+  }
+  for await (const chunk of csv) {
+    if (options.signal.aborted) break;
+    await rawStream.write(chunk);
+  }
+}

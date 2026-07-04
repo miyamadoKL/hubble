@@ -9,6 +9,7 @@ import { createApp } from '../app';
 import type { AuthVariables, RemoteAddressFn } from '../auth/middleware';
 import type { FakeScenario } from './fakeTrino';
 import { FakeTrino } from './fakeTrino';
+import type { ResultStore } from '../resultStore';
 
 /**
  * `datasources.yaml` が必須化されたことに伴うテストヘルパー。
@@ -103,6 +104,8 @@ export async function createTestContext(
     cwd?: string;
     reloadLogError?: (message: string, err: unknown) => void;
     reloadLogWarn?: (message: string) => void;
+    resultStore?: ResultStore;
+    resultStoreLogWarn?: (message: string, err?: unknown) => void;
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
@@ -116,6 +119,7 @@ export async function createTestContext(
     trino: { ...baseConfig.trino, ...options.configOverrides?.trino },
     query: { ...baseConfig.query, ...options.configOverrides?.query },
     metadata: { ...baseConfig.metadata, ...options.configOverrides?.metadata },
+    resultStore: options.configOverrides?.resultStore ?? baseConfig.resultStore,
     defaults: { ...baseConfig.defaults, ...options.configOverrides?.defaults },
     guard: { ...baseConfig.guard, ...options.configOverrides?.guard },
     scheduler: {
@@ -141,6 +145,9 @@ export async function createTestContext(
     schedulerSleep: () => Promise.resolve(),
     reloadLogError: options.reloadLogError,
     reloadLogWarn: options.reloadLogWarn,
+    resultStore: options.resultStore,
+    resultStoreLogWarn: options.resultStoreLogWarn,
+    resultCleanupSetTimer: () => ({ clear: () => {} }),
   });
   // 日本語: enabled=false でもクラッシュ復旧 (abortOrphans) は必ず走るため、
   // tick ループを使わないテストでも start() は呼んでおく必要がある。

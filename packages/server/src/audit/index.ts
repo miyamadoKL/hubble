@@ -8,6 +8,7 @@ import { newId } from '../util/id';
 export const auditActionSchema = z.enum([
   'query.execute',
   'query.kill',
+  'query.result.persist',
   'csv.download',
   'schedule.execute',
 ]);

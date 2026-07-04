@@ -33,6 +33,10 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
   completion (FQN + columns + CTEs), hover, real-time error markers, formatting.
 - **Live results** — virtualized grid (fixed header, 28px rows), column show/hide +
   search, client-side filter/sort, CSV download (gzip optional), TSV/HTML copy.
+- **Optional result persistence** — set `RESULT_STORE=s3` to store completed
+  query results as gzip JSONL in S3 and reopen them from history without
+  re-running the query. The default is `RESULT_STORE=none`, which keeps only the
+  in-memory result.
 - **Charts** (ECharts) — bars / lines / timeline / pie / scatter, with X/Y (multi-Y),
   sort, row-limit and scatter group/size controls. Theme + palette derived from the
   design tokens, so charts follow the light/dark switch.
@@ -66,9 +70,11 @@ e2e/           # Playwright E2E suites (editor / execution / results / notebook 
   truth; server and web are re-generatable implementation layers around them.
 - **State**: zustand stores (`ui`, `notebook`, `execution`, chart config) + TanStack
   Query for server state. Components stay presentational.
-- **Results stay in memory**: rows live in server memory + SSE; PostgreSQL (or
-  SQLite) persists only summaries (notebooks, saved queries, history, per-cell
-  `resultMeta`).
+- **Results stay in memory by default**: with `RESULT_STORE=none`, rows live in
+  server memory + SSE; PostgreSQL (or SQLite) persists only summaries
+  (notebooks, saved queries, history, per-cell `resultMeta`). With
+  `RESULT_STORE=s3`, completed results are stored in S3 and the DB records only
+  the object key and expiry timestamp.
 - **Design tokens are a contract**: all color/spacing/typography live in
   `packages/web/src/theme/tokens.css`; raw hex in components is blocked by an
   ast-grep lint rule. The Monaco and ECharts themes are derived from these tokens at

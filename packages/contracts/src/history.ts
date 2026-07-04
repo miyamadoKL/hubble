@@ -43,6 +43,10 @@ export const queryHistoryEntrySchema = z.object({
   /** Datasource this query ran against. */
   // 実行先データソース id。
   datasourceId: z.string().optional(),
+  // 永続化された結果を再実行なしで開けるかどうか。
+  resultAvailable: z.boolean().optional(),
+  // 永続化結果が失効する日時。
+  resultExpiresAt: isoTimestamp.optional(),
 });
 /** 履歴 1 件分の推論型。 */
 export type QueryHistoryEntry = z.infer<typeof queryHistoryEntrySchema>;

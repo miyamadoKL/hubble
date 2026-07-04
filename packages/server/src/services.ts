@@ -29,6 +29,8 @@ import type { MysqlPoolFactory } from './engine/mysql/pool';
 import type { PgPoolFactory } from './engine/postgresql/pool';
 import type { QueryEngine } from './engine/types';
 import { AuditLogger, AuditRepository } from './audit';
+import { createResultStore, type ResultStore } from './resultStore';
+import { ResultExpiryService } from './resultStore/cleanup';
 
 export interface Services {
   config: ServerConfig;
@@ -47,6 +49,8 @@ export interface Services {
   scheduleRuns: ScheduleRunRepository;
   scheduler: Scheduler;
   audit: AuditLogger;
+  resultStore: ResultStore;
+  resultExpiry: ResultExpiryService;
   reloadDatasources: () => Promise<void>;
   reloadRbac: () => Promise<void>;
   shutdown: () => Promise<void>;
@@ -65,6 +69,9 @@ export interface BuildServicesOptions {
   reloadLogError?: (message: string, err: unknown) => void;
   reloadLogWarn?: (message: string) => void;
   auditLogError?: (message: string, err: unknown) => void;
+  resultStore?: ResultStore;
+  resultStoreLogWarn?: (message: string, err?: unknown) => void;
+  resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
 }
 
 export async function buildServices(
@@ -97,6 +104,7 @@ export async function buildServices(
   await backfillOwners(db, config.trino.user);
 
   const audit = new AuditLogger(new AuditRepository(db), options.auditLogError);
+  const resultStore = options.resultStore ?? createResultStore(config.resultStore);
   const history = new HistoryRepository(db);
   const notebooks = new NotebookRepository(db);
   const savedQueries = new SavedQueryRepository(db);
@@ -109,7 +117,17 @@ export async function buildServices(
     defaultOverflowMode: config.query.overflowMode,
     now: options.now,
   });
-  const queries = new QueryService({ registry, history });
+  const queries = new QueryService({
+    registry,
+    history,
+    resultStore,
+    resultKeyPrefix:
+      config.resultStore.kind === 's3' ? config.resultStore.prefix : 'hubble-results/',
+    resultTtlDays: config.resultStore.ttlDays,
+    audit,
+    logWarn: options.resultStoreLogWarn,
+    now: options.now,
+  });
   const estimate = new EstimateService(
     engines,
     runtime.defaultDatasourceId,
@@ -146,6 +164,14 @@ export async function buildServices(
     sleep: options.schedulerSleep,
     setTimer: options.schedulerSetTimer,
   });
+  const resultExpiry = new ResultExpiryService({
+    history,
+    resultStore,
+    now: options.now,
+    logWarn: options.resultStoreLogWarn,
+    setTimer: options.resultCleanupSetTimer,
+  });
+  resultExpiry.start();
 
   let reloadInFlight = false;
   let rbacReloadInFlight = false;
@@ -215,9 +241,12 @@ export async function buildServices(
     scheduleRuns,
     scheduler,
     audit,
+    resultStore,
+    resultExpiry,
     reloadDatasources,
     reloadRbac,
     shutdown: async () => {
+      resultExpiry.stop();
       await scheduler.stop();
       await registry.shutdown();
       await db.close();

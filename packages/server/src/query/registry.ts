@@ -17,7 +17,7 @@ import type { TrinoRequestContext } from '../trino/types';
 import type { QueryEngine } from '../engine/types';
 import { AppError } from '../errors';
 import { newId } from '../util/id';
-import { QueryExecution, type OverflowMode } from './execution';
+import { QueryExecution, type OverflowMode, type QueryResultObserver } from './execution';
 
 /** `QueryRegistry` の生成に必要なオプション一式。 */
 export interface QueryRegistryOptions {
@@ -62,6 +62,8 @@ export interface SubmitParams {
   roleName?: string;
   maxRows?: number;
   overflowMode?: OverflowMode;
+  /** queryId 採番後に結果 observer を生成する。 */
+  makeResultObserver?: (queryId: string) => QueryResultObserver | undefined;
 }
 
 /**
@@ -125,6 +127,7 @@ export class QueryRegistry {
 
     const queryId = newId('q_');
     const execSource = params.executionSource ?? 'user';
+    const resultObserver = params.makeResultObserver?.(queryId);
     const client = engine.executionClient({
       source: execSource,
       user: params.ctx.user,
@@ -142,6 +145,7 @@ export class QueryRegistry {
       client,
       engine,
       now: this.now,
+      resultObserver,
       onSettled: (e) => {
         this.onSettled?.(e);
       },

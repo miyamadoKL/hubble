@@ -58,6 +58,18 @@ export interface AuthConfig {
  */
 export type DatabaseConfig = { kind: 'sqlite'; path: string } | { kind: 'postgres'; url: string };
 
+/** クエリ結果保存バックエンド設定。 */
+export type ResultStoreConfig =
+  | { kind: 'none'; ttlDays: number }
+  | {
+      kind: 's3';
+      bucket: string;
+      prefix: string;
+      region?: string;
+      endpoint?: string;
+      ttlDays: number;
+    };
+
 /** Server runtime configuration, derived from environment variables. */
 /** 日本語: サーバー実行時設定。`loadServerConfig()` が環境変数から一度だけ構築し、
  * 以後は不変な値としてアプリ全体（Services グラフ）に注入される。 */
@@ -129,6 +141,8 @@ export interface ServerConfig {
      * キャッシュ TTL。期限切れ後は stale-while-revalidate で古い値を返しつつ裏で更新する。 */
     ttlSeconds: number;
   };
+  /** 日本語: クエリ結果保存バックエンドの設定（`RESULT_STORE_*`）。 */
+  resultStore: ResultStoreConfig;
   /** Query Guard configuration (Query Guard feature). */
   /** 日本語: Query Guard（EXPLAIN (TYPE IO) による事前スキャン量見積もり）機能の設定。
    * `QUERY_GUARD_*` 環境変数群から組み立てる。 */
@@ -284,6 +298,26 @@ export function resolveDatabaseConfig(env: Env): DatabaseConfig {
   return { kind: 'sqlite', path: envStr(env, 'DB_PATH', './data/hubble.db') };
 }
 
+/** RESULT_STORE 関連の環境変数を解決する。 */
+export function resolveResultStoreConfig(env: Env): ResultStoreConfig {
+  const kind = envEnum(env, 'RESULT_STORE', ['none', 's3'] as const, 'none');
+  const ttlDays = envPositiveInt(env, 'RESULT_STORE_TTL_DAYS', 7);
+  if (kind === 'none') return { kind, ttlDays };
+
+  const bucket = envOptional(env, 'RESULT_STORE_S3_BUCKET');
+  if (bucket === undefined) {
+    throw new Error('RESULT_STORE_S3_BUCKET is required when RESULT_STORE=s3');
+  }
+  return {
+    kind,
+    bucket,
+    prefix: envStr(env, 'RESULT_STORE_S3_PREFIX', 'hubble-results/'),
+    region: envOptional(env, 'RESULT_STORE_S3_REGION'),
+    endpoint: envOptional(env, 'RESULT_STORE_S3_ENDPOINT'),
+    ttlDays,
+  };
+}
+
 /**
  * 日本語: 環境変数（既定は `process.env`、テストでは任意のオブジェクトを注入可能）から
  * `ServerConfig` を組み立てるエントリーポイント。各セクション（auth/trino/defaults/
@@ -332,6 +366,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
     metadata: {
       ttlSeconds: envPositiveInt(env, 'METADATA_TTL_SECONDS', 300),
     },
+    resultStore: resolveResultStoreConfig(env),
     guard: {
       mode: envEnum(env, 'QUERY_GUARD_MODE', ['off', 'warn', 'enforce'] as const, 'warn'),
       maxScanBytes: envNonNegativeInt(env, 'QUERY_GUARD_MAX_SCAN_BYTES', 0),
