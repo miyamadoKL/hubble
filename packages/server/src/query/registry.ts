@@ -58,6 +58,8 @@ export interface SubmitParams {
   executionSource?: 'user' | 'scheduled';
   /** principal が query.write を持たないとき true（MySQL/PG セッション防御）。 */
   sessionReadOnly?: boolean;
+  /** RBAC 解決後の role 名。SQL データソースの credential 選択に使う。 */
+  roleName?: string;
   maxRows?: number;
   overflowMode?: OverflowMode;
 }
@@ -126,6 +128,7 @@ export class QueryRegistry {
     const client = engine.executionClient({
       source: execSource,
       user: params.ctx.user,
+      roleName: params.roleName,
       sessionReadOnly: params.sessionReadOnly,
     });
 

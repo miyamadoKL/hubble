@@ -37,6 +37,8 @@ export interface SubmitQueryParams {
   owner: string;
   datasourceId?: string;
   sessionReadOnly?: boolean;
+  /** RBAC 解決後の role 名。SQL データソースの credential 選択に使う。 */
+  roleName?: string;
   maxRows?: number;
   overflowMode?: OverflowMode;
   notebookId?: string;
@@ -71,6 +73,7 @@ export class QueryService {
       ctx: params.ctx,
       datasourceId: params.datasourceId,
       sessionReadOnly: params.sessionReadOnly,
+      roleName: params.roleName,
       maxRows: params.maxRows,
       overflowMode: params.overflowMode,
     });

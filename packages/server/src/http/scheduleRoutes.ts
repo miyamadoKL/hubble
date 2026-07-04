@@ -178,6 +178,7 @@ export function scheduleRoutes(services: Services): App {
       catalog: body.catalog,
       schema: body.schema,
       principal: owner,
+      roleName: c.var.principal.role.name,
     });
     assertValidationAllowsWrite(validation);
     await assertScheduleStatementWritable(
@@ -246,6 +247,7 @@ export function scheduleRoutes(services: Services): App {
         catalog: body.catalog !== undefined ? body.catalog : existing.catalog,
         schema: body.schema !== undefined ? body.schema : existing.schema,
         principal: owner,
+        roleName: c.var.principal.role.name,
       });
       assertValidationAllowsWrite(validation);
       await assertScheduleStatementWritable(

@@ -41,9 +41,23 @@ export interface ResolvedSqlConnectionOptions {
   maxConnections: number;
 }
 
+/** RBAC role に対応する解決済み DB credential。 */
+export interface ResolvedSqlRoleCredential {
+  /** 接続用ユーザー名。 */
+  username: string;
+  /** 解決済みパスワード。ログや API レスポンスには含めない。 */
+  password: string;
+}
+
+/** mysql/postgresql 共通のロール別 credential 設定。 */
+export interface ResolvedSqlRoleCredentials {
+  /** role 名をキーにした credential 写像。 */
+  roleCredentials?: Record<string, ResolvedSqlRoleCredential>;
+}
+
 /** MySQL データソースの解決済み設定。 */
 export interface ResolvedMysqlDatasource
-  extends ResolvedDatasourceBase, ResolvedSqlConnectionOptions {
+  extends ResolvedDatasourceBase, ResolvedSqlConnectionOptions, ResolvedSqlRoleCredentials {
   type: 'mysql';
   host: string;
   port: number;
@@ -52,7 +66,7 @@ export interface ResolvedMysqlDatasource
 
 /** PostgreSQL データソースの解決済み設定。 */
 export interface ResolvedPostgresqlDatasource
-  extends ResolvedDatasourceBase, ResolvedSqlConnectionOptions {
+  extends ResolvedDatasourceBase, ResolvedSqlConnectionOptions, ResolvedSqlRoleCredentials {
   type: 'postgresql';
   host: string;
   port: number;

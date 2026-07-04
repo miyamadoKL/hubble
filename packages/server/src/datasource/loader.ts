@@ -12,9 +12,14 @@ import { parse as parseYaml } from 'yaml';
 import type { ZodError } from 'zod';
 import { datasourcesFileSchema, type DatasourceEntry } from './schema';
 import { resolveSqlConnectionOptions } from './connectionOptions';
-import type { ResolvedDatasource } from './types';
+import type { ResolvedDatasource, ResolvedSqlRoleCredential } from './types';
 
 type Env = Record<string, string | undefined>;
+type PasswordRef = {
+  id: string;
+  passwordEnv?: string;
+  passwordFile?: string;
+};
 
 /** `loadDatasources` に渡すオプション。 */
 export interface LoadDatasourcesOptions {
@@ -66,7 +71,7 @@ function formatZodError(error: ZodError): string {
  * @param env - 環境変数。
  * @returns 解決済みパスワード文字列。
  */
-function resolvePassword(entry: DatasourceEntry, env: Env): string {
+function resolvePassword(entry: PasswordRef, env: Env): string {
   if (entry.passwordEnv !== undefined) {
     const value = env[entry.passwordEnv];
     if (value === undefined) {
@@ -89,6 +94,34 @@ function resolvePassword(entry: DatasourceEntry, env: Env): string {
   }
 
   return '';
+}
+
+/**
+ * roleCredentials の各パスワード参照を解決済み credential へ変換する。
+ * @param entry - YAML エントリ。
+ * @param env - 環境変数。
+ * @returns role 名をキーにした解決済み credential 写像。
+ */
+function resolveRoleCredentials(
+  entry: Extract<DatasourceEntry, { type: 'mysql' | 'postgresql' }>,
+  env: Env,
+): Record<string, ResolvedSqlRoleCredential> | undefined {
+  if (entry.roleCredentials === undefined) return undefined;
+  const resolved: Record<string, ResolvedSqlRoleCredential> = {};
+  for (const [roleName, credential] of Object.entries(entry.roleCredentials)) {
+    resolved[roleName] = {
+      username: credential.username,
+      password: resolvePassword(
+        {
+          id: `${entry.id}.roleCredentials.${roleName}`,
+          passwordEnv: credential.passwordEnv,
+          passwordFile: credential.passwordFile,
+        },
+        env,
+      ),
+    };
+  }
+  return resolved;
 }
 
 /**
@@ -116,6 +149,7 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
       };
     case 'mysql': {
       const conn = resolveSqlConnectionOptions(entry.id, entry);
+      const roleCredentials = resolveRoleCredentials(entry, env);
       return {
         id: entry.id,
         type: 'mysql',
@@ -126,10 +160,12 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
         port: entry.port ?? 3306,
         database: entry.database,
         ...conn,
+        ...(roleCredentials !== undefined ? { roleCredentials } : {}),
       };
     }
     case 'postgresql': {
       const conn = resolveSqlConnectionOptions(entry.id, entry);
+      const roleCredentials = resolveRoleCredentials(entry, env);
       return {
         id: entry.id,
         type: 'postgresql',
@@ -140,6 +176,7 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
         port: entry.port ?? 5432,
         database: entry.database,
         ...conn,
+        ...(roleCredentials !== undefined ? { roleCredentials } : {}),
       };
     }
     default: {

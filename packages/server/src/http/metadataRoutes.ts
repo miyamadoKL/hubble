@@ -24,20 +24,35 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
   app.get('/catalogs', async (c) => {
     requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
-    return c.json(await services.metadata.getCatalogs(principal, defaultId));
+    return c.json(
+      await services.metadata.getCatalogs(principal, defaultId, c.var.principal.role.name),
+    );
   });
 
   app.get('/catalogs/:c/schemas', async (c) => {
     requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
-    return c.json(await services.metadata.getSchemas(c.req.param('c'), principal, defaultId));
+    return c.json(
+      await services.metadata.getSchemas(
+        c.req.param('c'),
+        principal,
+        defaultId,
+        c.var.principal.role.name,
+      ),
+    );
   });
 
   app.get('/catalogs/:c/schemas/:s/tables', async (c) => {
     requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
     return c.json(
-      await services.metadata.getTables(c.req.param('c'), c.req.param('s'), principal, defaultId),
+      await services.metadata.getTables(
+        c.req.param('c'),
+        c.req.param('s'),
+        principal,
+        defaultId,
+        c.var.principal.role.name,
+      ),
     );
   });
 
@@ -50,6 +65,7 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
       c.req.param('t'),
       principal,
       defaultId,
+      c.var.principal.role.name,
     );
     return c.json(tableDetailSchema.parse(raw));
   });
@@ -64,6 +80,7 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
       principal,
       10,
       defaultId,
+      c.var.principal.role.name,
     );
     return c.json(sample);
   });
@@ -72,7 +89,13 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
     requireDatasourceAccess(c.var.principal.role, defaultId);
     const principal = c.var.principal.user;
     const body = await parseJsonBody(c, metadataRefreshRequestSchema);
-    await services.metadata.refresh(principal, body.catalog, body.schema, defaultId);
+    await services.metadata.refresh(
+      principal,
+      body.catalog,
+      body.schema,
+      defaultId,
+      c.var.principal.role.name,
+    );
     return c.json({ ok: true });
   });
 
@@ -90,7 +113,9 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
     const datasourceId = c.req.param('datasourceId');
     requireDatasourceAccess(c.var.principal.role, datasourceId);
     resolveEngine(services.engines, datasourceId, services.defaultDatasourceId);
-    return c.json(await services.metadata.getCatalogs(principal, datasourceId));
+    return c.json(
+      await services.metadata.getCatalogs(principal, datasourceId, c.var.principal.role.name),
+    );
   });
 
   app.get('/:datasourceId/catalogs/:c/schemas', async (c) => {
@@ -98,7 +123,14 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
     const datasourceId = c.req.param('datasourceId');
     requireDatasourceAccess(c.var.principal.role, datasourceId);
     resolveEngine(services.engines, datasourceId, services.defaultDatasourceId);
-    return c.json(await services.metadata.getSchemas(c.req.param('c'), principal, datasourceId));
+    return c.json(
+      await services.metadata.getSchemas(
+        c.req.param('c'),
+        principal,
+        datasourceId,
+        c.var.principal.role.name,
+      ),
+    );
   });
 
   app.get('/:datasourceId/catalogs/:c/schemas/:s/tables', async (c) => {
@@ -112,6 +144,7 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
         c.req.param('s'),
         principal,
         datasourceId,
+        c.var.principal.role.name,
       ),
     );
   });
@@ -127,6 +160,7 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
       c.req.param('t'),
       principal,
       datasourceId,
+      c.var.principal.role.name,
     );
     return c.json(tableDetailSchema.parse(raw));
   });
@@ -143,6 +177,7 @@ export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: 
       principal,
       10,
       datasourceId,
+      c.var.principal.role.name,
     );
     return c.json(sample);
   });

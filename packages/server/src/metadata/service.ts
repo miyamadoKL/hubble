@@ -80,9 +80,14 @@ export class MetadataService {
     }
   }
 
-  /** データソース id、principal、階層キーを連結したキャッシュキーを組み立てる。 */
-  private cacheKey(datasourceId: string, principal: string, key: string): string {
-    return `${datasourceId}:${principal}:${key}`;
+  /** データソース id、principal、role、階層キーを連結したキャッシュキーを組み立てる。 */
+  private cacheKey(
+    datasourceId: string,
+    principal: string,
+    roleName: string | undefined,
+    key: string,
+  ): string {
+    return `${datasourceId}:${principal}:${roleName ?? ''}:${key}`;
   }
 
   /** リクエストの datasourceId を解決し、対応するエンジンを返す。 */
@@ -109,10 +114,11 @@ export class MetadataService {
     map: Map<string, CacheEntry<T>>,
     datasourceId: string,
     principal: string,
+    roleName: string | undefined,
     key: string,
     fetcher: () => Promise<T>,
   ): Promise<MetadataResponse<T extends Array<infer U> ? U : never>> {
-    const cacheKey = this.cacheKey(datasourceId, principal, key);
+    const cacheKey = this.cacheKey(datasourceId, principal, roleName, key);
     const entry = map.get(cacheKey);
     if (entry && !this.isStale(entry)) {
       // フレッシュヒット: キャッシュ済みの値をそのまま返す。
@@ -161,10 +167,16 @@ export class MetadataService {
   }
 
   /** カタログ一覧を取得する（キャッシュキーは固定の `'_'`、カタログ単位に分かれないため）。 */
-  getCatalogs(principal: string, datasourceId?: string): Promise<MetadataResponse<Catalog>> {
+  getCatalogs(
+    principal: string,
+    datasourceId?: string,
+    roleName?: string,
+  ): Promise<MetadataResponse<Catalog>> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
-    const opts = { principal };
-    return this.resolve(this.catalogs, id, principal, '_', () => engine.listCatalogs(opts));
+    const opts = { principal, roleName };
+    return this.resolve(this.catalogs, id, principal, roleName, '_', () =>
+      engine.listCatalogs(opts),
+    );
   }
 
   /** 指定カタログのスキーマ一覧を取得する。キャッシュキーはカタログ名。 */
@@ -172,10 +184,11 @@ export class MetadataService {
     catalog: string,
     principal: string,
     datasourceId?: string,
+    roleName?: string,
   ): Promise<MetadataResponse<SchemaItem>> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
-    const opts = { principal };
-    return this.resolve(this.schemas, id, principal, catalog, () =>
+    const opts = { principal, roleName };
+    return this.resolve(this.schemas, id, principal, roleName, catalog, () =>
       engine.listSchemas(catalog, opts),
     );
   }
@@ -186,11 +199,12 @@ export class MetadataService {
     schema: string,
     principal: string,
     datasourceId?: string,
+    roleName?: string,
   ): Promise<MetadataResponse<TableItem>> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
     const key = `${catalog} ${schema}`;
-    const opts = { principal };
-    return this.resolve(this.tables, id, principal, key, () =>
+    const opts = { principal, roleName };
+    return this.resolve(this.tables, id, principal, roleName, key, () =>
       engine.listTables(catalog, schema, opts),
     );
   }
@@ -206,11 +220,12 @@ export class MetadataService {
     table: string,
     principal: string,
     datasourceId?: string,
+    roleName?: string,
   ): Promise<TableDetail> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
     const key = `${catalog} ${schema} ${table}`;
-    const opts = { principal };
-    const res = await this.resolve(this.columns, id, principal, key, async () => {
+    const opts = { principal, roleName };
+    const res = await this.resolve(this.columns, id, principal, roleName, key, async () => {
       const detail = await engine.describeTable(catalog, schema, table, opts);
       return detail.columns;
     });
@@ -227,9 +242,10 @@ export class MetadataService {
     principal: string,
     limit = 10,
     datasourceId?: string,
+    roleName?: string,
   ): Promise<SampleRowsResponse> {
     const { engine } = this.resolveDatasource(datasourceId);
-    return engine.sampleTable(catalog, schema, table, limit, { principal });
+    return engine.sampleTable(catalog, schema, table, limit, { principal, roleName });
   }
 
   /**
@@ -246,21 +262,28 @@ export class MetadataService {
     catalog?: string,
     schema?: string,
     datasourceId?: string,
+    roleName?: string,
   ): Promise<void> {
     const { datasourceId: id, engine } = this.resolveDatasource(datasourceId);
-    const opts = { principal };
+    const opts = { principal, roleName };
     if (!catalog) {
       const items = await engine.listCatalogs(opts);
-      this.catalogs.set(this.cacheKey(id, principal, '_'), { items, updatedAt: this.now() });
+      this.catalogs.set(this.cacheKey(id, principal, roleName, '_'), {
+        items,
+        updatedAt: this.now(),
+      });
       return;
     }
     if (!schema) {
       const items = await engine.listSchemas(catalog, opts);
-      this.schemas.set(this.cacheKey(id, principal, catalog), { items, updatedAt: this.now() });
+      this.schemas.set(this.cacheKey(id, principal, roleName, catalog), {
+        items,
+        updatedAt: this.now(),
+      });
       return;
     }
     const items = await engine.listTables(catalog, schema, opts);
-    this.tables.set(this.cacheKey(id, principal, `${catalog} ${schema}`), {
+    this.tables.set(this.cacheKey(id, principal, roleName, `${catalog} ${schema}`), {
       items,
       updatedAt: this.now(),
     });

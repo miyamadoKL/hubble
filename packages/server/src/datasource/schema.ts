@@ -13,12 +13,42 @@ const datasourceIdSchema = z
   .string()
   .regex(datasourceIdPattern, 'must match /^[a-z][a-z0-9-]{0,62}$/');
 
+const roleNameSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9-]{0,62}$/, 'must match /^[a-z][a-z0-9-]{0,62}$/');
+
+/** RBAC role ごとに DB 接続ユーザーを切り替えるための credential。 */
+const roleCredentialSchema = z
+  .object({
+    username: z.string().min(1),
+    password: z.never().optional(),
+    passwordEnv: z.string().min(1).optional(),
+    passwordFile: z.string().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.passwordEnv !== undefined && value.passwordFile !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'passwordEnv and passwordFile cannot both be set',
+        path: ['passwordEnv'],
+      });
+    }
+    if (value.passwordEnv === undefined && value.passwordFile === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'passwordEnv or passwordFile is required',
+        path: ['passwordEnv'],
+      });
+    }
+  });
+
 /** 全種別で共通の YAML フィールド。 */
 const baseDatasourceSchema = z
   .object({
     id: datasourceIdSchema,
     displayName: z.string().min(1).optional(),
     username: z.string().min(1),
+    password: z.never().optional(),
     passwordEnv: z.string().min(1).optional(),
     passwordFile: z.string().min(1).optional(),
   })
@@ -70,6 +100,7 @@ export const mysqlDatasourceSchema = baseDatasourceSchema
     tls: z.boolean().optional(),
     tlsCaFile: z.string().min(1).optional(),
     maxConnections: z.number().int().positive().optional(),
+    roleCredentials: z.record(roleNameSchema, roleCredentialSchema).optional(),
   })
   .superRefine(refineTlsCaFile);
 
@@ -84,6 +115,7 @@ export const postgresqlDatasourceSchema = baseDatasourceSchema
     tls: z.boolean().optional(),
     tlsCaFile: z.string().min(1).optional(),
     maxConnections: z.number().int().positive().optional(),
+    roleCredentials: z.record(roleNameSchema, roleCredentialSchema).optional(),
   })
   .superRefine(refineTlsCaFile);
 

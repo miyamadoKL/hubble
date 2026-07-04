@@ -34,6 +34,15 @@ datasources:
     # tls: true
     # tlsCaFile: /var/run/secrets/mysql-ca.pem
     # maxConnections: 5
+    # RBAC role 名に対応する credential がある場合、その role の実行とメタデータ取得は
+    # 専用 credential の接続プールを使う。未定義 role は上の username/password に戻る。
+    roleCredentials:
+      analyst:
+        username: hubble_analyst
+        passwordEnv: MYSQL_ANALYST_PASSWORD
+      operator:
+        username: hubble_operator
+        passwordFile: /var/run/secrets/mysql-operator-password
 
   - id: pg-warehouse
     type: postgresql
@@ -46,3 +55,8 @@ datasources:
     # tls: true
     # tlsCaFile: /var/run/secrets/pg-ca.pem
     # maxConnections: 5
+    # roleCredentials は MySQL と同じ形式。パスワードの YAML 直書きは不可。
+    roleCredentials:
+      analyst:
+        username: hubble_analyst
+        passwordEnv: PG_ANALYST_PASSWORD
