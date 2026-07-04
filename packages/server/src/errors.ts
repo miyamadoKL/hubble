@@ -52,6 +52,11 @@ export class AppError extends Error {
     return new AppError(409, { code: 'CONFLICT', message });
   }
 
+  /** 日本語: 403 Forbidden。RBAC により操作が拒否されたときに使う。 */
+  static forbidden(message: string, code = 'FORBIDDEN'): AppError {
+    return new AppError(403, { code, message });
+  }
+
   /** 日本語: 500 Internal Server Error。サーバー側の想定外の失敗に使う。 */
   static internal(message: string): AppError {
     return new AppError(500, { code: 'INTERNAL', message });

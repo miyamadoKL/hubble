@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseExplainIoJson } from './explainIo';
+import { classifyIoPlanWrites, parseExplainIoJson } from './explainIo';
 
 // Fixtures mirror the real Trino 479 EXPLAIN (TYPE IO, FORMAT JSON) output.
 
@@ -142,6 +142,22 @@ describe('parseExplainIoJson', () => {
 
   it('returns undefined for a non-JSON echoed statement (unsupported)', () => {
     expect(parseExplainIoJson('SET SESSION foo = 1')).toBeUndefined();
+  });
+
+  it('detects write outputs from outputTableColumnInfos', () => {
+    const cell = JSON.stringify({
+      inputTableColumnInfos: [],
+      outputTableColumnInfos: [
+        {
+          table: { catalog: 'tpch', schemaTable: { schema: 'sf1', table: 'ctas_out' } },
+          estimate: { outputRowCount: 10, outputSizeInBytes: 100 },
+        },
+      ],
+      estimate: { outputRowCount: 10, outputSizeInBytes: 100 },
+    });
+    const plan = parseExplainIoJson(cell)!;
+    expect(plan.hasWriteOutputs).toBe(true);
+    expect(classifyIoPlanWrites(cell)).toBe(true);
   });
 
   it('returns undefined for JSON that is not an IO plan', () => {

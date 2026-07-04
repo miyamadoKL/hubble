@@ -295,12 +295,23 @@ describe('schedule datasource persistence', () => {
       cacheTtlSeconds: 0,
       bytesPerSecond: 0,
     });
+    const { loadRbac } = await import('../rbac/loader');
     const scheduler = new Scheduler({
       schedules,
       runs,
       engines,
       defaultDatasourceId,
       estimate,
+      rbac: loadRbac({}),
+      guardConfig: {
+        mode: 'off',
+        maxScanBytes: 0,
+        maxScanRows: 0,
+        onUnknown: 'allow',
+        estimateTimeoutMs: 3000,
+        cacheTtlSeconds: 0,
+        bytesPerSecond: 0,
+      },
       config: {
         enabled: false,
         tickSeconds: 15,

@@ -17,6 +17,7 @@ import { capabilitiesForKind } from '../../datasource/summary';
 import type { ResolvedMysqlDatasource } from '../../datasource/types';
 import type { ValidationResult } from '../../schedule/validator';
 import type {
+  DownloadClientOptions,
   EngineValidateParams,
   ExecutionClientOptions,
   QueryEngine,
@@ -45,8 +46,6 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
   const capabilities: DatasourceCapabilities = capabilitiesForKind('mysql');
   const syntheticCatalog = datasource.id;
 
-  const statementClient = createMysqlStatementClient(pool);
-
   const assertCatalog = (catalog: string): void => {
     if (catalog !== syntheticCatalog) {
       throw AppError.notFound(`Catalog ${catalog} not found`);
@@ -68,12 +67,17 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
     capabilities,
 
     executionClient(opts: ExecutionClientOptions): StatementClient {
-      void opts;
-      return statementClient;
+      return createMysqlStatementClient(pool, {
+        datasourceReadOnly: datasource.readOnly,
+        sessionReadOnly: opts.sessionReadOnly ?? false,
+      });
     },
 
-    downloadClient(): StatementClient {
-      return statementClient;
+    downloadClient(opts: DownloadClientOptions = {}): StatementClient {
+      return createMysqlStatementClient(pool, {
+        datasourceReadOnly: datasource.readOnly,
+        sessionReadOnly: opts.sessionReadOnly ?? false,
+      });
     },
 
     async estimate(): Promise<never> {

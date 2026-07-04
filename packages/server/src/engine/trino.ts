@@ -25,6 +25,7 @@ import { runToCompletion } from '../trino/runner';
 import type { TrinoRequestContext } from '../trino/types';
 import { runTrinoEstimate } from './trinoEstimate';
 import type {
+  DownloadClientOptions,
   EngineEstimateParams,
   EngineValidateParams,
   EstimateGuardConfig,
@@ -122,8 +123,20 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
       return wrapClientWithUser(client, opts.user);
     },
 
-    downloadClient(user?: string): StatementClient {
-      return wrapClientWithUser(downloadClient, user);
+    downloadClient(opts: DownloadClientOptions = {}): StatementClient {
+      return wrapClientWithUser(downloadClient, opts.user);
+    },
+
+    ioExplainExecution(params: EngineEstimateParams) {
+      return {
+        client: metadataClient,
+        ctx: {
+          catalog: params.catalog,
+          schema: params.schema,
+          source: tags.metadata,
+          user: params.principal,
+        },
+      };
     },
 
     async estimate(

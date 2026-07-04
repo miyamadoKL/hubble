@@ -4,8 +4,19 @@ import type { SqlDatabase } from '../db/sqlDatabase';
 import { EstimateService } from '../query/estimateService';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
 import { FakeTrino, type FakeScenario } from '../test/fakeTrino';
+import { loadRbac } from '../rbac/loader';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { Scheduler, type SchedulerConfig } from './scheduler';
+
+const DEFAULT_GUARD_CONFIG = {
+  mode: 'warn' as const,
+  maxScanBytes: 0,
+  maxScanRows: 100,
+  onUnknown: 'warn' as const,
+  estimateTimeoutMs: 3000,
+  cacheTtlSeconds: 0,
+  bytesPerSecond: 0,
+};
 
 /**
  * Scheduler behavior matrix (Query Scheduling feature). Each statement marker is
@@ -83,6 +94,11 @@ async function makeHarness(
     engines,
     defaultDatasourceId,
     estimate,
+    rbac: loadRbac({}),
+    guardConfig: {
+      ...DEFAULT_GUARD_CONFIG,
+      mode: configOverrides.guardMode ?? DEFAULT_GUARD_CONFIG.mode,
+    },
     config,
     now,
     sleep: (ms) => {

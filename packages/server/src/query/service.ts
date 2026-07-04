@@ -36,6 +36,7 @@ export interface SubmitQueryParams {
   // `X-Trino-User` としても使われる（design.md §11 参照）。
   owner: string;
   datasourceId?: string;
+  sessionReadOnly?: boolean;
   maxRows?: number;
   overflowMode?: OverflowMode;
   notebookId?: string;
@@ -69,6 +70,7 @@ export class QueryService {
       statement: params.statement,
       ctx: params.ctx,
       datasourceId: params.datasourceId,
+      sessionReadOnly: params.sessionReadOnly,
       maxRows: params.maxRows,
       overflowMode: params.overflowMode,
     });

@@ -127,6 +127,8 @@ export async function buildServices(
     engines,
     defaultDatasourceId,
     estimate,
+    rbac,
+    guardConfig: config.guard,
     config: {
       enabled: config.scheduler.enabled,
       tickSeconds: config.scheduler.tickSeconds,

@@ -22,6 +22,12 @@ import type { TrinoRequestContext } from '../trino/types';
 import type { EstimateService } from '../query/estimateService';
 import type { QueryEngine } from '../engine/types';
 import { getEngineOrUndefined } from '../engine/resolve';
+import { hasQueryWrite, schedulePrincipalIdentity } from '../rbac/check';
+import { effectiveGuardLimits } from '../rbac/guard';
+import { resolveRoleForPrincipal } from '../rbac/resolve';
+import type { LoadedRbac } from '../rbac/types';
+import { assertQueryWriteAllowed } from '../rbac/writeCheck';
+import type { ServerConfig } from '../config';
 import type { ScheduleRecord, ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
 import { drainStatement } from './execute';
 import { nextRunAfter } from './cron';
@@ -61,6 +67,10 @@ export interface SchedulerDeps {
   defaultDatasourceId: string;
   // Query Guard のスキャン量見積りサービス (enforce モードで使用)。
   estimate: EstimateService;
+  /** ロール解決と実効 Guard マージに使う RBAC 設定。 */
+  rbac: LoadedRbac;
+  /** グローバル Guard 設定（ロール上書きのベース）。 */
+  guardConfig: ServerConfig['guard'];
   config: SchedulerConfig;
   /** Wall clock (injectable for tests). */
   // 日本語: 省略時は Date.now。テストでは仮想時計を注入して cron 発火判定を制御する。
@@ -377,11 +387,44 @@ export class Scheduler {
       };
     }
 
+    const scheduleRole = resolveRoleForPrincipal(
+      this.deps.rbac,
+      schedulePrincipalIdentity(schedule.owner),
+    );
+    const effective = effectiveGuardLimits(this.deps.guardConfig, scheduleRole);
+
     // 日本語: 無限ループに見えるが、各分岐は必ず return するか (確定的失敗/成功/blocked)、
     // maybeRetry() が undefined を返した場合のみ waitBeforeRetry() を挟んで continue する。
     // つまりループを抜けるのは「確定」か「リトライ上限到達で確定」のいずれかのみ。
     for (;;) {
       attempt += 1;
+
+      try {
+        const ioExplain = engine.ioExplainExecution?.({
+          statement: schedule.statement,
+          catalog: schedule.catalog ?? undefined,
+          schema: schedule.schema ?? undefined,
+          principal: schedule.owner,
+        });
+        await assertQueryWriteAllowed({
+          statement: schedule.statement,
+          role: scheduleRole,
+          ioExplainClient: ioExplain?.client,
+          ioExplainCtx: ioExplain?.ctx,
+          ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
+        });
+      } catch (err) {
+        const errorType = errorTypeOf(err);
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          status: 'failed',
+          attempt,
+          trinoQueryId: null,
+          errorType,
+          errorMessage: message,
+          rowCount: null,
+        };
+      }
 
       // 1. Pre-flight validation (EXPLAIN VALIDATE). USER_ERROR is deterministic.
       // 日本語: 実行直前にもう一度 EXPLAIN (TYPE VALIDATE) で検証する。作成/更新時にも
@@ -425,13 +468,15 @@ export class Scheduler {
       // 日本語: enforce モードでのみ、EXPLAIN (TYPE IO) ベースのスキャン量見積りを行い、
       // 閾値超過ならブロックする。ブロックはポリシー判断でありリトライしても結果は
       // 変わらないため、blocked ステータスで即座に確定する。
-      if (this.deps.config.guardMode === 'enforce') {
+      if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
         const estimate = await this.deps.estimate.estimate({
           statement: schedule.statement,
           catalog: schedule.catalog ?? undefined,
           schema: schedule.schema ?? undefined,
           principal: schedule.owner,
           datasourceId: schedule.datasourceId,
+          roleName: scheduleRole.name,
+          guard: effective,
         });
         if (estimate.verdict.decision === 'block') {
           return {
@@ -452,6 +497,7 @@ export class Scheduler {
         const client = engine.executionClient({
           source: 'scheduled',
           user: schedule.owner,
+          sessionReadOnly: !hasQueryWrite(scheduleRole),
         });
         const ctx: TrinoRequestContext = {
           catalog: schedule.catalog ?? undefined,

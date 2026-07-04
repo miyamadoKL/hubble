@@ -14,6 +14,7 @@ import { capabilitiesForKind } from '../../datasource/summary';
 import type { ResolvedPostgresqlDatasource } from '../../datasource/types';
 import type { ValidationResult } from '../../schedule/validator';
 import type {
+  DownloadClientOptions,
   EngineValidateParams,
   ExecutionClientOptions,
   QueryEngine,
@@ -41,8 +42,6 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
   const pool = poolFactory(datasource);
   const capabilities: DatasourceCapabilities = capabilitiesForKind('postgresql');
   let catalogName: string | undefined;
-
-  const statementClient = createPgStatementClient(pool, datasource.readOnly);
 
   const loadCatalogName = async (): Promise<string> => {
     if (catalogName !== undefined) return catalogName;
@@ -80,12 +79,17 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
     capabilities,
 
     executionClient(opts: ExecutionClientOptions): StatementClient {
-      void opts;
-      return statementClient;
+      return createPgStatementClient(pool, {
+        datasourceReadOnly: datasource.readOnly,
+        sessionReadOnly: opts.sessionReadOnly ?? false,
+      });
     },
 
-    downloadClient(): StatementClient {
-      return statementClient;
+    downloadClient(opts: DownloadClientOptions = {}): StatementClient {
+      return createPgStatementClient(pool, {
+        datasourceReadOnly: datasource.readOnly,
+        sessionReadOnly: opts.sessionReadOnly ?? false,
+      });
     },
 
     async estimate(): Promise<never> {

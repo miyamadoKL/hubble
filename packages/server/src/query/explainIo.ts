@@ -69,11 +69,14 @@ interface RawInputTable {
 // EXPLAIN IO JSON ドキュメント全体の生の形。
 interface RawIoPlan {
   inputTableColumnInfos?: RawInputTable[];
+  outputTableColumnInfos?: RawInputTable[];
   estimate?: RawEstimate;
 }
 
 // パース結果（Query Guard の判定にそのまま使える構造化データ）。
 export interface ParsedIoPlan {
+  /** EXPLAIN IO が書き込み先テーブルを報告しているか。 */
+  hasWriteOutputs: boolean;
   /** Sum of input-table `outputSizeInBytes` (null when wholly unknown). */
   // 入力テーブルの `outputSizeInBytes` の合算値（全テーブルが不明なら null）。
   scanBytes: number | null;
@@ -147,10 +150,29 @@ export function parseExplainIoJson(cell: string): ParsedIoPlan | undefined {
   }
 
   return {
+    hasWriteOutputs: (plan.outputTableColumnInfos?.length ?? 0) > 0,
     scanBytes,
     scanRows,
     outputRows: finiteOrNull(plan.estimate?.outputRowCount),
     outputBytes: finiteOrNull(plan.estimate?.outputSizeInBytes),
     tables,
   };
+}
+
+/**
+ * EXPLAIN IO の JSON セルから書き込み先の有無を判定する。
+ * パース不能なセルは `unclassified` を返す（read-only ロールでは拒否する）。
+ */
+export function classifyIoPlanWrites(cell: string): boolean | 'unclassified' {
+  const parsed = parseExplainIoJson(cell);
+  if (parsed !== undefined) return parsed.hasWriteOutputs;
+  try {
+    const raw = JSON.parse(cell) as RawIoPlan;
+    if (Array.isArray(raw.outputTableColumnInfos) && raw.outputTableColumnInfos.length > 0) {
+      return true;
+    }
+  } catch {
+    // JSON として解釈できない。
+  }
+  return 'unclassified';
 }

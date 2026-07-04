@@ -56,6 +56,8 @@ export interface SubmitParams {
   datasourceId?: string;
   /** ユーザークエリかスケジュール実行か。 */
   executionSource?: 'user' | 'scheduled';
+  /** principal が query.write を持たないとき true（MySQL/PG セッション防御）。 */
+  sessionReadOnly?: boolean;
   maxRows?: number;
   overflowMode?: OverflowMode;
 }
@@ -124,6 +126,7 @@ export class QueryRegistry {
     const client = engine.executionClient({
       source: execSource,
       user: params.ctx.user,
+      sessionReadOnly: params.sessionReadOnly,
     });
 
     const exec = new QueryExecution({

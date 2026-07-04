@@ -24,6 +24,13 @@ const PG_OID_TYPES: Record<number, string> = {
   1700: 'numeric',
 };
 
+export interface PgStatementClientOptions {
+  /** データソース既定の readOnly（プール返却時に戻す値）。 */
+  datasourceReadOnly: boolean;
+  /** この実行単位でセッション read only を強制するか。 */
+  sessionReadOnly: boolean;
+}
+
 interface PgExecution {
   queryId: string;
   client: PoolClient;
@@ -32,7 +39,8 @@ interface PgExecution {
   backendPid: number;
   rowCount: number;
   released: boolean;
-  readOnly: boolean;
+  /** チェックアウト時に read only を上書きしたか。 */
+  sessionReadOnlyApplied: boolean;
 }
 
 function fieldsToColumns(fields: FieldDef[]): TrinoColumn[] {
@@ -47,14 +55,28 @@ function cursorFields(cursor: Cursor): FieldDef[] | undefined {
   return c._result?.fields;
 }
 
+async function applyPgSessionReadOnly(client: PoolClient, readOnly: boolean): Promise<void> {
+  await client.query(`SET default_transaction_read_only = ${readOnly ? 'on' : 'off'}`);
+}
+
 /**
  * PostgreSQL プールを使った StatementClient を生成する。
  * @param pool - pg Pool(テストから差し替え可能)。
- * @param readOnly - 接続時に READ ONLY を設定するか。
+ * @param options - データソース既定 readOnly と実行単位の sessionReadOnly。
  * @returns StatementClient 実装。
  */
-export function createPgStatementClient(pool: PgPool, readOnly: boolean): StatementClient {
+export function createPgStatementClient(
+  pool: PgPool,
+  options: PgStatementClientOptions,
+): StatementClient {
   const executions = new Map<string, PgExecution>();
+
+  const restoreAndRelease = async (exec: PgExecution): Promise<void> => {
+    if (exec.sessionReadOnlyApplied) {
+      await applyPgSessionReadOnly(exec.client, options.datasourceReadOnly);
+    }
+    exec.client.release();
+  };
 
   const releaseExecution = async (exec: PgExecution): Promise<void> => {
     if (exec.released) return;
@@ -65,7 +87,7 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
     } catch {
       // ベストエフォート。
     }
-    exec.client.release();
+    await restoreAndRelease(exec);
   };
 
   /** キャンセル等で portal が残る接続はプールへ返さず破棄する。 */
@@ -81,17 +103,28 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
     exec.client.release(reason ?? new Error('Query cancelled'));
   };
 
-  const destroyClient = (client: PoolClient, reason: unknown): void => {
+  const destroyClient = async (
+    client: PoolClient,
+    reason: unknown,
+    applied: boolean,
+  ): Promise<void> => {
+    if (applied) {
+      await applyPgSessionReadOnly(client, options.datasourceReadOnly).catch(() => {});
+    }
     const err = reason instanceof Error ? reason : new Error(String(reason));
     client.release(err);
   };
 
-  const acquire = async (): Promise<PoolClient> => {
+  const acquire = async (): Promise<{ client: PoolClient; sessionReadOnlyApplied: boolean }> => {
     const client = await pool.connect();
-    if (readOnly) {
-      await client.query('SET default_transaction_read_only = on');
+    let sessionReadOnlyApplied = false;
+    if (options.datasourceReadOnly) {
+      await applyPgSessionReadOnly(client, true);
+    } else if (options.sessionReadOnly) {
+      await applyPgSessionReadOnly(client, true);
+      sessionReadOnlyApplied = true;
     }
-    return client;
+    return { client, sessionReadOnlyApplied };
   };
 
   return {
@@ -105,8 +138,9 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
       const queryId = nextQueryId('pg');
       let client: PoolClient | undefined;
       let cursor: Cursor | undefined;
+      let sessionReadOnlyApplied = false;
       try {
-        client = await acquire();
+        ({ client, sessionReadOnlyApplied } = await acquire());
         const pidRes = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
         const backendPid = Number(pidRes.rows[0]?.pid ?? 0);
         cursor = new Cursor(statement, undefined, { rowMode: 'array' });
@@ -123,7 +157,7 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
           backendPid,
           rowCount: rows.length,
           released: false,
-          readOnly,
+          sessionReadOnlyApplied,
         };
         executions.set(queryId, exec);
         client = undefined;
@@ -139,7 +173,7 @@ export function createPgStatementClient(pool: PgPool, readOnly: boolean): Statem
             // ベストエフォート。
           }
         }
-        if (client) destroyClient(client, err);
+        if (client) await destroyClient(client, err, sessionReadOnlyApplied);
         throwPgDriverError(err, statement);
       }
     },

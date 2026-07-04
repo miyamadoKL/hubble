@@ -16,6 +16,8 @@ interface FakePoolOptions {
   rows?: unknown[][];
   error?: unknown;
   threadId?: number;
+  /** SET SESSION 発行を記録する配列。 */
+  sqlLog?: string[];
 }
 
 function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; actions: string[] } {
@@ -48,6 +50,7 @@ function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; actions: s
         actions.push('destroy');
       },
       query: async (sql: string) => {
+        if (sql.startsWith('SET SESSION')) opts.sqlLog?.push(sql);
         if (sql.startsWith('KILL QUERY')) actions.push('kill');
       },
     }),
@@ -58,7 +61,10 @@ function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; actions: s
 describe('createMysqlStatementClient', () => {
   it('returns the first batch with columns and FINISHED when rows fit one page', async () => {
     const { pool } = makeFakePool({ rows: [[1], [2]] });
-    const client = createMysqlStatementClient(pool);
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
     const page = await client.start('SELECT 1', { source: 'test' }, emptySessionMutations());
     expect(page.columns).toEqual([{ name: 'n', type: 'LONG' }]);
     expect(page.data).toEqual([[1], [2]]);
@@ -69,7 +75,10 @@ describe('createMysqlStatementClient', () => {
   it('splits large result sets across advance pages', async () => {
     const rows = Array.from({ length: SQL_BATCH_SIZE + 5 }, (_, i) => [i]);
     const { pool, actions } = makeFakePool({ rows });
-    const client = createMysqlStatementClient(pool);
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
     expect(first.data).toHaveLength(SQL_BATCH_SIZE);
@@ -93,7 +102,10 @@ describe('createMysqlStatementClient', () => {
     const { pool } = makeFakePool({
       error: { errno: 1064, sqlMessage: 'syntax error at line 3' },
     });
-    const client = createMysqlStatementClient(pool);
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
     await expect(
       client.start('SELEC 1', { source: 'test' }, emptySessionMutations()),
     ).rejects.toBeInstanceOf(TrinoQueryError);
@@ -111,7 +123,10 @@ describe('createMysqlStatementClient', () => {
     const { pool } = makeFakePool({
       error: { code: 'ECONNREFUSED', message: 'connect refused' },
     });
-    const client = createMysqlStatementClient(pool);
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
     await expect(
       client.start('SELECT 1', { source: 'test' }, emptySessionMutations()),
     ).rejects.toBeInstanceOf(TrinoTransportError);
@@ -120,7 +135,10 @@ describe('createMysqlStatementClient', () => {
   it('destroys the execution connection on cancel instead of returning it to the pool', async () => {
     const rows = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
     const { pool, actions } = makeFakePool({ rows, threadId: 77 });
-    const client = createMysqlStatementClient(pool);
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
     await client.cancel(first.nextUri!, { source: 'test' });
@@ -135,7 +153,10 @@ describe('createMysqlStatementClient', () => {
   it('is idempotent when cancel races with destroy', async () => {
     const rows = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
     const { pool, actions } = makeFakePool({ rows });
-    const client = createMysqlStatementClient(pool);
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
 
     const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
     await Promise.all([
@@ -146,9 +167,49 @@ describe('createMysqlStatementClient', () => {
     expect(actions.filter((a) => a === 'destroy').length).toBe(1);
   });
 
+  it('applies and restores session read only on release after normal completion', async () => {
+    const sqlLog: string[] = [];
+    const rows = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
+    const { pool, actions } = makeFakePool({ rows, sqlLog });
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: true,
+    });
+    const first = await client.start('SELECT n', { source: 'test' }, emptySessionMutations());
+    await client.advance(first.nextUri!, { source: 'test' }, emptySessionMutations());
+
+    expect(sqlLog).toEqual([
+      'SET SESSION TRANSACTION READ ONLY',
+      'SET SESSION TRANSACTION READ WRITE',
+    ]);
+    expect(actions).toContain('release');
+  });
+
+  it('restores session read only before release when start fails', async () => {
+    const sqlLog: string[] = [];
+    const { pool } = makeFakePool({
+      error: { errno: 1064, sqlMessage: 'syntax error' },
+      sqlLog,
+    });
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: true,
+    });
+    await expect(
+      client.start('SELEC 1', { source: 'test' }, emptySessionMutations()),
+    ).rejects.toBeInstanceOf(TrinoQueryError);
+    expect(sqlLog).toEqual([
+      'SET SESSION TRANSACTION READ ONLY',
+      'SET SESSION TRANSACTION READ WRITE',
+    ]);
+  });
+
   it('waitBackoff resolves immediately', async () => {
     const { pool } = makeFakePool();
-    const client = createMysqlStatementClient(pool);
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
     await expect(client.waitBackoff(0)).resolves.toBeUndefined();
   });
 });
