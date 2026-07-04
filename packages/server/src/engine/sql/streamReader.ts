@@ -66,6 +66,7 @@ export class RowStreamReader {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.done = true;
     this.stream.removeListener('data', this.onData);
     this.stream.removeListener('end', this.onEnd);
     this.stream.removeListener('error', this.onError);
@@ -105,13 +106,22 @@ export class RowStreamReader {
   async readBatch(max: number): Promise<{ rows: unknown[][]; done: boolean }> {
     for (;;) {
       if (this.failed) throw this.failed;
+      if (this.disposed && this.queue.length === 0) {
+        return { rows: [], done: true };
+      }
       if (this.queue.length > 0 || this.done) {
         const rows = this.queue.splice(0, max);
         this.maybeResume();
         const finished = this.done && this.queue.length === 0;
         return { rows, done: finished };
       }
-      await new Promise<void>((resolve) => this.waiters.push(resolve));
+      await new Promise<void>((resolve) => {
+        if (this.disposed) {
+          resolve();
+          return;
+        }
+        this.waiters.push(resolve);
+      });
     }
   }
 }

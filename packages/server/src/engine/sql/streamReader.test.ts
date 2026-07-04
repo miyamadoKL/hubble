@@ -131,6 +131,15 @@ describe('RowStreamReader', () => {
     expect(collected).toHaveLength(totalRows);
   });
 
+  it('resolves readBatch waiting on empty queue when dispose is called', async () => {
+    const stream = new Readable({ objectMode: true, read() {} });
+    const reader = new RowStreamReader(stream, { batchSize: 2 });
+    const pending = reader.readBatch(2);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    reader.dispose();
+    await expect(pending).resolves.toEqual({ rows: [], done: true });
+  });
+
   it('dispose resumes a paused stream and unblocks waiters', async () => {
     const batchSize = 2;
     const { stream, actions, enqueueRows } = makeControllableStream();
