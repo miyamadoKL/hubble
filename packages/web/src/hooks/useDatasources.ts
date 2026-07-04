@@ -13,6 +13,17 @@ import { useDatasourceStore } from '../stores/datasourceStore';
 export const datasourcesQueryKey = ['datasources'] as const;
 
 /**
+ * データソース一覧の staleTime（ミリ秒）。
+ * サーバー側は rbac.yaml / datasources.yaml をホットリロードでき、ロールの
+ * datasource allowlist が実行時に変わり得る。以前は staleTime: Infinity で
+ * invalidate も無かったため、既存タブはページ再読み込みまで古い一覧を表示し
+ * 続けていた。allowlist から外れた datasource は一覧から消え、選択中のまま
+ * だとその datasource への API 呼び出しが 404 になる。60 秒程度の有限値に
+ * することで、タブを開いたまま放置してもそう遠くないうちに一覧が追従する。
+ */
+export const DATASOURCES_STALE_MS = 60_000;
+
+/**
  * データソース一覧と現在の選択を返すフック。
  */
 export function useDatasources(): {
@@ -26,7 +37,11 @@ export function useDatasources(): {
   const query = useQuery({
     queryKey: datasourcesQueryKey,
     queryFn: fetchDatasources,
-    staleTime: Infinity,
+    staleTime: DATASOURCES_STALE_MS,
+    // ウィンドウ/タブへのフォーカス復帰時に再取得する。バックグラウンドタブで
+    // 放置されている間に allowlist が変わっても、ユーザーが戻ってきた時点で
+    // 一覧を追従させるため。
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 

@@ -3,17 +3,6 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadDatasources } from './loader';
-import type { ServerConfig } from '../config';
-
-const trinoConfig: ServerConfig['trino'] = {
-  baseUrl: 'http://trino.example:8080',
-  username: 'admin',
-  password: 'secret-from-env',
-  user: 'admin',
-  source: 'hubble',
-  metadataSource: 'hubble-metadata',
-  scheduledSource: 'hubble-scheduled',
-};
 
 function writeDatasources(dir: string, body: string): string {
   const path = join(dir, 'datasources.yaml');
@@ -63,7 +52,6 @@ describe('loadDatasources', () => {
 
     const result = loadDatasources({
       env: { DATASOURCES_PATH: yamlPath, TRINO_SECRET: 'trino-pass' },
-      trino: trinoConfig,
       cwd: tempDir,
     });
 
@@ -76,6 +64,9 @@ describe('loadDatasources', () => {
       password: 'trino-pass',
       baseUrl: 'http://trino:8080',
       source: 'custom-source',
+      // metadataSource/scheduledSource は YAML 未指定のため既定値が埋まる。
+      metadataSource: 'hubble-metadata',
+      scheduledSource: 'hubble-scheduled',
     });
     expect(result[1]).toEqual({
       id: 'mysql-analytics',
@@ -123,7 +114,6 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow("datasource 'trino-a': duplicate id");
@@ -143,7 +133,6 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow(/datasources\[0\]\.id/);
@@ -165,7 +154,6 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow(/passwordEnv/);
@@ -184,7 +172,6 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow(/datasources\[0\]/);
@@ -204,7 +191,6 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow(/datasources\[0\]/);
@@ -224,7 +210,6 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow(/datasources\[0\]/);
@@ -244,7 +229,6 @@ describe('loadDatasources', () => {
 
     const result = loadDatasources({
       env: { DATASOURCES_PATH: 'datasources.yaml', MY_PASS: 'from-env' },
-      trino: trinoConfig,
       cwd: tempDir,
     });
 
@@ -266,7 +250,6 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow("datasource 'trino-a': passwordEnv 'MISSING_PASS' is not set");
@@ -288,7 +271,6 @@ describe('loadDatasources', () => {
 
     const result = loadDatasources({
       env: { DATASOURCES_PATH: 'datasources.yaml' },
-      trino: trinoConfig,
       cwd: tempDir,
     });
 
@@ -311,7 +293,6 @@ describe('loadDatasources', () => {
 
     const result = loadDatasources({
       env: { DATASOURCES_PATH: 'datasources.yaml' },
-      trino: trinoConfig,
       cwd: tempDir,
     });
 
@@ -333,30 +314,92 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow("datasource 'trino-a': passwordFile '/no/such/file' cannot be read");
   });
 
-  it('falls back to TRINO_* config when no datasources file exists', () => {
+  it('throws a clear error when datasources.yaml does not exist (no fallback)', () => {
+    // Postgres ファースト移行により、TRINO_* 環境変数から trino-default
+    // データソースを自動合成する後方互換フォールバックは廃止された。
+    // DATASOURCES_PATH 未指定かつ ./datasources.yaml も無い場合は起動時エラーにする。
+    expect(() =>
+      loadDatasources({
+        env: {},
+        cwd: tempDir,
+      }),
+    ).toThrow(
+      'datasources.yaml が見つからない。DATASOURCES_PATH で指定するか ./datasources.yaml を作成せよ',
+    );
+  });
+
+  it('resolves explicit metadataSource/scheduledSource for a trino datasource', () => {
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: trino-a
+    type: trino
+    username: u
+    baseUrl: http://trino:8080
+    source: custom-source
+    metadataSource: custom-metadata
+    scheduledSource: custom-scheduled
+`,
+    );
+
     const result = loadDatasources({
-      env: {},
-      trino: trinoConfig,
+      env: { DATASOURCES_PATH: 'datasources.yaml' },
       cwd: tempDir,
     });
 
-    expect(result).toEqual([
-      {
-        id: 'trino-default',
-        type: 'trino',
-        displayName: 'Trino',
-        username: 'admin',
-        password: 'secret-from-env',
-        baseUrl: 'http://trino.example:8080',
-        source: 'hubble',
-      },
-    ]);
+    expect(result[0]).toMatchObject({
+      source: 'custom-source',
+      metadataSource: 'custom-metadata',
+      scheduledSource: 'custom-scheduled',
+    });
+  });
+
+  it('defaults source/metadataSource/scheduledSource when omitted for a trino datasource', () => {
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: trino-a
+    type: trino
+    username: u
+    baseUrl: http://trino:8080
+`,
+    );
+
+    const result = loadDatasources({
+      env: { DATASOURCES_PATH: 'datasources.yaml' },
+      cwd: tempDir,
+    });
+
+    expect(result[0]).toMatchObject({
+      source: 'hubble',
+      metadataSource: 'hubble-metadata',
+      scheduledSource: 'hubble-scheduled',
+    });
+  });
+
+  it('rejects an empty metadataSource string', () => {
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: trino-a
+    type: trino
+    username: u
+    baseUrl: http://trino:8080
+    metadataSource: ''
+`,
+    );
+
+    expect(() =>
+      loadDatasources({
+        env: { DATASOURCES_PATH: 'datasources.yaml' },
+        cwd: tempDir,
+      }),
+    ).toThrow(/datasources\[0\]\.metadataSource/);
   });
 
   it('resolves mysql/postgresql connection options from YAML', () => {
@@ -379,7 +422,6 @@ describe('loadDatasources', () => {
 
     const result = loadDatasources({
       env: { DATASOURCES_PATH: 'datasources.yaml' },
-      trino: trinoConfig,
       cwd: tempDir,
     });
 
@@ -408,19 +450,21 @@ describe('loadDatasources', () => {
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'datasources.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
     ).toThrow(/tlsCaFile requires tls: true/);
   });
 
   it('errors when DATASOURCES_PATH points to a missing file', () => {
+    // DATASOURCES_PATH で明示指定したパスが存在しない場合も、既定パス探索が
+    // 失敗した場合と同じ「datasources.yaml が見つからない」必須化エラーになる。
     expect(() =>
       loadDatasources({
         env: { DATASOURCES_PATH: 'missing.yaml' },
-        trino: trinoConfig,
         cwd: tempDir,
       }),
-    ).toThrow("datasources file '");
+    ).toThrow(
+      'datasources.yaml が見つからない。DATASOURCES_PATH で指定するか ./datasources.yaml を作成せよ',
+    );
   });
 });

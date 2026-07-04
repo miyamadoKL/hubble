@@ -1,14 +1,15 @@
 /**
  * datasources.yaml の読み込みと解決済みデータソースへの変換。
  *
- * `DATASOURCES_PATH` または `./datasources.yaml` から宣言的設定を読み込み、
- * 未設定時は既存の `TRINO_*` 環境変数から単一データソースを合成する。
+ * `DATASOURCES_PATH`（未設定時は `./datasources.yaml`）から宣言的設定を読み込む。
+ * このファイルは必須であり、存在しない場合は起動時に例外を投げる(Postgres
+ * ファースト移行により、`TRINO_*` 環境変数から `trino-default` データソースを
+ * 自動合成していた後方互換フォールバックは廃止された)。
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ZodError } from 'zod';
-import type { ServerConfig } from '../config';
 import { datasourcesFileSchema, type DatasourceEntry } from './schema';
 import { resolveSqlConnectionOptions } from './connectionOptions';
 import type { ResolvedDatasource } from './types';
@@ -19,8 +20,6 @@ type Env = Record<string, string | undefined>;
 export interface LoadDatasourcesOptions {
   /** 環境変数（既定は `process.env`）。 */
   env?: Env;
-  /** 後方互換フォールバック用の Trino 設定。 */
-  trino: ServerConfig['trino'];
   /** 作業ディレクトリ（既定は `process.cwd()`）。 */
   cwd?: string;
 }
@@ -112,6 +111,8 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
         password,
         baseUrl: entry.baseUrl,
         source: entry.source ?? 'hubble',
+        metadataSource: entry.metadataSource ?? 'hubble-metadata',
+        scheduledSource: entry.scheduledSource ?? 'hubble-scheduled',
       };
     case 'mysql': {
       const conn = resolveSqlConnectionOptions(entry.id, entry);
@@ -196,48 +197,46 @@ function loadFromFile(filePath: string, env: Env): ResolvedDatasource[] {
 }
 
 /**
- * 既存 TRINO_* 設定から単一の Trino データソースを合成する（後方互換）。
- * @param trino - `loadServerConfig()` の trino セクション。
- * @returns 合成された解決済みデータソース 1 件。
- */
-function fallbackFromTrinoConfig(trino: ServerConfig['trino']): ResolvedDatasource[] {
-  return [
-    {
-      id: 'trino-default',
-      type: 'trino',
-      displayName: 'Trino',
-      username: trino.username,
-      password: trino.password,
-      baseUrl: trino.baseUrl,
-      source: trino.source,
-    },
-  ];
-}
-
-/**
- * 宣言的データソース設定を読み込み、解決済み一覧を返す。
+ * `datasources.yaml` の実ファイルパスを解決する。
  *
- * - `DATASOURCES_PATH` が設定されていればそのファイルを必須として読む
- * - 未設定なら `./datasources.yaml` があれば読む
- * - どちらも無ければ `TRINO_*` から `trino-default` を合成する
+ * - `DATASOURCES_PATH` が設定されていればそのパスを使う(相対パスは `cwd` 起点)
+ * - 未設定なら `./datasources.yaml` を既定パスとして使う
  *
- * @param options - 環境変数と Trino 設定。
- * @returns 解決済みデータソース一覧。
+ * ファイルの存在確認はここでは行わない。存在しない場合の必須化エラーは
+ * `loadDatasources` 側の責務とする。
+ *
+ * @param env - 環境変数。
+ * @param cwd - 作業ディレクトリ。
+ * @returns 解決済みファイルパス。
  */
-export function resolveDatasourcesPath(env: Env, cwd: string): string | undefined {
+export function resolveDatasourcesPath(env: Env, cwd: string): string {
   const explicitPath = env.DATASOURCES_PATH;
   if (explicitPath !== undefined && explicitPath !== '') {
     return resolve(cwd, explicitPath);
   }
-  const defaultPath = resolve(cwd, 'datasources.yaml');
-  if (existsSync(defaultPath)) return defaultPath;
-  return undefined;
+  return resolve(cwd, 'datasources.yaml');
 }
 
+/**
+ * 宣言的データソース設定(`datasources.yaml`)を読み込み、解決済み一覧を返す。
+ *
+ * このファイルは必須である。`DATASOURCES_PATH` で指定したパス、または既定の
+ * `./datasources.yaml` のどちらにもファイルが存在しない場合は、起動時エラーとして
+ * 即座に例外を投げる(`TRINO_*` 環境変数から単一データソースを自動合成する
+ * 後方互換フォールバックは廃止済み)。
+ *
+ * @param options - 環境変数と作業ディレクトリ。
+ * @returns 解決済みデータソース一覧。
+ */
 export function loadDatasources(options: LoadDatasourcesOptions): ResolvedDatasource[] {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
   const filePath = resolveDatasourcesPath(env, cwd);
-  if (filePath !== undefined) return loadFromFile(filePath, env);
-  return fallbackFromTrinoConfig(options.trino);
+  if (!existsSync(filePath)) {
+    throw new Error(
+      'datasources.yaml が見つからない。DATASOURCES_PATH で指定するか ./datasources.yaml を作成せよ' +
+        ` (探索したパス: '${filePath}')`,
+    );
+  }
+  return loadFromFile(filePath, env);
 }

@@ -18,7 +18,6 @@ import type { ServerConfig } from '../config';
 import { capabilitiesForKind } from '../datasource/summary';
 import type { ResolvedTrinoDatasource } from '../datasource/types';
 import { MetadataSource } from '../metadata/source';
-import { DOWNLOAD_SOURCE } from '../query/csv';
 import type { ValidationResult } from '../schedule/validator';
 import { TrinoClient } from '../trino/client';
 import { runToCompletion } from '../trino/runner';
@@ -38,7 +37,7 @@ import type {
 /** TrinoEngine 構築オプション。 */
 export interface TrinoEngineOptions {
   datasource: ResolvedTrinoDatasource;
-  /** trino-default フォールバック時の環境変数由来ソースタグ。 */
+  /** 全 Trino データソース共通の設定(impersonation ユーザー)。 */
   trinoConfig: ServerConfig['trino'];
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
@@ -54,29 +53,26 @@ export interface TrinoSourceTags {
 }
 
 /**
- * データソースと設定から X-Trino-Source タグを導出する。
- * trino-default のみ既存 TRINO_* 環境変数の値をそのまま使う（後方互換）。
+ * データソース自身のフィールドから X-Trino-Source タグを導出する。
+ *
+ * `source` / `metadataSource` / `scheduledSource` は `datasources.yaml` の
+ * Trino エントリで任意指定でき、`loadDatasources()`（`datasource/loader.ts`）が
+ * 未指定分を既定値(`hubble` / `hubble-metadata` / `hubble-scheduled`)で
+ * 埋めたうえで渡してくる。ここでは特定 datasource id を特別扱いする分岐は
+ * 持たず、常にデータソースの解決済みフィールドをそのまま使う(横断設定
+ * `ServerConfig['trino']` はもはや使わない)。
  *
  * @param datasource - 解決済み Trino データソース。
- * @param trinoConfig - loadServerConfig() の trino セクション。
  * @returns 用途別ソースタグ。
  */
-export function deriveTrinoSourceTags(
-  datasource: ResolvedTrinoDatasource,
-  trinoConfig: ServerConfig['trino'],
-): TrinoSourceTags {
-  if (datasource.id === 'trino-default') {
-    return {
-      user: trinoConfig.source,
-      metadata: trinoConfig.metadataSource,
-      scheduled: trinoConfig.scheduledSource,
-      download: DOWNLOAD_SOURCE,
-    };
-  }
+export function deriveTrinoSourceTags(datasource: ResolvedTrinoDatasource): TrinoSourceTags {
   return {
     user: datasource.source,
-    metadata: `${datasource.source}-metadata`,
-    scheduled: `${datasource.source}-scheduled`,
+    metadata: datasource.metadataSource,
+    scheduled: datasource.scheduledSource,
+    // download 用のタグは datasources.yaml に専用フィールドを持たないため、
+    // 従来どおり source から派生させる(既定 source='hubble' の場合は
+    // DOWNLOAD_SOURCE と同じ 'hubble-download' になる)。
     download: `${datasource.source}-download`,
   };
 }
@@ -105,7 +101,7 @@ function createTrinoClient(
  */
 export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
   const { datasource, trinoConfig } = options;
-  const tags = deriveTrinoSourceTags(datasource, trinoConfig);
+  const tags = deriveTrinoSourceTags(datasource);
   const capabilities: DatasourceCapabilities = capabilitiesForKind('trino');
 
   const userClient = createTrinoClient(datasource, trinoConfig, tags.user, options);

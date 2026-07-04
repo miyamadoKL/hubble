@@ -8,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 import { deriveTrinoSourceTags } from './trino';
-import { TEST_TRINO_CONFIG } from '../test/testEngine';
 import { openMemoryDatabase } from '../db';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
 import { Scheduler } from '../schedule/scheduler';
@@ -32,19 +31,21 @@ function writeDatasourcesYaml(dir: string, body: string): string {
 }
 
 describe('deriveTrinoSourceTags', () => {
-  it('uses TRINO_* env values for trino-default', () => {
-    const tags = deriveTrinoSourceTags(
-      {
-        id: 'trino-default',
-        type: 'trino',
-        displayName: 'Trino',
-        username: 'admin',
-        password: '',
-        baseUrl: 'http://trino.test',
-        source: 'ignored',
-      },
-      TEST_TRINO_CONFIG,
-    );
+  it('uses the datasource default source fields (hubble / hubble-metadata / hubble-scheduled)', () => {
+    // `loadDatasources()` は source/metadataSource/scheduledSource が YAML に
+    // 未指定の場合、既定値を埋めたうえで ResolvedTrinoDatasource を返す。
+    // ここではその「既定値が埋まった状態」を模して検証する。
+    const tags = deriveTrinoSourceTags({
+      id: 'trino-a',
+      type: 'trino',
+      displayName: 'Trino',
+      username: 'admin',
+      password: '',
+      baseUrl: 'http://trino.test',
+      source: 'hubble',
+      metadataSource: 'hubble-metadata',
+      scheduledSource: 'hubble-scheduled',
+    });
     expect(tags).toEqual({
       user: 'hubble',
       metadata: 'hubble-metadata',
@@ -53,23 +54,22 @@ describe('deriveTrinoSourceTags', () => {
     });
   });
 
-  it('derives metadata/scheduled/download suffixes for custom datasources', () => {
-    const tags = deriveTrinoSourceTags(
-      {
-        id: 'trino-prod',
-        type: 'trino',
-        displayName: 'Prod',
-        username: 'admin',
-        password: '',
-        baseUrl: 'http://trino.test',
-        source: 'custom-source',
-      },
-      TEST_TRINO_CONFIG,
-    );
+  it('derives tags from explicit datasource source/metadataSource/scheduledSource fields', () => {
+    const tags = deriveTrinoSourceTags({
+      id: 'trino-prod',
+      type: 'trino',
+      displayName: 'Prod',
+      username: 'admin',
+      password: '',
+      baseUrl: 'http://trino.test',
+      source: 'custom-source',
+      metadataSource: 'custom-metadata',
+      scheduledSource: 'custom-scheduled',
+    });
     expect(tags).toEqual({
       user: 'custom-source',
-      metadata: 'custom-source-metadata',
-      scheduled: 'custom-source-scheduled',
+      metadata: 'custom-metadata',
+      scheduled: 'custom-scheduled',
       download: 'custom-source-download',
     });
   });

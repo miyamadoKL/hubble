@@ -18,6 +18,7 @@ import {
   type GuardMode,
   type GuardOnUnknown,
 } from '@hubble/contracts';
+import type { ResolvedDatasource } from './datasource/types';
 
 /** How a proxy-supplied principal is derived from SSO headers. */
 /** 日本語: `AUTH_USER_MAPPING` で選択する、SSO ヘッダから principal（実行ユーザー名）を
@@ -79,32 +80,20 @@ export interface ServerConfig {
   staticDir?: string;
   /** 日本語: 認証設定一式（`AUTH_MODE` ほか、下記 AuthConfig 参照）。 */
   auth: AuthConfig;
-  /** 日本語: Trino 接続設定一式。`TRINO_*` 環境変数群から組み立てる。 */
+  /**
+   * 日本語: Trino 関連の横断設定。データソース個別の接続情報(baseUrl/username/password/
+   * source 系)は `datasources.yaml`（`packages/server/src/datasource/schema.ts`）が
+   * 一次情報源であり、ここには全 Trino データソースに共通する impersonation
+   * ユーザーのみを残す(Postgres ファースト移行により TRINO_BASE_URL 等の
+   * レガシー自動合成パスは廃止された)。
+   */
   trino: {
-    /** 日本語: Trino coordinator の URL（`TRINO_BASE_URL`、既定 `http://127.0.0.1:30080`）。 */
-    baseUrl: string;
-    /** 日本語: Trino への Basic 認証ユーザー名（`TRINO_USERNAME`、既定 `admin`）。
-     * これは技術アカウントであり、実行ユーザーの impersonation は `user`/`X-Trino-User` で行う。 */
-    username: string;
-    /** 日本語: Trino への Basic 認証パスワード（`TRINO_PASSWORD`、既定は空文字）。 */
-    password: string;
     /** Value sent as `X-Trino-User`. */
-    /** 日本語: `TRINO_USER`（既定 `admin`）。AUTH_MODE=none の場合は常にこの値が
-     * principal になる。proxy モードでは SSO から解決した principal が
-     * メタデータ取得を含む Trino 実行の X-Trino-User として使われる。 */
+    /** 日本語: `TRINO_USER`（既定 `admin`）。全 Trino データソース共通の impersonation
+     * ユーザー。AUTH_MODE=none の場合は常にこの値が principal になり、owner
+     * backfill(db/backfill.ts)の初期値としても使われる。proxy モードでは SSO から
+     * 解決した principal が実際の X-Trino-User として使われる。 */
     user: string;
-    /** `X-Trino-Source` for user queries. */
-    /** 日本語: `TRINO_SOURCE`（既定 `hubble`）。ユーザーが発行するクエリに付与し、
-     * resource group をソース別に分けられるようにする。 */
-    source: string;
-    /** `X-Trino-Source` for metadata queries. */
-    /** 日本語: `TRINO_METADATA_SOURCE`（既定 `hubble-metadata`）。カタログ一覧等の
-     * メタデータ取得クエリに付与するソース種別。 */
-    metadataSource: string;
-    /** `X-Trino-Source` for scheduled runs (Query Scheduling feature). */
-    /** 日本語: `TRINO_SCHEDULED_SOURCE`（既定 `hubble-scheduled`）。スケジューラーが
-     * 発行するクエリに付与するソース種別。 */
-    scheduledSource: string;
   };
   /** 日本語: 新規 notebook/クエリ実行のデフォルト値（`DEFAULT_CATALOG` / `DEFAULT_SCHEMA` / `DEFAULT_LIMIT`）。 */
   defaults: {
@@ -204,14 +193,6 @@ type Env = Record<string, string | undefined>;
 function envStr(env: Env, key: string, fallback: string): string {
   const v = env[key];
   return v === undefined || v === '' ? fallback : v;
-}
-
-/** Allows explicitly empty string (e.g. an empty Trino password). */
-// 日本語: 空文字列を「明示的な空値」として許容する版。TRINO_PASSWORD のように
-// 「未設定=デフォルト」と「空文字列=パスワードなしを明示」を区別したい場合に使う。
-function envStrAllowEmpty(env: Env, key: string, fallback: string): string {
-  const v = env[key];
-  return v === undefined ? fallback : v;
 }
 
 // 整数値を読む。パース不能な値は起動時エラーとして即座に落とす（サイレントに
@@ -330,13 +311,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       ),
     },
     trino: {
-      baseUrl: envStr(env, 'TRINO_BASE_URL', 'http://127.0.0.1:30080'),
-      username: envStr(env, 'TRINO_USERNAME', 'admin'),
-      password: envStrAllowEmpty(env, 'TRINO_PASSWORD', ''),
       user: envStr(env, 'TRINO_USER', 'admin'),
-      source: envStr(env, 'TRINO_SOURCE', 'hubble'),
-      metadataSource: envStr(env, 'TRINO_METADATA_SOURCE', 'hubble-metadata'),
-      scheduledSource: envStr(env, 'TRINO_SCHEDULED_SOURCE', 'hubble-scheduled'),
     },
     defaults: {
       catalog: envOptional(env, 'DEFAULT_CATALOG'),
@@ -385,16 +360,32 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
  * Build the public `AppConfig` from server config and validate it
  * against the contract before exposing it via `GET /api/config`.
  *
- * 日本語: `ServerConfig`（内部設定、Trino パスワード等の機密情報を含む）から
- * フロントエンドに公開してよい部分だけを抜き出し、`GET /api/config` で返す
- * `AppConfig`（packages/contracts の契約スキーマ）を組み立てる。`appConfigSchema.parse`
+ * 日本語: `ServerConfig`（内部設定）と既定データソースから、フロントエンドに
+ * 公開してよい部分だけを抜き出し、`GET /api/config` で返す `AppConfig`
+ * （packages/contracts の契約スキーマ）を組み立てる。`appConfigSchema.parse`
  * によって契約に沿った形になっているかをここで検証する（サーバー起動直後の
  * 設定ミスをテスト/起動時に検出できるようにするため）。
+ *
+ * `datasources.yaml` の必須化により、Trino 接続先 URL は `config.trino`（横断設定、
+ * user のみ）ではなく既定データソース自体が一次情報源になった。既定データソースが
+ * Trino でない場合(例: MySQL/PostgreSQL を既定にした構成)は、契約上 URL 必須の
+ * ため意味のあるプレースホルダーを返す(web 側は現状この値を表示に使っていない)。
+ *
+ * @param config - サーバー内部設定。
+ * @param defaultDatasource - 既定データソース(未解決/非 Trino の場合は省略可)。
+ * @returns 契約スキーマで検証済みの公開設定。
  */
-export function toAppConfig(config: ServerConfig): AppConfig {
+export function toAppConfig(
+  config: ServerConfig,
+  defaultDatasource?: ResolvedDatasource,
+): AppConfig {
+  const trinoUrl =
+    defaultDatasource !== undefined && defaultDatasource.type === 'trino'
+      ? defaultDatasource.baseUrl
+      : 'http://localhost';
   return appConfigSchema.parse({
     trino: {
-      url: config.trino.baseUrl,
+      url: trinoUrl,
       user: config.trino.user,
     },
     defaults: {

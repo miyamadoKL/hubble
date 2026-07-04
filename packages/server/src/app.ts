@@ -85,7 +85,14 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   );
 
   // フロントエンドが起動時に読む公開設定（Trino URL/既定値/認証モード/Guard 設定等）。
-  app.get(apiRoutes.config(), (c) => c.json(toAppConfig(services.config)));
+  // Trino URL は datasources.yaml で定義された既定データソースが一次情報源のため、
+  // ここで既定データソースを検索して toAppConfig に渡す。
+  app.get(apiRoutes.config(), (c) => {
+    const defaultDatasource = services.datasources.find(
+      (ds) => ds.id === services.defaultDatasourceId,
+    );
+    return c.json(toAppConfig(services.config, defaultDatasource));
+  });
   app.route('/api/datasources', datasourceRoutes(services));
   app.route('/api/datasources', datasourceMetadataRoutes(services));
   // 認証ミドルウェアが解決した principal をそのまま返すだけの薄いエンドポイント。

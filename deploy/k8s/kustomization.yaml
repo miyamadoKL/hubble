@@ -15,9 +15,11 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - secret.yaml
-  - pvc.yaml
   - deployment.yaml
   - service.yaml
+  # Non-production 向け: SQLite (DB_PATH) を使う場合のみ pvc.yaml を追加する
+  # (既定の PostgreSQL バックエンドでは不要。pvc.yaml のコメント参照)。
+  # - pvc.yaml
 
 # Swap in your built image. `hubble:0.1.0` is a placeholder; override here:
 #   images:

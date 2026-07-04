@@ -62,29 +62,20 @@ describe('GET /api/datasources', () => {
     }
   });
 
-  it('returns fallback trino-default when no YAML is configured', async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'hubble-ds-fallback-'));
+  it('throws a startup error when datasources.yaml is missing (no TRINO_* fallback)', async () => {
+    // Postgres ファースト移行により、TRINO_* 環境変数から trino-default を
+    // 自動合成する後方互換フォールバックは廃止された。datasources.yaml が
+    // 存在しない状態で起動しようとすると、明確な日本語エラーで即座に失敗する。
+    const tempDir = mkdtempSync(join(tmpdir(), 'hubble-ds-missing-'));
     try {
-      const { app } = await createTestContext({
-        env: {
-          TRINO_BASE_URL: 'http://fallback:8080',
-          TRINO_USERNAME: 'svc',
-        },
-        cwd: tempDir,
-      });
-
-      const res = await app.request(apiRoutes.datasources());
-      expect(res.status).toBe(200);
-
-      const body = datasourcesResponseSchema.parse(await res.json());
-      expect(body.datasources).toEqual([
-        {
-          id: 'trino-default',
-          kind: 'trino',
-          displayName: 'Trino',
-          capabilities: { costEstimate: true, catalogs: true },
-        },
-      ]);
+      await expect(
+        createTestContext({
+          env: { DATASOURCES_PATH: 'datasources.yaml' },
+          cwd: tempDir,
+        }),
+      ).rejects.toThrow(
+        'datasources.yaml が見つからない。DATASOURCES_PATH で指定するか ./datasources.yaml を作成せよ',
+      );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

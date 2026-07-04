@@ -3,15 +3,19 @@ kind: ConfigMap
 metadata:
   name: hubble-config
 # Non-secret environment for the server. The full reference (defaults, meaning)
-# is docs/operations.md §4. Secrets (e.g. TRINO_PASSWORD) live in the Secret.
+# is docs/operations.md §4. Secrets (e.g. TRINO_PASSWORD, DATABASE_URL) live in
+# the Secret.
+#
+# TRINO_BASE_URL / TRINO_USERNAME / TRINO_SOURCE / TRINO_METADATA_SOURCE /
+# TRINO_SCHEDULED_SOURCE は廃止済み (サーバーが読まなくなった)。Trino の接続情報
+# (baseUrl、Basic 認証、source タグ) はすべて下記の datasources.yaml に集約する。
+# TRINO_USER (impersonation ユーザー) のみ env で維持する。
 data:
   PORT: '8080'
-  # SQLite path on the mounted PVC (see pvc.yaml / deployment volumeMounts).
-  DB_PATH: /data/hubble.db
   # The image already sets STATIC_DIR; repeated here for visibility.
   STATIC_DIR: /app/packages/web/dist
-  # Declarative datasources (mounted at /etc/hubble/datasources.yaml).
-  # 既定は既存の単一 Trino 構成と等価。mysql/postgresql を足すときはこの YAML と
+  # Declarative datasources (mounted at /etc/hubble/datasources.yaml)。
+  # 既定は単一 Trino 構成と等価。mysql/postgresql を足すときはこの YAML と
   # Secret のパスワードエントリを拡張する (README のデータソース設定を参照)。
   DATASOURCES_PATH: /etc/hubble/datasources.yaml
   datasources.yaml: |
@@ -22,15 +26,20 @@ data:
         username: admin
         passwordEnv: TRINO_PASSWORD
         baseUrl: http://trino.trino.svc.cluster.local:8080
+        # X-Trino-Source 系。省略時の既定値はそれぞれ hubble / hubble-metadata /
+        # hubble-scheduled なので、既定のままでよい場合は省略してよい。
         source: hubble
-  # Impersonation user and X-Trino-Source (still read from env when set).
+        metadataSource: hubble-metadata
+        scheduledSource: hubble-scheduled
+  # Impersonation user (X-Trino-User)。Trino の接続情報そのものではないため維持する。
   TRINO_USER: admin
-  TRINO_USERNAME: admin
-  TRINO_SOURCE: hubble
-  TRINO_METADATA_SOURCE: hubble-metadata
   # Initial catalog/schema for new notebooks.
   DEFAULT_CATALOG: tpch
   DEFAULT_SCHEMA: tiny
+  # Non-production 向け: PostgreSQL (DATABASE_URL、Secret 側) の代わりに SQLite
+  # を使う場合は DATABASE_URL を外し、下記 DB_PATH を有効化する
+  # (pvc.yaml / deployment.yaml の PVC マウントと組み合わせる。docs/deployment.md §5)。
+  # DB_PATH: /data/hubble.db
   # Query Guard: estimate scan cost before execution (see docs/operations.md §8.6).
   # QUERY_GUARD_MODE: warn            # off | warn (default) | enforce
   # QUERY_GUARD_MAX_SCAN_BYTES: '0'   # e.g. '107374182400' for 100 GB

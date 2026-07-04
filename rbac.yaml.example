@@ -1,10 +1,11 @@
 # Declarative RBAC for Hubble.
 # Copy to rbac.yaml or point RBAC_PATH at your file.
 # rbac.yaml is git-ignored (like .env); only this example is tracked.
-# Changes take effect without restart (polling interval applies).
+# Changes take effect without restart (polling interval applies, or SIGHUP).
 #
-# Phase A: roles are resolved and exposed via GET /api/me.
-# Permission enforcement begins in Phase B.
+# Roles are resolved and exposed via GET /api/me, and permissions
+# (query.write / query.killAny / queries.viewAll / datasources allowlist) are
+# enforced.
 
 roles:
   admin:
