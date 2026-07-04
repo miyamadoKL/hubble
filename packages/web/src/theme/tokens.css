@@ -1,5 +1,5 @@
 /*
- * Fable design tokens (design.md §6) — the single source of truth for color,
+ * Fable design tokens — the single source of truth for color,
  * spacing, radius, shadow and typography. CSS variables are the contract;
  * raw hex literals are forbidden in components (enforced by ast-grep).
  *
@@ -184,7 +184,7 @@
   --leading-normal: 1.5;
 
   /* Component density */
-  --row-height-dense: 28px; /* result grid / tree rows (design.md §6) */
+  --row-height-dense: 28px; /* result grid / tree rows */
   --control-height: 32px;
 
   /* Motion */

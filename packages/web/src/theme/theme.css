@@ -111,7 +111,7 @@
   }
 }
 
-/* Motion: fade/slide only, within the 150ms budget (design.md §6). Used by the
+/* Motion: fade/slide only, within the 150ms budget. Used by the
    command palette, toasts and the cell result reveal. */
 @keyframes fadeIn {
   from {

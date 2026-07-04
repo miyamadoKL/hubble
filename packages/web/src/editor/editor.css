@@ -20,7 +20,7 @@
 
 /*
  * Per-statement execution status glyphs in the editor glyph margin
- * (design.md §5 ガター). All colors come from design tokens so they track the
+ * (gutter). All colors come from design tokens so they track the
  * active theme. The whole glyph is clickable (the cell wires the glyph-margin
  * mouse-down to run that statement).
  */
