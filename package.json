@@ -2,7 +2,7 @@
   "name": "hubble",
   "version": "0.1.0",
   "private": true,
-  "description": "Hubble SQL Workbench — a Trino-focused query editor inspired by Hue's Notebook.",
+  "description": "Hubble SQL Workbench — a multi-datasource SQL workbench for Trino (first-class), MySQL, and PostgreSQL, inspired by Hue's Notebook.",
   "type": "module",
   "packageManager": "pnpm@11.6.0",
   "engines": {
