@@ -44,6 +44,12 @@ export const createQueryRequestSchema = z.object({
 export type CreateQueryRequest = z.infer<typeof createQueryRequestSchema>;
 
 /**
+ * 打ち切り結果の CSV 完全ダウンロードに再実行が必要だが、
+ * ステートメント分類またはデータソース状態の理由で再実行できないときのエラーコード（HTTP 422）。
+ */
+export const CSV_REEXEC_UNAVAILABLE = 'CSV_REEXEC_UNAVAILABLE';
+
+/**
  * Lifecycle state of a query.
  * クエリのライフサイクル状態。queued（投入待ち）→ running（実行中）→
  * finished/failed/canceled（いずれかの終端状態）と遷移する。
@@ -131,6 +137,12 @@ export const querySnapshotSchema = z.object({
   /** Datasource this query runs against. */
   // このクエリが実行されたデータソース id。
   datasourceId: z.string().optional(),
+  /**
+   * True when a truncated or in-flight CSV download may re-execute the statement
+   * for full results (read-confirmed statement and pinned engine still open).
+   */
+  // 打ち切りまたは実行中の CSV で全文取得のための再実行が可能かどうか。
+  csvReexecAllowed: z.boolean().optional(),
 });
 /** クエリスナップショットの推論型。 */
 export type QuerySnapshot = z.infer<typeof querySnapshotSchema>;
