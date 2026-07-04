@@ -80,7 +80,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
       auth: services.config.auth,
       noneModeUser: services.config.trino.user,
       remoteAddress: deps.remoteAddress,
-      rbac: services.rbac,
+      getRbac: () => services.rbac,
     })(c, next),
   );
 

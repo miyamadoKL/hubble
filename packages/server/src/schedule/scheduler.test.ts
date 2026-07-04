@@ -94,7 +94,7 @@ async function makeHarness(
     engines,
     defaultDatasourceId,
     estimate,
-    rbac: loadRbac({}),
+    getRbac: () => loadRbac({}),
     guardConfig: {
       ...DEFAULT_GUARD_CONFIG,
       mode: configOverrides.guardMode ?? DEFAULT_GUARD_CONFIG.mode,

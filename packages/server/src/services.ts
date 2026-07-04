@@ -46,6 +46,7 @@ export interface Services {
   scheduleRuns: ScheduleRunRepository;
   scheduler: Scheduler;
   reloadDatasources: () => Promise<void>;
+  reloadRbac: () => Promise<void>;
   shutdown: () => Promise<void>;
 }
 
@@ -70,7 +71,7 @@ export async function buildServices(
 ): Promise<Services> {
   const env = options.env ?? process.env;
   const cwd = options.cwd;
-  const rbac = loadRbac({ env, cwd });
+  const rbacState = { current: loadRbac({ env, cwd }) };
   const datasources = loadDatasources({ env, trino: config.trino, cwd });
   const buildEngineOptions: BuildEnginesOptions = {
     trinoConfig: config.trino,
@@ -127,7 +128,7 @@ export async function buildServices(
     engines,
     defaultDatasourceId: runtime.defaultDatasourceId,
     estimate,
-    rbac,
+    getRbac: () => rbacState.current,
     guardConfig: config.guard,
     config: {
       enabled: config.scheduler.enabled,
@@ -142,8 +143,20 @@ export async function buildServices(
   });
 
   let reloadInFlight = false;
+  let rbacReloadInFlight = false;
   const reloadLogError = options.reloadLogError ?? ((m, e) => console.error(m, e));
   const reloadLogWarn = options.reloadLogWarn ?? console.warn;
+  const reloadRbac = async (): Promise<void> => {
+    if (rbacReloadInFlight) return;
+    rbacReloadInFlight = true;
+    try {
+      rbacState.current = loadRbac({ env, cwd });
+    } catch (err) {
+      reloadLogError('rbac reload failed; keeping current config', err);
+    } finally {
+      rbacReloadInFlight = false;
+    }
+  };
   const reloadDatasources = async (): Promise<void> => {
     if (reloadInFlight) return;
     reloadInFlight = true;
@@ -178,7 +191,9 @@ export async function buildServices(
 
   return {
     config,
-    rbac,
+    get rbac() {
+      return rbacState.current;
+    },
     datasources,
     engines,
     get defaultDatasourceId() {
@@ -195,6 +210,7 @@ export async function buildServices(
     scheduleRuns,
     scheduler,
     reloadDatasources,
+    reloadRbac,
     shutdown: async () => {
       await scheduler.stop();
       await registry.shutdown();
