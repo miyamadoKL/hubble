@@ -1,6 +1,6 @@
 /**
  * Minimal async SQL abstraction shared by the SQLite and PostgreSQL backends
- * (design.md §4, backend selection via DATABASE_URL / DB_PATH).
+ * (backend selection via DATABASE_URL / DB_PATH).
  *
  * All repository SQL is written with positional `?` placeholders and a flat
  * params array. The PostgreSQL adapter rewrites `?` to `$1..$n`; the SQLite
@@ -8,7 +8,7 @@
  * literal `?` characters inside string literals so the rewrite stays correct.
  *
  * SQLite / PostgreSQL の両バックエンドが共通で実装する、最小限の非同期 SQL
- * 抽象インターフェース（design.md §4、バックエンドの選択は DATABASE_URL /
+ * 抽象インターフェース（バックエンドの選択は DATABASE_URL /
  * DB_PATH で行う）。このファイルは型とインターフェースの定義のみを持ち、実装は
  * sqliteAdapter.ts / postgresAdapter.ts にある。
  *

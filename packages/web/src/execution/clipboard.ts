@@ -1,13 +1,13 @@
 // Copy result rows to the clipboard as both TSV (text/plain) and an HTML table
-// (text/html), so pasting into a spreadsheet keeps the grid (design.md §6:
-// クリップボードコピー TSV + HTML の ClipboardItem). Operates over the rows
+// (text/html), so pasting into a spreadsheet keeps the grid (クリップボードコピー
+// TSV + HTML の ClipboardItem). Operates over the rows
 // currently loaded client-side.
 //
 // ==== ファイルの責務（日本語） ================================================
 // 結果グリッドの行をクリップボードへコピーするためのヘルパー群。
 // TSV（text/plain）と HTML テーブル（text/html）の両方を同時に書き込むことで、
 // スプレッドシートに貼り付けたときに表の形（罫線とセル区切り）が保たれる
-// ようにしている（design.md §6）。対象はすでにクライアント側に読み込み済みの
+// ようにしている。対象はすでにクライアント側に読み込み済みの
 // 行のみで、サーバーへの追加取得は行わない。
 // ============================================================================
 

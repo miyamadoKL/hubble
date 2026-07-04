@@ -29,7 +29,7 @@ import {
 } from '../../notebook';
 
 /**
- * AppShell (design.md §6): the three-zone instrument layout — TopBar over a
+ * AppShell: the three-zone instrument layout — TopBar over a
  * hairline, a resizable Sidebar, and the scrolling NotebookView. Owns the shared
  * catalog.schema context, bootstraps the notebook workspace (restoring open
  * tabs + drafts), and hosts the save dialog driven by the UI store's
@@ -44,8 +44,8 @@ export function AppShell() {
   const defaultLimit = useDefaultLimit();
   const { data: config } = useConfig();
   const { selectedId: datasourceId, selected: selectedDatasource } = useDatasources();
-  // Seed the shell context from the most-recently-used context (design.md §5:
-  // 最近使った値を復元); config defaults fill any gap once loaded.
+  // Seed the shell context from the most-recently-used context (最近使った値を復元);
+  // config defaults fill any gap once loaded.
   // シェル全体で共有する catalog.schema コンテキスト。初期値は localStorage の「最近使った
   // コンテキスト」の先頭要素から復元し、なければ空文字（後続の useEffect が config の
   // デフォルト値で補う）。
@@ -114,7 +114,7 @@ export function AppShell() {
   }, [activeContext?.catalog, activeContext?.schema, activeContext]);
 
   // Keep the active notebook's context in sync with the shell selector and record
-  // it as most-recently-used (design.md §5: notebook context へ保存 + recent 保持).
+  // it as most-recently-used (notebook context へ保存 + recent 保持).
   // ContextSelector から呼ばれるハンドラー。シェルの context を更新し、アクティブな
   // ノートブックにも同じ context を書き込み、さらに「最近使った」履歴にも記録する。
   const handleContextChange = (next: { catalog: string; schema: string }) => {
@@ -123,7 +123,7 @@ export function AppShell() {
     recordRecentContext(next);
   };
 
-  // ---- Help modal + presentation mode (design.md §5) ----
+  // ---- Help modal + presentation mode ----
   // ---- ヘルプモーダルとプレゼンテーションモード ----
   const shortcutsHelpOpen = useUiStore((s) => s.shortcutsHelpOpen);
   const setShortcutsHelpOpen = useUiStore((s) => s.setShortcutsHelpOpen);
@@ -190,7 +190,7 @@ export function AppShell() {
     <div className="flex h-screen flex-col overflow-hidden bg-surface-base text-ink-base">
       {/* 最上部の TopBar。context の表示/変更と全セル実行のデフォルト行数上限を渡す。 */}
       <TopBar context={context} onContextChange={handleContextChange} defaultLimit={defaultLimit} />
-      {/* Signature hairline under the TopBar (design.md §6 memorable detail). */}
+      {/* Signature hairline under the TopBar (memorable detail). */}
       {/* TopBar 直下の1px の装飾ライン。左端だけアクセントカラーのグラデーションを乗せる。 */}
       <div className="relative h-px shrink-0 bg-border-base">
         <span className="absolute top-0 left-0 h-px w-24 bg-gradient-to-r from-accent/60 to-transparent" />

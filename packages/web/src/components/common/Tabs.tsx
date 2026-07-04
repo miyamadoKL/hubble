@@ -42,7 +42,7 @@ interface TabsProps<T extends string> {
 
 /**
  * Horizontal tabs. The underline variant renders the signature active-tab
- * underline (design.md §6 "記憶に残るディテール"): a 2px accent bar that sits on
+ * underline ("記憶に残るディテール"): a 2px accent bar that sits on
  * the container's hairline.
  *
  * 水平タブコンポーネント。variant に応じて "underline"（アクティブなタブの

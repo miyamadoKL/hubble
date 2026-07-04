@@ -11,7 +11,7 @@
 // ECharts のオプション組み立ては chartOptions.ts、テーマ（配色やフォント）の解決は
 // chartTheme.ts が担当する。
 // ============================================================================
-// Chart data derivation (design.md §5 結果: チャート). Pure functions that turn
+// Chart data derivation (結果: チャート). Pure functions that turn
 // the loaded result rows + column types into the value-type classification, the
 // selectable X/Y axis options, and the sorted/limited rows a chart renders from.
 //
@@ -23,7 +23,7 @@ import type { QueryColumn } from '@hubble/contracts';
 import type { ResultRow } from '../execution';
 
 /**
- * The five chart kinds we support (design.md §5).
+ * The five chart kinds we support.
  * サポートするチャート種別: 棒グラフ(bars) / 折れ線(lines) / タイムライン(timeline)
  * / 円グラフ(pie) / 散布図(scatter) の5種類。
  */

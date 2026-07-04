@@ -12,7 +12,7 @@ import { formatDuration, formatInt, formatRelativeTime } from '../../utils/forma
 import { cn } from '../../utils/cn';
 
 /**
- * "Last run" strip (design.md §4 resultMeta). Shown on a reloaded SQL cell that
+ * "Last run" strip. Shown on a reloaded SQL cell that
  * has a persisted execution summary but no live result yet — full result rows
  * are never persisted, so this is the empty-state stand-in until the user re-runs.
  */

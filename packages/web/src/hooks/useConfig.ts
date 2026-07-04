@@ -1,4 +1,4 @@
-// App config (`GET /api/config`) via TanStack Query (design.md §7). Exposes the
+// App config (`GET /api/config`) via TanStack Query. Exposes the
 // server defaults — notably `defaults.limit`, the LIMIT auto-append value used
 // by the execution layer. Config is effectively static for a session, so it is
 // cached aggressively.
@@ -61,7 +61,7 @@ const GUARD_OFF: GuardConfig = {
   bytesPerSecond: 0,
 };
 
-/** The active Query Guard config (design.md / Query Guard feature). */
+/** The active Query Guard config (Query Guard feature). */
 /**
  * 現在有効な Query Guard の設定を返すフック。Query Guard はスキャン量が大きすぎるクエリなどを
  * 事前に検知して警告し、ブロックする機能で、その挙動（mode やしきい値）をここから取得する。

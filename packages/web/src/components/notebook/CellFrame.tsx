@@ -10,8 +10,7 @@ import type { ReactNode } from 'react';
 import { cn } from '../../utils/cn';
 
 /**
- * Cell container with the signature left status gutter (design.md §6
- * "記憶に残るディテール": セル左端の実行状態ガター). A thin vertical bar reflects the
+ * Cell container with the signature left status gutter. A thin vertical bar reflects the
  * cell's last execution state; it brightens on hover.
  */
 

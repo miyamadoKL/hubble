@@ -13,9 +13,9 @@ import { formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
 
 /**
- * Notebook list panel (design.md §5: Notebook 一覧). Shows each saved notebook
+ * Notebook list panel (Notebook 一覧). Shows each saved notebook
  * with its last-updated time; the active notebook is highlighted. Clicking a row
- * opens the notebook (design.md §5: 再オープン). Items are lightweight
+ * opens the notebook (再オープン). Items are lightweight
  * `NotebookListItem`s from `GET /api/notebooks`.
  */
 /**

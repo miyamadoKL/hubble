@@ -3,8 +3,8 @@
  * CRUD を提供する。ノートブック本体（セル、変数、コンテキストを含む契約型
  * `Notebook` 全体）は JSON 文字列として `data` 列にそのまま保存し、`name` /
  * `description` のみ検索用に別列へ複製して抽出する。全操作は `owner`
- * principal で絞り込まれ、他ユーザーのノートブックは参照も変更もできない
- * （design.md §11）。`likeParam()` は savedQueries.ts からも再利用される
+ * principal で絞り込まれ、他ユーザーのノートブックは参照も変更もできない。
+ * `likeParam()` は savedQueries.ts からも再利用される
  * LIKE 検索の共通ヘルパー。
  */
 import type {
@@ -34,12 +34,12 @@ interface NotebookRow {
 /**
  * CRUD for notebooks. The full `Notebook` (cells/variables/context) is stored
  * as JSON in `data`; `name`/`description` are also extracted for search. Every
- * operation is scoped to an `owner` principal (design.md §11): a user can only
+ * operation is scoped to an `owner` principal: a user can only
  * see / mutate their own notebooks.
  *
  * ノートブックに対する CRUD リポジトリ。`Notebook`（セル/変数/コンテキスト）
  * 全体は `data` 列に JSON として保存し、`name`/`description` は検索用に別列
- * へも抽出する。全操作は `owner` principal で絞り込まれ（design.md §11）、
+ * へも抽出する。全操作は `owner` principal で絞り込まれ、
  * ユーザーは自分のノートブックしか参照も変更もできない。
  */
 export class NotebookRepository {

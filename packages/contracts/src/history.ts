@@ -3,7 +3,7 @@ import { isoTimestamp } from './common';
 import { queryStateSchema } from './query';
 
 /**
- * Query history model (design.md §4, §7). Auto-recorded per execution
+ * Query history model. Auto-recorded per execution
  * (Hue's `is_history` equivalent).
  *
  * `QueryHistoryEntry { id, statement(first 2000 chars), catalog, schema,

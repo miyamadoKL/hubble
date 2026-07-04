@@ -4,11 +4,11 @@
  * 対して安定したキーを割り当てるために使用する。
  */
 
-// Stable client-side ids for cells and draft notebooks (design.md §4: cellId is
+// Stable client-side ids for cells and draft notebooks (cellId is
 // a stable key). `crypto.randomUUID` is available in every target browser and in
 // jsdom (Node ≥ 19), so no extra dependency is needed.
 // セルやドラフトノートブックのための、クライアント側で安定した ID
-// （design.md §4: cellId は安定したキーであること、という要件に対応）。
+// （cellId は安定したキーであること、という要件に対応）。
 // `crypto.randomUUID` は対象とするすべてのブラウザ、および jsdom（Node ≥ 19）
 // でも利用可能な標準 API なので、外部の UUID 生成ライブラリへの依存を追加する
 // 必要がない。

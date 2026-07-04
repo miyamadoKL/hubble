@@ -11,8 +11,7 @@ import { Fragment, useMemo } from 'react';
 import { cn } from '../../utils/cn';
 
 /**
- * Hand-written SQL token highlighter for the static code area (design.md §6:
- * "Monaco は P3a。今は pre+手書きトークン色で見た目だけ"). Produces themed spans
+ * Hand-written SQL token highlighter for the static code area. Produces themed spans
  * using token CSS variables — NO raw hex. This is presentation only; it is not a
  * real lexer and will be replaced by the Monaco/ANTLR pipeline in P3a.
  */

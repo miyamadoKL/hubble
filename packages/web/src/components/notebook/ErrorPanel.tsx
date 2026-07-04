@@ -14,7 +14,7 @@ import { parseQueryBlocked } from '../../execution';
 import { formatBytes, formatInt } from '../../utils/format';
 
 /**
- * Execution error panel (design.md §5: メッセージ + trinoErrorName + 位置).
+ * Execution error panel (メッセージ + trinoErrorName + 位置).
  * Rendered on an error-soft well; the same line/column is also surfaced as a
  * Monaco marker by the cell wiring.
  *

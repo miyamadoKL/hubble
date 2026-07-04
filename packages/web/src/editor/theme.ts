@@ -1,13 +1,12 @@
 // Monaco theme derived at runtime from the Fable design tokens (tokens.css).
-// design.md §8 / P3a brief: the editor must read `--syntax-*` / surface / ink
+// The editor must read `--syntax-*` / surface / ink
 // via getComputedStyle and defineTheme — NO raw hex in code — and follow
 // light/dark switches. We read the tokens off :root, build a base16-ish Monaco
 // theme, and expose a re-apply hook the editor calls on theme change.
 //
 // ---- ファイル概要（日本語） ----
 // Fable のデザイントークン（tokens.css で定義された CSS カスタムプロパティ）から、
-// 実行時に Monaco のテーマを組み立てるモジュール。design.md §8 / P3a の方針により、
-// エディターの配色はコード中に生の16進カラーを書かず、必ず `--syntax-*` や
+// 実行時に Monaco のテーマを組み立てるモジュール。エディターの配色はコード中に生の16進カラーを書かず、必ず `--syntax-*` や
 // surface/ink 系のトークンを `getComputedStyle` で読み取って `defineTheme` に渡す
 // ことになっている。これによりアプリのライト/ダーク切り替えにエディターの配色も
 // 追従する。`:root` からトークン値を読み、Monaco の base16 風テーマオブジェクトを

@@ -7,7 +7,7 @@ import { createTestContext } from '../test/harness';
 import { cacheControlFor } from './staticRoutes';
 
 /**
- * Static serving + SPA fallback (design.md §3 deployment). A throwaway dir holds
+ * Static serving + SPA fallback. A throwaway dir holds
  * an index.html and a hashed asset; we assert files are served, unknown non-API
  * paths fall back to index.html, and `/api/*` is never intercepted.
  */

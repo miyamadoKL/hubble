@@ -1,10 +1,10 @@
-// SQL formatting via sql-formatter (Trino dialect). design.md §5/§8: format the
+// SQL formatting via sql-formatter (Trino dialect): format the
 // selection if there is one, otherwise the whole document; wire as a Monaco
 // action + Ctrl/Cmd+I. Kept separate so it can be unit-tested without an editor.
 //
 // ---- ファイル概要（日本語） ----
-// sql-formatter（Trino 方言）を使った SQL 整形機能を提供するモジュール。design.md
-// §5/§8 に従い、選択範囲があればその部分だけを、なければドキュメント全体を整形する。
+// sql-formatter（Trino 方言）を使った SQL 整形機能を提供するモジュール。
+// 選択範囲があればその部分だけを、なければドキュメント全体を整形する。
 // Monaco のアクション（コマンドパレット/右クリックメニュー/Ctrl+I や Cmd+I ショートカット）
 // として registerTrinoLanguage.ts から配線される。Monaco エディターに依存しない
 // `formatSql` を分離してあるため、エディターなしでも単体テストできる。

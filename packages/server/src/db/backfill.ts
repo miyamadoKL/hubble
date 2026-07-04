@@ -15,7 +15,7 @@ import type { SqlDatabase } from './sqlDatabase';
 const OWNED_TABLES = ['notebooks', 'saved_queries', 'query_history'] as const;
 
 /**
- * Backfill empty `owner` columns with the configured principal (design.md §11).
+ * Backfill empty `owner` columns with the configured principal.
  *
  * Migration `0002` adds `owner TEXT NOT NULL DEFAULT ''` because static SQL
  * cannot read the runtime `TRINO_USER`. At startup we rewrite those empty
@@ -23,7 +23,7 @@ const OWNED_TABLES = ['notebooks', 'saved_queries', 'query_history'] as const;
  * history become owned by it (the `none`-mode owner). Idempotent: rows already
  * owned are left untouched. Returns the number of rows updated per table.
  *
- * 空の `owner` 列を、設定済みのプリンシパルで埋め戻す（design.md §11）。
+ * 空の `owner` 列を、設定済みのプリンシパルで埋め戻す。
  *
  * migration `0002` は `owner TEXT NOT NULL DEFAULT ''` を追加するが、静的な
  * SQL 側では実行時の `TRINO_USER` を読み取れないため、この関数をサーバー

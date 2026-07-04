@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { resetWorkspace, setEditor, waitEditorReady } from './helpers';
 
 /**
- * App-shell suite (design.md §5 管理 + §6 + stretch): theme toggle persistence,
+ * App-shell suite: theme toggle persistence,
  * command-palette navigation, the keyboard-shortcuts help modal, and presentation
  * mode.
  */

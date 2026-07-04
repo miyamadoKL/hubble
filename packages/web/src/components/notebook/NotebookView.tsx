@@ -33,7 +33,7 @@ import {
 import { useActiveNotebook, useNotebookStore, substituteVariables } from '../../notebook';
 
 /**
- * NotebookView (design.md §6): the active notebook's editable header, variable
+ * NotebookView: the active notebook's editable header, variable
  * panel, and cell list. All mutations flow through the notebook store; this
  * component is the orchestrator that wires cell toolbars, drag-reordering,
  * variable substitution and the delete-confirm modal.
@@ -118,7 +118,7 @@ export function NotebookView({
    * ユニット実行（runUnit/runUnits）直前に変数を解決する。未定義の変数があれば
    * エラートーストを出して実行を中断させる（null を返して呼び出し元に中断を伝える）。
    */
-  /** Substitute notebook variables into a unit before it runs (design.md §5). */
+  /** Substitute notebook variables into a unit before it runs. */
   const resolveUnit = (unit: ExecutionUnit): ExecutionUnit | null => {
     const { text, missing } = substituteVariables(unit.text, variableValues);
     if (missing.length > 0) {
@@ -141,7 +141,7 @@ export function NotebookView({
   };
 
   const confirmDelete = (cell: Cell) => {
-    // Only prompt when the cell has content (design.md §5: 内容ありは確認).
+    // Only prompt when the cell has content (内容ありは確認).
     // 空セルは確認なしで即削除し、内容があるセルだけ確認モーダルを挟んで誤操作を防ぐ。
     if (cell.source.trim() === '') {
       doDelete(cell.id);
@@ -358,7 +358,7 @@ function runCellById(
  * @param onRename - 名前確定時に呼ばれるコールバック。
  * @param onDescribe - 説明確定時に呼ばれるコールバック。
  */
-/** Editable notebook title + description (design.md §6 NotebookView ヘッダー). */
+/** Editable notebook title + description (NotebookView ヘッダー). */
 function NotebookHeader({
   name,
   description,

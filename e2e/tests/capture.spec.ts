@@ -6,7 +6,7 @@ import { resetWorkspace, setEditor, runCellToGrid, resultPane, openResultTab } f
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
- * README hero-shot capture (design.md §9). Not an assertion suite — it drives the
+ * README hero-shot capture. Not an assertion suite — it drives the
  * proven E2E helpers to render four representative views and writes them under
  * docs/screenshots. Run explicitly:
  *

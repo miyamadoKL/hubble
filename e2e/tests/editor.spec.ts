@@ -10,7 +10,7 @@ import {
 } from './helpers';
 
 /**
- * Editor suite (design.md §5 セルと実行 / エディター). Drives the Monaco SQL cell
+ * Editor suite. Drives the Monaco SQL cell
  * against a real Trino: run → grid, syntax-error marker + line:col, format, and
  * the auto-LIMIT control state.
  */
@@ -60,8 +60,8 @@ test('error position is reflected as a Monaco marker in the gutter', async ({ pa
 
 test('formats SQL via Ctrl+Shift+F (sql-formatter, no server round-trip)', async ({ page }) => {
   await setEditor(page, 0, 'select nationkey,name from tpch.tiny.nation where regionkey=1');
-  // Focus the editor and invoke the Trino format command (design.md §5:
-  // Ctrl/Cmd+I or Ctrl+Shift+F).
+  // Focus the editor and invoke the Trino format command
+  // (Ctrl/Cmd+I or Ctrl+Shift+F).
   await cell(page).locator('[data-testid="sql-editor"]').click();
   await page.keyboard.press('Control+Shift+KeyF');
 
@@ -85,7 +85,7 @@ test('formats SQL via Ctrl+Shift+F (sql-formatter, no server round-trip)', async
 });
 
 test('auto-LIMIT control shows the default and toggles off', async ({ page }) => {
-  // The LIMIT control is part of the SQL cell toolbar (design.md §5).
+  // The LIMIT control is part of the SQL cell toolbar.
   const toggle = cell(page).getByRole('switch', { name: 'Toggle auto LIMIT' });
   await expect(toggle).toBeVisible();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');

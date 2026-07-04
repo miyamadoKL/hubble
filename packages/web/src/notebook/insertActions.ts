@@ -1,6 +1,5 @@
 // Imperative "drop SQL into the notebook" actions shared by the Data browser,
-// Saved queries and History panels (design.md §5: クリックでカーソル位置に挿入 /
-// 新規セルへ). They read the notebook store imperatively so the sidebar panels
+// Saved queries and History panels. They read the notebook store imperatively so the sidebar panels
 // stay decoupled from React state, and they centralise the "no active cell →
 // toast" policy so every entry point behaves the same.
 //
@@ -19,8 +18,7 @@ import { insertAtCursor } from '../editor/activeEditor';
 import { toast } from '../components/common/Toast';
 
 /**
- * Insert `text` at the active SQL editor's caret (design.md §5: カーソル位置に
- * 挿入). When no editor is focused, toasts and returns false so the caller can
+ * Insert `text` at the active SQL editor's caret. When no editor is focused, toasts and returns false so the caller can
  * fall back to a new cell.
  *
  * 現在フォーカスされている SQL エディタのキャレット位置に `text` を挿入する。

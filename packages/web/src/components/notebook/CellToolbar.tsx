@@ -22,8 +22,8 @@ import { Tooltip } from '../common/Tooltip';
 import { cn } from '../../utils/cn';
 
 /**
- * Cell toolbar (design.md §6): collapse / kind badge / editable name, plus run /
- * stop, the LIMIT auto-append toggle (SQL cells, design.md §5), move up/down,
+ * Cell toolbar: collapse / kind badge / editable name, plus run /
+ * stop, the LIMIT auto-append toggle (SQL cells), move up/down,
  * delete, and the drag grip handle. Move/delete/rename are notebook-level
  * operations passed down from NotebookView; run/limit are SQL-cell-owned.
  */
@@ -309,7 +309,7 @@ function CellName({ name, onRename }: { name?: string; onRename: (name: string) 
 }
 
 /**
- * LIMIT auto-append toggle + inline editable value (design.md §5).
+ * LIMIT auto-append toggle + inline editable value.
  * SQL セル用の LIMIT 自動付与トグルと、LIMIT 値をインライン編集できるコントロール。
  *
  * @param autoLimit - LIMIT を自動付与するかどうか（トグルの ON/OFF 状態）。

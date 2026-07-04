@@ -1,4 +1,4 @@
--- v1.1 auth (design.md §11): owner scoping.
+-- v1.1 auth: owner scoping.
 -- Add an `owner` column to every user-owned table. Existing rows default to the
 -- empty string here (migrations are static SQL and cannot read TRINO_USER); a
 -- startup backfill (src/db/backfill.ts) rewrites empty owners to the configured

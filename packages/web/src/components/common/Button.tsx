@@ -39,7 +39,7 @@ const base =
 
 // variant ごとの配色（枠線、背景、文字色、hover/active 時の色）定義。
 const variants: Record<ButtonVariant, string> = {
-  // Accent reserved for primary action (Run) — design.md §6.
+  // Accent reserved for primary action (Run).
   // アクセントカラーは「実行」など主要アクションを表す primary バリエーションにのみ使用する。
   primary:
     'border-accent bg-accent text-accent-contrast hover:bg-accent-hover active:bg-accent-active',

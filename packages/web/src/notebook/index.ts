@@ -1,4 +1,4 @@
-// Public surface of the notebook feature layer (design.md §4, §5). Components
+// Public surface of the notebook feature layer. Components
 // import from here rather than reaching into individual modules.
 //
 // ==== ファイルの責務（日本語） ================================================

@@ -9,7 +9,7 @@ import { AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 /**
- * Toast notifications (design.md §6: success / error 2 variants). A tiny zustand
+ * Toast notifications (success / error 2 variants). A tiny zustand
  * store drives a fixed container; toasts fade/slide in within the motion budget.
  *
  * トースト通知の実装。success / error / info の3種類のバリアントを持ち、

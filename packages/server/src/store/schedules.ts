@@ -137,11 +137,11 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
 
 /**
  * CRUD for schedules (Query Scheduling feature). Every operation is scoped to an
- * `owner` principal (design.md §11). The unscoped `listAllEnabled` is used by
+ * `owner` principal. The unscoped `listAllEnabled` is used by
  * the in-process scheduler tick to find due work across all owners.
  *
  * スケジュール（Query Scheduling 機能）に対する CRUD リポジトリ。ほぼ全ての
- * 操作は `owner` principal で絞り込まれる（design.md §11）。例外は
+ * 操作は `owner` principal で絞り込まれる。例外は
  * `listAllEnabled` で、これは全 owner を横断して有効なスケジュールを探す
  * ためにプロセス内スケジューラーの tick から使われる。
  */

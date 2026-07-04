@@ -30,7 +30,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { trySelectDatasource, toastDatasourceMissing } from '../../utils/applyDatasource';
 
 /**
- * History panel (design.md §5: offset ページング 50 件, state フィルタチップ, 各行
+ * History panel (offset ページング 50 件, state フィルタチップ, 各行
  * の詳細 + 新規セルへ). Self-contained: drives an offset-paging reducer over
  * `GET /api/history`, auto-refetches the first page on mount (so executions show
  * up), and exposes a state-filter chip row. Each row expands to the full
@@ -189,10 +189,10 @@ export function HistoryPanel() {
   // 相対時刻表示の基準となる現在時刻（レンダーごとに固定して行間でずれないようにする）。
   const now = new Date();
 
-  // Offset paging via useInfiniteQuery (design.md §5: offset ページング 50 件,
+  // Offset paging via useInfiniteQuery (offset ページング 50 件,
   // もっと見る). `getNextPageParam` reuses the same paging math as the reducer.
   // `refetchOnMount: 'always'` re-pulls the first page whenever the panel shows,
-  // so freshly-executed queries appear (design.md §5: 自動 refetch).
+  // so freshly-executed queries appear (自動 refetch).
   const query = useInfiniteQuery({
     queryKey: ['history', filter],
     queryFn: ({ pageParam }) =>

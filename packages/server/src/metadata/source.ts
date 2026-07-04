@@ -8,8 +8,8 @@ import type { TrinoColumn, TrinoRequestContext } from '../trino/types';
  * 問い合わせる、キャッシュを持たない「生」のデータソース実装。
  *
  * `system.metadata.catalogs` と各カタログの `information_schema` を SQL で
- * 問い合わせるだけの薄いレイヤーで、結果の保持や TTL 管理などは一切行わない
- * (design.md §3)。キャッシュ層は metadata/service.ts の `MetadataService` が
+ * 問い合わせるだけの薄いレイヤーで、結果の保持や TTL 管理などは一切行わない。
+ * キャッシュ層は metadata/service.ts の `MetadataService` が
  * 別途この上に被せる。ここで組み立てる SQL には利用者からの入力
  * (catalog/schema/table 名) が識別子やリテラルとして埋め込まれるため、
  * SQL インジェクション対策として quoteIdent/quoteString によるエスケープを必ず経由する。
@@ -38,7 +38,7 @@ function toStr(value: unknown): string {
 
 /**
  * Trino-backed metadata source. Reads `system.metadata.catalogs` and
- * `information_schema` (design.md §3). All queries use the metadata source tag.
+ * `information_schema`. All queries use the metadata source tag.
  *
  * 日本語: 各 fetchXxx メソッドは runToCompletion (trino/runner.ts) を使い、
  * 対象の SQL を完走させて全行を受け取ってから加工する (メタデータのレスポンスは

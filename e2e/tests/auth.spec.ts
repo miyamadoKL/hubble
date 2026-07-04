@@ -3,7 +3,7 @@ import type { APIRequestContext } from '@playwright/test';
 import { AUTH_SERVER_URL } from '../playwright.config';
 
 /**
- * Proxy-mode auth (design.md §11), verified at the API level against a dedicated
+ * Proxy-mode auth, verified at the API level against a dedicated
  * `AUTH_MODE=proxy` BFF (separate port, see playwright.config.ts). No real
  * oauth2-proxy is involved: the spec injects `x-forwarded-email` itself, and
  * because requests originate from localhost (inside the default trusted CIDR)

@@ -1,8 +1,8 @@
--- Query Scheduling feature (design.md §4 follow-on).
+-- Query Scheduling feature.
 -- A `schedules` row runs a saved statement on a cron schedule; each firing
 -- produces a `schedule_runs` row recording that run's outcome (one row per run,
 -- even if the run retried internally). Both tables are owner-scoped like the
--- rest of the store (design.md §11). The statement is validated with Trino's
+-- rest of the store. The statement is validated with Trino's
 -- `EXPLAIN (TYPE VALIDATE)` at create/update and before every execution.
 --
 -- Dialect notes (must parse on both SQLite and PostgreSQL):

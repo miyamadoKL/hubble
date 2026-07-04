@@ -3,9 +3,8 @@
  * テーブルへの挿入、更新、参照を提供する。1件の履歴行は、クエリ投入時に
  * `insert()` で作成され、Trino 側でクエリが完了/失敗/キャンセルされた
  * 「settle」のタイミングで `update()` により結果列（state, row_count,
- * elapsed_ms, trino_query_id, error_message）が上書きされる（design.md §4）。
- * 全操作は `owner` principal で絞り込まれ、他ユーザーの履歴は見えない
- * （design.md §11）。
+ * elapsed_ms, trino_query_id, error_message）が上書きされる。
+ * 全操作は `owner` principal で絞り込まれ、他ユーザーの履歴は見えない。
  */
 import type { HistoryResponse, QueryHistoryEntry, QueryState } from '@hubble/contracts';
 import { queryHistoryEntrySchema } from '@hubble/contracts';
@@ -42,7 +41,7 @@ export interface HistoryInsert {
   catalog?: string;
   schema?: string;
   state: QueryState;
-  /** Owning principal (design.md §11). */
+  /** Owning principal. */
   owner: string;
   notebookId?: string;
   cellId?: string;
@@ -68,10 +67,10 @@ const STATEMENT_MAX = 2000;
 
 /**
  * Query history (Hue's `is_history` equivalent). A row is inserted on submit
- * and updated when the query settles (design.md §4).
+ * and updated when the query settles.
  *
  * クエリ実行履歴（Hue の `is_history` 相当）のリポジトリ。行はクエリ投入時に
- * 挿入され、クエリが確定（settle）したタイミングで更新される（design.md §4）。
+ * 挿入され、クエリが確定（settle）したタイミングで更新される。
  */
 export class HistoryRepository {
   constructor(private readonly db: SqlDatabase) {}

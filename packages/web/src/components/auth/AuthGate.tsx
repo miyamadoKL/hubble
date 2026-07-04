@@ -10,7 +10,7 @@ import { useMe, isUnauthenticated } from '../../hooks/useMe';
 import { AuthRequired } from './AuthRequired';
 
 /**
- * Gate the app on authentication (design.md §11). `/api/me` is the canonical
+ * Gate the app on authentication. `/api/me` is the canonical
  * probe: in `proxy` mode an unauthenticated request (direct access / expired
  * session) returns 401 UNAUTHENTICATED, and we swap the whole UI for the
  * "authentication required" screen. In `none` mode `/api/me` always succeeds,
@@ -19,7 +19,7 @@ import { AuthRequired } from './AuthRequired';
  * While the probe is in flight we render the app optimistically; behind an
  * oauth2-proxy the request resolves immediately and there is no flash.
  *
- * アプリ全体を認証状態に応じて出し分けるコンポーネント (design.md §11 参照)。
+ * アプリ全体を認証状態に応じて出し分けるコンポーネント。
  * `/api/me` を認証状態の正規のプローブとして扱う。`proxy` モードでは、
  * 直接アクセスやセッション期限切れなど未認証のリクエストは 401
  * UNAUTHENTICATED を返すため、その場合はアプリ全体の UI を「認証が必要」

@@ -1,5 +1,5 @@
 /**
- * Minimal CIDR membership test for the trusted-proxy boundary (design.md §11).
+ * Minimal CIDR membership test for the trusted-proxy boundary.
  *
  * Supports IPv4 and IPv6 ranges. An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`,
  * which is how Node reports an IPv4 peer on a dual-stack socket) is matched

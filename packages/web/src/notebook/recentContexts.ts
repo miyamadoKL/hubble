@@ -1,4 +1,4 @@
-// Recently-used catalog.schema contexts (design.md §5 管理: 最近使った値を復元).
+// Recently-used catalog.schema contexts.
 // Persisted to localStorage as an MRU list (most-recent first, max 5) so a new
 // notebook starts from the last context the user worked in. Pure list logic is
 // split out (`pushRecent`) for unit testing; the read/write helpers wrap it with
@@ -6,8 +6,7 @@
 //
 // ==== ファイルの責務（日本語） ================================================
 // 直近使用した catalog.schema コンテキストを、MRU（Most Recently Used）リスト
-// として localStorage に永続化するためのヘルパー群（design.md §5 管理:
-// 最近使った値を復元）。新規 notebook 作成時に、直前まで使っていたコンテキストを
+// として localStorage に永続化するためのヘルパー群。新規 notebook 作成時に、直前まで使っていたコンテキストを
 // 初期値として引き継げるようにする。リストの並べ替えロジック（`pushRecent`）は
 // 副作用の無い純粋関数として切り出してあり単体テスト可能。read/write の
 // ヘルパーはそれを localStorage への安全なアクセスでラップしたもの。

@@ -1,4 +1,4 @@
-// Current identity (`GET /api/me`) via TanStack Query (design.md §11). Drives
+// Current identity (`GET /api/me`) via TanStack Query. Drives
 // the TopBar user chip (hidden in `none` mode) and is the canonical signal for
 // the global "authentication required" screen: a 401 here means the proxy
 // session is missing or expired.

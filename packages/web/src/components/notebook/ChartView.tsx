@@ -18,7 +18,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { Spinner } from '../common/Spinner';
 
 /**
- * The ECharts canvas for a result chart (design.md §5). ECharts is loaded lazily
+ * The ECharts canvas for a result chart. ECharts is loaded lazily
  * (own chunk) on first render. The option is rebuilt from rows + config + the
  * current token theme on any change, and the chart re-themes + resizes when the
  * app theme switches or the container resizes. No raw colors — every color comes

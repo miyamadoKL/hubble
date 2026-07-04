@@ -24,7 +24,7 @@ import { DatasourceBadge } from '../common/DatasourceBadge';
 import { trySelectDatasource } from '../../utils/applyDatasource';
 
 /**
- * Saved queries panel (design.md §5: 一覧 / 検索 / お気に入りトグル / 削除 /
+ * Saved queries panel (一覧 / 検索 / お気に入りトグル / 削除 /
  * 詳細 / 挿入). Self-contained: fetches its own list (debounced search), and
  * mutates favorites / deletions through the saved-query API, invalidating the
  * list on success. Insert drops the statement at the caret; "New cell" appends a

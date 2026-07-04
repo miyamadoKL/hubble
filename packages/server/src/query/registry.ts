@@ -63,11 +63,11 @@ export interface SubmitParams {
 }
 
 /**
- * In-memory registry of query executions (design.md §3). Owns the concurrency
+ * In-memory registry of query executions. Owns the concurrency
  * semaphore, the queued-waiters list, and the TTL sweep for finished queries.
  *
- * クエリ実行（`QueryExecution`）をメモリ上で管理するレジストリ
- * （design.md §3 参照）。同時実行数を制御するセマフォ、順番待ちの
+ * クエリ実行（`QueryExecution`）をメモリ上で管理するレジストリ。
+ * 同時実行数を制御するセマフォ、順番待ちの
  * キュー（waiters）、終了済みクエリを掃除する TTL スイープを保持する。
  */
 export class QueryRegistry {

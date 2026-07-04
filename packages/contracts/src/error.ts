@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Common API error envelope (design.md §7).
+ * Common API error envelope.
  * Every API failure returns this shape: `{ error: { ... } }`.
  *
  * API のエラーレスポンスの共通契約を定義するファイル。
@@ -46,8 +46,8 @@ export type ApiError = z.infer<typeof apiErrorSchema>;
 
 /**
  * Error code returned (HTTP 401) when the request could not be authenticated in
- * `proxy` mode — SSO headers were missing or arrived from an untrusted source
- * (design.md §11). The web treats this code as the signal to show the global
+ * `proxy` mode — SSO headers were missing or arrived from an untrusted source.
+ * The web treats this code as the signal to show the global
  * "authentication required" screen.
  *
  * `proxy` 認証モードでリクエストを認証できなかった場合（SSO ヘッダーが欠落している、

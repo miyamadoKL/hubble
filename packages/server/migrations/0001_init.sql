@@ -1,4 +1,4 @@
--- Initial schema (design.md §4).
+-- Initial schema.
 -- Notebooks, saved queries and query history. Full payloads are stored as JSON
 -- with a few extracted columns for search / filtering. Result rows are NOT
 -- stored here (kept in server memory with TTL sweep).

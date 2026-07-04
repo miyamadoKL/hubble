@@ -10,7 +10,7 @@ import {
 } from './helpers';
 
 /**
- * Execution suite (design.md §5 セルと実行): sequential multi-statement runs that
+ * Execution suite: sequential multi-statement runs that
  * stop on the first error, cancel of a heavy query, the EXPLAIN tab, and the
  * server-side truncation warning.
  */
@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
 
 test('runs multiple statements sequentially and stops at the first error', async ({ page }) => {
   // Three statements; the 2nd references a missing table, so the 3rd must not run
-  // (Hue-compatible stop-on-error, design.md §5).
+  // (Hue-compatible stop-on-error).
   await setEditor(
     page,
     0,
@@ -47,7 +47,7 @@ test('runs multiple statements sequentially and stops at the first error', async
 
 test('cancels a heavy running query and lands in the canceled state', async ({ page }) => {
   // A cross join over a large tpch scale factor runs long enough to cancel
-  // (design.md §5 キャンセル example).
+  // (cancel example).
   await setEditor(page, 0, 'SELECT count(*) FROM tpch.sf1000.lineitem CROSS JOIN tpch.tiny.nation');
   // Turn auto-LIMIT off so the statement isn't reshaped (it's an aggregate anyway).
   await runCell(page);

@@ -1,13 +1,12 @@
-// Workspace bootstrap (design.md §5 管理: 開いているタブ集合 + アクティブを復元,
-// 未保存 notebook の下書き復元). Runs once on mount: wires the API persistence,
+// Workspace bootstrap (restores the open tab set + active tab, and unsaved
+// notebook drafts). Runs once on mount: wires the API persistence,
 // restores the previously-open tabs (saved notebooks re-fetched from the server,
 // drafts read back from localStorage), and seeds a blank notebook when the
-// workspace is empty (design.md §1 初回起動).
+// workspace is empty.
 //
 // ==== ファイルの責務（日本語） ================================================
 // アプリ起動時に一度だけ実行される、notebook ワークスペースの復元処理
-// （design.md §5 管理: 開いているタブ集合 + アクティブタブの復元、未保存 draft
-// notebook の下書き復元）。
+// （開いているタブ集合とアクティブタブの復元、未保存 draft notebook の下書き復元）。
 //   1. notebookStore に本物の API 永続化実装（create/update）を配線する。
 //   2. execution レイヤーの「セル実行が終端状態に達した」通知を、notebook の
 //      resultMeta へ書き込むシンクとして配線する。
@@ -15,8 +14,7 @@
 //      タブ id 一覧 + アクティブ id）を読み、保存済み notebook はサーバーから
 //      再取得、draft notebook は localStorage から読み戻して、元通りにタブを
 //      再オープンする。
-//   4. 復元できるものが何も無ければ、空の notebook を 1 つ新規作成して開く
-//      （design.md §1 初回起動時の挙動）。
+//   4. 復元できるものが何も無ければ、空の notebook を 1 つ新規作成して開く。
 // ============================================================================
 
 import { useEffect } from 'react';
@@ -37,11 +35,11 @@ let persistenceWired = false;
 
 /**
  * Wire the execution layer's terminal-state sink to write a lightweight summary
- * into the owning cell's `resultMeta` (design.md §4). Idempotent.
+ * into the owning cell's `resultMeta`. Idempotent.
  *
  * execution レイヤーが「セルの実行が終端状態に達した」ときに呼ぶシンクを、
  * notebook ストアの `setCellResultMeta` へ接続する。これにより実行結果の
- * 軽量なサマリー（design.md §4: resultMeta）がセルに永続化される。
+ * 軽量なサマリー（resultMeta）がセルに永続化される。
  * 何度呼んでも安全（後勝ちで同じ実装が再設定されるだけ）。
  */
 function ensureResultMetaSink(): void {

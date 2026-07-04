@@ -12,12 +12,12 @@ import { toPresentationCards } from '../../notebook/presentation';
 import { useUiStore } from '../../stores/uiStore';
 
 /**
- * Presentation mode (design.md §5 stretch). A read-only, full-bleed view of the
+ * Presentation mode. A read-only, full-bleed view of the
  * active notebook's cells, split into titled cards on `--` comment headings.
  * Toggled by Ctrl/Cmd+Shift+P or the command palette; Escape exits.
  */
 /**
- * プレゼンテーションモードの画面（design.md §5 stretch）。
+ * プレゼンテーションモードの画面。
  * 現在アクティブなノートブックのセルを読み取り専用のフルブリード表示に変換し、
  * `--` コメント見出しを区切りとしてタイトル付きのカード（スライド）に分割する。
  * Ctrl/Cmd+Shift+P またはコマンドパレットから切り替え、Escape で終了する。

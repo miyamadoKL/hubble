@@ -1,5 +1,5 @@
-// Monaco glue for the per-statement execution gutter + execution-error markers
-// (design.md §5). Pure Monaco/decoration plumbing; the cell component owns the
+// Monaco glue for the per-statement execution gutter + execution-error markers.
+// Pure Monaco/decoration plumbing; the cell component owns the
 // state and calls these to project it into the editor.
 //
 //   - applyStatementGutter : glyph-margin status icons per statement, derived

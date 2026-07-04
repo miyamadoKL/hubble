@@ -32,7 +32,7 @@ import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
 
 /**
- * Data browser tree (design.md §5): catalog → schema → table → column, lazy-
+ * Data browser tree: catalog → schema → table → column, lazy-
  * loaded on expand (TanStack Query, stale 5 min). A client-side filter narrows
  * already-loaded nodes and auto-expands matched paths; unloaded branches are
  * left collapsed (the filter can't reach them, which is fine). Clicking a table
@@ -581,8 +581,8 @@ export function SchemaTree({
   const needle = filter.trim().toLowerCase();
 
   // While filtering, auto-expand already-loaded branches that contain a match so
-  // the matched table/column surfaces without manual clicking (design.md §5:
-  // マッチパスは自動展開). Unloaded branches are untouched — the filter can't see
+  // the matched table/column surfaces without manual clicking (マッチパスは自動展開).
+  // Unloaded branches are untouched — the filter can't see
   // into them, and that's acceptable. The auto-expand math lives in the pure
   // `treeFilter` module (unit-tested); here we just feed it the cached tree.
   const effectiveExpanded = useMemo(() => {

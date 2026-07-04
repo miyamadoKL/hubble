@@ -1,7 +1,7 @@
-// Pure reducer for the History panel's offset paging (design.md §5: offset
+// Pure reducer for the History panel's offset paging (offset
 // ページング 50 件, もっと見る). Pages are appended as they arrive; switching the
 // state filter resets the accumulator. Kept framework-free so it can be unit
-// tested directly (design.md §9: 履歴ページング reducer のテスト).
+// tested directly (履歴ページング reducer のテスト).
 //
 // このファイルは HistoryPanel が使う「offset ページング」の状態管理ロジックを
 // React から切り離して純粋関数として提供するモジュールである。React の

@@ -2,11 +2,11 @@
 // 【ファイル概要】
 // このファイルは、ECharts本体（echarts/core）と必要なチャート、コンポーネント、
 // レンダラーのモジュールを動的import（コード分割）で遅延ロードする処理を担う。
-// design.md §5/§8 の方針「echarts は動的 import でチャンク分離」に従い、
+// 「echarts は動的 import でチャンク分離」という方針に従い、
 // エディタ本体のバンドルサイズにECHartsを含めず、チャートを実際に描画する
 // タイミングで初めてロードされるようにする。
 // ============================================================================
-// Lazy ECharts loader (design.md §5/§8 "echarts は動的 import でチャンク分離").
+// Lazy ECharts loader ("echarts は動的 import でチャンク分離").
 // Pulls only the chart + component modules we use from echarts/core so the editor
 // payload stays lean, and the whole thing lands in its own rollup chunk. The
 // dynamic import is cached so repeated chart renders reuse one module instance.

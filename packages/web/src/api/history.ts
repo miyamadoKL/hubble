@@ -1,4 +1,4 @@
-// Query-history fetcher (design.md §7). `GET /api/history?offset&limit&state=`
+// Query-history fetcher. `GET /api/history?offset&limit&state=`
 // returns a paged envelope `{ items, offset, limit, total }`. Paging policy
 // (offset stepping, page size) lives in the panel's reducer, not here.
 //
@@ -16,8 +16,8 @@ import {
 } from '@hubble/contracts';
 import { apiFetch } from './client';
 
-/** Default page size for the history panel (design.md §5: ページング 50 件). */
-// 履歴パネルのデフォルトページサイズ。design.md §5 の仕様に合わせて 50 件固定。
+/** Default page size for the history panel (ページング 50 件). */
+// 履歴パネルのデフォルトページサイズ。仕様に合わせて 50 件固定。
 export const HISTORY_PAGE_SIZE = 50;
 
 /** `fetchHistory` に渡す検索やページングパラメータ。 */

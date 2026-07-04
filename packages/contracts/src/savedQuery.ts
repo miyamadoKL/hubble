@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { isoTimestamp } from './common';
 
 /**
- * SavedQuery model (design.md §4).
+ * SavedQuery model.
  * `SavedQuery { id, name, description, statement, catalog?, schema?, isFavorite, createdAt, updatedAt }`
  *
  * ユーザーが明示的に「保存」した SQL クエリ（お気に入り含む）に関する契約を

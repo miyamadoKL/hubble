@@ -10,7 +10,7 @@ import { Fragment, type ReactNode } from 'react';
 import { cn } from '../../utils/cn';
 
 /**
- * Lightweight markdown renderer for markdown-cell previews (design.md §6).
+ * Lightweight markdown renderer for markdown-cell previews.
  * Covers the subset a SQL notebook needs: headings (h1–h3), bold / italic /
  * inline code, ordered + unordered lists, blockquotes, fenced code blocks and
  * GitHub-style tables. Deliberately dependency-free (no markdown-it) — the

@@ -36,7 +36,7 @@ function readZip(path: string): Promise<Record<string, Buffer>> {
 }
 
 /**
- * Results suite (design.md §5 結果): virtual scroll over 5000 rows, column show/
+ * Results suite: virtual scroll over 5000 rows, column show/
  * hide, sort, cell-value filter, CSV download (content verified), and clipboard
  * copy.
  */

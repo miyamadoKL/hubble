@@ -31,7 +31,7 @@ import { useExecutionStore } from '../../execution';
 import { isCellRunning } from '../../execution';
 
 /**
- * TopBar (design.md §6): logo · notebook tabs (open/close/new/rename) ·
+ * TopBar: logo · notebook tabs (open/close/new/rename) ·
  * catalog.schema selector · Run all / Save · command palette · theme toggle.
  * Notebook state comes from the notebook store; run state from the execution
  * store (so the Run button flips to Stop while cells stream).
@@ -191,7 +191,7 @@ export function TopBar({
             }}
           />
 
-          {/* Current user (design.md §11); UserChip renders null in authMode none. */}
+          {/* Current user; UserChip renders null in authMode none. */}
           {/* 現在のユーザー表示。authMode が none のときは UserChip 内部で null を返す。 */}
           <UserChip />
         </div>

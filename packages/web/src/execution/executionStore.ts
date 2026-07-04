@@ -1,10 +1,10 @@
-// Execution store (design.md §3 "状態" + §5 実行フロー). One zustand store keyed
+// Execution store ("状態" + 実行フロー). One zustand store keyed
 // by cellId. Each cell holds its current query's id/state/stats/columns/rows and
 // the SSE subscription that feeds them. A monotonically increasing generation
 // per cell lets a stale subscription's events be dropped the instant a newer run
 // (or cancel) supersedes it — no torn state when a user re-runs quickly.
 //
-// Row data lives only here (server memory + SSE; design.md §4). The structure is
+// Row data lives only here (server memory + SSE). The structure is
 // reconstructible from a snapshot + rows page, so a reload can call
 // `restoreCell` to resume a still-running query by re-subscribing.
 //
@@ -16,8 +16,8 @@
 // それを購読する SSE サブスクリプションを 1 レコードにまとめて保持する。セルごとに
 // 単調増加する世代 (generation) カウンタを持ち、再実行やキャンセルで古い購読からの
 // イベントを即座に無視できるようにしている（連打しても状態が壊れない）。
-// 行データはこのストア（メモリ）と SSE のみに存在し、DB には結果の要約のみが残る
-// (design.md §4)。構造はスナップショット + 行ページから再構築可能なため、リロード後
+// 行データはこのストア（メモリ）と SSE のみに存在し、DB には結果の要約のみが残る。
+// 構造はスナップショット + 行ページから再構築可能なため、リロード後
 // も `restoreCell` で実行中クエリへ再購読して復元できる。
 // このモジュール自体は React 非依存で、末尾のセレクタフック経由でのみ Component から
 // 参照される。
@@ -205,7 +205,7 @@ export interface CellResultSummary {
 
 /**
  * Sink invoked when a cell's run reaches a terminal state, so a higher layer can
- * persist a lightweight summary into `cell.resultMeta` (design.md §4: 結果の要約
+ * persist a lightweight summary into `cell.resultMeta` (結果の要約
  * のみ永続化). Injected to keep the execution store free of the notebook store
  * (no import cycle); a no-op until wired by `__setCellSettledSink`.
  */

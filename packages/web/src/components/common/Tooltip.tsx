@@ -30,7 +30,7 @@ const sideClasses: Record<TooltipSide, string> = {
 
 /**
  * Lightweight tooltip. Shown on hover/focus via local state (no portal needed
- * for the shell). 150ms fade aligns with the motion budget (design.md §6).
+ * for the shell). 150ms fade aligns with the motion budget.
  *
  * 軽量なツールチップ。ホバーまたはフォーカス時にローカル state (`open`) を
  * 切り替えて表示する（シェル用途のためポータルは使用しない）。

@@ -1,6 +1,6 @@
 // Pure helpers for turning a tree node into the text inserted at the caret
-// (design.md §5: table は context を考慮した相対名/FQN、column は名前) and for
-// building a SELECT template (design.md §5: ダブルクリックで SELECT 雛形).
+// (table は context を考慮した相対名/FQN、column は名前) and for
+// building a SELECT template (ダブルクリックで SELECT 雛形).
 //
 // Trino identifiers are quoted with double quotes only when they aren't a plain
 // lowercase identifier — this keeps the common tpch case clean (`orders`) while
@@ -77,7 +77,7 @@ export function relativeTableName(ref: TableRef, ctx: EditorContext): string {
 }
 
 /**
- * A SELECT template for a table (design.md §5): explicit column list when known,
+ * A SELECT template for a table: explicit column list when known,
  * else `*`, qualified by the same relative-name rules, with a LIMIT.
  *
  * テーブル詳細ポップオーバーの「SELECT 雛形を新規セルへ」ボタンから使われる、

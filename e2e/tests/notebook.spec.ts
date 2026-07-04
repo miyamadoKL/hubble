@@ -13,7 +13,7 @@ import {
 } from './helpers';
 
 /**
- * Notebook suite (design.md §5 セル / 変数 / 管理): cell add / delete (confirm) /
+ * Notebook suite: cell add / delete (confirm) /
  * reorder / collapse, Markdown edit → render, variable substitution, run-all, and
  * save → reload → restore with the dirty indicator.
  */

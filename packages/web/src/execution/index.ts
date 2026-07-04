@@ -1,4 +1,4 @@
-// Public surface of the execution layer (design.md §3, §5). Components and the
+// Public surface of the execution layer. Components and the
 // editor wiring import from here rather than reaching into individual modules.
 //
 // ==== ファイルの責務（日本語） ================================================

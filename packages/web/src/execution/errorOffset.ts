@@ -1,7 +1,7 @@
 // Map a query error's (line, column) — reported relative to the *statement text*
 // that was sent to Trino — back onto the cell's full source, so Monaco markers
 // land on the right characters even when the statement was one of several in the
-// cell (design.md §5: 複数ステートメント実行時はオフセット補正).
+// cell (複数ステートメント実行時はオフセット補正).
 //
 // Trino positions are 1-based line/column. The statement begins at character
 // offset `unitStart` in the source. We convert that offset to a (line, col)

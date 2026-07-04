@@ -2,7 +2,6 @@
  * サイドバーパネル等に組み込むためのコンパクトな検索入力フィールド。
  * 左側に検索アイコン、右側に入力値がある場合のみクリアボタンを表示する。
  * 制御コンポーネントとして `value` / `onChange` で値を親から管理する設計になっている。
- * (design.md §5: 検索フィルタ の実装)
  */
 import { Search, X } from 'lucide-react';
 import type { InputHTMLAttributes, Ref } from 'react';
@@ -24,7 +23,7 @@ interface SearchInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, '
   inputRef?: Ref<HTMLInputElement>;
 }
 
-/** Compact search field for sidebar panels (design.md §5: 検索フィルタ). */
+/** Compact search field for sidebar panels. */
 /**
  * サイドバーパネル向けのコンパクトな検索入力フィールド。
  * 検索アイコンを常に表示し、`value` が空でないときのみクリアボタンを表示する。

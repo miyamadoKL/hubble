@@ -1,7 +1,7 @@
 /**
  * クエリ実行 API ルーター（`packages/server/src/http/queryRoutes.ts`）。
  *
- * design.md §7 が定義する「クエリ」まわりのエンドポイント群（見積り(estimate) / 投入(submit) /
+ * 「クエリ」まわりのエンドポイント群（見積り(estimate) / 投入(submit) /
  * スナップショット取得 / 行ページ取得 / キャンセル /
  * SSE によるライブ進捗配信 / CSV ダウンロード）を Hono のサブルーターとして実装する。
  *
@@ -40,7 +40,7 @@ import { streamQueryCsv } from '../query/csv';
 const KEEPALIVE_INTERVAL_MS = 15_000;
 
 /**
- * Query endpoints (design.md §7): submit/snapshot/events(SSE)/rows/cancel/CSV.
+ * Query endpoints: submit/snapshot/events(SSE)/rows/cancel/CSV.
  * Mounted under `/api/queries`.
  *
  * クエリ実行系エンドポイントをまとめた Hono サブルーターを構築するファクトリ関数。
@@ -87,7 +87,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       catalog,
       schema,
       source: body.source,
-      // Impersonate the authenticated principal for this user query (design.md §11).
+      // Impersonate the authenticated principal for this user query.
       user: principal.user,
       sessionProperties: body.sessionProperties,
     };
@@ -161,7 +161,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
 
   /**
    * Fetch an execution scoped to the requesting principal. A query is owned by
-   * the principal whose impersonation user started it (design.md §11); another
+   * the principal whose impersonation user started it; another
    * user gets a 404 (indistinguishable from "unknown id"), so executions never
    * leak across owners.
    *

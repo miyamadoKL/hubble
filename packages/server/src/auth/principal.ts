@@ -14,10 +14,10 @@ import { isTrustedAddress, parseCidrList, type ParsedCidr } from './cidr';
 import type { ResolvedRole } from '../rbac/types';
 
 /**
- * The authenticated identity for a request (design.md §11). `user` is both the
+ * The authenticated identity for a request. `user` is both the
  * owner id for stored resources and the `X-Trino-User` impersonation value.
  *
- * リクエストの認証済み識別情報（design.md §11）。`user` は保存リソースの所有者 id と、
+ * リクエストの認証済み識別情報。`user` は保存リソースの所有者 id と、
  * Trino へのリクエストで使う `X-Trino-User`（impersonation）の値を兼ねる。
  */
 

@@ -1,4 +1,4 @@
-// One-shot registration of the Trino SQL language for Monaco (design.md §8:
+// One-shot registration of the Trino SQL language for Monaco (
 // "registerTrinoLanguage(monaco, deps) で一括登録"). Splits the old 950-line
 // QueryEditorPane monolith into discrete, independently testable concerns:
 //
@@ -180,7 +180,7 @@ function registerCompletionProvider(monacoNs: typeof monaco, deps: TrinoLanguage
       const offset = model.getOffsetAt(position);
       const { catalog, schema } = deps.getContext();
       // trino-lang の collectCompletions にソース全文とカーソルオフセットを渡し、
-      // ファントムカーソル方式 + antlr4-c3 で候補を収集する（design.md §8）。
+      // ファントムカーソル方式 + antlr4-c3 で候補を収集する。
       const candidates = collectCompletions({
         sql,
         offset,
@@ -244,13 +244,13 @@ function registerHoverProvider(monacoNs: typeof monaco, deps: TrinoLanguageDeps)
 /**
  * Attach the debounced parse → marker/decoration loop to one editor. Returns a
  * disposer. Uses a generation counter so a late parse never clobbers a newer
- * one (design.md §8 stale-result guard). Also wires Ctrl/Cmd+Enter execute and
+ * one (stale-result guard). Also wires Ctrl/Cmd+Enter execute and
  * the format action (Ctrl/Cmd+I).
  *
  * 1 つのエディターに「デバウンスした構文解析 → マーカー/装飾更新」ループをアタッチする。
  * 返り値の disposer を呼ぶとループとリソースを解放する。世代カウンタ（generation）を使い、
- * 遅れて完了した古い解析結果が新しい結果を上書きしないようにする（design.md §8 の
- * stale-result 対策）。あわせて Ctrl/Cmd+Enter での実行、Ctrl/Cmd+I 等での整形アクションも
+ * 遅れて完了した古い解析結果が新しい結果を上書きしないようにする（stale-result
+ * 対策）。あわせて Ctrl/Cmd+Enter での実行、Ctrl/Cmd+I 等での整形アクションも
  * このエディターに配線する。
  */
 export function attachDiagnostics(
@@ -330,7 +330,7 @@ export function attachDiagnostics(
   editor.addAction({
     id: 'fable.formatSql',
     label: 'Format SQL (Trino)',
-    // Ctrl/Cmd+I and Ctrl/Cmd+Shift+F both format (design.md §5).
+    // Ctrl/Cmd+I and Ctrl/Cmd+Shift+F both format.
     keybindings: [
       monacoNs.KeyMod.CtrlCmd | monacoNs.KeyCode.KeyI,
       monacoNs.KeyMod.CtrlCmd | monacoNs.KeyMod.Shift | monacoNs.KeyCode.KeyF,

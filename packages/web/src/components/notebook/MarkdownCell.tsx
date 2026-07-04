@@ -10,7 +10,7 @@ import { Markdown } from './Markdown';
 import { cn } from '../../utils/cn';
 
 /**
- * A markdown cell body (design.md §6, P4a §2). Renders the markdown preview;
+ * A markdown cell body (P4a §2). Renders the markdown preview;
  * clicking it (or pressing the edit button) swaps in a mono textarea. Blur or
  * Ctrl/Cmd+Enter commits and returns to the rendered view.
  *

@@ -13,7 +13,7 @@ import { formatEditor } from '../editor/formatter';
 import { matchShortcut, type FocusContext, type KeyChord } from './shortcuts';
 
 /**
- * Global keyboard shortcuts for the shell (design.md §5 ショートカット). The full
+ * Global keyboard shortcuts for the shell (ショートカット). The full
  * audit + completion:
  *
  *   - Ctrl/Cmd+K  → command palette      (any focus)
@@ -31,7 +31,7 @@ import { matchShortcut, type FocusContext, type KeyChord } from './shortcuts';
  * `matchShortcut` (pure, tested) decides the action from the chord + focus.
  */
 /**
- * シェル全体で有効なグローバルキーボードショートカットを登録する hook（design.md §5）。
+ * シェル全体で有効なグローバルキーボードショートカットを登録する hook。
  * 副作用として window に keydown リスナーを登録するだけで、戻り値は持たない（void）。
  *
  * 対応するショートカット:
