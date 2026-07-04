@@ -20,7 +20,7 @@ export interface NotebookTab {
 }
 
 /**
- * Notebook tabs in the TopBar (design.md §6, §5 管理). Each tab selects its
+ * Notebook tabs in the TopBar. Each tab selects its
  * notebook, shows a dirty dot when unsaved, closes via the × (the caller
  * confirms for dirty tabs), and renames inline on double-click. The active tab
  * carries the accent underline.

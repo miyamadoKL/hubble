@@ -6,7 +6,6 @@
 感覚で使えます。
 
 - 運用者（ホスト担当）向けの導入・設定は [`operations.md`](operations.md) を参照してください。
-- 画面・機能の設計背景は [`design.md`](design.md) を参照してください。
 
 ---
 

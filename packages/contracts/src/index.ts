@@ -1,5 +1,5 @@
 /**
- * @hubble/contracts — the contract layer (design.md §3).
+ * @hubble/contracts — the contract layer.
  * zod schemas + inferred types shared by server and web. Change with care.
  *
  * Hubble の「契約層」パッケージのエントリーポイント。

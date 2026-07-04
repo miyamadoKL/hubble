@@ -1,4 +1,4 @@
-// Presentation mode parsing (design.md §5 stretch: Presentation mode). A notebook
+// Presentation mode parsing. A notebook
 // is flattened into read-only "cards", split on `--` comment headings so a SQL
 // cell like
 //
@@ -10,7 +10,7 @@
 // renders as two titled cards. Pure + testable; the component renders the result.
 //
 // ==== ファイルの責務（日本語） ================================================
-// プレゼンテーションモード（design.md §5 stretch）向けの解析処理。notebook を
+// プレゼンテーションモード向けの解析処理。notebook を
 // 読み取り専用の「カード」の列に平坦化する。SQL セルは `--` コメント見出しで
 // 区切られ、1 つのセル内に複数の見出しがあれば複数のカードに分割される。
 // markdown セルはセル全体で 1 枚のカードになる。純粋関数のみで構成されており、

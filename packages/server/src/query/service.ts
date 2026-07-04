@@ -31,9 +31,9 @@ export interface QueryServiceParams {
 export interface SubmitQueryParams {
   statement: string;
   ctx: TrinoRequestContext;
-  /** Owning principal — also the `X-Trino-User` (design.md §11). */
+  /** Owning principal — also the `X-Trino-User`. */
   // このクエリの所有者となる principal。Trino へのリクエストでは
-  // `X-Trino-User` としても使われる（design.md §11 参照）。
+  // `X-Trino-User` としても使われる。
   owner: string;
   datasourceId?: string;
   sessionReadOnly?: boolean;

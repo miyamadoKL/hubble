@@ -1,13 +1,13 @@
 // Lazy, single-flight loader for the local Monaco bundle. The first caller
 // triggers `import('monaco-editor')` (its own Vite chunk, so Monaco stays out
-// of the initial payload — design.md §8 "チャンク分離"). Subsequent callers get
+// of the initial payload). Subsequent callers get
 // the cached namespace. Also installs the bundled editor web worker.
 //
 // ---- ファイル概要（日本語） ----
 // ローカルバンドルされた Monaco を「遅延かつ一度だけ」ロードするためのモジュール。
 // 最初の呼び出しで `import('monaco-editor/.../edcore.main')` を発火させ（Vite の
-// 独立チャンクとして扱われるため、初期ロードのペイロードに Monaco を含めずに済む。
-// design.md §8 の「チャンク分離」方針）、2 回目以降の呼び出しはキャッシュされた
+// 独立チャンクとして扱われるため、初期ロードのペイロードに Monaco を含めずに済む）、
+// 2 回目以降の呼び出しはキャッシュされた
 // Promise（＝同じ Monaco 名前空間）を返す（single-flight）。あわせて Monaco の
 // エディター用 Web Worker のセットアップ（monacoSetup.ts）も初回ロード時に行う。
 

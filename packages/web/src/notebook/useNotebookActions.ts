@@ -1,13 +1,12 @@
 // Imperative notebook actions shared by the TopBar, command palette and global
-// shortcuts (design.md §5 管理, §6 コマンドパレット). These read the store
+// shortcuts. These read the store
 // imperatively (getState) so they have stable identity and never re-render their
 // callers. Run-all and save policy live here so every entry point behaves the
 // same.
 //
 // ==== ファイルの責務（日本語） ================================================
 // TopBar、コマンドパレット、グローバルショートカットから共有される、
-// notebook に対する命令的なアクション群（design.md §5 管理, §6 コマンド
-// パレット）。ストアを React フックとして購読するのではなく `getState()` で
+// notebook に対する命令的なアクション群。ストアを React フックとして購読するのではなく `getState()` で
 // 直接読み書きするため、これらの関数自体は参照が安定しており、呼び出し元の
 // 再レンダーを引き起こさない。「全セル実行」「アクティブセルの実行」
 // 「保存」といった、どのエントリポイント（ボタン/ショートカット/パレット）
@@ -62,7 +61,7 @@ function resolveCellUnits(source: string, values: Record<string, string>): Execu
 
 /**
  * Run every SQL cell of the active notebook, top to bottom, stopping at the
- * first failure (design.md §5: 全セル実行: 上から順次, エラーで停止). Markdown
+ * first failure. Markdown
  * cells are skipped. Returns when the batch settles.
  */
 export async function runAllCells(
@@ -101,7 +100,7 @@ export async function runAllCells(
 }
 
 /**
- * Run the "active" SQL cell of the active notebook (design.md §5 Ctrl/Cmd+Enter
+ * Run the "active" SQL cell of the active notebook (Ctrl/Cmd+Enter
  * when focus is *not* inside an editor or a variable input). The target is the
  * cell whose editor was last focused (activeEditor registry), else the first SQL
  * cell. Variables are substituted; a missing value aborts with a toast.

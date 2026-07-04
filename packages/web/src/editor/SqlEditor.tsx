@@ -1,4 +1,4 @@
-// SqlEditor: the Monaco-backed SQL cell editor (design.md §6). Auto-height —
+// SqlEditor: the Monaco-backed SQL cell editor. Auto-height —
 // grows with content, minimum 4 lines — so notebook cells size to their query.
 // Monaco is loaded lazily (its own chunk) and the Trino language is registered
 // on first mount; diagnostics (markers + decorations + format/execute commands)
@@ -38,7 +38,7 @@ export interface SqlEditorProps {
   onChange?: (value: string) => void;
   /**
    * Ctrl/Cmd+Enter handler. Receives the live editor so the caller can read the
-   * current selection / caret to decide the execution unit (design.md §5).
+   * current selection / caret to decide the execution unit.
    */
   /**
    * Ctrl/Cmd+Enter が押されたときのハンドラ。実体のエディターを受け取るので、呼び出し側は
@@ -135,7 +135,7 @@ export function SqlEditor({
         lineNumbers: 'on',
         lineNumbersMinChars: 3,
         // Statement status indicators (idle/active/executing/done/failed) render
-        // in the glyph margin via decorations (design.md §5 ガター).
+        // in the glyph margin via decorations (ガター).
         glyphMargin: true,
         folding: false,
         fontFamily: 'var(--font-mono)',

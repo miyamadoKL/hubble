@@ -1,4 +1,4 @@
-// Local Monaco bundling (design.md §8: "monaco-editor は ローカルバンドル, CDN
+// Local Monaco bundling ("monaco-editor は ローカルバンドル, CDN
 // loader 禁止"). We configure MonacoEnvironment to instantiate the editor web
 // worker from a Vite-bundled chunk (`?worker`), so no AMD loader / CDN fetch is
 // involved. Trino SQL needs only the base editor worker (no JSON/TS/CSS langs).
@@ -9,7 +9,7 @@
 // ---- ファイル概要（日本語） ----
 // Monaco を CDN から読み込むのではなく、ローカルバンドル（Vite の `?worker` 構文で
 // バンドルされたチャンク）から Web Worker をインスタンス化するためのセットアップ
-// モジュール（design.md §8: 「monaco-editor は ローカルバンドル, CDN loader 禁止」）。
+// モジュール（「monaco-editor は ローカルバンドル, CDN loader 禁止」）。
 // これにより AMD ローダーや外部 CDN への通信は一切発生しない。Trino SQL の言語
 // サポートには基本のエディター Worker だけあれば十分で、JSON/TypeScript/CSS 用の
 // 言語 Worker は不要なため読み込まない。

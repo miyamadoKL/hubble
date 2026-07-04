@@ -5,7 +5,7 @@
 // 定義する。設定はクライアント側のメモリ上にのみ保持され、サーバー側の contract
 // （ノートブックのスキーマ）には保存されない。詳細は下の英語コメントを参照。
 // ============================================================================
-// Per-cell chart configuration store (design.md §5: 設定はセルごとに保持).
+// Per-cell chart configuration store (設定はセルごとに保持).
 //
 // Persistence decision: the chart config is kept in this client-only zustand
 // store keyed by cellId — it is NOT written into the notebook contract. The

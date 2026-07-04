@@ -2,8 +2,8 @@
  * 保存済みクエリ（Saved Query）機能の永続化層。`saved_queries` テーブルへの
  * CRUD と、名前/SQL文/説明を対象とした `?query=` の部分一致検索を提供する。
  * お気に入り（is_favorite）を先頭に並べる点が一覧取得の特徴。全操作は
- * `owner` principal で絞り込まれ、他ユーザーの保存済みクエリは参照できない
- * （design.md §11）。アーキテクチャ上は `SqlDatabase` 抽象の上に乗るリポジトリ
+ * `owner` principal で絞り込まれ、他ユーザーの保存済みクエリは参照できない。
+ * アーキテクチャ上は `SqlDatabase` 抽象の上に乗るリポジトリ
  * 層で、契約型 `SavedQuery`（packages/contracts）との変換をこのファイルが担う。
  */
 import type {
@@ -35,11 +35,11 @@ interface SavedQueryRow {
 
 /**
  * CRUD for saved queries with a `?query=` LIKE search over name/statement.
- * Every operation is scoped to an `owner` principal (design.md §11).
+ * Every operation is scoped to an `owner` principal.
  *
  * 保存済みクエリに対する CRUD と、name/statement/description を対象にした
  * `?query=` の LIKE 検索を提供するリポジトリ。全操作は `owner` principal で
- * 絞り込まれる（design.md §11）。
+ * 絞り込まれる。
  */
 export class SavedQueryRepository {
   constructor(private readonly db: SqlDatabase) {}

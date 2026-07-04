@@ -1,4 +1,4 @@
-// Notebook CRUD fetchers (design.md §7). Thin wrappers over `apiFetch`, each
+// Notebook CRUD fetchers. Thin wrappers over `apiFetch`, each
 // validating against the contract schema. The notebookStore drives these for
 // list / open / create / save / delete; the persistence policy (debounce,
 // POST-vs-PUT) lives in the store, not here.

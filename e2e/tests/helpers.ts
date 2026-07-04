@@ -1,7 +1,7 @@
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 
 /**
- * Shared E2E helpers (design.md §9, P6). These wrap the operational patterns the
+ * Shared E2E helpers (P6). These wrap the operational patterns the
  * P3–P5 screenshot scripts established, but as test-grade utilities: every wait
  * is anchored to a network response or a DOM/state condition (no fixed
  * `waitForTimeout`), so the suites stay non-flaky on a real Trino.

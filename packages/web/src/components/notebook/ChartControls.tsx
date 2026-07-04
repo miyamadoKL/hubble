@@ -33,7 +33,7 @@ import {
 } from '../../chart';
 
 /**
- * The compact chart control row (design.md §5): chart-type icons, X / Y axis
+ * The compact chart control row: chart-type icons, X / Y axis
  * pickers (Y multi-select, numeric only), sort, row-limit, plus group + size for
  * scatter. Pure presentation — config flows down, edits flow up via `onChange`.
  */

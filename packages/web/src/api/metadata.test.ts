@@ -11,7 +11,7 @@ import {
   metadataQueryKeys,
 } from './metadata';
 
-// Lazy-load data layer for the Data browser tree (design.md §5): each level is
+// Lazy-load data layer for the Data browser tree: each level is
 // fetched on demand from `/api/catalogs...`. These tests stub `fetch` to verify
 // the right URL is hit, the contract response is parsed, and the MetadataSource
 // (used by completion + the tree's cache) dedupes repeat reads.

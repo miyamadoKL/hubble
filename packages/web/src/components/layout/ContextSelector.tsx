@@ -13,7 +13,7 @@ import { Spinner } from '../common/Spinner';
 import { cn } from '../../utils/cn';
 
 /**
- * catalog.schema context selector (design.md §6, §5 管理: 実 catalogs/schemas
+ * catalog.schema context selector (実 catalogs/schemas
  * からの選択, 検索付きドロップダウン, 最近使った context). A single instrument-
  * style control opens a searchable two-pane popover: pick a catalog (left), then
  * a schema (right). A "Recent" row offers the last few contexts for one-click

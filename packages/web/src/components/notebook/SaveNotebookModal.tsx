@@ -10,7 +10,7 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 
 /**
- * Notebook save dialog (design.md §5 管理: 名前入力モーダル + Save As). Used both
+ * Notebook save dialog (名前入力モーダル + Save As). Used both
  * for the first save of a draft and for "Save As". The caller supplies the
  * initial name and receives the chosen name on confirm.
  */

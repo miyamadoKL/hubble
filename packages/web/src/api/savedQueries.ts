@@ -1,4 +1,4 @@
-// Saved-query CRUD fetchers (design.md §7). Thin wrappers over `apiFetch`, each
+// Saved-query CRUD fetchers. Thin wrappers over `apiFetch`, each
 // validating against the contract schema. `GET /api/saved-queries` returns a
 // bare array (server: storeRoutes); the search term is debounced at the call
 // site (the panel), not here.

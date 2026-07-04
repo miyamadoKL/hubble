@@ -8,7 +8,7 @@
 // ECharts のランタイムや DOM には依存しないため、5種類すべての option の形状を
 // 単体テストで検証できる。
 // ============================================================================
-// ECharts option assembly (design.md §5 結果: チャート). Builds a complete
+// ECharts option assembly (結果: チャート). Builds a complete
 // ECharts option object for each of the five chart types from the derived rows +
 // config + token theme. Pure — no ECharts runtime, no DOM — so the option shape
 // for all five types is unit-testable. The shape matches echarts' `EChartsOption`

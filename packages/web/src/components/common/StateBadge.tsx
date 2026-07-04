@@ -7,7 +7,7 @@ import type { QueryState } from '@hubble/contracts';
 import { cn } from '../../utils/cn';
 
 /**
- * Semantic state pill (design.md §6: running=blue / success=green / error=red,
+ * Semantic state pill (running=blue / success=green / error=red,
  * each with its -soft background). Used by history rows and the stats strip.
  *
  * QueryState を意味づけされた色（running=青 / success=緑 / error=赤、

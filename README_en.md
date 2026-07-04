@@ -21,7 +21,7 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 
 > Multi-datasource support (Trino, MySQL, PostgreSQL) and RBAC are available
 > (see the Japanese README sections on datasource and RBAC configuration).
-> Hue's document sharing remains a non-goal (see `docs/design.md`).
+> Hue's document sharing remains a non-goal.
 > Authentication (SSO via oauth2-proxy + impersonation) and scheduled runs are
 > supported (`docs/operations.md` §7 / §12).
 
@@ -70,8 +70,6 @@ e2e/           # Playwright E2E suites (editor / execution / results / notebook 
   `packages/web/src/theme/tokens.css`; raw hex in components is blocked by an
   ast-grep lint rule. The Monaco and ECharts themes are derived from these tokens at
   runtime via `getComputedStyle`, so both follow the theme switch.
-
-See `docs/design.md` for the full design, data model and API contract.
 
 ## Getting started
 
@@ -151,9 +149,7 @@ pnpm --filter @hubble/e2e test
 The E2E suite (35 tests across editor / execution / results / notebook / panels /
 chart / app) runs against a real Trino with deterministic `tpch.tiny` / `tpch.sf1`
 data. It uses an in-memory SQLite (`DB_PATH=:memory:`) so it never touches your own
-notebooks, and `QUERY_MAX_ROWS=10000` to exercise the truncation path. The
-acceptance audit of every v1 checklist item is in
-[`docs/acceptance-v1.md`](docs/acceptance-v1.md).
+notebooks, and `QUERY_MAX_ROWS=10000` to exercise the truncation path.
 
 ## Keyboard shortcuts
 

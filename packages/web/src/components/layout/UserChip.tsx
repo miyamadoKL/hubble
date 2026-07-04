@@ -7,7 +7,7 @@ import { useMe } from '../../hooks/useMe';
 import { Tooltip } from '../common/Tooltip';
 
 /**
- * Current-user chip for the TopBar (design.md §11). Shows the resolved
+ * Current-user chip for the TopBar. Shows the resolved
  * principal (with the email as a tooltip when available). Hidden entirely in
  * `authMode === 'none'`, where there is no meaningful user identity.
  */

@@ -96,7 +96,7 @@ export interface TrinoRequestContext {
   schema?: string;
   source?: string;
   /**
-   * `X-Trino-User` override for impersonation (design.md §11). When set, the
+   * `X-Trino-User` override for impersonation. When set, the
    * statement runs as this principal instead of the client's technical user.
    * Metadata queries leave this unset and use the technical user.
    */

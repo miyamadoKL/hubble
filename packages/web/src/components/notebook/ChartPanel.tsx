@@ -18,7 +18,7 @@ import { useChartConfig, useChartConfigStore } from '../../chart/chartConfigStor
 import type { ResultRow } from '../../execution';
 
 /**
- * Chart tab body (design.md §5 結果: チャート). Owns the per-cell config: reads
+ * Chart tab body (結果: チャート). Owns the per-cell config: reads
  * the stored config (or seeds a default), reconciles it against the live result
  * columns, renders the control row + ECharts canvas. When nothing is chartable
  * (no numeric column / no rows) it shows guidance instead of an empty plot.

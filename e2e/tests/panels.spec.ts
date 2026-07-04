@@ -11,7 +11,7 @@ import {
 } from './helpers';
 
 /**
- * Assist-panel suite (design.md §5 アシスト): schema tree expand → insert, table
+ * Assist-panel suite: schema tree expand → insert, table
  * detail popover with sample rows, saved-query save → list → insert → delete,
  * history record → filter → new cell, and the context selector → execution.
  */

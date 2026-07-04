@@ -19,13 +19,13 @@ import {
   type GuardOnUnknown,
 } from '@hubble/contracts';
 
-/** How a proxy-supplied principal is derived from SSO headers (design.md §11). */
+/** How a proxy-supplied principal is derived from SSO headers. */
 /** 日本語: `AUTH_USER_MAPPING` で選択する、SSO ヘッダから principal（実行ユーザー名）を
  * 導出する方式。`email-localpart` はメールの `@` より前の部分、`email` はメール全体、
  * `user` はユーザーヘッダの値をそのまま使う。 */
 export type UserMapping = 'email-localpart' | 'email' | 'user';
 
-/** Authentication configuration (design.md §11). */
+/** Authentication configuration. */
 /** 日本語: 認証まわりの設定一式。`AUTH_MODE=none`（既定）ではほぼ無視され、
  * `AUTH_MODE=proxy`（oauth2-proxy 前段 SSO）のときにのみ意味を持つ。 */
 export interface AuthConfig {
@@ -47,7 +47,7 @@ export interface AuthConfig {
 }
 
 /**
- * Selected persistence backend (design.md §4). `sqlite` is the historical
+ * Selected persistence backend. `sqlite` is the historical
  * default (`DB_PATH`); `postgres` is selected when `DATABASE_URL` is a
  * `postgres://` / `postgresql://` URL.
  *
@@ -369,7 +369,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
 }
 
 /**
- * Build the public `AppConfig` (design.md §7) from server config and validate it
+ * Build the public `AppConfig` from server config and validate it
  * against the contract before exposing it via `GET /api/config`.
  *
  * 日本語: `ServerConfig`（内部設定、Trino パスワード等の機密情報を含む）から

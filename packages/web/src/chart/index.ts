@@ -7,7 +7,7 @@
 // なお ECHarts のランタイム自体はここではロードせず、実際にチャートを描画する
 // ChartView コンポーネント側で遅延ロードされる（echartsLoader.ts参照）。
 // ============================================================================
-// Public surface of the chart feature layer (design.md §5 結果: チャート).
+// Public surface of the chart feature layer (結果: チャート).
 // Components import from here; the ECharts runtime is loaded lazily by the
 // ChartView component, never at module load.
 

@@ -1,7 +1,7 @@
 /**
  * コマンドパレット (Ctrl+K) コンポーネントを定義するモジュール。
  *
- * design.md §6 で定義されたコマンドパレット機能を実装する。コマンド一覧の
+ * コマンドパレット機能を実装する。コマンド一覧の
  * 検索と実行、サイドバーへのナビゲーション、ノートブックを開くための
  * サブモードなどをまとめて提供する。
  */
@@ -35,7 +35,7 @@ import { listNotebooks, getNotebook } from '../../api/notebooks';
 import { formatRelativeTime } from '../../utils/format';
 
 /**
- * Command palette (design.md §6: Ctrl+K). P4b completes it: navigation entries
+ * Command palette (Ctrl+K). P4b completes it: navigation entries
  * use `gotoSidebar` (switch tab + expand + focus its search), a "Open notebook…"
  * entry drops into a searchable notebook list, and the action set is organised as
  * a registry built from injected handlers so new actions are easy to add.
@@ -43,7 +43,7 @@ import { formatRelativeTime } from '../../utils/format';
  * The content is split into a freshly-mounted inner component so each open starts
  * with clean query/selection state (no reset-in-effect).
  *
- * コマンドパレットは design.md §6 (Ctrl+K) の完成形 (P4b) である。ナビゲーション
+ * コマンドパレットは Ctrl+K の完成形 (P4b) である。ナビゲーション
  * 系のエントリは `gotoSidebar` (タブ切り替え + 展開 + 検索欄へのフォーカス) を
  * 使い、「ノートブックを開く…」エントリは検索可能なノートブック一覧のサブ
  * モードに遷移する。アクション一覧は、注入されたハンドラーから組み立てられる
@@ -74,10 +74,10 @@ interface Command {
 type PaletteMode = 'commands' | 'open-notebook';
 
 /**
- * Build the command registry from injected handlers (design.md §6 registry).
+ * Build the command registry from injected handlers.
  *
  * 注入されたハンドラー群から、パレットに表示するコマンド一覧 (registry) を
- * 組み立てる (design.md §6 のコマンドレジストリ)。呼び出し元のコンポーネント
+ * 組み立てる。呼び出し元のコンポーネント
  * が保持する状態やストアの操作関数を deps として受け取り、コマンドオブジェクトの
  * 配列に変換する。
  *

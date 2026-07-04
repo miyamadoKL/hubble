@@ -1,4 +1,4 @@
-// Variable detection + substitution (design.md §4, §5 "変数"; Hue-compatible).
+// Variable detection + substitution (Hue-compatible).
 //
 // Hue's variable substitution lets a query carry `${name}` placeholders that the
 // user fills in before running. We support the four Hue forms:
@@ -211,7 +211,7 @@ const DATETIME_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/;
 const NUMBER_RE = /^-?\d+(\.\d+)?$/;
 const BOOL_RE = /^(true|false)$/i;
 
-/** Infer the input widget type from a default value (design.md §5 型推論). */
+/** Infer the input widget type from a default value. */
 export function inferType(detected: DetectedVariable): VariableType {
   if (detected.options && detected.options.length > 0) return 'select';
   const v = detected.defaultValue.trim();

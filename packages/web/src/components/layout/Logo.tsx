@@ -6,7 +6,7 @@
 import { cn } from '../../utils/cn';
 
 /**
- * Text logo "Hubble" (design.md §6: テキストロゴ, 文字組で個性を出す).
+ * Text logo "Hubble" (テキストロゴ, 文字組で個性を出す).
  * Memorable detail: of the wordmark's two `b`s, the first carries the copper
  * accent — a single accented letter set in mono with tightened tracking, beside
  * the product label. No Hue/Cloudera/Trino marks.
@@ -14,7 +14,7 @@ import { cn } from '../../utils/cn';
 /**
  * "Hubble" のテキストロゴを描画する。
  * ワードマーク中の2つの `b` のうち最初の1文字だけアクセントカラーを当てることで、
- * ロゴマークを使わずに個性を出している（design.md §6 の「記憶に残るディテール」）。
+ * ロゴマークを使わずに個性を出している（「記憶に残るディテール」）。
  *
  * @param className - ルート要素に追加する Tailwind クラス（配置調整用）。
  */

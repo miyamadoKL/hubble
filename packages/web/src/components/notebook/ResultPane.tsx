@@ -2,7 +2,7 @@
 // SQLセルの実行結果を表示するパネル。Grid（表形式）/ Chart（グラフ）/
 // Explain（実行計画）/ Details（実行メタ情報）の4タブ構成で、エラー発生時は
 // 上部にエラーバナーも表示する。表示内容は execution ストアの CellExecution
-// レコードによって完全に駆動される（design.md §6 参照）。
+// レコードによって完全に駆動される。
 import { useEffect, useState } from 'react';
 import {
   BarChart3,
@@ -33,7 +33,7 @@ import {
 } from '../../execution';
 
 /**
- * Live result pane with per-cell tabs (design.md §6: Grid / Chart / Explain /
+ * Live result pane with per-cell tabs (Grid / Chart / Explain /
  * Details + Error). Driven entirely by the cell's `CellExecution` record from
  * the execution store. EXPLAIN runs a separate query through `onExplain` and
  * shows its plan text here.

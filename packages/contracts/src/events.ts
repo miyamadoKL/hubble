@@ -3,7 +3,7 @@ import { queryColumnSchema, queryStatsSchema, queryStateSchema } from './query';
 import { apiErrorDetailSchema } from './error';
 
 /**
- * Server-Sent Events for `GET /api/queries/:id/events` (design.md §7).
+ * Server-Sent Events for `GET /api/queries/:id/events`.
  * Discriminated union keyed on `type`. The SSE `event:` name mirrors `type`.
  *
  * クエリ実行の進捗を web にリアルタイム配信する SSE (Server-Sent Events) の契約を

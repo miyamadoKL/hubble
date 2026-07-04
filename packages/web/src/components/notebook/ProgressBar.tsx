@@ -15,11 +15,11 @@ interface ProgressBarProps {
 }
 
 /**
- * Thin query-progress bar (design.md §5: 進捗 %). Determinate fills with the
+ * Thin query-progress bar. Determinate fills with the
  * running color; indeterminate animates a sweeping segment.
  */
 /**
- * クエリの進捗を表す薄いバー（design.md §5: 進捗 %）。
+ * クエリの進捗を表す薄いバー。
  * value が指定されていれば実際の進捗率に応じてバーの幅を伸ばし（確定モード）、
  * value が undefined（例: queued 状態で進捗が不明）の場合は
  * 一定幅のセグメントが左右に流れるアニメーションを表示する（不確定モード）。

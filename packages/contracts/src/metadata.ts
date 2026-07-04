@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { isoTimestamp } from './common';
 
 /**
- * Metadata model (design.md §4, §7).
+ * Metadata model.
  * `system.metadata.catalogs` / `information_schema.tables` / `information_schema.columns`
  * wrapped by the server with a TTL cache + stale-while-revalidate.
  *
@@ -72,7 +72,7 @@ export const metadataSourceSchema = z.enum(['cache', 'live']);
 export type MetadataSource = z.infer<typeof metadataSourceSchema>;
 
 /**
- * Generic metadata response envelope (design.md §7):
+ * Generic metadata response envelope:
  * `MetadataResponse<T> = { items, source, stale, lastUpdatedAt }`.
  *
  * Use as a schema factory: `metadataResponseSchema(catalogSchema)`.
@@ -121,7 +121,7 @@ export type SchemasResponse = z.infer<typeof schemasResponseSchema>;
 export type TablesResponse = z.infer<typeof tablesResponseSchema>;
 
 /**
- * Sample-rows response for `GET .../tables/:t/sample` (design.md §7: 10 行サンプル).
+ * Sample-rows response for `GET .../tables/:t/sample` (10 行サンプル).
  * テーブルのサンプル行取得エンドポイントのレスポンス（設計上は 10 行程度を想定）。
  */
 export const sampleRowsResponseSchema = z.object({

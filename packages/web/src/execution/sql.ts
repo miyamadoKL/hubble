@@ -1,4 +1,4 @@
-// Pure SQL helpers for the execution layer (design.md §5 "セルと実行"):
+// Pure SQL helpers for the execution layer ("セルと実行"):
 //   - classifyStatement : coarse statement-kind detection (driven by the leading
 //                         keyword, comment/whitespace stripped)
 //   - statementHasLimit : detect a top-level LIMIT/FETCH so we never double it

@@ -141,7 +141,7 @@ function assertValidationAllowsWrite(result: ValidationResult): void {
 
 /**
  * Schedule routes (Query Scheduling feature), mounted under `/api/schedules`.
- * Owner-scoped (design.md §11). Create/update validate the statement with
+ * Owner-scoped. Create/update validate the statement with
  * `EXPLAIN (TYPE VALIDATE)`; manual run + run history mirror the scheduler.
  *
  * スケジュール CRUD、手動実行、実行履歴取得エンドポイントをまとめた Hono サブルーターを構築する

@@ -28,8 +28,8 @@ import { PrincipalResolver, type Principal, type PrincipalIdentity } from './pri
  */
 export interface AuthVariables {
   /**
-   * The authenticated identity for the request (design.md §11).
-   * リクエストの認証済み識別情報（design.md §11 参照）。
+   * The authenticated identity for the request.
+   * リクエストの認証済み識別情報。
    */
   principal: Principal;
 }
@@ -91,7 +91,7 @@ function unauthenticated(reason: string): never {
 }
 
 /**
- * Authentication middleware (design.md §11). Resolves a `Principal` and exposes
+ * Authentication middleware. Resolves a `Principal` and exposes
  * it via `c.set('principal', …)`.
  *
  * - `none` mode: every request is authenticated as the technical user.
@@ -101,7 +101,7 @@ function unauthenticated(reason: string): never {
  * `/api/healthz` is always exempt. Static assets are served outside the API and
  * never reach this middleware (it is mounted under `/api`).
  *
- * 認証ミドルウェア（design.md §11）。`Principal` を解決し `c.set('principal', …)` で公開する。
+ * 認証ミドルウェア。`Principal` を解決し `c.set('principal', …)` で公開する。
  * - `none` モード: すべてのリクエストを技術ユーザーとして認証済み扱いにする。
  * - `proxy` モード: 信頼済み SSO ヘッダーから principal を解決する。信頼できないピアからの
  *   リクエストや、識別ヘッダーが欠落しているリクエストは 401 になる。

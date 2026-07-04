@@ -19,7 +19,7 @@ import { formatDecimal, formatInt } from '../../utils/format';
 import type { ResultRow } from '../../execution';
 
 /**
- * High-density virtualized result grid (design.md §6): fixed header, row-number
+ * High-density virtualized result grid: fixed header, row-number
  * column, 28px rows, mono numerics, column type labels. Rows stream in (the
  * parent passes a growing array). Client-side sort/filter operate over the rows
  * currently loaded — additional rows keep streaming in underneath. NULL is

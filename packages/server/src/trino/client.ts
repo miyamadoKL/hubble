@@ -105,7 +105,7 @@ export class TrinoClient {
   // (認証、ユーザー、ソース、カタログ/スキーマ、セッションプロパティ) を組み立てる。
   private commonHeaders(ctx: TrinoRequestContext): Headers {
     const headers = new Headers();
-    // Impersonation (design.md §11): per-request `ctx.user` overrides the
+    // Impersonation: per-request `ctx.user` overrides the
     // technical user; metadata queries omit it and run as the technical user.
     // 日本語: ctx.user が空でなければそれを X-Trino-User に使う (ユーザー
     // なりすまし実行)。未指定ならクライアント全体のテクニカルユーザーを使う。

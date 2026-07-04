@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { isoTimestamp } from './common';
 
 /**
- * Notebook model (design.md §4). Hue's `Notebook { snippets[] }` simplified to a
+ * Notebook model. Hue's `Notebook { snippets[] }` simplified to a
  * single `cells` array (tabs/cells double-holding removed per prior lesson).
  *
  * ノートブック（SQL / Markdown セルの集合）に関する契約を定義するファイル。
@@ -70,7 +70,7 @@ export type CellKind = z.infer<typeof cellKindSchema>;
 
 /**
  * Summary of a cell's last execution, persisted with the notebook
- * (full result rows are NOT persisted — design.md §4).
+ * (full result rows are NOT persisted).
  *
  * セルの直近の実行結果サマリ。ノートブックと一緒に永続化されるが、
  * 結果行そのものは永続化されない（再度実行すれば取得できるため）。

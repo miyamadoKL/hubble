@@ -1,4 +1,4 @@
-// Pure tree-filtering logic for the Data browser (design.md §5: 検索フィルタ,
+// Pure tree-filtering logic for the Data browser (検索フィルタ,
 // マッチパスは自動展開). Lifted out of the React component so the lazy-load
 // expansion behaviour is unit-testable without rendering Monaco / TanStack.
 //
@@ -10,7 +10,7 @@
 
 /*
  * このファイルの責務:
- * SchemaTree の検索フィルタ（design.md §5）に関する純粋関数を集約する。React 非依存の
+ * SchemaTree の検索フィルタに関する純粋関数を集約する。React 非依存の
  * ロジックとして切り出すことで、Monaco / TanStack Query をレンダリングせずに
  * ユニットテストできるようにしている。画面上は、データブラウザ上部の検索ボックスに
  * 入力した文字列が、ツリーの表示絞り込みと自動展開の両方に反映される仕組みを支える。

@@ -11,7 +11,7 @@ import type { Variable } from '@hubble/contracts';
 import { cn } from '../../utils/cn';
 
 /**
- * Variable substitution panel (design.md §5 変数パネル; shown only when the
+ * Variable substitution panel (shown only when the
  * notebook's SQL defines `${…}` variables). Each variable renders a typed input
  * (text / number / date / datetime-local / checkbox / select) seeded from its
  * detected default. Ctrl/Cmd+Enter from any input runs the active cell.
@@ -31,7 +31,7 @@ export function VariablePanel({
   onChange: (name: string, value: string) => void;
   onRunActive: () => void;
 }) {
-  // 変数が1つも無ければパネルごと非表示にする（design.md §5 の仕様どおり）。
+  // 変数が1つも無ければパネルごと非表示にする。
   if (variables.length === 0) return null;
 
   // Ctrl/Cmd+Enter をどの入力欄からでも捕捉し、アクティブセルの実行をトリガーする共通ハンドラ。

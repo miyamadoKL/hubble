@@ -8,7 +8,7 @@ import { Kbd } from './Kbd';
 import { SHORTCUTS } from '../../hooks/shortcuts';
 
 /**
- * "Keyboard shortcuts" reference modal (design.md §5). Opened from the command
+ * "Keyboard shortcuts" reference modal. Opened from the command
  * palette; lists the canonical shortcut registry so the keys shown here, in the
  * palette, and the runtime dispatcher all come from one source (`SHORTCUTS`).
  *

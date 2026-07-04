@@ -2,7 +2,7 @@
  * アプリ左側のサイドバー本体。
  * アイコンレール（Data / Notebooks / Saved / History / Schedules の切り替え）と、
  * 選択中タブに応じたパネル（検索欄 + 一覧）、幅のドラッグリサイズ、折りたたみを担当する。
- * design.md §6 で定義されたシェルの一部で、幅、選択タブ、折りたたみ状態は uiStore に永続化される。
+ * シェルの一部であり、幅、選択タブ、折りたたみ状態は uiStore に永続化される。
  */
 import { useCallback, useEffect, useRef } from 'react';
 import {
@@ -38,7 +38,7 @@ import { useNotebookStore } from '../../notebook';
 import { cn } from '../../utils/cn';
 
 /**
- * Sidebar (design.md §6): icon section rail (Data / Notebooks / Saved /
+ * Sidebar: icon section rail (Data / Notebooks / Saved /
  * History), a per-panel search field, a drag handle to resize, and a collapse
  * control. Width and active tab persist via the UI store.
  */
@@ -278,8 +278,8 @@ export function Sidebar({
 }
 
 /**
- * The Notebooks sidebar panel: the saved notebooks from the server (design.md §5
- * Notebook 一覧 / 検索 / 再オープン). Clicking a row fetches the full notebook and
+ * The Notebooks sidebar panel: the saved notebooks from the server
+ * (Notebook 一覧 / 検索 / 再オープン). Clicking a row fetches the full notebook and
  * opens it in a tab (the store dedupes if it's already open).
  *
  * @param search - Notebooks パネルの検索文字列。サーバー側の一覧取得に渡す。

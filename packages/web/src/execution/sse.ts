@@ -1,5 +1,5 @@
-// Thin, testable SSE subscription over `GET /api/queries/:id/events`
-// (design.md §3, §7). The server replays current state on connect
+// Thin, testable SSE subscription over `GET /api/queries/:id/events`.
+// The server replays current state on connect
 // (state → columns → rows chunks → stats → [error] → done) and then streams
 // live; `done` ends the stream. We parse every frame with the contracts
 // `queryEventSchema` and hand typed events to the store. Reconnecting with the

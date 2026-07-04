@@ -9,7 +9,7 @@ import { Code2, FileText, Plus } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 /**
- * Inter-cell insertion control (design.md §6: 「+ SQL / + Markdown」挿入 UI).
+ * Inter-cell insertion control (「+ SQL / + Markdown」挿入 UI).
  * A faint hairline with centered actions that surface on hover; clicking inserts
  * a new cell at this slot.
  */

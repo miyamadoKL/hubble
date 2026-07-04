@@ -1,5 +1,5 @@
 /**
- * API path constants and type-safe path builders (design.md §7).
+ * API path constants and type-safe path builders.
  * The single source of truth for endpoint paths shared by server and web.
  *
  * API のエンドポイントパスを一元管理するファイル。server（ルーティング定義）と

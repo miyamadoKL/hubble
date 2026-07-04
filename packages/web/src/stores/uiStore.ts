@@ -12,11 +12,11 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 /**
- * UI store (design.md §3, §10): theme + shell layout state only. Presentation
+ * UI store: theme + shell layout state only. Presentation
  * concerns live here; notebook/execution/metadata stores arrive in later phases.
  * Theme is persisted; transient flags (palette open) are not.
  *
- * UI ストア（design.md §3, §10）: テーマとシェルのレイアウト状態のみを扱う。
+ * UI ストア: テーマとシェルのレイアウト状態のみを扱う。
  * プレゼンテーション（見た目）に関する関心事はここに集約し、
  * ノートブックの内容、クエリ実行、メタデータ関連のストアは
  * 後続のフェーズで別途追加される想定。
@@ -27,7 +27,7 @@ import { persist } from 'zustand/middleware';
 /** テーマの種類。ライトモードとダークモードの2種類のみをサポートする。 */
 export type ThemeMode = 'light' | 'dark';
 
-/** Sidebar sections (design.md §6; Query Scheduling adds 'schedules'). */
+/** Sidebar sections (Query Scheduling adds 'schedules'). */
 /**
  * サイドバーに表示されるセクション（タブ）の種類。
  * 'data'（データカタログ）、'notebooks'（ノートブック一覧）、
@@ -97,10 +97,10 @@ interface UiState {
   // コマンドパレットの「Go to」系コマンドなどからサイドバーの検索欄への
   // フォーカスを要求するために増加させるカウンター（nonce）。
   sidebarFocusNonce: number;
-  /** "Keyboard shortcuts" help modal (design.md §5). */
+  /** "Keyboard shortcuts" help modal. */
   // キーボードショートカット一覧のヘルプモーダルが開いているかどうか。
   shortcutsHelpOpen: boolean;
-  /** Presentation mode toggle (design.md §5 stretch: SQL カード表示). */
+  /** Presentation mode toggle (stretch: SQL カード表示). */
   // プレゼンテーションモード（SQL をカード形式で見せるような表示切り替え）の有効/無効。
   presentationMode: boolean;
   /**

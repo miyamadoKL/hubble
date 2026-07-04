@@ -8,9 +8,9 @@ const multiDsE2e = process.env.MULTI_DS_E2E === '1';
 const multiDsConfigPath = resolve(e2eDir, 'datasources.e2e.yaml');
 
 /**
- * Playwright config (design.md §3, §9). Starts the BFF server (port 8081) and the
+ * Playwright config. Starts the BFF server (port 8081) and the
  * web dev server (port 5173), then runs the P6 E2E suites against a real Trino
- * (tpch catalog, design.md §9). The suites assume a live Trino at
+ * (tpch catalog). The suites assume a live Trino at
  * `TRINO_BASE_URL` (default http://127.0.0.1:30080, admin / empty password).
  *
  * Determinism + isolation:
@@ -19,7 +19,7 @@ const multiDsConfigPath = resolve(e2eDir, 'datasources.e2e.yaml');
  *  - `QUERY_MAX_ROWS=10000` bounds the server-side row buffer. The virtual-scroll
  *    test loads 5000 rows (under the cap), while the truncation test asks for
  *    12000 (over it) to drive the "result truncated" warning deterministically
- *    without a second server (design.md §5 truncated 警告).
+ *    without a second server.
  *
  * Hubble の E2E テスト (Playwright) 実行設定ファイル。
  * BFF server（ポート 8081）と web の開発サーバー（ポート 5173）を自動起動したうえで、
@@ -34,8 +34,7 @@ const multiDsConfigPath = resolve(e2eDir, 'datasources.e2e.yaml');
  *  - `QUERY_MAX_ROWS=10000` で server 側の行バッファ上限を制御する。
  *    仮想スクロールのテストは上限未満の 5000 行を、切り詰め警告のテストは
  *    上限超過の 12000 行をそれぞれ要求することで、2 つ目の server を
- *    用意せずとも「結果が切り詰められた」警告を決定的に発生させられる
- *    （design.md §5 の truncated 警告）。
+ *    用意せずとも「結果が切り詰められた」警告を決定的に発生させられる。
  */
 // web 開発サーバー（Vite）のポート番号。
 const WEB_PORT = 5173;
@@ -45,7 +44,7 @@ const WEB_PORT = 5173;
 // プロセスとの衝突を避けるため、E2E では 8081 に固定している。
 const SERVER_PORT = 8081;
 /**
- * A second BFF on a separate port running `AUTH_MODE=proxy` (design.md §11).
+ * A second BFF on a separate port running `AUTH_MODE=proxy`.
  * `auth.spec.ts` drives it directly over HTTP with injected SSO headers — no
  * real oauth2-proxy needed (localhost is inside the default trusted CIDR). The
  * default browser suite keeps using the none-mode server on SERVER_PORT.
@@ -132,7 +131,7 @@ export default defineConfig({
       },
     },
     {
-      // Proxy-mode BFF for auth.spec.ts (design.md §11). Same Trino, separate
+      // Proxy-mode BFF for auth.spec.ts. Same Trino, separate
       // DB + port; SSO headers are injected by the spec.
       // auth.spec.ts 専用の proxy 認証モード BFF サーバー。接続先 Trino は共通だが、
       // DB とポートは通常サーバーと分離している。SSO ヘッダーはテスト側から注入される。

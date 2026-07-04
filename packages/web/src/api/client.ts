@@ -22,11 +22,11 @@ import type { ZodType } from 'zod';
 
 /**
  * Error thrown by the API client. Carries the parsed `{ error }` envelope
- * (design.md §7) when the server returns one, plus the HTTP status.
+ * when the server returns one, plus the HTTP status.
  *
  * API クライアントが送出する共通エラークラス。
  * サーバーが返す `{ error: { code, message, ... } }` 形式のエラーエンベロープ
- * （design.md §7 参照）をパースした内容（detail）と、レスポンスの HTTP ステータス
+ * をパースした内容（detail）と、レスポンスの HTTP ステータス
  * コード（status）を保持する。呼び出し側はこのクラスを catch することで、
  * HTTP エラーとレスポンススキーマ不一致エラーの両方を統一的に扱える。
  */
@@ -172,9 +172,9 @@ export function fetchConfig(): Promise<AppConfig> {
 }
 
 /**
- * Fetch the current authenticated identity (design.md §11).
+ * Fetch the current authenticated identity.
  * `GET /api/me` を呼び出し、現在リクエストを行っている認証済みユーザーの
- * アイデンティティ情報（design.md §11 参照）を取得する。
+ * アイデンティティ情報を取得する。
  * @returns 現在の認証済みユーザー情報（MeResponse）。
  * @throws {ApiClientError} 未認証とリクエスト失敗時、またはレスポンスがスキーマに一致しない場合。
  */

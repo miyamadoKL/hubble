@@ -16,7 +16,7 @@ import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
 
 /**
- * Table detail popover (design.md §5: カラム一覧 + 型 + コメント + サンプル 10 行).
+ * Table detail popover (カラム一覧 + 型 + コメント + サンプル 10 行).
  * Columns come from the (often already cached) table detail; the sample rows are
  * fetched lazily — only when the popover opens — via `GET .../sample`. A
  * "SELECT 雛形を新規セルへ" button adds a `SELECT col1, col2 … FROM t LIMIT 100`
@@ -76,7 +76,7 @@ export function TableDetailPopover({
     staleTime: META_STALE_MS,
   });
 
-  // Sample is fetched only while the popover is mounted (design.md §5: 開いた時
+  // Sample is fetched only while the popover is mounted (開いた時
   // のみ fetch). It can be slow / large, so a shorter cache window is fine.
   // サンプル行はこのコンポーネントがマウントされている間だけ取得する
   // （このポップオーバーを開いたときにだけ発火する遅延取得）。

@@ -3,7 +3,7 @@ import { isoTimestamp } from './common';
 import { apiErrorDetailSchema } from './error';
 
 /**
- * Query execution model (design.md §4, §7).
+ * Query execution model.
  *
  * クエリ実行そのもの（リクエスト、状態、結果ページ）に関する契約を定義するファイル。
  * server はここで定義されたリクエスト形状で SQL 実行を受け付け、非同期に
@@ -64,7 +64,7 @@ export const queryColumnSchema = z.object({
 export type QueryColumn = z.infer<typeof queryColumnSchema>;
 
 /**
- * Execution statistics, mirroring Trino's `stats` object (design.md §7).
+ * Execution statistics, mirroring Trino's `stats` object.
  * 実行統計情報。Trino の REST API が返す `stats` オブジェクトの形をほぼそのまま反映する。
  */
 export const queryStatsSchema = z.object({

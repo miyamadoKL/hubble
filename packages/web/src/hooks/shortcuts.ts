@@ -1,4 +1,4 @@
-// Keyboard-shortcut matching (design.md §5 ショートカット). A pure classifier that
+// Keyboard-shortcut matching (ショートカット). A pure classifier that
 // maps a keyboard event (+ the current focus context) to a shell action, kept
 // separate from the React hook so the dispatch logic is unit-testable without a
 // DOM. The full list is the source of truth for both the runtime dispatcher and
@@ -58,9 +58,9 @@ export interface ShortcutSpec {
   keys: string[];
 }
 
-/** The canonical shortcut list (design.md §5 + the presentation stretch). */
+/** The canonical shortcut list (plus the presentation stretch). */
 /**
- * ショートカットの正規リスト（design.md §5 で定義されたもの＋プレゼンテーションモードの拡張）。
+ * ショートカットの正規リスト（プレゼンテーションモードの拡張を含む）。
  * ヘルプモーダルの表示内容そのものであり、実装が変わった場合はここも合わせて更新する必要がある。
  */
 export const SHORTCUTS: ShortcutSpec[] = [
@@ -116,7 +116,7 @@ export function matchShortcut(e: KeyChord, focus: FocusContext): ShortcutAction 
   if (isMod(e) && !e.altKey && !e.shiftKey && k === 's') return 'save';
 
   // Theme — Ctrl+Alt+T (no Cmd needed; matches design + avoids browser conflicts).
-  // テーマ切り替え: Ctrl+Alt+T。Cmd では発火させない（design.md の定義通り、かつブラウザの
+  // テーマ切り替え: Ctrl+Alt+T。Cmd では発火させない（ブラウザの
   // 既存ショートカットとの衝突を避けるため）。
   if (e.ctrlKey && e.altKey && k === 't') return 'theme';
 

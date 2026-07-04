@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { authModeSchema } from './auth';
 
 /**
- * App config exposed via `GET /api/config` (design.md §7).
+ * App config exposed via `GET /api/config`.
  * Built server-side from env vars and validated before being sent to the client.
  *
  * アプリ全体の設定を表す契約。server が環境変数から組み立て、この zod スキーマで
@@ -64,7 +64,7 @@ export type GuardConfig = z.infer<typeof guardConfigSchema>;
 export const appConfigSchema = z.object({
   trino: trinoConfigSchema,
   defaults: appDefaultsSchema,
-  /** Active authentication mode (design.md §11); web hides the user chip in `none`. */
+  /** Active authentication mode; web hides the user chip in `none`. */
   authMode: authModeSchema,
   /** Query Guard settings (Query Guard feature). */
   guard: guardConfigSchema,

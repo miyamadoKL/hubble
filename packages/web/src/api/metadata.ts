@@ -1,5 +1,5 @@
 // Contracts-based metadata fetchers + a MetadataSource implementation for the
-// trino-lang language layer (design.md §8: inject a real `/api/datasources/:id/catalogs...`
+// trino-lang language layer (inject a real `/api/datasources/:id/catalogs...`
 // client). Caching is delegated to TanStack Query's `queryClient.fetchQuery`,
 // so repeated completion/hover passes dedupe network work and respect staleTime.
 //
@@ -11,7 +11,7 @@
 //   2. trino-lang（SQL エディタの補完やホバー機能）が利用する MetadataSource の
 //      実装（createApiMetadataSource）。こちらは TanStack Query の
 //      queryClient.fetchQuery にキャッシュを委譲することで、補完やホバーの
-//      たびに同じメタデータを何度も取得しないようにしている（design.md §8）。
+//      たびに同じメタデータを何度も取得しないようにしている。
 
 import { z } from 'zod';
 import {
@@ -31,7 +31,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { apiFetch } from './client';
 import type { MetadataSource, MetadataTable } from '../trino-lang';
 
-/** Stale window matching the server TTL cache (design.md §3). */
+/** Stale window matching the server TTL cache. */
 export const META_STALE_MS = 5 * 60_000;
 
 // TanStack Query のキャッシュキーを生成するヘルパー群。

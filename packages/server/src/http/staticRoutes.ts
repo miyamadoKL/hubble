@@ -2,9 +2,9 @@
  * 静的ファイル配信 + SPA フォールバック（`packages/server/src/http/staticRoutes.ts`）。
  *
  * ビルド済みの web アプリ（`packages/web` の Vite ビルド成果物）を BFF サーバー自身から配信する
- * ための処理をまとめる（design.md §3 のデプロイ/運用モデル）。`STATIC_DIR` 環境変数が設定された
+ * ための処理をまとめる。`STATIC_DIR` 環境変数が設定された
  * ときのみ `app.ts` から呼び出され、API ルーター群より後にマウントすることで `/api/*` を
- * 横取りしないようにする。認証は適用されない（静的アセットは公開。design.md §11 参照）。
+ * 横取りしないようにする。認証は適用されない（静的アセットは公開）。
  *
  * 実装上の要点は、Hono の `@hono/node-server/serve-static` が `onFound` の時点ではまだ
  * `Response` を確定させておらず、その後に生成される `Response` へ後からヘッダーを差し込む
@@ -91,8 +91,8 @@ function withCacheControl(
 }
 
 /**
- * Register static file serving + SPA fallback for the built web app
- * (design.md §3 deployment / operations). When `staticDir` is set:
+ * Register static file serving + SPA fallback for the built web app.
+ * When `staticDir` is set:
  *
  *  - `GET`/`HEAD` for a matching file under `staticDir` is served with an
  *    appropriate Cache-Control (immutable for hashed assets, no-cache for

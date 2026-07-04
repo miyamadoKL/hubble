@@ -3,11 +3,11 @@
 // このファイルは、Fable のデザイントークン（tokens.css）から実行時に
 // チャート用のテーマ（配色やフォント）を解決する処理を担う。
 // ECharts の色は必ず --chart-* 等の CSS カスタムプロパティ経由で取得し、
-// コード中に生の16進カラーコードを直接書かないことがルール（design.md §5/§6）。
+// コード中に生の16進カラーコードを直接書かないことがルールである。
 // ライト/ダークテーマの切り替えにも、CSSトークンの値が変わるだけで自動追従する。
 // ============================================================================
 // Chart theme derived at runtime from the Fable design tokens (tokens.css).
-// design.md §5/§6: ECharts colors + font must come from `--chart-*`, ink, border
+// ECharts colors + font must come from `--chart-*`, ink, border
 // and surface tokens via getComputedStyle — NO raw hex in code — and follow the
 // light/dark switch. Mirrors the editor theme's token-reading approach.
 
@@ -79,8 +79,8 @@ export function readChartTheme(): ChartTheme {
     surface: readToken('--color-surface-sunken'),
     surfaceRaised: readToken('--color-surface-raised'),
     accent: readToken('--color-accent'),
-    // Plex per design.md §6; the literal stack matches --font-sans / --font-mono.
-    // フォントはトークンではなく直接指定（design.md §6 でPlexフォントが指定されて
+    // Plex is the specified font; the literal stack matches --font-sans / --font-mono.
+    // フォントはトークンではなく直接指定（Plexフォントが指定されて
     // おり、--font-sans / --font-mono と同じフォントスタックを踏襲している）。
     fontFamily: "'IBM Plex Sans', 'IBM Plex Sans JP', ui-sans-serif, system-ui, sans-serif",
     fontMono: "'IBM Plex Mono', ui-monospace, monospace",

@@ -2,18 +2,18 @@
 // 値の変化を「デバウンス」する汎用 React hook。頻繁に変化する値（例: 検索入力欄の文字列）を
 // そのまま API 呼び出し等のトリガーに使うとキー入力のたびにリクエストが飛んでしまうため、
 // 一定時間（delayMs）入力が止まってから初めて値を反映させることで、無駄なリクエストや
-// 再計算を抑制する。Saved-queries の検索（design.md §5）で使われている。
+// 再計算を抑制する。Saved-queries の検索で使われている。
 
 import { useEffect, useState } from 'react';
 
 /**
- * Debounce a fast-changing value (design.md §5: 検索 デバウンス 300ms). The
+ * Debounce a fast-changing value (検索 デバウンス 300ms). The
  * returned value trails `value` by `delayMs`; the timer resets on every change,
  * so it only settles once the input goes quiet. Used by the Saved-queries
  * search so each keystroke doesn't fire a request.
  */
 /**
- * 頻繁に変化する値をデバウンスする hook（design.md §5: 検索デバウンス 300ms）。
+ * 頻繁に変化する値をデバウンスする hook（検索デバウンス 300ms）。
  *
  * @param value - デバウンス対象の値。変化するたびに内部の setTimeout タイマーがリセットされる。
  * @param delayMs - `value` の変化が反映されるまでの遅延（ミリ秒）。デフォルトは300ms。

@@ -4,7 +4,7 @@
  * サーバー内のあらゆる場所（ルートハンドラ、サービス層）は成功しないとき
  * `AppError`（またはそのサブクラス）を throw する規約になっており、`app.ts` の
  * `app.onError` がそれを一律に `{ error: { code, message, ... } }` という
- * design.md §7 のエラーエンベロープに変換する。Trino が返すエラー
+ * エラーエンベロープに変換する。Trino が返すエラー
  * （`TrinoError`）を `AppError` に変換するユーティリティもここに置く。
  */
 import type { ApiErrorDetail } from '@hubble/contracts';
@@ -13,7 +13,7 @@ import type { TrinoError } from './trino/types';
 /**
  * An application error carrying a contract `ApiErrorDetail` and an HTTP status.
  * Thrown throughout the server and rendered uniformly by the error handler in
- * `app.ts` as the `{ error: { ... } }` envelope (design.md §7).
+ * `app.ts` as the `{ error: { ... } }` envelope.
  *
  * 日本語: HTTP ステータスコードと契約上の `ApiErrorDetail`（code/message 等）を
  * セットで運ぶアプリケーションエラー。サーバー内のあらゆる箇所からこのクラス
@@ -82,7 +82,7 @@ export class AppError extends Error {
  * 日本語: Trino の `/v1/statement` レスポンスに含まれるエラーペイロードを、
  * 契約上の `ApiErrorDetail` 形式に変換する。Trino が返す `errorLocation`
  * （エラー箇所の行と列）が正の値で存在する場合のみ `line`/`column` を設定し、
- * エディター側のマーカー表示（design.md §5 の `line N:M` 反映）に使えるようにする。
+ * エディター側のマーカー表示（`line N:M` 反映）に使えるようにする。
  */
 export function trinoErrorToDetail(error: TrinoError): ApiErrorDetail {
   const detail: ApiErrorDetail = {

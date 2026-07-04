@@ -7,7 +7,7 @@
  * `app.ts` から `/api/notebooks` / `/api/saved-queries` / `/api/history` にそれぞれマウントされる。
  *
  * どの操作もリクエスト principal（`c.var.principal.user`）の所有物のみを対象とする
- * オーナースコープ設計（design.md §11）で、実データの永続化や検索ロジックは
+ * オーナースコープ設計で、実データの永続化や検索ロジックは
  * `services.notebooks` / `services.savedQueries` / `services.history` に委譲する。
  */
 import { Hono } from 'hono';
@@ -27,7 +27,7 @@ type App = Hono<{ Variables: AuthVariables }>;
 
 /**
  * Notebook CRUD + search, mounted under `/api/notebooks`. Every operation is
- * scoped to the request principal's owner id (design.md §11).
+ * scoped to the request principal's owner id.
  *
  * ノートブック（保存された SQL セル群）の CRUD と検索エンドポイントを構築するファクトリ関数。
  * @param services - DI コンテナ。`services.notebooks` の永続化ロジックに処理を委譲する。

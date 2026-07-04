@@ -1,4 +1,4 @@
-// Typed API helpers for the query lifecycle (design.md §7). Thin wrappers over
+// Typed API helpers for the query lifecycle. Thin wrappers over
 // the shared `apiFetch` so the execution store stays focused on state rather
 // than fetch/zod plumbing.
 //

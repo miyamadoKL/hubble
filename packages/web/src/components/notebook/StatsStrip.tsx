@@ -11,7 +11,7 @@ import { formatBytes, formatDuration, formatInt } from '../../utils/format';
 import { cn } from '../../utils/cn';
 
 /**
- * Live stats strip + progress (design.md §5: state / progress% / splits / rows /
+ * Live stats strip + progress (state / progress% / splits / rows /
  * bytes / elapsed ticker, Trino Web UI link, truncated warning, cancel). Sits
  * between the editor and the result pane and updates as SSE stats arrive.
  */

@@ -12,12 +12,12 @@ export default defineConfig({
   // React（JSX 変換や Fast Refresh）と Tailwind CSS を有効化する。
   plugins: [react(), tailwindcss()],
   // Monaco + the ANTLR grammar + ECharts are large; isolate them into their own
-  // chunks so the initial app payload stays small (design.md §8 "チャンク分離").
+  // chunks so the initial app payload stays small.
   // The editor and charts are loaded via dynamic import, so these only download
   // when a cell renders / a chart tab is opened.
   // Monaco エディタ、ANTLR 由来の文法定義、ECharts はいずれもサイズが大きいため、
   // それぞれ専用のチャンクに分離し、アプリ初回読み込み時のペイロードを
-  // 小さく保つ（design.md §8 の「チャンク分離」）。エディタとチャート機能は
+  // 小さく保つ。エディタとチャート機能は
   // 動的 import で読み込まれるため、これらのチャンクはセルが描画されたときや
   // チャートタブが開かれたときにのみダウンロードされる。
   build: {

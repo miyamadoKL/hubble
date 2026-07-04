@@ -48,15 +48,15 @@ import { subscribeQueryEvents } from '../../execution/sse';
 import { setActiveEditor, clearActiveEditor } from '../../editor/activeEditor';
 
 /**
- * A live SQL cell: the Monaco editor wired to the execution store
- * (design.md §5). Owns the editor instance so it can paint the per-statement
+ * A live SQL cell: the Monaco editor wired to the execution store.
+ * Owns the editor instance so it can paint the per-statement
  * gutter, push execution-error markers, and resolve the execution unit
  * (selection / caret / whole-cell) on run.
  *
  * Source edits flow up via `onSourceChange` (notebookStore is the source of
  * truth). Before any unit runs, its text is passed through `resolveUnit`, which
  * applies notebook variable substitution and can veto a run (returning null) —
- * design.md §5 「実行時置換: runUnit/runUnits に渡す直前に解決」.
+ * 「実行時置換: runUnit/runUnits に渡す直前に解決」.
  */
 
 /** SqlCell の props */
@@ -78,8 +78,8 @@ interface SqlCellProps {
   onFocus?: () => void;
   // 実行時のカタログ/スキーマなどのコンテキスト情報。
   context: ExecutionContext;
-  /** Default LIMIT from /api/config (design.md §5). */
-  // /api/config から取得したデフォルトのLIMIT値（design.md §5）。
+  /** Default LIMIT from /api/config. */
+  // /api/config から取得したデフォルトのLIMIT値。
   defaultLimit: number;
   /** false のとき Query Guard 見積りを行わない（costEstimate 非対応データソース）。 */
   costEstimateEnabled?: boolean;
@@ -132,7 +132,7 @@ const ESTIMATE_DEBOUNCE_MS = 600;
  * ライブSQLセル本体のコンポーネント。Monacoエディタのインスタンスを保持し、
  * ステートメント単位のガター描画、実行エラーマーカー、実行ユニットの解決を
  * 行い、実行結果（StatsStrip / ResultPane）や見積りストリップ（EstimateStrip）を
- * 表示する。design.md §5 の「ライブSQLセル」仕様に対応する。
+ * 表示する。
  */
 export function SqlCell({
   cellId,
@@ -610,9 +610,9 @@ export function SqlCell({
             </>
           ) : (
             // No live result this session — surface the last persisted run, if any
-            // (design.md §4 resultMeta: 再ロード時に「前回実行」を表示).
+            // (再ロード時に「前回実行」を表示).
             // このセッションではまだ実行していない場合、永続化された前回の実行結果概要が
-            // あればそれを表示する（design.md §4 resultMeta）。
+            // あればそれを表示する。
             resultMeta && <LastRunStrip meta={resultMeta} onRun={runWholeCell} />
           )}
         </>

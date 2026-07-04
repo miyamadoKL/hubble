@@ -52,10 +52,10 @@ export async function defaultServices(options: BuildServicesOptions = {}): Promi
 }
 
 /**
- * Build the Hono app wiring every API route (design.md §7). All handlers throw
+ * Build the Hono app wiring every API route. All handlers throw
  * `AppError` on failure; the error handler renders the `{ error }` envelope.
  *
- * 日本語: 全 API エンドポイントを配線した Hono アプリを構築する（design.md §7）。
+ * 日本語: 全 API エンドポイントを配線した Hono アプリを構築する。
  * 各ハンドラは失敗時に `AppError` を throw する規約になっており、末尾の
  * `app.onError` が一律に `{ error: {...} }` 形式のレスポンスへ変換する。
  */
@@ -63,12 +63,12 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   const app = new Hono<{ Variables: AuthVariables }>();
   const { services } = deps;
 
-  // healthz is always public (design.md §11): it must answer before auth.
+  // healthz is always public: it must answer before auth.
   // 日本語: ヘルスチェックは認証ミドルウェアより前に登録し、常に認証不要で応答させる
   // （ロードバランサ等の死活監視が認証設定に左右されないようにするため）。
   app.get(apiRoutes.healthz(), (c) => c.json({ status: 'ok' }));
 
-  // Authentication gate for every other /api route (design.md §11). In `none`
+  // Authentication gate for every other /api route. In `none`
   // mode it transparently sets the technical principal; in `proxy` mode it
   // resolves the SSO principal or returns 401 UNAUTHENTICATED.
   // 日本語: healthz 以外の全 /api ルートに適用される認証ゲート。AUTH_MODE=none
@@ -127,7 +127,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
     throw AppError.notFound('Not found');
   });
 
-  // Static web app + SPA fallback (design.md §3 deployment). Only enabled when
+  // Static web app + SPA fallback. Only enabled when
   // STATIC_DIR is configured; never serves `/api/*` (handled above). Auth is
   // unaffected — assets are public and the middleware is mounted under `/api`.
   // 日本語: STATIC_DIR が設定されている場合のみ、ビルド済み web アプリを配信し、
@@ -137,7 +137,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
     registerStaticServing(app, services.config.staticDir);
   }
 
-  // Uniform error envelope (design.md §7).
+  // Uniform error envelope.
   // 日本語: ルートハンドラ内で throw された全エラー（AppError / 想定外の例外）を
   // ここで一括捕捉し、`{ error: { code, message, ... } }` の統一フォーマットに変換する。
   app.onError((err, c) => {

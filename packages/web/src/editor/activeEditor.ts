@@ -1,4 +1,4 @@
-// Active-editor registry (design.md §5: テーブル/カラムのクリックでカーソル位置に
+// Active-editor registry (テーブル/カラムのクリックでカーソル位置に
 // 挿入). The Data browser needs to drop text into "the SQL cell the user was last
 // editing", but it lives in the sidebar — far from any Monaco instance. Rather
 // than thread an editor ref through the tree, each SqlCell registers its editor

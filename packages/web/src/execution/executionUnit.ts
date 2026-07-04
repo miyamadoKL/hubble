@@ -1,4 +1,4 @@
-// Resolve *what* to run from the editor state (design.md §5 実行単位の決定):
+// Resolve *what* to run from the editor state (実行単位の決定):
 //
 //   - a non-empty selection  → run exactly the selected text (one unit)
 //   - otherwise              → run the statement under the caret (one unit)

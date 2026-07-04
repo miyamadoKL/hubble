@@ -38,10 +38,14 @@ test-results/
 # agent infrastructure (not part of the app)
 /.opencode/
 /opencode.json
-/docs/tasks/
 /.claude/
 /.codex/
 /CLAUDE.md
 
 # Agent-local conventions (kept out of the repository)
 AGENTS.md
+
+# 歴史的ドキュメント(ローカル参照用。リポジトリには含めない)
+/docs/design.md
+/docs/acceptance-v1.md
+/docs/tasks/

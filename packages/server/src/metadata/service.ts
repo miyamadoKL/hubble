@@ -2,8 +2,8 @@
  * メタデータ（カタログ→スキーマ→テーブル→カラムのツリー）に対する
  * TTL + stale-while-revalidate キャッシュ層。`QueryEngine`（データソースごとの
  * メタデータ取得実装）をラップし、Trino への問い合わせ頻度を抑えつつ
- * 「今どのくらい新しいデータか」を呼び出し元（routes 層）へ伝える
- * （design.md §3）。カタログ一覧、スキーマ一覧、テーブル一覧、カラム一覧を
+ * 「今どのくらい新しいデータか」を呼び出し元（routes 層）へ伝える。
+ * カタログ一覧、スキーマ一覧、テーブル一覧、カラム一覧を
  * それぞれ個別の `Map` でキャッシュし、キーは `datasourceId` とカタログ/スキーマ/
  * テーブル名の組み合わせ文字列。サンプル行（`getSample`）はキャッシュ対象外で常に
  * ライブ取得する。
@@ -31,7 +31,7 @@ interface CacheEntry<T> {
 }
 
 /**
- * TTL cache with stale-while-revalidate over QueryEngine metadata methods (design.md §3).
+ * TTL cache with stale-while-revalidate over QueryEngine metadata methods.
  *
  * - Fresh hit (within TTL): served from cache, `{source:'cache', stale:false}`.
  * - Stale hit: served immediately as `{source:'cache', stale:true}` and a
@@ -39,7 +39,7 @@ interface CacheEntry<T> {
  * - Miss: fetched synchronously, `{source:'live', stale:false}`.
  * - `refresh()` forces a synchronous re-fetch and updates the cache.
  *
- * `QueryEngine`（design.md §3）に対する TTL + stale-while-revalidate キャッシュ。
+ * `QueryEngine` に対する TTL + stale-while-revalidate キャッシュ。
  * データソースごとに独立したキャッシュを保持する（キーに `datasourceId` を含める）。
  *
  * - フレッシュヒット（TTL 内）: キャッシュから即座に返す

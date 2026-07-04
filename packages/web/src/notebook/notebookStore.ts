@@ -1,9 +1,9 @@
-// Notebook store (design.md §3 状態分割, §4 データモデル, §5 管理). One zustand
+// Notebook store. One zustand
 // store owns every *open* notebook (the TopBar tabs), the active id, and each
 // open notebook's dirty / draft / saving state. Cell CRUD, reordering, variable
 // values and the title/description all flow through here.
 //
-// Persistence policy (design.md §4, §5):
+// Persistence policy:
 //   - A *saved* notebook (has a server id, `draft === false`) is autosaved with a
 //     2s debounce via PUT, and on an explicit Ctrl/Cmd+S.
 //   - A *draft* notebook (never persisted, `draft === true`) is kept in
@@ -77,8 +77,8 @@ export function __setPersistence(p: NotebookPersistence | null): void {
   persistence = p;
 }
 
-/** オートセーブのデバウンス時間（design.md §4: 2 秒でデバウンス）。 */
-/** Autosave debounce window (design.md §4: debounce 2s). */
+/** オートセーブのデバウンス時間（2 秒でデバウンス）。 */
+/** Autosave debounce window (debounce 2s). */
 export const AUTOSAVE_DEBOUNCE_MS = 2000;
 
 // ---- localStorage keys ------------------------------------------------------
@@ -109,7 +109,7 @@ export interface OpenNotebook {
   saving: boolean;
 }
 
-// ストアが公開する state と action の全体。design.md の「状態分割」節に対応する。
+// ストアが公開する state と action の全体。
 interface NotebookStoreState {
   // id をキーにした「開いている notebook」の集合。並び順は持たない
   // （タブの表示順は openIds が担う）。
@@ -159,7 +159,7 @@ interface NotebookStoreState {
   setCellName: (id: string, cellId: string, name: string) => void;
   // セルの折りたたみ状態をトグルする。
   toggleCellCollapsed: (id: string, cellId: string) => void;
-  /** Write the last-execution summary into a cell (design.md §4 resultMeta). */
+  /** Write the last-execution summary into a cell (`resultMeta`). */
   setCellResultMeta: (cellId: string, meta: CellResultMeta) => void;
 
   // Variables
@@ -180,9 +180,9 @@ interface NotebookStoreState {
 
 /**
  * 空の SQL セルを 1 つだけ持つ、まっさらな notebook を生成する
- * （design.md §1 初回起動時に使われる形）。id と timestamp はここで払い出す。
+ * （初回起動時に使われる形）。id と timestamp はここで払い出す。
  */
-/** A fresh blank notebook with one empty SQL cell (design.md §1 初回起動). */
+/** A fresh blank notebook with one empty SQL cell. */
 export function blankNotebook(context: NotebookContext = {}): Notebook {
   const now = new Date().toISOString();
   return {
@@ -388,7 +388,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     }
   };
 
-  /** Debounced PUT for a saved notebook (design.md §4: 2s debounce). */
+  /** Debounced PUT for a saved notebook (2s debounce). */
   const scheduleAutosave = (id: string): void => {
     // 直前の timer を破棄してから新しく張り直す = 連続編集中は PUT が
     // 発火しない（最後の編集から 2 秒静止して初めて保存される）。
@@ -478,8 +478,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
 
     createBlankNotebook: () => {
       // Seed the new notebook's context from the active notebook, falling back to
-      // the most-recently-used context (design.md §5: 最近使った値を新規 notebook
-      // の初期値に).
+      // the most-recently-used context.
       // アクティブな notebook が catalog/schema を持っていればそれを引き継ぎ、
       // 持っていなければ直近使用した context（recentContexts）の先頭を使う。
       const active = get().activeId ? get().open[get().activeId!]?.notebook.context : undefined;
