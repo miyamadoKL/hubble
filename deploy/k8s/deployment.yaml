@@ -3,14 +3,17 @@ kind: Deployment
 metadata:
   name: hubble
 spec:
-  # IMPORTANT: replicas MUST stay 1. Hubble persists to a single SQLite file on
-  # a ReadWriteOnce PVC; running two pods would either fail to attach the volume
-  # or corrupt the database. Scale Trino, not Hubble. (docs/operations.md §9)
+  # PostgreSQL (DATABASE_URL、secret.yaml) が既定の永続化バックエンドなので、DB は
+  # 外部の PostgreSQL が一元管理する。よって replicas は 1 に固定する必要がなく、
+  # 複数に増やしても安全 (増やす場合はこの値を変更する)。RollingUpdate も利用できる。
   replicas: 1
-  # Recreate (not RollingUpdate): the new pod can only attach the RWO PVC once
-  # the old pod has released it, so they must not run concurrently.
   strategy:
-    type: Recreate
+    type: RollingUpdate
+  # Non-production 向け: SQLite (DB_PATH + PVC) を使う場合は下記に戻すこと。
+  # SQLite は単一プロセスでしか安全に開けないため必須の制約。
+  #   replicas: 1
+  #   strategy:
+  #     type: Recreate  # 旧 Pod が RWO PVC を解放してから新 Pod が attach するため
   selector:
     matchLabels:
       app.kubernetes.io/name: hubble
@@ -20,8 +23,9 @@ spec:
         app.kubernetes.io/name: hubble
     spec:
       securityContext:
-        # Match the image's non-root `node` user (uid/gid 1000) so the pod can
-        # write to the mounted /data volume.
+        # Match the image's non-root `node` user (uid/gid 1000)。SQLite 構成
+        # (non-production、下記コメント参照) では /data ボリュームへの書き込みに
+        # この uid/gid が必要になる。
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
@@ -56,26 +60,30 @@ spec:
             limits:
               memory: 1Gi
           volumeMounts:
-            - name: data
-              mountPath: /data
             - name: datasources
               mountPath: /etc/hubble/datasources.yaml
               subPath: datasources.yaml
               readOnly: true
+            # Non-production 向け: SQLite (DB_PATH + PVC、pvc.yaml) を使う場合は
+            # 下記を有効化する。
+            # - name: data
+            #   mountPath: /data
             # passwordFile 方式の例 (Secret をファイルマウントする場合):
             # - name: datasource-secrets
             #   mountPath: /etc/hubble/secrets
             #   readOnly: true
       volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: hubble-data
         - name: datasources
           configMap:
             name: hubble-config
             items:
               - key: datasources.yaml
                 path: datasources.yaml
+        # Non-production 向け: SQLite (DB_PATH) を使う場合は下記の PVC ボリューム
+        # (pvc.yaml) を有効化する。
+        # - name: data
+        #   persistentVolumeClaim:
+        #     claimName: hubble-data
         # passwordFile 用 Secret ボリュームの例:
         # - name: datasource-secrets
         #   secret:

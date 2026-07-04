@@ -5,7 +5,13 @@
 #
 # `hubble` reads optional overrides from a local `.env` (git-ignored). The demo
 # `trino` service ships the tpch catalog so the stack works with no external
-# data source. Point Hubble at your own Trino by setting TRINO_BASE_URL in .env.
+# data source. Trino の接続情報 (baseUrl / Basic 認証 / source タグ) は
+# deploy/compose/datasources.yaml (DATASOURCES_PATH) にまとめて定義する。外部
+# Trino に接続する場合は、そのファイルの baseUrl / username / passwordEnv を
+# 書き換えるか、DATASOURCES_PATH で別ファイルを指す。
+#
+# 永続化は PostgreSQL (DATABASE_URL) が既定 (下記 postgres サービス)。SQLite
+# (DB_PATH) で動かす non-production 向けの構成は本ファイル末尾のコメントを参照。
 services:
   hubble:
     build: .
@@ -17,24 +23,35 @@ services:
       # a host-side .env may move the *dev-server* port (e.g. PORT=8081 to dodge
       # a local clash), but that must not leak into the container via env_file.
       PORT: '8080'
-      # Connect to the demo Trino by service name. Override in .env (env_file
-      # below) to target an external coordinator, e.g.
-      # TRINO_BASE_URL=https://trino.internal:8443
-      TRINO_BASE_URL: ${TRINO_BASE_URL:-http://trino:8080}
+      # 宣言的データソース定義ファイル (Trino の baseUrl/認証/source はここに集約)。
+      DATASOURCES_PATH: /etc/hubble/datasources.yaml
+      # deploy/compose/datasources.yaml の passwordEnv: TRINO_PASSWORD が参照する
+      # 環境変数。デモ Trino は認証不要のため既定値は空文字。外部 Trino に接続する
+      # 場合は .env に TRINO_PASSWORD=*** を設定する。
+      TRINO_PASSWORD: ${TRINO_PASSWORD:-}
+      # X-Trino-User (impersonation ユーザー)。Trino の接続情報そのものではないため
+      # 廃止対象ではなく維持する。
       TRINO_USER: ${TRINO_USER:-admin}
-      TRINO_USERNAME: ${TRINO_USERNAME:-admin}
       DEFAULT_CATALOG: ${DEFAULT_CATALOG:-tpch}
       DEFAULT_SCHEMA: ${DEFAULT_SCHEMA:-tiny}
+      # 永続化バックエンド。postgres:// を渡すと DATABASE_URL が DB_PATH より
+      # 優先される。既定パスワードは開発専用のプレースホルダ (本番では .env で上書き)。
+      DATABASE_URL: ${DATABASE_URL:-postgres://hubble:hubble-dev@postgres:5432/hubble}
     # Optional: a local .env supplies/overrides any variable (incl. secrets like
     # TRINO_PASSWORD). The file is git-ignored; absence is tolerated.
     env_file:
       - path: .env
         required: false
     volumes:
-      # Persist the SQLite store (notebooks / saved queries / history).
-      - hubble-data:/data
+      # データソース定義を読み取り専用でマウント。
+      - ./deploy/compose/datasources.yaml:/etc/hubble/datasources.yaml:ro
+      # Non-production 向け: SQLite で動かす場合はここで hubble-data を /data に
+      # マウントし、DATABASE_URL を外して DB_PATH (既定 /data/hubble.db) を使う。
+      # - hubble-data:/data
     depends_on:
       trino:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -54,5 +71,29 @@ services:
     # depends_on: condition: service_healthy works without any override here.
     restart: unless-stopped
 
+  # Hubble の永続化 (notebooks / saved queries / query history) 用 PostgreSQL。
+  # クエリ対象データ (Trino/mysql/postgresql データソース) とは別物で、アプリの
+  # 内部状態のみを保持する。
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: hubble
+      POSTGRES_USER: hubble
+      # 開発用の既定パスワード。共有環境や本番相当で使う場合は .env で上書きすること。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hubble-dev}
+    volumes:
+      - hubble-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U hubble -d hubble']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
 volumes:
+  # PostgreSQL の永続化ボリューム (既定の DATABASE_URL バックエンド)。
+  hubble-postgres-data:
+  # Non-production 向け: SQLite (DB_PATH) を使う場合にマウントするボリューム。
+  # 上の hubble.volumes のコメントアウトと合わせて有効化する。
   hubble-data:

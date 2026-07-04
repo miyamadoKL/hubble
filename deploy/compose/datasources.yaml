@@ -1,0 +1,18 @@
+# docker-compose.yml (デモ Trino のみの既定構成) 用データソース定義。
+# /etc/hubble/datasources.yaml としてマウントされ、DATASOURCES_PATH がこのパスを指す。
+# 外部 Trino に接続する場合は、このファイルの baseUrl / username / passwordEnv を
+# 書き換えるか、DATASOURCES_PATH で別ファイルを指す。
+# マルチデータソースのデモ構成 (trino + mysql + postgresql) は
+# deploy/compose/datasources.demo.yaml (docker-compose.demo.yml 用) を参照。
+datasources:
+  - id: trino-default
+    type: trino
+    displayName: Trino
+    username: admin
+    passwordEnv: TRINO_PASSWORD
+    baseUrl: http://trino:8080
+    # X-Trino-Source。resource group をソース別に分けるためのタグ。
+    # 省略時の既定値はそれぞれ hubble / hubble-metadata / hubble-scheduled。
+    source: hubble
+    metadataSource: hubble-metadata
+    scheduledSource: hubble-scheduled
