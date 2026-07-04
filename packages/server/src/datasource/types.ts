@@ -25,8 +25,12 @@ export interface ResolvedTrinoDatasource extends ResolvedDatasourceBase {
   type: 'trino';
   /** Trino coordinator のベース URL。 */
   baseUrl: string;
-  /** `X-Trino-Source` に送る値。 */
+  /** ユーザーが発行するクエリに付与する `X-Trino-Source` の値。 */
   source: string;
+  /** カタログ一覧等のメタデータ取得クエリに付与する `X-Trino-Source` の値。 */
+  metadataSource: string;
+  /** スケジューラーが発行するクエリに付与する `X-Trino-Source` の値。 */
+  scheduledSource: string;
 }
 
 /** mysql/postgresql 共通の解決済み接続オプション。 */

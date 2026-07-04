@@ -32,11 +32,20 @@ const baseDatasourceSchema = z
     }
   });
 
-/** Trino データソースの YAML エントリ。 */
+/**
+ * Trino データソースの YAML エントリ。
+ *
+ * `source` / `metadataSource` / `scheduledSource` はいずれも任意で、
+ * `X-Trino-Source` ヘッダに用途別に付与する値(既定値はそれぞれ
+ * `hubble` / `hubble-metadata` / `hubble-scheduled`)。resource group を
+ * ソース種別ごとに分けたい場合に上書きする。
+ */
 export const trinoDatasourceSchema = baseDatasourceSchema.safeExtend({
   type: z.literal('trino'),
   baseUrl: z.url(),
   source: z.string().min(1).optional(),
+  metadataSource: z.string().min(1).optional(),
+  scheduledSource: z.string().min(1).optional(),
 });
 
 /** tlsCaFile は tls: true が必須であることを検証する。 */

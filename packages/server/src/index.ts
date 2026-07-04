@@ -40,13 +40,14 @@ if (config.database.kind === 'postgres') {
 // もこの中で適用される。
 const services = await defaultServices();
 
+// datasources.yaml は必須化されているため、この時点で defaultServices() が既に
+// 成功している(=ファイルが存在する)ことが保証されており、resolveDatasourcesPath は
+// 必ず具体的なパスを返す。
 const datasourcesPath = resolveDatasourcesPath(process.env, process.cwd());
 const rbacPath = resolveRbacPath(process.env, process.cwd());
 const watchedFiles = [
   { path: rbacPath, reload: () => services.reloadRbac() },
-  ...(datasourcesPath
-    ? [{ path: datasourcesPath, reload: () => services.reloadDatasources() }]
-    : []),
+  { path: datasourcesPath, reload: () => services.reloadDatasources() },
 ];
 const intervalSeconds = parseReloadIntervalSeconds(process.env);
 const fileReload = startFileReload(watchedFiles, { intervalSeconds });

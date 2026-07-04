@@ -1,4 +1,7 @@
 import type { Hono } from 'hono';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openMemoryDatabase } from '../db';
 import { loadServerConfig, type ServerConfig } from '../config';
 import { buildServices, type Services } from '../services';
@@ -6,6 +9,48 @@ import { createApp } from '../app';
 import type { AuthVariables, RemoteAddressFn } from '../auth/middleware';
 import type { FakeScenario } from './fakeTrino';
 import { FakeTrino } from './fakeTrino';
+
+/**
+ * `datasources.yaml` が必須化されたことに伴うテストヘルパー。
+ *
+ * 呼び出し元が `env.DATASOURCES_PATH` を指定していない場合、実際に使う
+ * 作業ディレクトリ(`cwd` が省略されていれば使い捨ての一時ディレクトリを新規作成)
+ * 直下に `./datasources.yaml` が無ければ、fake Trino (`http://trino.test`) 1 件
+ * だけを持つ使い捨ての YAML を書き出す。これにより、個々の `*Routes.test.ts` や
+ * rbac 関連テスト等が明示的な datasources.yaml を用意しなくても、従来の
+ * `trino-default` 後方互換フォールバックと同じ「単一 Trino データソース」構成で
+ * 動作し続けられる。呼び出し元が既に同じ場所へ独自の datasources.yaml を
+ * 書いている場合はそれを優先し、上書きしない。
+ *
+ * @param cwd - 呼び出し元が明示した作業ディレクトリ。
+ * @param env - 呼び出し元が明示した環境変数。
+ * @returns 実際に使う作業ディレクトリ。
+ */
+function resolveTestDatasourcesCwd(
+  cwd: string | undefined,
+  env: Record<string, string | undefined> | undefined,
+): string {
+  const effectiveCwd = cwd ?? mkdtempSync(join(tmpdir(), 'hubble-test-ds-'));
+  // DATASOURCES_PATH が明示されている場合は呼び出し元がファイル配置を管理するため、
+  // ここでは何も書き出さない。
+  if (env?.DATASOURCES_PATH !== undefined) return effectiveCwd;
+  const defaultPath = join(effectiveCwd, 'datasources.yaml');
+  if (!existsSync(defaultPath)) {
+    writeFileSync(
+      defaultPath,
+      `datasources:
+  - id: trino-default
+    type: trino
+    displayName: Trino
+    username: admin
+    baseUrl: http://trino.test
+    source: hubble
+`,
+      'utf8',
+    );
+  }
+  return effectiveCwd;
+}
 
 /**
  * server パッケージの結合テストで共通利用する「テストコンテキスト構築」を
@@ -28,10 +73,13 @@ export interface TestContext {
  *
  * 日本語: 実施内容は次の通り。
  *   1. `options.scenarios` を積んだ `FakeTrino` を生成する (Trino の代わり)。
- *   2. `loadServerConfig` で既定設定を読み込み、`trino.baseUrl` を fake の URL に
- *      固定しつつ `options.configOverrides` で個別に上書きする。scheduler は
- *      デフォルトで tick ループを無効化する (`startScheduler` が true でない限り)
- *      ことで、ルート/CRUD テストが背後の非同期発火に影響されず決定的に動くようにする。
+ *   2. `loadServerConfig` で既定設定を読み込み、`options.configOverrides` で
+ *      個別に上書きする。Trino 接続先(baseUrl)は datasources.yaml 側の責務に
+ *      なったため、ここでは `resolveTestDatasourcesCwd` が fake サーバーの URL
+ *      (`http://trino.test`) を指す使い捨て datasources.yaml を用意する。
+ *      scheduler はデフォルトで tick ループを無効化する (`startScheduler` が
+ *      true でない限り) ことで、ルート/CRUD テストが背後の非同期発火に
+ *      影響されず決定的に動くようにする。
  *   3. インメモリ SQLite を開き、`buildServices` でサービス層一式を構築する。
  *      `fetchImpl` は fake.fetch (実ネットワークなしで応答)、`sleepImpl`/
  *      `schedulerSleep` は既定で即座に resolve するダミーにして、バックオフ待ちの
@@ -60,12 +108,12 @@ export async function createTestContext(
   const fake = new FakeTrino(options.scenarios ?? []);
   const baseConfig = loadServerConfig(options.env ?? {});
   // 日本語: 各セクションごとにベース設定と configOverrides をマージする。
-  // trino.baseUrl は常に fake サーバーの URL に固定した上で、
-  // configOverrides.trino があればそれをさらに重ねて上書きできるようにする。
+  // Trino 接続先(baseUrl)は datasources.yaml 側の責務になったため、ここでは
+  // config.trino(横断設定、user のみ)への configOverrides.trino の上書きだけを行う。
   const config: ServerConfig = {
     ...baseConfig,
     ...options.configOverrides,
-    trino: { ...baseConfig.trino, baseUrl: 'http://trino.test', ...options.configOverrides?.trino },
+    trino: { ...baseConfig.trino, ...options.configOverrides?.trino },
     query: { ...baseConfig.query, ...options.configOverrides?.query },
     metadata: { ...baseConfig.metadata, ...options.configOverrides?.metadata },
     defaults: { ...baseConfig.defaults, ...options.configOverrides?.defaults },
@@ -81,9 +129,10 @@ export async function createTestContext(
   };
 
   const db = await openMemoryDatabase();
+  const cwd = resolveTestDatasourcesCwd(options.cwd, options.env);
   const services = await buildServices(config, db, {
     env: options.env,
-    cwd: options.cwd,
+    cwd,
     fetchImpl: fake.fetch,
     // 日本語: 既定では待たずに即 resolve するので、バックオフ待ちが原因で
     // テストが遅くなることはない。実際の待ち時間を検証したいテストのみ

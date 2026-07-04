@@ -12,7 +12,7 @@
  *   p5-shortcuts.png — the "Keyboard shortcuts" help modal
  *
  * Prereqs (start these first):
- *   - server: PORT=8081 TRINO_BASE_URL=http://localhost:30080 (live Trino)
+ *   - server: PORT=8081 DATASOURCES_PATH=<Trino baseUrl=http://localhost:30080 を指す datasources.yaml> (live Trino)
  *   - web:    pnpm --filter @hubble/web dev   (vite :5173)
  *
  * Run: node e2e/screenshots-p5.mjs [baseURL]

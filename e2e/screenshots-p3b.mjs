@@ -12,7 +12,7 @@
  *   p3b-explain.png  — the EXPLAIN tab plan
  *
  * Prereqs (start these first):
- *   - server: PORT=8081 TRINO_BASE_URL=http://localhost:30080 (P2a, live Trino)
+ *   - server: PORT=8081 DATASOURCES_PATH=<Trino baseUrl=http://localhost:30080 を指す datasources.yaml> (P2a, live Trino)
  *   - web:    pnpm --filter @hubble/web dev   (vite :5173)
  *
  * Run: node e2e/screenshots-p3b.mjs

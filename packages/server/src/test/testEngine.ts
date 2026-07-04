@@ -7,18 +7,12 @@ import { createTrinoEngine } from '../engine/trino';
 import type { QueryEngine } from '../engine/types';
 import type { FakeTrino } from './fakeTrino';
 
-/** テストで使う既定の Trino 設定（trino-default 後方互換用）。 */
+/** テストで使う既定の Trino 横断設定(datasources.yaml 必須化後は impersonation ユーザーのみ)。 */
 export const TEST_TRINO_CONFIG: ServerConfig['trino'] = {
-  baseUrl: 'http://trino.test',
-  username: 'admin',
-  password: '',
   user: 'admin',
-  source: 'hubble',
-  metadataSource: 'hubble-metadata',
-  scheduledSource: 'hubble-scheduled',
 };
 
-/** フォールバックデータソースの既定 id。 */
+/** テスト用の既定データソース id(datasources.yaml が無い場合の後方互換名を踏襲)。 */
 export const DEFAULT_DATASOURCE_ID = 'trino-default';
 
 /**
@@ -37,6 +31,8 @@ export function makeTrinoDatasource(
     password: '',
     baseUrl: 'http://trino.test',
     source: 'hubble',
+    metadataSource: 'hubble-metadata',
+    scheduledSource: 'hubble-scheduled',
     ...overrides,
   };
 }

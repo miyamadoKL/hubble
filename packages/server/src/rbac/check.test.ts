@@ -107,6 +107,8 @@ describe('filterDatasourcesForRole', () => {
           username: 'u',
           password: 'p',
           source: 'hubble',
+          metadataSource: 'hubble-metadata',
+          scheduledSource: 'hubble-scheduled',
         },
         {
           id: 'mysql-a',

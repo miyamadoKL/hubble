@@ -1,4 +1,6 @@
-import { dirname, resolve } from 'node:path';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
@@ -8,10 +10,46 @@ const multiDsE2e = process.env.MULTI_DS_E2E === '1';
 const multiDsConfigPath = resolve(e2eDir, 'datasources.e2e.yaml');
 
 /**
+ * サーバー本体は `datasources.yaml`(必須化済み)からしか Trino 接続先を
+ * 読まなくなったため、単一データソース構成の E2E(デフォルトの P6 スイート)も
+ * `DATASOURCES_PATH` 経由で YAML を渡す必要がある。`TRINO_BASE_URL` は
+ * サーバーが直接読む環境変数ではなくなったので、E2E ハーネス専用であることが
+ * 明確な `E2E_TRINO_BASE_URL` を使い、その値を埋め込んだ使い捨ての
+ * datasources.yaml を一時ディレクトリに生成して `DATASOURCES_PATH` に渡す。
+ *
+ * @param baseUrl - 埋め込む Trino coordinator の URL。
+ * @returns 生成した YAML の絶対パス。
+ */
+function writeSingleDatasourceYaml(baseUrl: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'hubble-e2e-ds-'));
+  const path = join(dir, 'datasources.yaml');
+  writeFileSync(
+    path,
+    `datasources:
+  - id: trino-default
+    type: trino
+    displayName: Trino
+    username: admin
+    baseUrl: ${baseUrl}
+    source: hubble
+`,
+    'utf8',
+  );
+  return path;
+}
+
+/** E2E 専用: 単体 Trino に対する既定の接続先 URL(既定 http://127.0.0.1:30080)。 */
+const e2eTrinoBaseUrl = process.env.E2E_TRINO_BASE_URL ?? 'http://127.0.0.1:30080';
+const singleDsConfigPath = writeSingleDatasourceYaml(e2eTrinoBaseUrl);
+
+/**
  * Playwright config. Starts the BFF server (port 8081) and the
  * web dev server (port 5173), then runs the P6 E2E suites against a real Trino
  * (tpch catalog). The suites assume a live Trino at
- * `TRINO_BASE_URL` (default http://127.0.0.1:30080, admin / empty password).
+ * `E2E_TRINO_BASE_URL` (default http://127.0.0.1:30080, admin / empty
+ * password) — an E2E-harness-only variable used to generate a throwaway
+ * `datasources.yaml` for the server under test (the server itself no longer
+ * reads a `TRINO_BASE_URL` environment variable).
  *
  * Determinism + isolation:
  *  - `DB_PATH=:memory:` gives the server a throwaway SQLite — notebooks / saved
@@ -24,8 +62,11 @@ const multiDsConfigPath = resolve(e2eDir, 'datasources.e2e.yaml');
  * Hubble の E2E テスト (Playwright) 実行設定ファイル。
  * BFF server（ポート 8081）と web の開発サーバー（ポート 5173）を自動起動したうえで、
  * 実際に稼働している Trino（tpch カタログ）に対して P6 の E2E テスト群を実行する。
- * 各テストスイートは `TRINO_BASE_URL`（既定値 http://127.0.0.1:30080、
- * ユーザー admin / パスワード空文字）に生きた Trino が存在することを前提とする。
+ * 各テストスイートは `E2E_TRINO_BASE_URL`（既定値 http://127.0.0.1:30080、
+ * ユーザー admin / パスワード空文字)に生きた Trino が存在することを前提とする。
+ * この変数は E2E ハーネス専用であり、サーバー本体は直接読まない
+ * (`datasources.yaml` が必須化されたため、この値は下記で生成する使い捨ての
+ * YAML に埋め込んだうえで `DATASOURCES_PATH` 経由でサーバーへ渡す)。
  *
  * 決定性と独立性の確保:
  *  - `DB_PATH=:memory:` により server にインメモリの使い捨て SQLite を与える。
@@ -123,9 +164,7 @@ export default defineConfig({
               DEMO_MYSQL_PASSWORD: process.env.DEMO_MYSQL_PASSWORD ?? 'hubble-demo',
               DEMO_POSTGRES_PASSWORD: process.env.DEMO_POSTGRES_PASSWORD ?? 'hubble-demo',
             }
-          : {
-              TRINO_BASE_URL: process.env.TRINO_BASE_URL ?? 'http://127.0.0.1:30080',
-            }),
+          : { DATASOURCES_PATH: singleDsConfigPath }),
         DEFAULT_CATALOG: 'tpch',
         DEFAULT_SCHEMA: 'tiny',
       },
@@ -151,7 +190,7 @@ export default defineConfig({
               DEMO_MYSQL_PASSWORD: process.env.DEMO_MYSQL_PASSWORD ?? 'hubble-demo',
               DEMO_POSTGRES_PASSWORD: process.env.DEMO_POSTGRES_PASSWORD ?? 'hubble-demo',
             }
-          : { TRINO_BASE_URL: process.env.TRINO_BASE_URL ?? 'http://127.0.0.1:30080' }),
+          : { DATASOURCES_PATH: singleDsConfigPath }),
         DEFAULT_CATALOG: 'tpch',
         DEFAULT_SCHEMA: 'tiny',
       },

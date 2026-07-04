@@ -1,7 +1,10 @@
 # Playwright マルチデータソース E2E 用 (MULTI_DS_E2E=1)。
 # ローカルで demo DB を起動している場合:
 #   docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d demo-mysql demo-postgres
-# Trino は既存 E2E と同様 TRINO_BASE_URL (既定 http://127.0.0.1:30080) を参照する。
+# サーバー本体は datasources.yaml からしか Trino 接続先を読まないため、baseUrl は
+# このファイルに固定値 (http://127.0.0.1:30080) を直書きしている。単一データソース
+# 構成の E2E(既定の P6 スイート)側は playwright.config.ts が E2E_TRINO_BASE_URL
+# (E2E ハーネス専用の環境変数) を埋め込んだ datasources.yaml を別途生成する。
 datasources:
   - id: trino-demo
     type: trino

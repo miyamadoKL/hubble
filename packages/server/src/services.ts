@@ -72,7 +72,7 @@ export async function buildServices(
   const env = options.env ?? process.env;
   const cwd = options.cwd;
   const rbacState = { current: loadRbac({ env, cwd }) };
-  const datasources = loadDatasources({ env, trino: config.trino, cwd });
+  const datasources = loadDatasources({ env, cwd });
   const buildEngineOptions: BuildEnginesOptions = {
     trinoConfig: config.trino,
     fetchImpl: options.fetchImpl,
@@ -161,7 +161,7 @@ export async function buildServices(
     if (reloadInFlight) return;
     reloadInFlight = true;
     try {
-      const next = loadDatasources({ env, trino: config.trino, cwd });
+      const next = loadDatasources({ env, cwd });
       const plan = planDatasourceReload(engines, datasources, next, buildEngineOptions);
       applyDatasourceReloadSync(
         {
