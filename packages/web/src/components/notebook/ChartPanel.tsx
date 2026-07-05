@@ -2,7 +2,8 @@
  * ChartPanel.tsx
  *
  * SQL セルの実行結果を表示する「チャート」タブの本体コンポーネント。
- * セルごとのチャート設定（軸に使う列や種類など）を chartConfigStore から読み込み、
+ * セルごとのチャート設定（軸に使う列や種類など）をノートブックのセル
+ * （`cell.chart`、サーバーへ永続化される）から読み込み、
  * 現在のクエリ結果の列構成と突き合わせて有効な設定に補正（reconcile）したうえで、
  * 設定操作 UI（ChartControls）と実際の描画（ChartView）をまとめて表示する。
  * 行が無い、あるいは数値列が無くグラフ化できない場合はガイダンス表示に切り替える。
@@ -14,7 +15,7 @@ import { ChartControls } from './ChartControls';
 import { ChartView } from './ChartView';
 import { EmptyState } from '../common/EmptyState';
 import { describeColumns, reconcileConfig } from '../../chart';
-import { useChartConfig, useChartConfigStore } from '../../chart/chartConfigStore';
+import { useNotebookStore } from '../../notebook/notebookStore';
 import type { ResultRow } from '../../execution';
 
 /**
@@ -25,7 +26,7 @@ import type { ResultRow } from '../../execution';
  */
 /**
  * クエリ結果をチャートとして表示するパネル。
- * @param cellId - 対象セルの ID（チャート設定を chartConfigStore に保存/読込する際のキーになる）。
+ * @param cellId - 対象セルの ID（チャート設定をノートブックセルに保存/読込する際のキーになる）。
  * @param columns - クエリ結果の列定義一覧。
  * @param rows - クエリ結果の行データ一覧。
  */
@@ -39,9 +40,17 @@ export function ChartPanel({
   rows: ReadonlyArray<ResultRow>;
 }) {
   // このセルに保存済みのチャート設定を購読する（未設定なら undefined）。
-  const stored = useChartConfig(cellId);
+  // 設定はノートブックセルの `chart` フィールドとして保持され、
+  // notebook 本体のオートセーブに乗ってサーバーへ永続化される。
+  const stored = useNotebookStore((s) => {
+    const ownerId = s.openIds.find((nbId) =>
+      s.open[nbId]?.notebook.cells.some((c) => c.id === cellId),
+    );
+    if (!ownerId) return undefined;
+    return s.open[ownerId]?.notebook.cells.find((c) => c.id === cellId)?.chart;
+  });
   // チャート設定を更新するためのストアアクション。
-  const setConfig = useChartConfigStore((s) => s.set);
+  const setConfig = useNotebookStore((s) => s.setCellChart);
 
   // 列定義を「型（数値/文字列/日時など）付き」の記述情報に変換する。columns が変わらない限り再計算しない。
   const cols = useMemo(() => describeColumns(columns), [columns]);

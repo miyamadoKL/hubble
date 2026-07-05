@@ -41,6 +41,15 @@ const notebook: Notebook = {
       name: 'First',
       collapsed: true,
       resultMeta: { rowCount: 1, executedAt: '2026-01-01T00:00:00.000Z' },
+      chart: {
+        type: 'lines',
+        xIndex: 0,
+        yIndices: [1, 2],
+        sort: 'none',
+        limit: 'all',
+        groupIndex: null,
+        sizeIndex: null,
+      },
     },
   ],
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -122,6 +131,9 @@ describe('github canonical', () => {
     const content = notebookToContent(notebook);
     expect(content).toContain('id: nb_1');
     expect(content).toContain('kind: sql');
+    // チャート設定はユーザーコンテンツなので正規形に含まれる。
+    expect(content).toContain('chart:');
+    expect(content).toContain('type: lines');
     expect(content).not.toContain('resultMeta');
     expect(content).not.toContain('createdAt');
     expect(content).not.toContain('owner');

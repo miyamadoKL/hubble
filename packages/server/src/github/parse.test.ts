@@ -71,7 +71,22 @@ describe('parseNotebookContent', () => {
       ],
       cells: [
         { id: 'c_old', kind: 'markdown', source: '# Title', collapsed: true },
-        { id: 'c_old2', kind: 'sql', source: 'SELECT 1', name: 'q1' },
+        {
+          id: 'c_old2',
+          kind: 'sql',
+          source: 'SELECT 1',
+          name: 'q1',
+          // チャート設定も正規形に含まれ、pull で復元されることを確認する。
+          chart: {
+            type: 'bars',
+            xIndex: 0,
+            yIndices: [1],
+            sort: 'desc',
+            limit: 25,
+            groupIndex: null,
+            sizeIndex: null,
+          },
+        },
       ],
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
@@ -88,6 +103,16 @@ describe('parseNotebookContent', () => {
     expect(parsed.cells[0]?.source).toBe('# Title');
     expect(parsed.cells[0]?.collapsed).toBe(true);
     expect(parsed.cells[1]?.name).toBe('q1');
+    expect(parsed.cells[0]?.chart).toBeUndefined();
+    expect(parsed.cells[1]?.chart).toEqual({
+      type: 'bars',
+      xIndex: 0,
+      yIndices: [1],
+      sort: 'desc',
+      limit: 25,
+      groupIndex: null,
+      sizeIndex: null,
+    });
   });
 
   it('throws on invalid YAML', () => {
