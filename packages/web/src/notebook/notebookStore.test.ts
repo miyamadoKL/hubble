@@ -230,6 +230,22 @@ describe('autosave debounce (fake timers)', () => {
     expect(update).not.toHaveBeenCalled();
     expect(localStorage.getItem(`hubble-draft:${id}`)).toContain('SELECT 9');
   });
+
+  test('view-only shared notebook is NOT autosaved to the server', async () => {
+    vi.useFakeTimers();
+    const update = vi.fn(async (_id: string, nb: Notebook) => nb);
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+
+    useNotebookStore
+      .getState()
+      .openNotebook(makeNotebook({ myPermission: 'view' }), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT 2');
+    vi.advanceTimersByTime(AUTOSAVE_DEBOUNCE_MS * 2);
+    await vi.runAllTimersAsync();
+
+    expect(update).not.toHaveBeenCalled();
+    expect(useNotebookStore.getState().open['nb-1']?.dirty).toBe(true);
+  });
 });
 
 describe('explicit persistence', () => {
@@ -259,6 +275,18 @@ describe('explicit persistence', () => {
     expect(update).toHaveBeenCalledTimes(1);
     expect(saved?.cells[0]?.source).toBe('SELECT 5');
     expect(useNotebookStore.getState().open['nb-1']?.dirty).toBe(false);
+  });
+
+  test('persistSavedNotebook skips view-only notebooks', async () => {
+    const update = vi.fn(async (_id: string, nb: Notebook) => nb);
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+    useNotebookStore
+      .getState()
+      .openNotebook(makeNotebook({ myPermission: 'view' }), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT 5');
+    const saved = await persistSavedNotebook('nb-1');
+    expect(update).not.toHaveBeenCalled();
+    expect(saved).toBeNull();
   });
 });
 

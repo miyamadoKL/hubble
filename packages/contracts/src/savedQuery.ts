@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isoTimestamp } from './common';
+import { myPermissionSchema } from './share';
 
 /**
  * SavedQuery model.
@@ -31,6 +32,10 @@ export const savedQuerySchema = z.object({
   createdAt: isoTimestamp,
   // 最終更新日時。
   updatedAt: isoTimestamp,
+  /** 所有者 user id。共有経由で取得した場合に設定される。 */
+  owner: z.string().optional(),
+  /** 呼び出し元の effective permission (owner / edit / view)。 */
+  myPermission: myPermissionSchema.optional(),
 });
 /** 保存済みクエリの推論型。 */
 export type SavedQuery = z.infer<typeof savedQuerySchema>;

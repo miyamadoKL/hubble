@@ -1,19 +1,21 @@
 /**
  * 保存済みクエリ（Saved Query）機能の永続化層。`saved_queries` テーブルへの
  * CRUD と、名前/SQL文/説明を対象とした `?query=` の部分一致検索を提供する。
- * お気に入り（is_favorite）を先頭に並べる点が一覧取得の特徴。全操作は
- * `owner` principal で絞り込まれ、他ユーザーの保存済みクエリは参照できない。
+ * お気に入り（is_favorite）を先頭に並べる点が一覧取得の特徴。所有分に加え、
+ * `document_shares` 経由で共有されたクエリも accessor 向けに一覧・取得できる。
  * アーキテクチャ上は `SqlDatabase` 抽象の上に乗るリポジトリ
  * 層で、契約型 `SavedQuery`（packages/contracts）との変換をこのファイルが担う。
  */
 import type {
   CreateSavedQueryRequest,
+  MyPermission,
   SavedQuery,
   UpdateSavedQueryRequest,
 } from '@hubble/contracts';
 import { savedQuerySchema } from '@hubble/contracts';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
+import { DocumentShareRepository, type ShareAccessor, type StoreForbidden } from './documentShares';
 import { likeParam } from './notebooks';
 
 /**
@@ -29,49 +31,59 @@ interface SavedQueryRow {
   schema: string | null;
   datasource_id: string | null;
   is_favorite: number;
+  owner: string;
   created_at: string;
   updated_at: string;
 }
 
 /**
  * CRUD for saved queries with a `?query=` LIKE search over name/statement.
- * Every operation is scoped to an `owner` principal.
+ * Every operation is scoped to an accessor (owner or shared permission).
  *
  * 保存済みクエリに対する CRUD と、name/statement/description を対象にした
- * `?query=` の LIKE 検索を提供するリポジトリ。全操作は `owner` principal で
- * 絞り込まれる。
+ * `?query=` の LIKE 検索を提供するリポジトリ。全操作は accessor でスコープされ、
+ * 所有分に加え document_shares 経由で共有されたクエリも参照できる。
  */
 export class SavedQueryRepository {
-  constructor(private readonly db: SqlDatabase) {}
+  constructor(
+    private readonly db: SqlDatabase,
+    private readonly shares: DocumentShareRepository,
+  ) {}
 
   /**
-   * owner の保存済みクエリを、お気に入り優先で更新日時降順に返す。`query` が
+   * accessor が所有または共有経由で参照できる保存済みクエリを返す。
+   * 所有分のお気に入りのみ先頭に並べ、残りは updated_at 降順。`query` が
    * 指定された場合は name/statement/description に対する部分一致（LIKE）で
-   * 絞り込む。
+   * 絞り込む（共有分にも適用される）。
    */
-  async list(owner: string, query?: string): Promise<SavedQuery[]> {
-    const rows =
-      query && query.trim() !== ''
-        ? await this.db.query<SavedQueryRow>(
-            `SELECT * FROM saved_queries
-             WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR statement LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
-             ORDER BY is_favorite DESC, updated_at DESC`,
-            [owner, likeParam(query), likeParam(query), likeParam(query)],
-          )
-        : await this.db.query<SavedQueryRow>(
-            `SELECT * FROM saved_queries WHERE owner = ? ORDER BY is_favorite DESC, updated_at DESC`,
-            [owner],
-          );
-    return rows.map(rowToSavedQuery);
+  async list(accessor: ShareAccessor, query?: string): Promise<SavedQuery[]> {
+    const ownedRows = await this.listOwnedRows(accessor.user, query);
+    const ownedIds = new Set(ownedRows.map((row) => row.id));
+    const sharedIds = await this.shares.listAccessibleDocumentIds('saved_query', accessor);
+    const sharedOnlyIds = [...sharedIds.keys()].filter((id) => !ownedIds.has(id));
+    const sharedRows =
+      sharedOnlyIds.length > 0 ? await this.fetchRowsByIds(sharedOnlyIds, query) : [];
+
+    const items: SavedQuery[] = [
+      ...ownedRows.map((row) => withAccessMeta(rowToSavedQuery(row), row.owner, 'owner')),
+      ...sharedRows.map((row) =>
+        withAccessMeta(rowToSavedQuery(row), row.owner, sharedIds.get(row.id)!),
+      ),
+    ];
+    return sortSavedQueries(items);
   }
 
-  /** owner が所有する単一の保存済みクエリを id で取得する。存在しなければ undefined。 */
-  async get(owner: string, id: string): Promise<SavedQuery | undefined> {
-    const rows = await this.db.query<SavedQueryRow>(
-      'SELECT * FROM saved_queries WHERE id = ? AND owner = ?',
-      [id, owner],
-    );
-    return rows[0] ? rowToSavedQuery(rows[0]) : undefined;
+  /** accessor が参照可能な単一の保存済みクエリを id で取得する。存在しないか権限がなければ undefined。 */
+  async get(accessor: ShareAccessor, id: string): Promise<SavedQuery | undefined> {
+    const owned = await this.getOwnedRow(id, accessor.user);
+    if (owned) {
+      return withAccessMeta(rowToSavedQuery(owned), owned.owner, 'owner');
+    }
+    const permission = await this.shares.resolvePermission('saved_query', id, accessor);
+    if (!permission) return undefined;
+    const row = await this.getRowById(id);
+    if (!row) return undefined;
+    return withAccessMeta(rowToSavedQuery(row), row.owner, permission);
   }
 
   /** 新しい保存済みクエリを作成する。id は `sq_` プレフィックス付きで採番される。 */
@@ -98,24 +110,130 @@ export class SavedQueryRepository {
     return saved;
   }
 
-  /** 既存の保存済みクエリを更新する。対象が owner のクエリとして存在しなければ undefined。 */
+  /**
+   * 既存の保存済みクエリを更新する。owner または edit 共有者のみ更新可能。
+   * view のみの場合は 'forbidden'、対象が存在しないか権限がなければ undefined。
+   */
   async update(
-    owner: string,
+    accessor: ShareAccessor,
     id: string,
     req: UpdateSavedQueryRequest,
-  ): Promise<SavedQuery | undefined> {
-    const existing = await this.get(owner, id);
+  ): Promise<SavedQuery | undefined | StoreForbidden> {
+    const owned = await this.getOwnedRow(id, accessor.user);
+    if (owned) {
+      return this.applyUpdate(owned, req, accessor.user, req.isFavorite, 'owner');
+    }
+
+    const permission = await this.shares.resolvePermission('saved_query', id, accessor);
+    if (!permission) return undefined;
+    if (permission === 'view') return 'forbidden';
+
+    const existing = await this.getRowById(id);
     if (!existing) return undefined;
+    // お気に入りは owner の状態のため、edit 共有者による更新では既存値を維持する。
+    // ドライバが is_favorite を文字列で返す可能性に備え、rowToSavedQuery と
+    // 同じく Number() で数値化してから真偽値化する。
+    return this.applyUpdate(
+      existing,
+      req,
+      existing.owner,
+      Number(existing.is_favorite) !== 0,
+      'edit',
+    );
+  }
+
+  /**
+   * 保存済みクエリを削除する。owner のみ可能。削除できたら true、対象が
+   * 存在しなければ false、共有されているが owner でない場合は 'forbidden'。
+   */
+  async delete(accessor: ShareAccessor, id: string): Promise<boolean | StoreForbidden> {
+    const owner = await this.getOwner(id);
+    if (!owner) return false;
+    if (owner !== accessor.user) {
+      const permission = await this.shares.resolvePermission('saved_query', id, accessor);
+      if (permission) return 'forbidden';
+      return false;
+    }
+
+    return this.db.transaction(async (tx) => {
+      const deleted = await tx.query<{ id: string }>(
+        'DELETE FROM saved_queries WHERE id = ? AND owner = ? RETURNING id',
+        [id, accessor.user],
+      );
+      if (deleted.length === 0) return false;
+      await new DocumentShareRepository(tx).deleteForDocument('saved_query', id);
+      return true;
+    });
+  }
+
+  /** ドキュメント id から owner user id を返す。存在しなければ undefined。 */
+  async getOwner(id: string): Promise<string | undefined> {
+    const rows = await this.db.query<{ owner: string }>(
+      'SELECT owner FROM saved_queries WHERE id = ?',
+      [id],
+    );
+    return rows[0]?.owner;
+  }
+
+  private async listOwnedRows(owner: string, query?: string): Promise<SavedQueryRow[]> {
+    if (query && query.trim() !== '') {
+      return this.db.query<SavedQueryRow>(
+        `SELECT * FROM saved_queries
+         WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR statement LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+         ORDER BY is_favorite DESC, updated_at DESC`,
+        [owner, likeParam(query), likeParam(query), likeParam(query)],
+      );
+    }
+    return this.db.query<SavedQueryRow>(
+      `SELECT * FROM saved_queries WHERE owner = ? ORDER BY is_favorite DESC, updated_at DESC`,
+      [owner],
+    );
+  }
+
+  private async fetchRowsByIds(ids: readonly string[], query?: string): Promise<SavedQueryRow[]> {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    const params: SqlParam[] = [...ids];
+    let sql = `SELECT * FROM saved_queries WHERE id IN (${placeholders})`;
+    if (query && query.trim() !== '') {
+      sql += ` AND (name LIKE ? ESCAPE '\\' OR statement LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')`;
+      params.push(likeParam(query), likeParam(query), likeParam(query));
+    }
+    return this.db.query<SavedQueryRow>(sql, params);
+  }
+
+  private async getOwnedRow(id: string, owner: string): Promise<SavedQueryRow | undefined> {
+    const rows = await this.db.query<SavedQueryRow>(
+      'SELECT * FROM saved_queries WHERE id = ? AND owner = ?',
+      [id, owner],
+    );
+    return rows[0];
+  }
+
+  private async getRowById(id: string): Promise<SavedQueryRow | undefined> {
+    const rows = await this.db.query<SavedQueryRow>('SELECT * FROM saved_queries WHERE id = ?', [
+      id,
+    ]);
+    return rows[0];
+  }
+
+  private async applyUpdate(
+    existing: SavedQueryRow,
+    req: UpdateSavedQueryRequest,
+    owner: string,
+    isFavorite: boolean,
+    myPermission: MyPermission,
+  ): Promise<SavedQuery> {
     // 既存値の上に req の値をマージし、スキーマで再バリデーションする。
     const updated: SavedQuery = savedQuerySchema.parse({
-      ...existing,
+      ...rowToSavedQuery(existing),
       name: req.name,
       description: req.description,
       statement: req.statement,
       catalog: req.catalog,
       schema: req.schema,
       datasourceId: req.datasourceId,
-      isFavorite: req.isFavorite,
+      isFavorite,
       updatedAt: new Date().toISOString(),
     });
     await this.db.run(
@@ -131,21 +249,24 @@ export class SavedQueryRepository {
         updated.datasourceId ?? null,
         updated.isFavorite ? 1 : 0,
         updated.updatedAt,
-        id,
+        existing.id,
         owner,
       ],
     );
-    return updated;
+    return withAccessMeta(updated, owner, myPermission);
   }
+}
 
-  /** 保存済みクエリを削除する。削除できたら true、対象が存在しなければ false。 */
-  async delete(owner: string, id: string): Promise<boolean> {
-    const deleted = await this.db.query<{ id: string }>(
-      'DELETE FROM saved_queries WHERE id = ? AND owner = ? RETURNING id',
-      [id, owner],
-    );
-    return deleted.length > 0;
-  }
+function withAccessMeta(saved: SavedQuery, owner: string, myPermission: MyPermission): SavedQuery {
+  return { ...saved, owner, myPermission };
+}
+
+function sortSavedQueries(items: SavedQuery[]): SavedQuery[] {
+  const ownedFavorites = items.filter((item) => item.myPermission === 'owner' && item.isFavorite);
+  const rest = items.filter((item) => !(item.myPermission === 'owner' && item.isFavorite));
+  rest.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  ownedFavorites.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return [...ownedFavorites, ...rest];
 }
 
 // DB 行をドメインオブジェクト `SavedQuery` へ変換する。catalog/schema は空文字

@@ -19,8 +19,11 @@ import { VariablePanel } from './VariablePanel';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { EmptyState } from '../common/EmptyState';
-import { NotebookText } from 'lucide-react';
+import { NotebookText, Share2 } from 'lucide-react';
 import { toast } from '../common/Toast';
+import { ShareModal } from '../common/ShareModal';
+import { listNotebookShares, updateNotebookShares } from '../../api/notebooks';
+import { isDocumentOwner } from '../../utils/documentShare';
 import {
   useCellExecution,
   executionActions,
@@ -87,6 +90,7 @@ export function NotebookView({
   // dragIndex / dragOverIndex: ネイティブ D&D によるセル並べ替えの進行状態
   //   （dragIndex は再レンダーを伴わない ref、dragOverIndex はホバー表示用の state）。
   const [pendingDelete, setPendingDelete] = useState<Cell | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const [editingMarkdownId, setEditingMarkdownId] = useState<string | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
   const dragIndex = useRef<number | null>(null);
@@ -107,6 +111,8 @@ export function NotebookView({
 
   const notebook = entry.notebook;
   const notebookId = notebook.id;
+  const readOnly = !entry.draft && notebook.myPermission === 'view';
+  const canShare = !entry.draft && isDocumentOwner(notebook.myPermission);
   const cellContext: ExecutionContext = { ...context, notebookId };
 
   // Build the variable value map for substitution.
@@ -198,6 +204,9 @@ export function NotebookView({
       <NotebookHeader
         name={notebook.name}
         description={notebook.description}
+        readOnly={readOnly}
+        canShare={canShare}
+        onShare={() => setShareOpen(true)}
         onRename={(name) => store.getState().renameNotebook(notebookId, name)}
         onDescribe={(d) => store.getState().setDescription(notebookId, d)}
       />
@@ -303,6 +312,15 @@ export function NotebookView({
           </pre>
         )}
       </Modal>
+      {canShare && (
+        <ShareModal
+          open={shareOpen}
+          onClose={() => setShareOpen(false)}
+          documentName={notebook.name}
+          fetchShares={() => listNotebookShares(notebookId)}
+          updateShares={(shares) => updateNotebookShares(notebookId, shares)}
+        />
+      )}
     </div>
   );
 }
@@ -362,11 +380,17 @@ function runCellById(
 function NotebookHeader({
   name,
   description,
+  readOnly,
+  canShare,
+  onShare,
   onRename,
   onDescribe,
 }: {
   name: string;
   description: string;
+  readOnly: boolean;
+  canShare: boolean;
+  onShare: () => void;
   onRename: (name: string) => void;
   onDescribe: (description: string) => void;
 }) {
@@ -378,72 +402,98 @@ function NotebookHeader({
 
   return (
     <header className="mb-4">
-      {/* タイトル：編集中は input、それ以外はクリックで編集を開始できる見出し */}
-      {editingName ? (
-        <input
-          autoFocus
-          value={nameDraft}
-          aria-label="Notebook name"
-          onChange={(e) => setNameDraft(e.target.value)}
-          onBlur={() => {
-            setEditingName(false);
-            onRename(nameDraft);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-            if (e.key === 'Escape') {
-              setNameDraft(name);
-              setEditingName(false);
-            }
-          }}
-          className="w-full bg-transparent text-lg font-semibold text-ink-strong focus:outline-none"
-        />
-      ) : (
-        <h1
-          className="cursor-text text-lg font-semibold text-ink-strong"
-          title="Click to rename"
-          onClick={() => {
-            setNameDraft(name);
-            setEditingName(true);
-          }}
-        >
-          {name}
-        </h1>
-      )}
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1">
+          {/* タイトル：read-only 時は編集不可、それ以外はクリックで編集開始 */}
+          {readOnly || editingName ? (
+            readOnly && !editingName ? (
+              <h1 className="text-lg font-semibold text-ink-strong">{name}</h1>
+            ) : (
+              <input
+                autoFocus
+                value={nameDraft}
+                aria-label="Notebook name"
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={() => {
+                  setEditingName(false);
+                  onRename(nameDraft);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                  if (e.key === 'Escape') {
+                    setNameDraft(name);
+                    setEditingName(false);
+                  }
+                }}
+                className="w-full bg-transparent text-lg font-semibold text-ink-strong focus:outline-none"
+              />
+            )
+          ) : (
+            <h1
+              className="cursor-text text-lg font-semibold text-ink-strong"
+              title="Click to rename"
+              onClick={() => {
+                setNameDraft(name);
+                setEditingName(true);
+              }}
+            >
+              {name}
+            </h1>
+          )}
 
-      {/* 説明：同様に編集中は input、それ以外はクリックで編集できるテキスト（未設定時はプレースホルダー） */}
-      {editingDesc ? (
-        <input
-          autoFocus
-          value={descDraft}
-          aria-label="Notebook description"
-          onChange={(e) => setDescDraft(e.target.value)}
-          onBlur={() => {
-            setEditingDesc(false);
-            onDescribe(descDraft);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-            if (e.key === 'Escape') {
-              setDescDraft(description);
-              setEditingDesc(false);
-            }
-          }}
-          placeholder="Add a description…"
-          className="mt-0.5 w-full bg-transparent text-sm text-ink-muted focus:outline-none"
-        />
-      ) : (
-        <p
-          className="mt-0.5 cursor-text text-sm text-ink-muted"
-          title="Click to edit description"
-          onClick={() => {
-            setDescDraft(description);
-            setEditingDesc(true);
-          }}
-        >
-          {description || <span className="text-ink-subtle italic">Add a description…</span>}
-        </p>
-      )}
+          {/* 説明：read-only 時は編集不可 */}
+          {readOnly || editingDesc ? (
+            readOnly && !editingDesc ? (
+              description ? (
+                <p className="mt-0.5 text-sm text-ink-muted">{description}</p>
+              ) : null
+            ) : (
+              <input
+                autoFocus
+                value={descDraft}
+                aria-label="Notebook description"
+                onChange={(e) => setDescDraft(e.target.value)}
+                onBlur={() => {
+                  setEditingDesc(false);
+                  onDescribe(descDraft);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                  if (e.key === 'Escape') {
+                    setDescDraft(description);
+                    setEditingDesc(false);
+                  }
+                }}
+                placeholder="Add a description…"
+                className="mt-0.5 w-full bg-transparent text-sm text-ink-muted focus:outline-none"
+              />
+            )
+          ) : (
+            <p
+              className="mt-0.5 cursor-text text-sm text-ink-muted"
+              title="Click to edit description"
+              onClick={() => {
+                setDescDraft(description);
+                setEditingDesc(true);
+              }}
+            >
+              {description || <span className="text-ink-subtle italic">Add a description…</span>}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {readOnly && (
+            <span className="rounded-full bg-surface-sunken px-2.5 py-0.5 font-mono text-2xs text-ink-muted">
+              Read-only
+            </span>
+          )}
+          {canShare && (
+            <Button variant="ghost" size="sm" icon={Share2} onClick={onShare}>
+              Share
+            </Button>
+          )}
+        </div>
+      </div>
     </header>
   );
 }

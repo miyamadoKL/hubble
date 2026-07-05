@@ -10,7 +10,13 @@ import { useState } from 'react';
 import type { SavedQuery } from '@hubble/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BookMarked, FilePlus2, Star, TextCursorInput, Trash2 } from 'lucide-react';
-import { listSavedQueries, updateSavedQuery, deleteSavedQuery } from '../../api/savedQueries';
+import {
+  listSavedQueries,
+  updateSavedQuery,
+  deleteSavedQuery,
+  listSavedQueryShares,
+  updateSavedQueryShares,
+} from '../../api/savedQueries';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { insertAtActiveCursor, addSqlCellWithSource } from '../../notebook';
 import { EmptyState } from '../common/EmptyState';
@@ -18,10 +24,14 @@ import { Spinner } from '../common/Spinner';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
+import { ShareModal } from '../common/ShareModal';
+import { DocumentShareBadge } from '../common/DocumentShareBadge';
 import { cn } from '../../utils/cn';
+import { isDocumentOwner } from '../../utils/documentShare';
 import { useDatasources } from '../../hooks/useDatasources';
 import { DatasourceBadge } from '../common/DatasourceBadge';
 import { trySelectDatasource } from '../../utils/applyDatasource';
+import { Share2 } from 'lucide-react';
 
 /**
  * Saved queries panel (一覧 / 検索 / お気に入りトグル / 削除 /
@@ -56,6 +66,7 @@ function SavedRow({
   onInsert,
   onNewCell,
   onDelete,
+  onShare,
 }: {
   query: SavedQuery;
   expanded: boolean;
@@ -65,28 +76,36 @@ function SavedRow({
   onInsert: () => void;
   onNewCell: () => void;
   onDelete: () => void;
+  onShare: () => void;
 }) {
+  const owner = isDocumentOwner(query.myPermission);
   // SQL 文の改行と連続空白を単一スペースに畳んで、折りたたみ表示用の 1 行要約を作る。
   const oneLine = query.statement.replace(/\s+/g, ' ').trim();
   return (
     <li className="group border-b border-border-subtle">
       <div className="flex items-start gap-2 px-3 py-2 transition-colors hover:bg-surface-sunken">
-        {/* お気に入りトグル用の星アイコンボタン。お気に入り時は塗りつぶし表示になる。 */}
-        <button
-          type="button"
-          aria-label={query.isFavorite ? 'Unfavorite' : 'Favorite'}
-          aria-pressed={query.isFavorite}
-          onClick={onToggleFavorite}
-          className="mt-0.5 shrink-0 rounded-sm p-0.5"
-        >
-          <Star
-            size={14}
-            strokeWidth={1.75}
-            className={cn(
-              query.isFavorite ? 'fill-accent text-accent' : 'text-ink-subtle hover:text-ink-muted',
-            )}
-          />
-        </button>
+        {/* 所有者のみお気に入りトグルを表示する（共有行の isFavorite は所有者側の状態）。 */}
+        {owner ? (
+          <button
+            type="button"
+            aria-label={query.isFavorite ? 'Unfavorite' : 'Favorite'}
+            aria-pressed={query.isFavorite}
+            onClick={onToggleFavorite}
+            className="mt-0.5 shrink-0 rounded-sm p-0.5"
+          >
+            <Star
+              size={14}
+              strokeWidth={1.75}
+              className={cn(
+                query.isFavorite
+                  ? 'fill-accent text-accent'
+                  : 'text-ink-subtle hover:text-ink-muted',
+              )}
+            />
+          </button>
+        ) : (
+          <span className="mt-0.5 w-[22px] shrink-0" aria-hidden />
+        )}
         {/* 名前、SQL 1 行要約、説明を表示する、展開トグル用のクリック領域。 */}
         <button
           type="button"
@@ -97,6 +116,7 @@ function SavedRow({
           <p className="truncate text-sm font-medium text-ink-strong">{query.name}</p>
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
             <DatasourceBadge datasourceId={query.datasourceId} datasources={datasources} />
+            <DocumentShareBadge owner={query.owner} myPermission={query.myPermission} />
             <p className="min-w-0 flex-1 truncate font-mono text-2xs text-ink-subtle">{oneLine}</p>
           </div>
           {query.description && (
@@ -120,16 +140,22 @@ function SavedRow({
             <Button variant="ghost" size="sm" icon={FilePlus2} onClick={onNewCell}>
               New cell
             </Button>
-            {/* 削除確認モーダルを開く（実際の削除はモーダル側の確定操作で実行される）。 */}
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={Trash2}
-              onClick={onDelete}
-              className="ml-auto text-ink-subtle hover:text-error"
-            >
-              Delete
-            </Button>
+            {owner && (
+              <Button variant="ghost" size="sm" icon={Share2} onClick={onShare}>
+                Share
+              </Button>
+            )}
+            {owner && (
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={Trash2}
+                onClick={onDelete}
+                className="ml-auto text-ink-subtle hover:text-error"
+              >
+                Delete
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -158,6 +184,8 @@ export function SavedQueriesPanel({ search }: { search: string }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // 削除確認モーダルの対象。null ならモーダルは非表示。
   const [pendingDelete, setPendingDelete] = useState<SavedQuery | null>(null);
+  // 共有編集モーダルの対象。null なら非表示。
+  const [pendingShare, setPendingShare] = useState<SavedQuery | null>(null);
 
   // デバウンス済み検索語で一覧を取得する。
   const list = useQuery({
@@ -261,6 +289,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
               }
             }}
             onDelete={() => setPendingDelete(query)}
+            onShare={() => setPendingShare(query)}
           />
         ))}
       </ul>
@@ -290,6 +319,19 @@ export function SavedQueriesPanel({ search }: { search: string }) {
             </Button>
           </>
         }
+      />
+      <ShareModal
+        open={pendingShare !== null}
+        onClose={() => setPendingShare(null)}
+        documentName={pendingShare?.name ?? ''}
+        fetchShares={() => {
+          if (!pendingShare) return Promise.reject(new Error('No document'));
+          return listSavedQueryShares(pendingShare.id);
+        }}
+        updateShares={(shares) => {
+          if (!pendingShare) return Promise.reject(new Error('No document'));
+          return updateSavedQueryShares(pendingShare.id, shares);
+        }}
       />
     </>
   );
