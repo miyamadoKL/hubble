@@ -44,6 +44,8 @@ export * from './history';
 export * from './schedule';
 // Alert（保存クエリ結果の閾値監視）の契約
 export * from './alert';
+// Dashboard（クエリ結果とチャートのグリッド配置）の契約
+export * from './dashboard';
 // クエリワークフロー（多段 SQL オーケストレーション）の契約
 export * from './workflow';
 // GitHub 連携の契約
