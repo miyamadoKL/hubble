@@ -265,9 +265,9 @@ export function WorkflowView() {
 
   return (
     <WorkflowEditor
-      // id が変わったら (別ワークフローを開いた、新規→保存済みへ遷移した) 再マウント
-      // してドラフトと選択 run を初期化し直す。
-      key={workflowId ?? 'new'}
+      // id または updatedAt が変わったら (別ワークフローを開いた、新規→保存済みへ遷移した、
+      // GitHub pull などサーバー側で内容が更新された) 再マウントしてドラフトを初期化し直す。
+      key={workflowId ? `${workflowId}:${workflow?.updatedAt ?? ''}` : 'new'}
       workflowId={workflowId}
       workflow={workflow}
       datasources={datasources}

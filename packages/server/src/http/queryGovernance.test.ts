@@ -69,6 +69,7 @@ function githubConfigOverrides() {
       defaultBranch: 'main',
       governance: 'on' as const,
       statusTtlSeconds: 120,
+      syncCron: null,
     },
   };
 }

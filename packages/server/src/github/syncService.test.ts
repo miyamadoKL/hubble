@@ -7,7 +7,7 @@ import { SavedQueryRepository } from '../store/savedQueries';
 import { DocumentShareRepository } from '../store/documentShares';
 import { WorkflowRepository } from '../store/workflows';
 import { dbBackends } from '../test/dbBackends';
-import { savedQueryToContent } from './canonical';
+import { savedQueryToContent, contentHash, documentPath, documentToContent } from './canonical';
 import { GithubPullRequestExistsError, type GithubClient } from './client';
 import { DocumentGitLinkRepository, GithubConnectionRepository } from './store';
 import { GithubSyncService } from './syncService';
@@ -104,6 +104,7 @@ function buildService(
   db: Awaited<ReturnType<(typeof dbBackends)[0]['open']>>,
   client: FakeGithubClient,
   now = () => Date.now(),
+  configOverrides: Partial<ReturnType<typeof loadServerConfig>['github']> = {},
 ) {
   const shares = new DocumentShareRepository(db);
   const savedQueries = new SavedQueryRepository(db, shares);
@@ -112,12 +113,13 @@ function buildService(
   const audit = new AuditLogger(new AuditRepository(db));
   const connections = new GithubConnectionRepository(db);
   const links = new DocumentGitLinkRepository(db);
-  const config = loadServerConfig({
+  const baseConfig = loadServerConfig({
     GITHUB_REPO: REPO,
     GITHUB_APP_CLIENT_ID: 'cid',
     GITHUB_APP_CLIENT_SECRET: 'sec',
     GITHUB_TOKEN_ENCRYPTION_KEY: KEY.toString('base64'),
   }).github;
+  const config = { ...baseConfig, ...configOverrides };
   const service = new GithubSyncService({
     config,
     client,
@@ -130,7 +132,7 @@ function buildService(
     encryptionKey: KEY,
     now,
   });
-  return { service, savedQueries, links, shares };
+  return { service, savedQueries, notebooks, workflows, links, shares, audit, config };
 }
 
 const principalAlice = {
@@ -299,6 +301,316 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
       status: 401,
       detail: { code: 'GITHUB_NOT_CONNECTED' },
     });
+    await db.close();
+  });
+
+  it('pullDocument overwrites local content and preserves isFavorite', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, links } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const saved = await savedQueries.create('alice', {
+      name: 'Q',
+      statement: 'SELECT 1',
+      isFavorite: true,
+    });
+    await savedQueries.update(accessorAlice, saved.id, {
+      name: 'Q',
+      description: '',
+      statement: 'SELECT local',
+      isFavorite: true,
+    });
+    const remoteContent = savedQueryToContent({
+      ...saved,
+      statement: 'SELECT remote',
+    });
+    const remoteHash = contentHash(remoteContent);
+    await links.upsert('saved_query', saved.id, {
+      path: documentPath('saved_query', saved.id),
+      approvedHash: contentHash(
+        savedQueryToContent({ ...saved, statement: 'SELECT local', isFavorite: true }),
+      ),
+    });
+    client.files.set(`${DEFAULT_BRANCH}:saved-queries/${saved.id}.sql`, {
+      contentText: remoteContent,
+      sha: 'remote-sha',
+    });
+
+    const result = await service.pullDocument(principalAlice, 'saved_query', saved.id);
+    expect(result).toEqual({ pulled: true, commit: 'remote-sha', status: 'approved' });
+
+    const updated = await savedQueries.get(accessorAlice, saved.id);
+    expect(updated?.statement).toBe('SELECT remote');
+    expect(updated?.isFavorite).toBe(true);
+
+    const link = await links.get('saved_query', saved.id);
+    expect(link?.approvedHash).toBe(remoteHash);
+    expect(link?.lastPushedHash).toBe(remoteHash);
+    await db.close();
+  });
+
+  it('pullDocument rejects non-owner and missing link or file', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, links, shares } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    await service.connect('bob', 'oauth-code');
+    const saved = await savedQueries.create('alice', {
+      name: 'Q',
+      statement: 'SELECT 1',
+    });
+    await shares.replaceForDocument(
+      'saved_query',
+      saved.id,
+      [{ subjectType: 'user', subjectValue: 'bob', permission: 'edit' }],
+      'alice',
+    );
+    const principalBob = {
+      user: 'bob',
+      role: { name: 'admin', permissions: new Set(['query.write'] as const) },
+      groups: [] as string[],
+    } as Principal;
+
+    await expect(service.pullDocument(principalBob, 'saved_query', saved.id)).rejects.toMatchObject(
+      {
+        status: 403,
+      },
+    );
+
+    await expect(
+      service.pullDocument(principalAlice, 'saved_query', saved.id),
+    ).rejects.toMatchObject({
+      status: 400,
+      detail: { code: 'GITHUB_NOT_LINKED' },
+    });
+
+    await links.upsert('saved_query', saved.id, {
+      path: documentPath('saved_query', saved.id),
+      approvedHash: 'abc',
+    });
+    await expect(
+      service.pullDocument(principalAlice, 'saved_query', saved.id),
+    ).rejects.toMatchObject({
+      status: 404,
+      detail: { code: 'GITHUB_FILE_MISSING' },
+    });
+    await db.close();
+  });
+
+  it('pullDocument preserves workflow enabled flag', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, workflows, links } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const workflow = await workflows.create('alice', {
+      name: 'WF',
+      datasourceId: 'trino-default',
+      enabled: false,
+      stages: [{ steps: [{ id: 's1', name: 'S', statement: 'SELECT 1', onFailure: 'stop' }] }],
+    });
+    const remoteContent = documentToContent('workflow', {
+      ...workflow,
+      stages: [{ steps: [{ id: 's1', name: 'S', statement: 'SELECT 2', onFailure: 'stop' }] }],
+    });
+    await links.upsert('workflow', workflow.id, {
+      path: documentPath('workflow', workflow.id),
+      approvedHash: contentHash(documentToContent('workflow', workflow)),
+    });
+    client.files.set(`${DEFAULT_BRANCH}:workflows/${workflow.id}.yaml`, {
+      contentText: remoteContent,
+      sha: 'wf-sha',
+    });
+
+    await service.pullDocument(principalAlice, 'workflow', workflow.id);
+    const updated = await workflows.get('alice', workflow.id);
+    expect(updated?.stages[0]?.steps[0]?.statement).toBe('SELECT 2');
+    expect(updated?.enabled).toBe(false);
+    await db.close();
+  });
+
+  it('pullDocument assigns new notebook cell ids', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, notebooks, links } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const notebook = await notebooks.create('alice', {
+      name: 'NB',
+      cells: [{ id: 'c_local', kind: 'sql', source: 'SELECT 1' }],
+    });
+    const remoteContent = documentToContent('notebook', {
+      ...notebook,
+      cells: [{ id: 'c_ignored', kind: 'sql', source: 'SELECT 2' }],
+    });
+    await links.upsert('notebook', notebook.id, {
+      path: documentPath('notebook', notebook.id),
+      approvedHash: contentHash(documentToContent('notebook', notebook)),
+    });
+    client.files.set(`${DEFAULT_BRANCH}:notebooks/${notebook.id}.yaml`, {
+      contentText: remoteContent,
+      sha: 'nb-sha',
+    });
+
+    await service.pullDocument(principalAlice, 'notebook', notebook.id);
+    const updated = await notebooks.get(accessorAlice, notebook.id);
+    expect(updated?.cells[0]?.source).toBe('SELECT 2');
+    expect(updated?.cells[0]?.id).not.toBe('c_local');
+    expect(updated?.cells[0]?.id.startsWith('c_')).toBe(true);
+    await db.close();
+  });
+
+  it('syncAll pulls unchanged local when main advanced', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, links } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const saved = await savedQueries.create('alice', {
+      name: 'Q',
+      statement: 'SELECT 1',
+    });
+    const localContent = documentToContent('saved_query', saved);
+    const localHash = contentHash(localContent);
+    await links.upsert('saved_query', saved.id, {
+      path: documentPath('saved_query', saved.id),
+      approvedHash: localHash,
+    });
+    const remoteContent = savedQueryToContent({ ...saved, statement: 'SELECT 9' });
+    client.files.set(`${DEFAULT_BRANCH}:saved-queries/${saved.id}.sql`, {
+      contentText: remoteContent,
+      sha: 'new-sha',
+    });
+
+    const summary = await service.syncAll();
+    expect(summary.updated).toBe(1);
+    const updated = await savedQueries.get(accessorAlice, saved.id);
+    expect(updated?.statement).toBe('SELECT 9');
+    const link = await links.get('saved_query', saved.id);
+    expect(link?.approvedHash).toBe(contentHash(remoteContent));
+    await db.close();
+  });
+
+  it('syncAll skips locally modified documents', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, links } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const saved = await savedQueries.create('alice', {
+      name: 'Q',
+      statement: 'SELECT 1',
+    });
+    await links.upsert('saved_query', saved.id, {
+      path: documentPath('saved_query', saved.id),
+      approvedHash: contentHash(savedQueryToContent(saved)),
+    });
+    await savedQueries.update(accessorAlice, saved.id, {
+      name: 'Q',
+      description: '',
+      statement: 'SELECT local-edit',
+      isFavorite: false,
+    });
+    client.files.set(`${DEFAULT_BRANCH}:saved-queries/${saved.id}.sql`, {
+      contentText: savedQueryToContent({ ...saved, statement: 'SELECT remote' }),
+      sha: 'remote-sha',
+    });
+
+    const summary = await service.syncAll();
+    expect(summary.skippedModified).toBe(1);
+    expect(summary.updated).toBe(0);
+    const doc = await savedQueries.get(accessorAlice, saved.id);
+    expect(doc?.statement).toBe('SELECT local-edit');
+    await db.close();
+  });
+
+  it('syncAll skips when owner is not connected and no sync token', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, links } = buildService(db, client);
+    const saved = await savedQueries.create('alice', {
+      name: 'Q',
+      statement: 'SELECT 1',
+    });
+    await links.upsert('saved_query', saved.id, {
+      path: documentPath('saved_query', saved.id),
+      approvedHash: contentHash(savedQueryToContent(saved)),
+    });
+    client.files.set(`${DEFAULT_BRANCH}:saved-queries/${saved.id}.sql`, {
+      contentText: savedQueryToContent({ ...saved, statement: 'SELECT 9' }),
+      sha: 'remote-sha',
+    });
+
+    const summary = await service.syncAll();
+    expect(summary.skippedNoToken).toBe(1);
+    await db.close();
+  });
+
+  it('syncAll uses GITHUB_SYNC_TOKEN when owner is not connected', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, links } = buildService(db, client, () => Date.now(), {
+      syncToken: 'server-token',
+    });
+    const saved = await savedQueries.create('alice', {
+      name: 'Q',
+      statement: 'SELECT 1',
+    });
+    const localHash = contentHash(savedQueryToContent(saved));
+    await links.upsert('saved_query', saved.id, {
+      path: documentPath('saved_query', saved.id),
+      approvedHash: localHash,
+    });
+    client.files.set(`${DEFAULT_BRANCH}:saved-queries/${saved.id}.sql`, {
+      contentText: savedQueryToContent({ ...saved, statement: 'SELECT synced' }),
+      sha: 'sync-sha',
+    });
+
+    const summary = await service.syncAll();
+    expect(summary.updated).toBe(1);
+    await db.close();
+  });
+
+  it('syncAll counts parse failures and continues', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, notebooks, links } = buildService(db, client, () => Date.now(), {
+      syncToken: 'server-token',
+    });
+    const notebook = await notebooks.create('alice', { name: 'NB' });
+    await links.upsert('notebook', notebook.id, {
+      path: documentPath('notebook', notebook.id),
+      approvedHash: contentHash(documentToContent('notebook', notebook)),
+    });
+    client.files.set(`${DEFAULT_BRANCH}:notebooks/${notebook.id}.yaml`, {
+      contentText: 'name: NB\ndescription: ""\ncontext: {}\nvariables: []\ncells: []\n',
+      sha: 'bad-sha',
+    });
+
+    const summary = await service.syncAll();
+    expect(summary.failed).toBe(1);
+    await db.close();
+  });
+
+  it('syncAll does nothing when main is unchanged', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, links } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const saved = await savedQueries.create('alice', {
+      name: 'Q',
+      statement: 'SELECT 1',
+    });
+    const content = savedQueryToContent(saved);
+    const hash = contentHash(content);
+    await links.upsert('saved_query', saved.id, {
+      path: documentPath('saved_query', saved.id),
+      approvedHash: hash,
+    });
+    client.files.set(`${DEFAULT_BRANCH}:saved-queries/${saved.id}.sql`, {
+      contentText: content,
+      sha: 'same-sha',
+    });
+
+    const summary = await service.syncAll();
+    expect(summary.updated).toBe(0);
+    expect(summary.skippedModified).toBe(0);
     await db.close();
   });
 });

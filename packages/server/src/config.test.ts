@@ -108,6 +108,7 @@ describe('loadServerConfig integer bounds', () => {
       defaultBranch: 'main',
       governance: 'off',
       statusTtlSeconds: 120,
+      syncCron: null,
     });
   });
 
@@ -132,7 +133,47 @@ describe('loadServerConfig integer bounds', () => {
       tokenEncryptionKey: Buffer.from(key, 'base64'),
       governance: 'on',
       statusTtlSeconds: 60,
+      syncCron: '0 3 * * *',
     });
+  });
+
+  it('disables scheduled sync when GITHUB_SYNC_CRON=off', () => {
+    const key = Buffer.alloc(32, 9).toString('base64');
+    expect(
+      loadServerConfig({
+        GITHUB_REPO: 'acme/docs',
+        GITHUB_APP_CLIENT_ID: 'cid',
+        GITHUB_APP_CLIENT_SECRET: 'sec',
+        GITHUB_TOKEN_ENCRYPTION_KEY: key,
+        GITHUB_SYNC_CRON: 'off',
+      }).github.syncCron,
+    ).toBeNull();
+  });
+
+  it('loads GITHUB_SYNC_TOKEN when configured', () => {
+    const key = Buffer.alloc(32, 9).toString('base64');
+    expect(
+      loadServerConfig({
+        GITHUB_REPO: 'acme/docs',
+        GITHUB_APP_CLIENT_ID: 'cid',
+        GITHUB_APP_CLIENT_SECRET: 'sec',
+        GITHUB_TOKEN_ENCRYPTION_KEY: key,
+        GITHUB_SYNC_TOKEN: 'server-pat',
+      }).github.syncToken,
+    ).toBe('server-pat');
+  });
+
+  it('rejects invalid GITHUB_SYNC_CRON when repo is configured', () => {
+    const key = Buffer.alloc(32, 9).toString('base64');
+    expect(() =>
+      loadServerConfig({
+        GITHUB_REPO: 'acme/docs',
+        GITHUB_APP_CLIENT_ID: 'cid',
+        GITHUB_APP_CLIENT_SECRET: 'sec',
+        GITHUB_TOKEN_ENCRYPTION_KEY: key,
+        GITHUB_SYNC_CRON: 'not-a-cron',
+      }),
+    ).toThrow(/GITHUB_SYNC_CRON/);
   });
 
   it('rejects invalid GitHub encryption key when repo is configured', () => {

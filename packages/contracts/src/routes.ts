@@ -125,6 +125,8 @@ export const apiRoutes = {
     `/api/github/documents/${enc(type)}/${enc(id)}/push`,
   githubDocumentPr: (type: string, id: string) =>
     `/api/github/documents/${enc(type)}/${enc(id)}/pr`,
+  githubDocumentPull: (type: string, id: string) =>
+    `/api/github/documents/${enc(type)}/${enc(id)}/pull`,
 } as const;
 
 /** apiRoutes オブジェクト全体の型（各エンドポイントの型を参照する際に使う）。 */

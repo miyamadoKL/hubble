@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   apiRoutes,
   githubDocumentPrResponseSchema,
+  githubDocumentPullResponseSchema,
   githubDocumentPushResponseSchema,
   githubDocumentStatusResponseSchema,
   githubStatusResponseSchema,
@@ -107,6 +108,7 @@ describe('github routes', () => {
           tokenEncryptionKey: KEY,
           governance: 'off',
           statusTtlSeconds: 120,
+          syncCron: null,
         },
       },
     });
@@ -154,6 +156,7 @@ describe('github routes', () => {
           tokenEncryptionKey: KEY,
           governance: 'off',
           statusTtlSeconds: 120,
+          syncCron: null,
         },
       },
     });
@@ -202,6 +205,66 @@ describe('github routes', () => {
     expect(audit.some((row) => row.action === 'github.connect')).toBe(true);
     expect(audit.some((row) => row.action === 'github.push')).toBe(true);
     expect(audit.some((row) => row.action === 'github.pr.create')).toBe(true);
+    await ctx.services.shutdown();
+  });
+
+  it('pulls document from main and records audit', async () => {
+    const fixedNow = Date.parse('2026-01-01T00:00:00.000Z');
+    const githubClient = new RouteFakeGithubClient();
+    const ctx = await createTestContext({
+      env: GITHUB_ENV,
+      githubClient,
+      configOverrides: {
+        github: {
+          enabled: true,
+          repo: GITHUB_ENV.GITHUB_REPO,
+          defaultBranch: 'main',
+          clientId: GITHUB_ENV.GITHUB_APP_CLIENT_ID,
+          clientSecret: GITHUB_ENV.GITHUB_APP_CLIENT_SECRET,
+          tokenEncryptionKey: KEY,
+          governance: 'off',
+          statusTtlSeconds: 120,
+          syncCron: null,
+        },
+      },
+    });
+    ctx.services.githubNow = () => fixedNow;
+    const state = createOAuthState(KEY, 'admin', fixedNow);
+    await ctx.app.request(
+      `/api/github/callback?code=oauth-code&state=${encodeURIComponent(state)}`,
+      { redirect: 'manual' },
+    );
+
+    const createRes = await ctx.app.request('/api/saved-queries', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: 'Q', statement: 'SELECT 1' }),
+    });
+    const saved = (await createRes.json()) as { id: string };
+    await ctx.app.request(apiRoutes.githubDocumentPush('saved_query', saved.id), {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({}),
+    });
+
+    githubClient.files.set(`main:saved-queries/${saved.id}.sql`, {
+      contentText: `-- name: Q\n\nSELECT 9\n`,
+      sha: 'main-sha',
+    });
+
+    const pullRes = await ctx.app.request(apiRoutes.githubDocumentPull('saved_query', saved.id), {
+      method: 'POST',
+    });
+    expect(pullRes.status).toBe(200);
+    const pullBody = githubDocumentPullResponseSchema.parse(await pullRes.json());
+    expect(pullBody).toEqual({ pulled: true, commit: 'main-sha', status: 'approved' });
+
+    const getRes = await ctx.app.request(`/api/saved-queries/${saved.id}`);
+    const body = (await getRes.json()) as { statement: string };
+    expect(body.statement).toBe('SELECT 9');
+
+    const audit = await ctx.services.audit.listForTest();
+    expect(audit.some((row) => row.action === 'github.pull')).toBe(true);
     await ctx.services.shutdown();
   });
 });

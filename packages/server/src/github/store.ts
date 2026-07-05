@@ -245,6 +245,14 @@ export class DocumentGitLinkRepository {
     );
     return rows.map(rowToLink);
   }
+
+  /** 全 Git リンクを返す (定時同期用)。 */
+  async listAll(): Promise<DocumentGitLinkRecord[]> {
+    const rows = await this.db.query<DocumentGitLinkRow>(
+      'SELECT * FROM document_git_links ORDER BY document_type, document_id',
+    );
+    return rows.map(rowToLink);
+  }
 }
 
 function rowToConnection(row: GithubConnectionRow): GithubConnectionRecord {

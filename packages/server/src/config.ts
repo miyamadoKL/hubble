@@ -19,6 +19,7 @@ import {
   type GuardOnUnknown,
 } from '@hubble/contracts';
 import type { ResolvedDatasource } from './datasource/types';
+import { isValidCron } from './schedule/cron';
 
 /** How a proxy-supplied principal is derived from SSO headers. */
 /** 日本語: `AUTH_USER_MAPPING` で選択する、SSO ヘッダから principal（実行ユーザー名）を
@@ -251,6 +252,10 @@ export interface GithubConfig {
   governance: GithubGovernance;
   /** 承認状態キャッシュの TTL (秒)。 */
   statusTtlSeconds: number;
+  /** 定時同期の cron 式。null のとき定時同期は無効。 */
+  syncCron: string | null;
+  /** 定時同期の読み取り用サーバートークン (任意)。 */
+  syncToken?: string;
 }
 
 // 日本語: 以降は環境変数を型付きの値へ変換する小さなヘルパー群。
@@ -386,6 +391,7 @@ export function resolveGithubConfig(env: Env): GithubConfig {
       defaultBranch,
       governance,
       statusTtlSeconds,
+      syncCron: null,
     };
   }
 
@@ -418,6 +424,19 @@ export function resolveGithubConfig(env: Env): GithubConfig {
     );
   }
 
+  const syncCronRaw = envStr(env, 'GITHUB_SYNC_CRON', '0 3 * * *').trim();
+  let syncCron: string | null;
+  if (syncCronRaw.toLowerCase() === 'off') {
+    syncCron = null;
+  } else if (!isValidCron(syncCronRaw)) {
+    throw new Error(
+      `Invalid GITHUB_SYNC_CRON: ${JSON.stringify(syncCronRaw)} (expected 5-field cron or off)`,
+    );
+  } else {
+    syncCron = syncCronRaw;
+  }
+  const syncToken = envOptional(env, 'GITHUB_SYNC_TOKEN');
+
   return {
     enabled: true,
     repo,
@@ -427,6 +446,8 @@ export function resolveGithubConfig(env: Env): GithubConfig {
     tokenEncryptionKey,
     governance,
     statusTtlSeconds,
+    syncCron,
+    ...(syncToken !== undefined ? { syncToken } : {}),
   };
 }
 

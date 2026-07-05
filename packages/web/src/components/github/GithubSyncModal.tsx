@@ -6,17 +6,27 @@
  */
 import { useState } from 'react';
 import type { DocumentGitType } from '@hubble/contracts';
-import { ExternalLink, GitBranch, GitFork, GitPullRequest, UploadCloud } from 'lucide-react';
+import {
+  ExternalLink,
+  GitBranch,
+  GitFork,
+  GitPullRequest,
+  RotateCcw,
+  UploadCloud,
+} from 'lucide-react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Spinner } from '../common/Spinner';
 import { toast } from '../common/Toast';
 import { ApiClientError } from '../../api/client';
 import { githubConnectUrl } from '../../api/github';
+import { getNotebook } from '../../api/notebooks';
+import { useNotebookStore } from '../../notebook';
 import {
   useCreateDocumentPr,
   useDocumentGitStatus,
   useGithubStatus,
+  usePullDocument,
   usePushDocument,
 } from '../../hooks/useGithub';
 import { GitStatusBadge } from './GitStatusBadge';
@@ -51,13 +61,22 @@ export function GithubSyncModal({
   const status = useDocumentGitStatus(type, open ? id : null, enabled);
   const push = usePushDocument(type, id);
   const createPr = useCreateDocumentPr(type, id);
+  const pull = usePullDocument(type, id);
   const [message, setMessage] = useState('');
+  // 「main へ戻す」の 2 段階確認 (誤操作でローカル編集を破棄しないため)。
+  const [confirmPull, setConfirmPull] = useState(false);
 
   if (!open) return null;
 
   const connected = global.data?.connected ?? false;
   const doc = status.data;
-  const busy = push.isPending || createPr.isPending;
+  const busy = push.isPending || createPr.isPending || pull.isPending;
+
+  // 閉じるときに 2 段階確認の状態をリセットする。
+  const close = () => {
+    setConfirmPull(false);
+    onClose();
+  };
 
   // API エラーをトーストに変換する共通ハンドラ。
   const onError = (title: string) => (err: unknown) => {
@@ -86,15 +105,53 @@ export function GithubSyncModal({
     });
   };
 
+  // ローカル編集を破棄して main の承認済み内容へ戻す。ノートブックが開いている
+  // 場合は取り込み後の内容をタブへ即時反映する (再オープン不要)。
+  const doPull = () => {
+    setConfirmPull(false);
+    pull.mutate(undefined, {
+      onSuccess: async (res) => {
+        toast.success('Reverted to main', `Now at ${res.commit.slice(0, 7)} (approved).`);
+        if (type === 'notebook') {
+          try {
+            const updated = await getNotebook(id);
+            useNotebookStore.getState().replaceNotebook(updated);
+          } catch {
+            /* タブ未オープンや取得失敗は無視 (一覧側のキャッシュ無効化で反映される) */
+          }
+        }
+      },
+      onError: onError('Revert failed'),
+    });
+  };
+
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={close}
       title="GitHub sync"
       description={`Version control and review for “${documentName}”.`}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
+          {/* main へ戻す (強制上書き)。リンク済みかつ承認内容が存在するときのみ。
+              誤操作防止のため 2 段階確認にする。 */}
+          {connected && doc && doc.status !== 'unlinked' && (
+            <Button
+              variant={confirmPull ? 'danger' : 'ghost'}
+              icon={RotateCcw}
+              onClick={() => (confirmPull ? doPull() : setConfirmPull(true))}
+              disabled={busy}
+              className="mr-auto"
+              title="Discard local changes and restore the approved version from the default branch"
+            >
+              {pull.isPending
+                ? 'Reverting…'
+                : confirmPull
+                  ? 'Discard local changes?'
+                  : 'Revert to main'}
+            </Button>
+          )}
+          <Button variant="ghost" onClick={close} disabled={busy}>
             Close
           </Button>
           {connected && (
