@@ -43,6 +43,7 @@ export type SidebarTab =
   | 'history'
   | 'schedules'
   | 'alerts'
+  | 'dashboards'
   | 'workflows'
   | 'operations';
 
@@ -53,6 +54,17 @@ export type SidebarTab =
  * 一時的な画面状態のため永続化しない。
  */
 export type WorkflowViewState = { kind: 'workflow'; id: string } | { kind: 'new-workflow' } | null;
+
+/**
+ * メインエリアに表示するダッシュボードビューの状態。
+ * null はノートブック表示 (通常状態)、`{ kind: 'dashboard' }` は既存ダッシュボードの
+ * 表示/編集ビュー、`{ kind: 'new-dashboard' }` は新規作成ビューを表す。
+ * 一時的な画面状態のため永続化しない。
+ */
+export type DashboardViewState =
+  | { kind: 'dashboard'; id: string }
+  | { kind: 'new-dashboard' }
+  | null;
 
 /** サイドバーの最小幅（ピクセル）。これより狭くはドラッグでリサイズできない。 */
 export const SIDEBAR_MIN_WIDTH = 200;
@@ -133,6 +145,8 @@ interface UiState {
   shellDefaultLimit: number;
   /** メインエリアに表示するワークフロービュー。null ならノートブック表示。 */
   workflowView: WorkflowViewState;
+  /** メインエリアに表示するダッシュボードビュー。null ならノートブック表示。 */
+  dashboardView: DashboardViewState;
 
   /** テーマを指定した値に設定し、DOM にも即座に反映する。 */
   setTheme: (mode: ThemeMode) => void;
@@ -171,6 +185,12 @@ interface UiState {
   openNewWorkflow: () => void;
   /** ワークフロービューを閉じてノートブック表示へ戻る。 */
   closeWorkflow: () => void;
+  /** 既存ダッシュボードをメインエリアで開く。 */
+  openDashboard: (id: string) => void;
+  /** 新規ダッシュボード作成ビューをメインエリアで開く。 */
+  openNewDashboard: () => void;
+  /** ダッシュボードビューを閉じてノートブック表示へ戻る。 */
+  closeDashboard: () => void;
 }
 
 /**
@@ -197,6 +217,7 @@ export const useUiStore = create<UiState>()(
       shellContext: {},
       shellDefaultLimit: 5000,
       workflowView: null,
+      dashboardView: null,
 
       // --- 各アクション（状態を更新する関数）の実装 ---
 
@@ -247,12 +268,18 @@ export const useUiStore = create<UiState>()(
       // ミラー値をまとめて更新する。
       setShellRuntime: (shellContext, shellDefaultLimit) =>
         set({ shellContext, shellDefaultLimit }),
-      // 既存ワークフローをメインエリアで開く。
-      openWorkflow: (id) => set({ workflowView: { kind: 'workflow', id } }),
-      // 新規作成ビューを開く。
-      openNewWorkflow: () => set({ workflowView: { kind: 'new-workflow' } }),
+      // 既存ワークフローをメインエリアで開く。ダッシュボードビューとは排他。
+      openWorkflow: (id) => set({ workflowView: { kind: 'workflow', id }, dashboardView: null }),
+      // 新規作成ビューを開く。ダッシュボードビューとは排他。
+      openNewWorkflow: () => set({ workflowView: { kind: 'new-workflow' }, dashboardView: null }),
       // ワークフロービューを閉じてノートブック表示へ戻す。
       closeWorkflow: () => set({ workflowView: null }),
+      // 既存ダッシュボードをメインエリアで開く。ワークフロービューとは排他。
+      openDashboard: (id) => set({ dashboardView: { kind: 'dashboard', id }, workflowView: null }),
+      // 新規作成ビューを開く。ワークフロービューとは排他。
+      openNewDashboard: () => set({ dashboardView: { kind: 'new-dashboard' }, workflowView: null }),
+      // ダッシュボードビューを閉じてノートブック表示へ戻す。
+      closeDashboard: () => set({ dashboardView: null }),
     }),
     {
       // localStorage に保存する際のキー名。

@@ -43,6 +43,17 @@ export function listSavedQueries(query?: string): Promise<SavedQuery[]> {
 }
 
 /**
+ * `GET /api/saved-queries/:id` を呼び出し、単一の保存済みクエリを取得する。
+ * ダッシュボード widget が参照先クエリの statement を解決するために使う。
+ * @param id 対象の保存済みクエリ ID。
+ * @returns 保存済みクエリ。
+ * @throws {ApiClientError} 存在しない ID (共有されていない場合を含む) やリクエスト失敗時。
+ */
+export function getSavedQuery(id: string): Promise<SavedQuery> {
+  return apiFetch(savedQuerySchema, apiRoutes.savedQuery(id));
+}
+
+/**
  * Create a saved query (`POST`, 201) and return the persisted record.
  * `POST /api/saved-queries` を呼び出し、新規の保存済みクエリを作成する。
  * 成功時のステータスコードは 201。

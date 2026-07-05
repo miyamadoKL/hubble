@@ -30,18 +30,22 @@ import { Spinner } from '../common/Spinner';
  * @param columns - 結果セットのカラムメタ情報（軸やシリーズの割り当てに使われる）。
  * @param rows - 描画対象の結果行。
  * @param config - チャート種別、軸/シリーズのマッピングなどの描画設定。
- * @param height - チャート描画領域の高さ（px）。デフォルトは 320。
+ * @param height - チャート描画領域の高さ（px）。デフォルトは 320。fill 指定時は無視される。
+ * @param fill - true の場合、固定高さではなく親要素の高さいっぱいに描画する
+ *   (ダッシュボード widget などリサイズ可能なコンテナ向け)。
  */
 export function ChartView({
   columns,
   rows,
   config,
   height = 320,
+  fill = false,
 }: {
   columns: QueryColumn[];
   rows: ReadonlyArray<ResultRow>;
   config: ChartConfig;
   height?: number;
+  fill?: boolean;
 }) {
   // ECharts のキャンバスをマウントする DOM 要素への参照。
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -102,7 +106,10 @@ export function ChartView({
   }, [columns, rows, config, theme, ready]);
 
   return (
-    <div className="relative bg-surface-sunken" data-testid="chart-canvas">
+    <div
+      className={fill ? 'relative h-full bg-surface-sunken' : 'relative bg-surface-sunken'}
+      data-testid="chart-canvas"
+    >
       {/* ECharts の読み込みと初期化が完了するまでの間だけ表示するローディングオーバーレイ。 */}
       {!ready && (
         <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 font-mono text-2xs text-ink-subtle">
@@ -110,7 +117,11 @@ export function ChartView({
         </div>
       )}
       {/* ECharts が init() でキャンバスを描画する対象の DOM 要素。 */}
-      <div ref={hostRef} style={{ height }} className="w-full" />
+      <div
+        ref={hostRef}
+        style={fill ? undefined : { height }}
+        className={fill ? 'h-full w-full' : 'w-full'}
+      />
     </div>
   );
 }
