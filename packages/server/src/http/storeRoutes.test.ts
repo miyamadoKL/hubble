@@ -4,9 +4,19 @@ import {
   notebookListItemSchema,
   savedQuerySchema,
   historyResponseSchema,
+  listDocumentSharesResponseSchema,
 } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
+
+function proxyCtx() {
+  return createTestContext({
+    env: { AUTH_MODE: 'proxy' },
+    remoteAddress: () => '127.0.0.1',
+  });
+}
+
+const ssoHeaders = (email: string) => ({ 'x-forwarded-email': email });
 
 interface Parser<T> {
   parse(value: unknown): T;
@@ -211,5 +221,195 @@ describe('history auto-record', () => {
     );
     expect(page.items).toHaveLength(1);
     expect(page.total).toBe(2);
+  });
+});
+
+describe('document sharing', () => {
+  const alice = ssoHeaders('alice@corp.com');
+  const bob = ssoHeaders('bob@corp.com');
+  const carol = ssoHeaders('carol@corp.com');
+
+  it('saved-query shares: owner-only GET/PUT, duplicate 400, audit on PUT', async () => {
+    const ctx = await proxyCtx();
+    const created = await json(
+      await ctx.app.request('/api/saved-queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...alice },
+        body: JSON.stringify({ name: 'shared', statement: 'SELECT 1' }),
+      }),
+      savedQuerySchema,
+    );
+
+    const bobGetShares = await ctx.app.request(`/api/saved-queries/${created.id}/shares`, {
+      headers: bob,
+    });
+    expect(bobGetShares.status).toBe(404);
+
+    const bobPutShares = await ctx.app.request(`/api/saved-queries/${created.id}/shares`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...bob },
+      body: JSON.stringify({
+        shares: [{ subjectType: 'user', subjectValue: 'bob', permission: 'view' }],
+      }),
+    });
+    expect(bobPutShares.status).toBe(404);
+
+    const dup = await ctx.app.request(`/api/saved-queries/${created.id}/shares`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...alice },
+      body: JSON.stringify({
+        shares: [
+          { subjectType: 'user', subjectValue: 'bob', permission: 'view' },
+          { subjectType: 'user', subjectValue: 'bob', permission: 'edit' },
+        ],
+      }),
+    });
+    expect(dup.status).toBe(400);
+
+    const shares = await json(
+      await ctx.app.request(`/api/saved-queries/${created.id}/shares`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...alice },
+        body: JSON.stringify({
+          shares: [{ subjectType: 'user', subjectValue: 'bob', permission: 'edit' }],
+        }),
+      }),
+      listDocumentSharesResponseSchema,
+    );
+    expect(shares.shares).toHaveLength(1);
+    expect(shares.shares[0]!.permission).toBe('edit');
+
+    const bobSharesForbidden = await ctx.app.request(`/api/saved-queries/${created.id}/shares`, {
+      headers: bob,
+    });
+    expect(bobSharesForbidden.status).toBe(403);
+
+    const auditRows = await ctx.services.audit.listForTest();
+    const shareAudit = auditRows.find((row) => row.action === 'document.share.update');
+    expect(shareAudit).toMatchObject({
+      actor: 'alice',
+      target: `saved_query:${created.id}`,
+    });
+    expect(shareAudit?.detail).toMatchObject({ count: 1 });
+  });
+
+  it('shared saved query: list/get/update for edit; view-only PUT is 403', async () => {
+    const ctx = await proxyCtx();
+    const created = await json(
+      await ctx.app.request('/api/saved-queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...alice },
+        body: JSON.stringify({ name: 'mine', statement: 'SELECT 1', isFavorite: true }),
+      }),
+      savedQuerySchema,
+    );
+
+    await json(
+      await ctx.app.request(`/api/saved-queries/${created.id}/shares`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...alice },
+        body: JSON.stringify({
+          shares: [{ subjectType: 'user', subjectValue: 'bob', permission: 'view' }],
+        }),
+      }),
+      listDocumentSharesResponseSchema,
+    );
+
+    const bobList = await json(
+      await ctx.app.request('/api/saved-queries', { headers: bob }),
+      arrayOf(savedQuerySchema),
+    );
+    expect(bobList).toHaveLength(1);
+    expect(bobList[0]).toMatchObject({ owner: 'alice', myPermission: 'view' });
+
+    const bobGet = await json(
+      await ctx.app.request(`/api/saved-queries/${created.id}`, { headers: bob }),
+      savedQuerySchema,
+    );
+    expect(bobGet.myPermission).toBe('view');
+
+    const viewPut = await ctx.app.request(`/api/saved-queries/${created.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...bob },
+      body: JSON.stringify({
+        name: 'mine',
+        description: '',
+        statement: 'SELECT 9',
+        isFavorite: false,
+      }),
+    });
+    expect(viewPut.status).toBe(403);
+
+    await json(
+      await ctx.app.request(`/api/saved-queries/${created.id}/shares`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...alice },
+        body: JSON.stringify({
+          shares: [{ subjectType: 'user', subjectValue: 'bob', permission: 'edit' }],
+        }),
+      }),
+      listDocumentSharesResponseSchema,
+    );
+
+    const bobUpdated = await json(
+      await ctx.app.request(`/api/saved-queries/${created.id}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...bob },
+        body: JSON.stringify({
+          name: 'mine',
+          description: '',
+          statement: 'SELECT 9',
+          isFavorite: false,
+        }),
+      }),
+      savedQuerySchema,
+    );
+    expect(bobUpdated.statement).toBe('SELECT 9');
+    expect(bobUpdated.isFavorite).toBe(true);
+
+    const carolGet = await ctx.app.request(`/api/saved-queries/${created.id}`, { headers: carol });
+    expect(carolGet.status).toBe(404);
+
+    const bobDelete = await ctx.app.request(`/api/saved-queries/${created.id}`, {
+      method: 'DELETE',
+      headers: bob,
+    });
+    expect(bobDelete.status).toBe(403);
+  });
+
+  it('notebook shares: shared user can list and get; owner manages shares', async () => {
+    const ctx = await proxyCtx();
+    const created = await json(
+      await ctx.app.request('/api/notebooks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...alice },
+        body: JSON.stringify({ name: 'Team nb' }),
+      }),
+      notebookSchema,
+    );
+
+    await json(
+      await ctx.app.request(`/api/notebooks/${created.id}/shares`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...alice },
+        body: JSON.stringify({
+          shares: [{ subjectType: 'user', subjectValue: 'bob', permission: 'view' }],
+        }),
+      }),
+      listDocumentSharesResponseSchema,
+    );
+
+    const bobList = await json(
+      await ctx.app.request('/api/notebooks', { headers: bob }),
+      arrayOf(notebookListItemSchema),
+    );
+    expect(bobList).toHaveLength(1);
+    expect(bobList[0]).toMatchObject({ owner: 'alice', myPermission: 'view' });
+
+    const ownerShares = await json(
+      await ctx.app.request(`/api/notebooks/${created.id}/shares`, { headers: alice }),
+      listDocumentSharesResponseSchema,
+    );
+    expect(ownerShares.shares[0]!.subjectValue).toBe('bob');
   });
 });

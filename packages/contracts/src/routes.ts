@@ -74,12 +74,16 @@ export const apiRoutes = {
   notebooks: () => '/api/notebooks',
   // 単一ノートブックの取得、更新、削除。
   notebook: (id: string) => `/api/notebooks/${enc(id)}`,
+  // ノートブックの共有一覧取得と更新。
+  notebookShares: (id: string) => `/api/notebooks/${enc(id)}/shares`,
 
   // Saved queries
   // 保存済みクエリ一覧取得 / 新規作成の基点パス。
   savedQueries: () => '/api/saved-queries',
   // 単一の保存済みクエリの取得、更新、削除。
   savedQuery: (id: string) => `/api/saved-queries/${enc(id)}`,
+  // 保存済みクエリの共有一覧取得と更新。
+  savedQueryShares: (id: string) => `/api/saved-queries/${enc(id)}/shares`,
 
   // History
   // クエリ実行履歴一覧取得。

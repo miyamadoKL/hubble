@@ -13,8 +13,12 @@ import { z } from 'zod';
 import {
   savedQuerySchema,
   apiRoutes,
+  listDocumentSharesResponseSchema,
   type CreateSavedQueryRequest,
+  type DocumentShare,
+  type ListDocumentSharesResponse,
   type SavedQuery,
+  type UpdateSharesRequest,
   type UpdateSavedQueryRequest,
 } from '@hubble/contracts';
 import { apiFetch } from './client';
@@ -76,4 +80,33 @@ export async function deleteSavedQuery(id: string): Promise<boolean> {
   // サーバーからは { ok: boolean } が返るので、その ok フィールドのみを取り出す。
   const res = await apiFetch(okSchema, apiRoutes.savedQuery(id), { method: 'DELETE' });
   return res.ok;
+}
+
+/**
+ * 保存済みクエリの共有一覧を取得する (`GET /api/saved-queries/:id/shares`)。
+ * 所有者のみ呼び出し可能。
+ * @param id 対象の保存済みクエリ ID。
+ * @returns 共有エントリの配列を含むレスポンス。
+ * @throws {ApiClientError} 権限不足、存在しない ID、リクエスト失敗時。
+ */
+export function listSavedQueryShares(id: string): Promise<ListDocumentSharesResponse> {
+  return apiFetch(listDocumentSharesResponseSchema, apiRoutes.savedQueryShares(id));
+}
+
+/**
+ * 保存済みクエリの共有一覧を全置換する (`PUT /api/saved-queries/:id/shares`)。
+ * 所有者のみ呼び出し可能。
+ * @param id 対象の保存済みクエリ ID。
+ * @param shares 置き換え後の共有エントリ（createdAt なし）。
+ * @returns 更新後の共有一覧。
+ * @throws {ApiClientError} バリデーションエラー、権限不足、リクエスト失敗時。
+ */
+export function updateSavedQueryShares(
+  id: string,
+  shares: UpdateSharesRequest['shares'],
+): Promise<{ shares: DocumentShare[] }> {
+  return apiFetch(listDocumentSharesResponseSchema, apiRoutes.savedQueryShares(id), {
+    method: 'PUT',
+    body: { shares },
+  });
 }

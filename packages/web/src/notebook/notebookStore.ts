@@ -51,6 +51,7 @@ import type {
 import { uid } from '../utils/id';
 import { detectVariables, reconcileVariables } from './variables';
 import { readRecentContexts } from './recentContexts';
+import { canPersistNotebookToServer } from '../utils/documentShare';
 
 // ---- Persistence injection --------------------------------------------------
 
@@ -382,8 +383,10 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     if (entry.draft) {
       // draft はサーバーに保存先がないので localStorage への書き出しだけ行う。
       writeDraft(entry.notebook);
-    } else {
-      // 保存済み notebook はデバウンスして PUT する。
+    } else if (
+      canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })
+    ) {
+      // 保存済み notebook はデバウンスして PUT する（view 共有はスキップ）。
       scheduleAutosave(id);
     }
   };
@@ -404,6 +407,9 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
   const saveNow = async (id: string): Promise<void> => {
     const entry = get().open[id];
     if (!entry || entry.draft || !persistence) return;
+    if (!canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })) {
+      return;
+    }
     if (!entry.dirty) return;
     set((s) => ({ open: { ...s.open, [id]: { ...entry, saving: true } } }));
     try {
@@ -670,6 +676,9 @@ export async function persistSavedNotebook(id: string): Promise<Notebook | null>
   const store = useNotebookStore.getState();
   const entry = store.open[id];
   if (!entry || entry.draft) return null;
+  if (!canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })) {
+    return null;
+  }
   // 明示的な保存が発火するので、待機中のデバウンス timer は不要になる。
   clearAutosave(id);
   store.setSaving(id, true);

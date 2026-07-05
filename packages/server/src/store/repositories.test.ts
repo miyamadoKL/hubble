@@ -8,16 +8,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { dbBackends } from '../test/dbBackends';
+import { DocumentShareRepository, type ShareAccessor } from './documentShares';
 import { NotebookRepository } from './notebooks';
 import { SavedQueryRepository } from './savedQueries';
 import { HistoryRepository } from './history';
 
-/**
- * Repository CRUD suite, parameterized over every available backend. SQLite
- * always runs; PostgreSQL runs only when `TEST_DATABASE_URL` is set (see
- * test/dbBackends.ts). This is the contract-level assurance that the same SQL
- * behaves identically on both dialects.
- */
+function accessor(user: string, groups: readonly string[] = [], role = 'member'): ShareAccessor {
+  return { user, groups, role };
+}
+
 for (const backend of dbBackends) {
   describe(`repositories on ${backend.name}`, () => {
     let db: SqlDatabase;
@@ -31,52 +30,114 @@ for (const backend of dbBackends) {
       return db;
     }
 
+    async function openNotebookRepo(): Promise<{
+      repo: NotebookRepository;
+      shares: DocumentShareRepository;
+    }> {
+      const database = await open();
+      const shares = new DocumentShareRepository(database);
+      return { repo: new NotebookRepository(database, shares), shares };
+    }
+
+    async function openSavedQueryRepo(): Promise<{
+      repo: SavedQueryRepository;
+      shares: DocumentShareRepository;
+    }> {
+      const database = await open();
+      const shares = new DocumentShareRepository(database);
+      return { repo: new SavedQueryRepository(database, shares), shares };
+    }
+
     describe('NotebookRepository', () => {
-      // 作成→一覧→取得→更新→検索（LIKE ワイルドカードのエスケープ含む）→
-      // 削除の一連のライフサイクルと、owner による隔離を検証する。
       it('creates, lists, gets, updates, searches, deletes; owner-scoped', async () => {
-        const repo = new NotebookRepository(await open());
+        const { repo } = await openNotebookRepo();
 
         const created = await repo.create('alice', { name: 'Sales', description: 'q3 sales' });
         expect(created.id).toMatch(/^nb_/);
         expect(created.cells).toEqual([]);
 
-        // Owner isolation: bob sees nothing.
-        expect(await repo.list('bob')).toEqual([]);
-        expect(await repo.get('bob', created.id)).toBeUndefined();
+        expect(await repo.list(accessor('bob'))).toEqual([]);
+        expect(await repo.get(accessor('bob'), created.id)).toBeUndefined();
 
-        const list = await repo.list('alice');
+        const list = await repo.list(accessor('alice'));
         expect(list).toHaveLength(1);
         expect(list[0]!.name).toBe('Sales');
+        expect(list[0]!.myPermission).toBe('owner');
 
-        const got = await repo.get('alice', created.id);
+        const got = await repo.get(accessor('alice'), created.id);
         expect(got?.name).toBe('Sales');
+        expect(got?.myPermission).toBe('owner');
 
-        const updated = await repo.update('alice', created.id, {
+        const updated = await repo.update(accessor('alice'), created.id, {
           name: 'Renamed',
           description: 'updated',
           cells: [{ id: 'c1', kind: 'sql', source: 'SELECT 1' }],
           variables: [],
           context: { catalog: 'tpch' },
         });
-        expect(updated?.name).toBe('Renamed');
-        expect(updated?.cells).toHaveLength(1);
+        expect(updated).not.toBe('forbidden');
+        if (updated === 'forbidden' || updated === undefined) {
+          throw new Error('expected notebook update');
+        }
+        expect(updated.name).toBe('Renamed');
+        expect(updated.cells).toHaveLength(1);
 
-        expect(await repo.list('alice', 'Renam')).toHaveLength(1);
-        expect(await repo.list('alice', 'zzz')).toHaveLength(0);
-        // LIKE wildcards in the query are escaped, not treated as patterns.
-        expect(await repo.list('alice', '%')).toHaveLength(0);
+        expect(await repo.list(accessor('alice'), 'Renam')).toHaveLength(1);
+        expect(await repo.list(accessor('alice'), 'zzz')).toHaveLength(0);
+        expect(await repo.list(accessor('alice'), '%')).toHaveLength(0);
 
-        expect(await repo.delete('bob', created.id)).toBe(false);
-        expect(await repo.delete('alice', created.id)).toBe(true);
-        expect(await repo.get('alice', created.id)).toBeUndefined();
+        expect(await repo.delete(accessor('bob'), created.id)).toBe(false);
+        expect(await repo.delete(accessor('alice'), created.id)).toBe(true);
+        expect(await repo.get(accessor('alice'), created.id)).toBeUndefined();
+      });
+
+      it('supports shared view/edit access and owner-only delete', async () => {
+        const { repo, shares } = await openNotebookRepo();
+        const created = await repo.create('alice', { name: 'Shared nb', description: 'd' });
+        await shares.replaceForDocument(
+          'notebook',
+          created.id,
+          [{ subjectType: 'user', subjectValue: 'bob', permission: 'view' }],
+          'alice',
+        );
+
+        expect(await repo.get(accessor('bob'), created.id)).toMatchObject({
+          owner: 'alice',
+          myPermission: 'view',
+        });
+        expect(
+          await repo.update(accessor('bob'), created.id, {
+            name: 'Nope',
+            description: 'd',
+            cells: [],
+            variables: [],
+            context: {},
+          }),
+        ).toBe('forbidden');
+        expect(await repo.delete(accessor('bob'), created.id)).toBe('forbidden');
+
+        await shares.replaceForDocument(
+          'notebook',
+          created.id,
+          [{ subjectType: 'user', subjectValue: 'bob', permission: 'edit' }],
+          'alice',
+        );
+        const updated = await repo.update(accessor('bob'), created.id, {
+          name: 'Bob edit',
+          description: 'd',
+          cells: [{ id: 'c1', kind: 'sql', source: 'SELECT 1' }],
+          variables: [],
+          context: {},
+        });
+        expect(updated).toMatchObject({ name: 'Bob edit', myPermission: 'edit', owner: 'alice' });
+        expect(await repo.list(accessor('bob'))).toHaveLength(1);
+        expect(await repo.get(accessor('carol'), created.id)).toBeUndefined();
       });
     });
 
     describe('SavedQueryRepository', () => {
-      // お気に入り優先の並び順、検索、更新、削除、owner による隔離を検証する。
       it('orders favorites first, searches, updates, deletes; owner-scoped', async () => {
-        const repo = new SavedQueryRepository(await open());
+        const { repo } = await openSavedQueryRepo();
 
         await repo.create('alice', { name: 'plain', statement: 'SELECT 1' });
         const fav = await repo.create('alice', {
@@ -89,35 +150,81 @@ for (const backend of dbBackends) {
         });
         expect(fav.id).toMatch(/^sq_/);
 
-        const list = await repo.list('alice');
+        const list = await repo.list(accessor('alice'));
         expect(list).toHaveLength(2);
-        expect(list[0]!.id).toBe(fav.id); // favorites first
+        expect(list[0]!.id).toBe(fav.id);
         expect(list[0]!.isFavorite).toBe(true);
         expect(list[0]!.catalog).toBe('tpch');
         expect(list[0]!.datasourceId).toBe('trino-default');
 
-        expect(await repo.list('alice', 'SELECT 2')).toHaveLength(1);
-        expect(await repo.list('bob')).toEqual([]);
+        expect(await repo.list(accessor('alice'), 'SELECT 2')).toHaveLength(1);
+        expect(await repo.list(accessor('bob'))).toEqual([]);
 
-        const updated = await repo.update('alice', fav.id, {
+        const updated = await repo.update(accessor('alice'), fav.id, {
           name: 'favorite',
           description: 'd',
           statement: 'SELECT 3',
           isFavorite: false,
           datasourceId: 'mysql-1',
         });
-        expect(updated?.statement).toBe('SELECT 3');
-        expect(updated?.isFavorite).toBe(false);
-        expect(updated?.datasourceId).toBe('mysql-1');
+        expect(updated).not.toBe('forbidden');
+        if (updated === 'forbidden' || updated === undefined) {
+          throw new Error('expected saved query update');
+        }
+        expect(updated.statement).toBe('SELECT 3');
+        expect(updated.isFavorite).toBe(false);
+        expect(updated.datasourceId).toBe('mysql-1');
 
-        expect(await repo.delete('alice', fav.id)).toBe(true);
-        expect(await repo.delete('alice', fav.id)).toBe(false);
+        expect(await repo.delete(accessor('alice'), fav.id)).toBe(true);
+        expect(await repo.delete(accessor('alice'), fav.id)).toBe(false);
+      });
+
+      it('shared edit preserves owner isFavorite; view cannot update', async () => {
+        const { repo, shares } = await openSavedQueryRepo();
+        const fav = await repo.create('alice', {
+          name: 'favorite',
+          statement: 'SELECT 1',
+          isFavorite: true,
+        });
+        await shares.replaceForDocument(
+          'saved_query',
+          fav.id,
+          [{ subjectType: 'user', subjectValue: 'bob', permission: 'view' }],
+          'alice',
+        );
+
+        expect(
+          await repo.update(accessor('bob'), fav.id, {
+            name: 'favorite',
+            description: '',
+            statement: 'SELECT 9',
+            isFavorite: false,
+          }),
+        ).toBe('forbidden');
+
+        await shares.replaceForDocument(
+          'saved_query',
+          fav.id,
+          [{ subjectType: 'user', subjectValue: 'bob', permission: 'edit' }],
+          'alice',
+        );
+        const updated = await repo.update(accessor('bob'), fav.id, {
+          name: 'favorite',
+          description: '',
+          statement: 'SELECT 9',
+          isFavorite: false,
+        });
+        expect(updated).toMatchObject({
+          statement: 'SELECT 9',
+          isFavorite: true,
+          myPermission: 'edit',
+          owner: 'alice',
+        });
+        expect(await repo.delete(accessor('bob'), fav.id)).toBe('forbidden');
       });
     });
 
     describe('HistoryRepository', () => {
-      // 投入時の insert、確定時の update、state による絞り込み、
-      // ページング、owner による隔離を検証する。
       it('inserts, updates on settle, filters by state, paginates; owner-scoped', async () => {
         const repo = new HistoryRepository(await open());
 
@@ -165,12 +272,10 @@ for (const backend of dbBackends) {
         expect(got?.elapsedMs).toBe(120);
         expect(got?.catalog).toBe('tpch');
 
-        // Owner isolation.
         expect(await repo.get('alice', 'h3')).toBeUndefined();
 
         const all = await repo.list('alice', {});
         expect(all.total).toBe(2);
-        // Most recent submitted_at first.
         expect(all.items.map((e) => e.id)).toEqual(['h2', 'h1']);
 
         const failed = await repo.list('alice', { state: 'failed' });

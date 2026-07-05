@@ -15,6 +15,7 @@ export const auditActionSchema = z.enum([
   'export.sheets',
   'schedule.execute',
   'notification.send',
+  'document.share.update',
 ]);
 
 export type AuditAction = z.infer<typeof auditActionSchema>;

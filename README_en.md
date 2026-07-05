@@ -20,10 +20,10 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 | ![Variable panel driving a parameterised query](docs/screenshots/final-variables.png) |
 
 > Multi-datasource support (Trino, MySQL, PostgreSQL) and RBAC are available
-> (see the "Datasource configuration" and "RBAC" sections below). Hue's
-> document sharing remains a non-goal. Authentication (SSO via oauth2-proxy +
-> impersonation) and scheduled runs are supported (`docs/operations.md` §7 /
-> §12).
+> (see the "Datasource configuration" and "RBAC" sections below). Saved queries
+> and notebooks can be shared between users (`docs/user-guide.md` §10.3).
+> Authentication (SSO via oauth2-proxy + impersonation) and scheduled runs are
+> supported (`docs/operations.md` §7 / §12).
 
 ## Highlights
 
@@ -55,6 +55,9 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 - **Audit log** — records query execution, CSV/XLSX downloads, S3 and Google
   Sheets exports, admin kills, and scheduled runs in `audit_log`, including
   denied or failed outcomes.
+- **Document sharing** — share saved queries and notebooks with users, SSO
+  groups, or RBAC roles at view or edit level. Query execution still uses the
+  runner's own RBAC; sharing does not delegate data access.
 
 ## Architecture
 

@@ -15,6 +15,7 @@ import { QueryService } from './query/service';
 import { EstimateService } from './query/estimateService';
 import { NotebookRepository } from './store/notebooks';
 import { SavedQueryRepository } from './store/savedQueries';
+import { DocumentShareRepository } from './store/documentShares';
 import { HistoryRepository } from './store/history';
 import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
 import { Scheduler } from './schedule/scheduler';
@@ -46,6 +47,7 @@ export interface Services {
   estimate: EstimateService;
   notebooks: NotebookRepository;
   savedQueries: SavedQueryRepository;
+  documentShares: DocumentShareRepository;
   history: HistoryRepository;
   schedules: ScheduleRepository;
   scheduleRuns: ScheduleRunRepository;
@@ -118,8 +120,9 @@ export async function buildServices(
       logWarn: options.notificationLogWarn,
     });
   const history = new HistoryRepository(db);
-  const notebooks = new NotebookRepository(db);
-  const savedQueries = new SavedQueryRepository(db);
+  const documentShares = new DocumentShareRepository(db);
+  const notebooks = new NotebookRepository(db, documentShares);
+  const savedQueries = new SavedQueryRepository(db, documentShares);
   const registry = new QueryRegistry({
     engines,
     defaultDatasourceId: runtime.defaultDatasourceId,
@@ -249,6 +252,7 @@ export async function buildServices(
     estimate,
     notebooks,
     savedQueries,
+    documentShares,
     history,
     schedules,
     scheduleRuns,

@@ -36,6 +36,7 @@ const TEST_PG_URL = process.env.TEST_DATABASE_URL;
 const OWNED_TABLES = [
   'notebooks',
   'saved_queries',
+  'document_shares',
   'query_history',
   'schedules',
   'schedule_runs',

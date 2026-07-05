@@ -9,6 +9,7 @@
 import type { NotebookListItem } from '@hubble/contracts';
 import { FileCode2, NotebookPen } from 'lucide-react';
 import { EmptyState } from '../common/EmptyState';
+import { DocumentShareBadge } from '../common/DocumentShareBadge';
 import { formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
 
@@ -87,8 +88,8 @@ export function NotebookListPanel({
                 {nb.description && (
                   <p className="mt-0.5 truncate text-xs text-ink-muted">{nb.description}</p>
                 )}
-                {/* 最終更新時刻を相対表記（例: "2時間前"）で表示する。 */}
-                <div className="mt-0.5 flex items-center gap-2 font-mono text-2xs text-ink-subtle">
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 font-mono text-2xs text-ink-subtle">
+                  <DocumentShareBadge owner={nb.owner} myPermission={nb.myPermission} />
                   <span>{formatRelativeTime(nb.updatedAt, now)}</span>
                 </div>
               </div>

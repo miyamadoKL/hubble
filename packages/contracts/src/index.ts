@@ -34,6 +34,8 @@ export * from './events';
 export * from './notebook';
 // 保存済みクエリの契約
 export * from './savedQuery';
+// ドキュメント共有の契約
+export * from './share';
 // クエリ実行履歴の契約
 export * from './history';
 // クエリスケジューリング（cron 実行）の契約
