@@ -51,6 +51,7 @@ import {
   useWorkflowRun,
 } from '../../hooks/useWorkflows';
 import { WorkflowStatusBadge } from './WorkflowStatusBadge';
+import { RunExportMenu } from './RunExportMenu';
 import { StepEditorModal } from './StepEditorModal';
 import { WorkflowSettingsModal, type WorkflowSettings } from './WorkflowSettingsModal';
 import { WorkflowRunsModal } from './WorkflowRunsModal';
@@ -336,6 +337,14 @@ function WorkflowEditor({
   const runInFlight = runQuery.data?.status === 'running';
   const problem = draftProblem(draft);
   const saving = create.isPending || update.isPending;
+  // 一括エクスポートは、選択中 run が完了済みで、永続化済み結果を持つ成功ステップが
+  // 1 つでもあるときだけ出す (RESULT_STORE 無効環境では出ない)。
+  const exportableRun =
+    runQuery.data &&
+    runQuery.data.status !== 'running' &&
+    runQuery.data.steps.some((s) => s.status === 'success' && s.resultAvailable)
+      ? runQuery.data.id
+      : null;
 
   // ドラフト更新のショートハンド (バリデーションエラー表示もリセットする)。
   const patchDraft = (patch: Partial<WorkflowDraft>) => {
@@ -465,6 +474,8 @@ function WorkflowEditor({
           {(dirty || isNew) && (
             <span className="mr-1 font-mono text-2xs text-warning">unsaved changes</span>
           )}
+          {/* 選択中 run の結果一括エクスポート (CSV zip / xlsx / Google Sheets)。 */}
+          {exportableRun && <RunExportMenu runId={exportableRun} disabled={false} />}
           <Button
             variant="ghost"
             size="sm"

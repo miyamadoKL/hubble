@@ -16,7 +16,9 @@ const SHEETS_APPEND_ROWS = 10_000;
 /** Google API の薄い抽象。テストではこの境界をフェイクする。 */
 export interface SheetsApiClient {
   createSpreadsheet(title: string): Promise<{ spreadsheetId: string; url: string }>;
-  appendValues(spreadsheetId: string, values: unknown[][]): Promise<void>;
+  appendValues(spreadsheetId: string, values: unknown[][], range?: string): Promise<void>;
+  renameFirstSheet(spreadsheetId: string, title: string): Promise<void>;
+  addSheet(spreadsheetId: string, title: string): Promise<void>;
   shareWithWriter(spreadsheetId: string, email: string): Promise<void>;
 }
 
@@ -40,7 +42,7 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
     async createSpreadsheet(title) {
       const created = await sheets.spreadsheets.create({
         requestBody: { properties: { title } },
-        fields: 'spreadsheetId,spreadsheetUrl',
+        fields: 'spreadsheetId,spreadsheetUrl,sheets.properties',
       });
       const spreadsheetId = created.data.spreadsheetId;
       if (!spreadsheetId) throw new Error('Google Sheets API did not return spreadsheetId');
@@ -50,14 +52,45 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
           created.data.spreadsheetUrl ?? `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
       };
     },
-    async appendValues(spreadsheetId, values) {
+    async appendValues(spreadsheetId, values, range = 'A1') {
       if (values.length === 0) return;
       await sheets.spreadsheets.values.append({
         spreadsheetId,
-        range: 'A1',
+        range,
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         requestBody: { values },
+      });
+    },
+    async renameFirstSheet(spreadsheetId, title) {
+      const meta = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties',
+      });
+      const sheetId = meta.data.sheets?.[0]?.properties?.sheetId;
+      if (sheetId === undefined || sheetId === null) {
+        throw new Error('Google Sheets API did not return the first sheet id');
+      }
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              updateSheetProperties: {
+                properties: { sheetId, title },
+                fields: 'title',
+              },
+            },
+          ],
+        },
+      });
+    },
+    async addSheet(spreadsheetId, title) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title } } }],
+        },
       });
     },
     async shareWithWriter(spreadsheetId, email) {
@@ -129,6 +162,73 @@ export class SheetsExporter {
       if (chunk.length >= SHEETS_APPEND_ROWS) await flush();
     }
     await flush();
+    await client.shareWithWriter(created.spreadsheetId, input.email);
+    return created;
+  }
+
+  /** 行イベントを複数シートの新規 spreadsheet へ書き込み、writer 共有する。 */
+  async exportMultiSheet(input: {
+    title: string;
+    email?: string;
+    sheets: ReadonlyArray<{ name: string; events: AsyncGenerator<QueryResultEvent> }>;
+  }): Promise<{ spreadsheetId: string; url: string }> {
+    const credentialsFile = this.config.credentialsFile;
+    if (!credentialsFile) {
+      throw AppError.notImplemented(
+        'Google Sheets export is disabled. Set EXPORT_SHEETS_CREDENTIALS_FILE to enable it.',
+      );
+    }
+    if (!input.email) {
+      throw AppError.badRequest('Google Sheets export requires an authenticated principal email.');
+    }
+    if (input.sheets.length === 0) {
+      throw AppError.badRequest('Google Sheets export requires at least one sheet.');
+    }
+
+    const client = await this.clientFactory(credentialsFile);
+    const created = await client.createSpreadsheet(input.title);
+    let totalCells = 0;
+
+    for (let index = 0; index < input.sheets.length; index += 1) {
+      const sheet = input.sheets[index]!;
+      if (index === 0) {
+        await client.renameFirstSheet(created.spreadsheetId, sheet.name);
+      } else {
+        await client.addSheet(created.spreadsheetId, sheet.name);
+      }
+
+      let columns: QueryColumn[] = [];
+      let chunk: unknown[][] = [];
+      const range = `'${sheet.name.replace(/'/g, "''")}'!A1`;
+
+      const flush = async (): Promise<void> => {
+        if (chunk.length === 0) return;
+        await client.appendValues(created.spreadsheetId, chunk, range);
+        chunk = [];
+      };
+
+      for await (const event of sheet.events) {
+        if (event.type === 'columns') {
+          columns = event.columns;
+          totalCells += event.columns.length;
+          chunk.push(event.columns.map((column) => column.name));
+          continue;
+        }
+
+        totalCells += Math.max(columns.length, event.row.length);
+        if (totalCells > SHEETS_SAFE_CELL_LIMIT) {
+          throw new AppError(413, {
+            code: 'RESULT_TOO_LARGE',
+            message:
+              'Google Sheets export is limited to 8,000,000 cells in Hubble. Use S3 or CSV for larger results.',
+          });
+        }
+        chunk.push(event.row.map(toSheetsCellValue));
+        if (chunk.length >= SHEETS_APPEND_ROWS) await flush();
+      }
+      await flush();
+    }
+
     await client.shareWithWriter(created.spreadsheetId, input.email);
     return created;
   }

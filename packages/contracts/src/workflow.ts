@@ -188,3 +188,17 @@ export const workflowStepResultPageSchema = z.object({
   totalRows: z.number().int().nonnegative(),
 });
 export type WorkflowStepResultPage = z.infer<typeof workflowStepResultPageSchema>;
+
+/** POST /api/workflow-runs/:runId/export のリクエストボディ。 */
+export const workflowRunExportRequestSchema = z.object({
+  destination: z.literal('sheets'),
+});
+export type WorkflowRunExportRequest = z.infer<typeof workflowRunExportRequestSchema>;
+
+/** POST /api/workflow-runs/:runId/export のレスポンスボディ。 */
+export const workflowRunExportResponseSchema = z.object({
+  destination: z.literal('sheets'),
+  spreadsheetId: z.string().min(1),
+  url: z.url(),
+});
+export type WorkflowRunExportResponse = z.infer<typeof workflowRunExportResponseSchema>;

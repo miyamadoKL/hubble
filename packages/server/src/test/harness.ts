@@ -106,6 +106,7 @@ export async function createTestContext(
     reloadLogWarn?: (message: string) => void;
     resultStore?: ResultStore;
     resultStoreLogWarn?: (message: string, err?: unknown) => void;
+    sheetsClientFactory?: import('../query/exportSheets').SheetsClientFactory;
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
@@ -167,7 +168,11 @@ export async function createTestContext(
   // tick ループを使わないテストでも start() は呼んでおく必要がある。
   await services.scheduler.start();
   await services.workflowRunner.start();
-  const app = createApp({ services, remoteAddress: options.remoteAddress });
+  const app = createApp({
+    services,
+    remoteAddress: options.remoteAddress,
+    sheetsClientFactory: options.sheetsClientFactory,
+  });
   return { app, services, fake };
 }
 

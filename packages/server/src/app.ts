@@ -36,6 +36,8 @@ export interface AppDeps {
   /** Override the remote-address source for the auth middleware (tests). */
   /** 日本語: 認証ミドルウェアがリモートアドレスを取得する方法を差し替える（テスト用）。 */
   remoteAddress?: RemoteAddressFn;
+  /** Google Sheets API client factory override (tests). */
+  sheetsClientFactory?: import('./query/exportSheets').SheetsClientFactory;
 }
 
 /**
@@ -128,7 +130,10 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   app.route('/api/history', historyRoutes(services));
   app.route('/api/schedules', scheduleRoutes(services));
   app.route('/api/workflows', workflowRoutes(services));
-  app.route('/api/workflow-runs', workflowRunRoutes(services));
+  app.route(
+    '/api/workflow-runs',
+    workflowRunRoutes(services, { sheetsClientFactory: deps.sheetsClientFactory }),
+  );
   // Metadata router owns `/catalogs/...` and `/metadata/refresh` under `/api`.
   app.route('/api', metadataRoutes(services));
 

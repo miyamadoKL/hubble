@@ -2,9 +2,15 @@
  * クエリワークフロー API ルーター (`/api/workflows` および `/api/workflow-runs`)。
  */
 import { Hono } from 'hono';
+import { PassThrough, Readable } from 'node:stream';
+import { stream } from 'hono/streaming';
+import type { StreamingApi } from 'hono/utils/stream';
+import { ZipFile } from 'yazl';
 import {
   createWorkflowRequestSchema,
   updateWorkflowRequestSchema,
+  workflowRunExportRequestSchema,
+  workflowRunExportResponseSchema,
   workflowRunSchema,
   workflowRunsResponseSchema,
   workflowStepResultPageSchema,
@@ -24,9 +30,21 @@ import type { WorkflowRecord, WorkflowRunRecord } from '../store/workflows';
 import { WorkflowRunInProgressError } from '../workflow/runner';
 import { nextRunIso } from '../schedule/cron';
 import { intParam, parseJsonBody } from './validate';
-import { readPersistedRowsPage } from '../resultStore/jsonl';
+import {
+  readPersistedRowsPage,
+  streamPersistedCsv,
+  streamPersistedResultEvents,
+} from '../resultStore/jsonl';
+import { resolveWorkflowRunExport } from '../workflow/exportResolve';
+import { writeXlsxWorkbook, XLSX_CONTENT_TYPE } from '../query/xlsx';
+import { SheetsExporter, type SheetsClientFactory } from '../query/exportSheets';
 
 type App = Hono<{ Variables: AuthVariables }>;
+
+/** workflowRunRoutes のテスト用オプション。 */
+export interface WorkflowRunRoutesOptions {
+  sheetsClientFactory?: SheetsClientFactory;
+}
 
 function toRunSummary(run: WorkflowRunRecord): WorkflowRunSummary {
   return {
@@ -260,7 +278,7 @@ export function workflowRoutes(services: Services): App {
   return app;
 }
 
-export function workflowRunRoutes(services: Services): App {
+export function workflowRunRoutes(services: Services, options: WorkflowRunRoutesOptions = {}): App {
   const app: App = new Hono<{ Variables: AuthVariables }>();
 
   app.get('/:runId', async (c) => {
@@ -322,5 +340,194 @@ export function workflowRunRoutes(services: Services): App {
     );
   });
 
+  app.get('/:runId/download.zip', async (c) => {
+    const runId = c.req.param('runId');
+    const principal = c.var.principal;
+    const resolved = await resolveWorkflowRunExport(services, runId, principal);
+
+    await services.audit.record({
+      actor: principal.user,
+      action: 'csv.download',
+      target: `workflow-run:${runId}`,
+      detail: {
+        outcome: 'allowed',
+        workflowId: resolved.workflowId,
+        runId,
+        format: 'zip',
+        stepCount: resolved.steps.length,
+        steps: resolved.zipEntries.map(({ step, entryName }) => ({
+          stepId: step.stepRunId,
+          entry: entryName,
+        })),
+      },
+    });
+
+    c.header('Content-Type', 'application/zip');
+    c.header('Content-Disposition', `attachment; filename="workflow-run-${runId}.zip"`);
+    c.header('Cache-Control', 'no-store');
+
+    return stream(c, async (rawStream) => {
+      const ac = new AbortController();
+      rawStream.onAbort(() => ac.abort());
+      await pipeWorkflowZip(rawStream, services, resolved.zipEntries, ac.signal);
+    });
+  });
+
+  app.get('/:runId/download.xlsx', async (c) => {
+    const runId = c.req.param('runId');
+    const principal = c.var.principal;
+    const resolved = await resolveWorkflowRunExport(services, runId, principal);
+
+    await services.audit.record({
+      actor: principal.user,
+      action: 'export.xlsx',
+      target: `workflow-run:${runId}`,
+      detail: {
+        outcome: 'allowed',
+        workflowId: resolved.workflowId,
+        runId,
+        format: 'xlsx',
+        stepCount: resolved.steps.length,
+        steps: resolved.sheets.map(({ step, name }) => ({
+          stepId: step.stepRunId,
+          sheet: name,
+        })),
+      },
+    });
+
+    c.header('Content-Type', XLSX_CONTENT_TYPE);
+    c.header('Content-Disposition', `attachment; filename="workflow-run-${runId}.xlsx"`);
+    c.header('Cache-Control', 'no-store');
+
+    return stream(c, async (rawStream) => {
+      const ac = new AbortController();
+      rawStream.onAbort(() => ac.abort());
+      const xlsx = new PassThrough();
+      const sheets = await Promise.all(
+        resolved.sheets.map(async ({ step, name }) => ({
+          name,
+          events: streamPersistedResultEvents(
+            await services.resultStore.getStream(step.resultObjectKey),
+          ),
+        })),
+      );
+      const writer = writeXlsxWorkbook(sheets, xlsx).catch((err) => {
+        xlsx.destroy(err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      });
+      await Promise.all([pipeNodeReadable(rawStream, xlsx, ac.signal), writer]);
+    });
+  });
+
+  app.post('/:runId/export', async (c) => {
+    const runId = c.req.param('runId');
+    const principal = c.var.principal;
+    const body = await parseJsonBody(c, workflowRunExportRequestSchema);
+    const resolved = await resolveWorkflowRunExport(services, runId, principal);
+
+    const workflow = await services.workflows.getById(resolved.workflowId);
+    const title = workflow ? `${workflow.name} ${runId}` : runId;
+    const exporter = new SheetsExporter(services.config.export.sheets, options.sheetsClientFactory);
+    const sheets = await Promise.all(
+      resolved.sheets.map(async ({ step, name }) => ({
+        name,
+        events: streamPersistedResultEvents(
+          await services.resultStore.getStream(step.resultObjectKey),
+        ),
+      })),
+    );
+    const response = await exporter.exportMultiSheet({
+      title,
+      email: principal.email,
+      sheets,
+    });
+
+    await services.audit.record({
+      actor: principal.user,
+      action: 'export.sheets',
+      target: `workflow-run:${runId}`,
+      detail: {
+        outcome: 'allowed',
+        workflowId: resolved.workflowId,
+        runId,
+        spreadsheetId: response.spreadsheetId,
+        stepCount: resolved.steps.length,
+        steps: resolved.sheets.map(({ step, name }) => ({
+          stepId: step.stepRunId,
+          sheet: name,
+        })),
+      },
+    });
+
+    return c.json(
+      workflowRunExportResponseSchema.parse({
+        destination: body.destination,
+        spreadsheetId: response.spreadsheetId,
+        url: response.url,
+      }),
+    );
+  });
+
   return app;
+}
+
+/** 永続化済み CSV を複数エントリの zip として HTTP レスポンスへ流す。 */
+async function pipeWorkflowZip(
+  out: StreamingApi,
+  services: Services,
+  entries: ReadonlyArray<{ step: { resultObjectKey: string }; entryName: string }>,
+  signal: AbortSignal,
+): Promise<void> {
+  const zip = new ZipFile();
+  const sources: Readable[] = [];
+
+  for (const entry of entries) {
+    const csv = streamPersistedCsv(
+      await services.resultStore.getStream(entry.step.resultObjectKey),
+    );
+    const source = Readable.from(csvBytes(csv, signal));
+    sources.push(source);
+    zip.addReadStream(source, entry.entryName, { compress: true, mtime: new Date(0) });
+  }
+  zip.end();
+
+  try {
+    for await (const chunk of zip.outputStream as AsyncIterable<Buffer>) {
+      if (signal.aborted) break;
+      await out.write(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+    }
+  } finally {
+    if (signal.aborted) {
+      for (const source of sources) source.destroy();
+    }
+  }
+}
+
+/** UTF-8 encode each CSV text chunk for yazl, stopping early on abort. */
+async function* csvBytes(csv: AsyncGenerator<string>, signal: AbortSignal): AsyncGenerator<Buffer> {
+  const encoder = new TextEncoder();
+  for await (const chunk of csv) {
+    if (signal.aborted) return;
+    yield Buffer.from(encoder.encode(chunk));
+  }
+}
+
+/** Node.js Readable を Hono StreamingApi へポンプする。 */
+async function pipeNodeReadable(
+  rawStream: StreamingApi,
+  source: Readable,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    for await (const chunk of source) {
+      if (signal.aborted) break;
+      const buffer =
+        chunk instanceof Uint8Array
+          ? chunk
+          : Buffer.from(typeof chunk === 'string' ? chunk : String(chunk));
+      await rawStream.write(buffer);
+    }
+  } finally {
+    if (signal.aborted) source.destroy();
+  }
 }
