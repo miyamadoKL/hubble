@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
 import { NotebookView } from '../notebook/NotebookView';
+import { WorkflowView } from '../workflow/WorkflowView';
 import { SaveNotebookModal } from '../notebook/SaveNotebookModal';
 import { CommandPalette } from '../palette/CommandPalette';
 import { PresentationView } from '../notebook/PresentationView';
@@ -125,6 +126,7 @@ export function AppShell() {
 
   // ---- Help modal + presentation mode ----
   // ---- ヘルプモーダルとプレゼンテーションモード ----
+  const workflowView = useUiStore((s) => s.workflowView);
   const shortcutsHelpOpen = useUiStore((s) => s.shortcutsHelpOpen);
   const setShortcutsHelpOpen = useUiStore((s) => s.setShortcutsHelpOpen);
   const presentationMode = useUiStore((s) => s.presentationMode);
@@ -207,19 +209,24 @@ export function AppShell() {
           flattenCatalog={selectedDatasource ? !selectedDatasource.capabilities.catalogs : false}
         />
         <main className="min-w-0 flex-1 overflow-auto bg-surface-base">
-          {datasourceId && (
-            <EditorRuntimeProvider
-              context={context}
-              datasourceId={datasourceId}
-              datasourceKind={selectedDatasource?.kind ?? 'trino'}
-            >
-              <NotebookView
-                context={{ ...context, datasourceId }}
-                defaultLimit={defaultLimit}
-                costEstimateEnabled={selectedDatasource?.capabilities.costEstimate ?? false}
-                trinoLanguage={selectedDatasource?.kind === 'trino'}
-              />
-            </EditorRuntimeProvider>
+          {/* ワークフロービューが開かれている間はノートブックの代わりに表示する。 */}
+          {workflowView ? (
+            <WorkflowView />
+          ) : (
+            datasourceId && (
+              <EditorRuntimeProvider
+                context={context}
+                datasourceId={datasourceId}
+                datasourceKind={selectedDatasource?.kind ?? 'trino'}
+              >
+                <NotebookView
+                  context={{ ...context, datasourceId }}
+                  defaultLimit={defaultLimit}
+                  costEstimateEnabled={selectedDatasource?.capabilities.costEstimate ?? false}
+                  trinoLanguage={selectedDatasource?.kind === 'trino'}
+                />
+              </EditorRuntimeProvider>
+            )
           )}
         </main>
       </div>

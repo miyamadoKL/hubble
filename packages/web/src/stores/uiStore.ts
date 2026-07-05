@@ -32,9 +32,25 @@ export type ThemeMode = 'light' | 'dark';
  * サイドバーに表示されるセクション（タブ）の種類。
  * 'data'（データカタログ）、'notebooks'（ノートブック一覧）、
  * 'saved'（保存済みクエリ）、'history'（実行履歴）、
- * 'schedules'（クエリスケジュール、後から追加された機能）の5種類。
+ * 'schedules'（クエリスケジュール、後から追加された機能）、
+ * 'workflows'（クエリワークフロー）の7種類。
  */
-export type SidebarTab = 'data' | 'notebooks' | 'saved' | 'history' | 'schedules' | 'operations';
+export type SidebarTab =
+  | 'data'
+  | 'notebooks'
+  | 'saved'
+  | 'history'
+  | 'schedules'
+  | 'workflows'
+  | 'operations';
+
+/**
+ * メインエリアに表示するワークフロービューの状態。
+ * null はノートブック表示 (通常状態)、`{ kind: 'workflow' }` は既存ワークフローの
+ * 編集/実行ビュー、`{ kind: 'new-workflow' }` は新規作成ビューを表す。
+ * 一時的な画面状態のため永続化しない。
+ */
+export type WorkflowViewState = { kind: 'workflow'; id: string } | { kind: 'new-workflow' } | null;
 
 /** サイドバーの最小幅（ピクセル）。これより狭くはドラッグでリサイズできない。 */
 export const SIDEBAR_MIN_WIDTH = 200;
@@ -113,6 +129,8 @@ interface UiState {
   shellContext: { catalog?: string; schema?: string; datasourceId?: string };
   // シェル側で設定されているデフォルトの LIMIT 件数のミラー。
   shellDefaultLimit: number;
+  /** メインエリアに表示するワークフロービュー。null ならノートブック表示。 */
+  workflowView: WorkflowViewState;
 
   /** テーマを指定した値に設定し、DOM にも即座に反映する。 */
   setTheme: (mode: ThemeMode) => void;
@@ -145,6 +163,12 @@ interface UiState {
     context: { catalog?: string; schema?: string; datasourceId?: string },
     defaultLimit: number,
   ) => void;
+  /** 既存ワークフローをメインエリアで開く。 */
+  openWorkflow: (id: string) => void;
+  /** 新規ワークフロー作成ビューをメインエリアで開く。 */
+  openNewWorkflow: () => void;
+  /** ワークフロービューを閉じてノートブック表示へ戻る。 */
+  closeWorkflow: () => void;
 }
 
 /**
@@ -170,6 +194,7 @@ export const useUiStore = create<UiState>()(
       presentationMode: false,
       shellContext: {},
       shellDefaultLimit: 5000,
+      workflowView: null,
 
       // --- 各アクション（状態を更新する関数）の実装 ---
 
@@ -220,6 +245,12 @@ export const useUiStore = create<UiState>()(
       // ミラー値をまとめて更新する。
       setShellRuntime: (shellContext, shellDefaultLimit) =>
         set({ shellContext, shellDefaultLimit }),
+      // 既存ワークフローをメインエリアで開く。
+      openWorkflow: (id) => set({ workflowView: { kind: 'workflow', id } }),
+      // 新規作成ビューを開く。
+      openNewWorkflow: () => set({ workflowView: { kind: 'new-workflow' } }),
+      // ワークフロービューを閉じてノートブック表示へ戻す。
+      closeWorkflow: () => set({ workflowView: null }),
     }),
     {
       // localStorage に保存する際のキー名。

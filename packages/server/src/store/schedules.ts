@@ -30,7 +30,7 @@ import type { PrincipalIdentity } from '../auth/principal';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 
-const schedulePrincipalSnapshotSchema = z.object({
+export const schedulePrincipalSnapshotSchema = z.object({
   user: z.string().min(1),
   email: z.string().min(1).optional(),
   groups: z.array(z.string().min(1)).optional(),

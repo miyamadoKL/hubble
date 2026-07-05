@@ -102,6 +102,15 @@ export const apiRoutes = {
   scheduleRun: (id: string) => `/api/schedules/${enc(id)}/run`,
   // スケジュールの実行履歴一覧取得。
   scheduleRuns: (id: string) => `/api/schedules/${enc(id)}/runs`,
+
+  // Workflows (Query Workflow feature)
+  workflows: () => '/api/workflows',
+  workflow: (id: string) => `/api/workflows/${enc(id)}`,
+  workflowRun: (id: string) => `/api/workflows/${enc(id)}/run`,
+  workflowRuns: (id: string) => `/api/workflows/${enc(id)}/runs`,
+  workflowRunDetail: (runId: string) => `/api/workflow-runs/${enc(runId)}`,
+  workflowStepResult: (runId: string, stepRunId: string) =>
+    `/api/workflow-runs/${enc(runId)}/steps/${enc(stepRunId)}/result`,
 } as const;
 
 /** apiRoutes オブジェクト全体の型（各エンドポイントの型を参照する際に使う）。 */

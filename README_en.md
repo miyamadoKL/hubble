@@ -19,6 +19,10 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 | ------------------------------------------------------------------------------------- |
 | ![Variable panel driving a parameterised query](docs/screenshots/final-variables.png) |
 
+| Workflow (stage execution)                                     |
+| -------------------------------------------------------------- |
+| ![Query workflow canvas](docs/screenshots/workflow-canvas.png) |
+
 > Multi-datasource support (Trino, MySQL, PostgreSQL) and RBAC are available
 > (see the "Datasource configuration" and "RBAC" sections below). Saved queries
 > and notebooks can be shared between users (`docs/user-guide.md` §10.3).
@@ -52,6 +56,9 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 - **Query Scheduler** — runs saved SQL on a cron schedule. Validates syntax and
   semantics with Trino's `EXPLAIN (TYPE VALIDATE)` at registration and before each
   run; retries on connection failures with geometric back-off.
+- **Query workflows** — run multiple SQL statements as an ordered stage pipeline
+  (parallel within a stage). Manual and cron triggers, per-step failure policy
+  (`stop` / `continue`) and retries, optional result persistence.
 - **Audit log** — records query execution, CSV/XLSX downloads, S3 and Google
   Sheets exports, admin kills, and scheduled runs in `audit_log`, including
   denied or failed outcomes.

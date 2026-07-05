@@ -2,6 +2,7 @@
  * 期限切れクエリ結果オブジェクトの削除を行うサービス。
  */
 import type { HistoryRepository } from '../store/history';
+import type { WorkflowRunRepository } from '../store/workflows';
 import type { ResultStore } from './store';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -9,6 +10,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** ResultExpiryService の生成オプション。 */
 export interface ResultExpiryServiceOptions {
   history: HistoryRepository;
+  workflowRuns: WorkflowRunRepository;
   resultStore: ResultStore;
   now?: () => number;
   logWarn?: (message: string, err?: unknown) => void;
@@ -38,12 +40,16 @@ export class ResultExpiryService {
   async runOnce(): Promise<void> {
     if (!this.options.resultStore.enabled) return;
     const nowIso = new Date(this.options.now?.() ?? Date.now()).toISOString();
-    const expired = await this.options.history.listExpiredResults(nowIso);
+    const historyExpired = await this.options.history.listExpiredResults(nowIso);
+    const workflowExpired = await this.options.workflowRuns.listExpiredResults(nowIso);
+    const expired = [
+      ...historyExpired.map((item) => ({ key: item.resultObjectKey })),
+      ...workflowExpired.map((item) => ({ key: item.resultObjectKey })),
+    ];
     if (expired.length === 0) return;
-    const result = await this.options.resultStore.deleteExpired(
-      expired.map((item) => ({ key: item.resultObjectKey })),
-    );
+    const result = await this.options.resultStore.deleteExpired(expired);
     await this.options.history.clearResultObjects(result.deleted);
+    await this.options.workflowRuns.clearResultObjects(result.deleted);
     for (const failed of result.failed) {
       this.options.logWarn?.(`failed to delete expired result ${failed.key}`, failed.error);
     }

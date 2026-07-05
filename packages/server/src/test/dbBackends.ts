@@ -40,6 +40,9 @@ const OWNED_TABLES = [
   'query_history',
   'schedules',
   'schedule_runs',
+  'workflows',
+  'workflow_runs',
+  'workflow_step_runs',
 ] as const;
 
 // 日本語: SQLite バックエンド定義。open() のたびに新規のインメモリ DB を

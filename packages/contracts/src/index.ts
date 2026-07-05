@@ -40,5 +40,7 @@ export * from './share';
 export * from './history';
 // クエリスケジューリング（cron 実行）の契約
 export * from './schedule';
+// クエリワークフロー（多段 SQL オーケストレーション）の契約
+export * from './workflow';
 // API パス定数とパスビルダー
 export * from './routes';

@@ -68,6 +68,7 @@ const app = createApp({ services });
 // SCHEDULER_ENABLED が false でない限り定期ティックループを開始する。
 // スケジューラーが無効でも API 自体は通常通り応答する。
 await services.scheduler.start();
+await services.workflowRunner.start();
 if (config.scheduler.enabled) {
   console.log(`hubble scheduler enabled (tick every ${config.scheduler.tickSeconds}s)`);
 } else {

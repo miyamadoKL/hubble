@@ -14,6 +14,7 @@ export const auditActionSchema = z.enum([
   'export.s3',
   'export.sheets',
   'schedule.execute',
+  'workflow.execute',
   'notification.send',
   'document.share.update',
 ]);
