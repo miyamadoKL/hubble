@@ -30,6 +30,8 @@ export * from './admin';
 export * from './estimate';
 // クエリ進捗を配信する SSE イベントの契約
 export * from './events';
+// チャート設定（セルごとの表示設定）の契約
+export * from './chart';
 // ノートブック（セルと変数）の契約
 export * from './notebook';
 // 保存済みクエリの契約

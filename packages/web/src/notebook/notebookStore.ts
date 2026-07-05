@@ -44,6 +44,7 @@ import type {
   Cell,
   CellKind,
   CellResultMeta,
+  ChartConfig,
   Notebook,
   NotebookContext,
   Variable,
@@ -168,6 +169,9 @@ interface NotebookStoreState {
   toggleCellCollapsed: (id: string, cellId: string) => void;
   /** Write the last-execution summary into a cell (`resultMeta`). */
   setCellResultMeta: (cellId: string, meta: CellResultMeta) => void;
+  // セルのチャート設定を更新する（ユーザーのチャート操作のたびに呼ばれ、
+  // notebook 本体と一緒にサーバーへ永続化される）。
+  setCellChart: (cellId: string, chart: ChartConfig) => void;
 
   // Variables
   // 変数の入力値のみを更新する（SQL 自体は変わらないため変数の再検出は行わない）。
@@ -598,6 +602,22 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       const next = { ...entry.notebook, cells };
       set((s) => ({ open: { ...s.open, [ownerId]: { ...entry, notebook: next, dirty: true } } }));
       afterChange(ownerId);
+    },
+
+    setCellChart: (cellId, chart) => {
+      // setCellResultMeta と同様、cellId から所有 notebook を線形探索で逆引きする。
+      const state = get();
+      const ownerId = state.openIds.find((nbId) =>
+        state.open[nbId]?.notebook.cells.some((c) => c.id === cellId),
+      );
+      if (!ownerId) return;
+      // チャート設定はユーザーが編集するコンテンツなので mutate 経由で
+      // updatedAt を更新し、通常のオートセーブフローに乗せる
+      // （SQL は変わらないが mutate の変数再計算は冪等なので問題ない）。
+      mutate(ownerId, (nb) => ({
+        ...nb,
+        cells: nb.cells.map((c) => (c.id === cellId ? { ...c, chart } : c)),
+      }));
     },
 
     setVariableValue: (id, name, value) => {

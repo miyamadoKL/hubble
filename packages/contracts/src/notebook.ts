@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { chartConfigSchema } from './chart';
 import { isoTimestamp } from './common';
 import { myPermissionSchema } from './share';
 
@@ -107,6 +108,8 @@ export const cellSchema = z.object({
   collapsed: z.boolean().optional(),
   // 直近の実行結果サマリ（未実行の場合は省略）。
   resultMeta: cellResultMetaSchema.optional(),
+  // セルのチャート表示設定（一度もチャートを操作していない場合は省略）。
+  chart: chartConfigSchema.optional(),
 });
 /** セルの推論型。 */
 export type Cell = z.infer<typeof cellSchema>;

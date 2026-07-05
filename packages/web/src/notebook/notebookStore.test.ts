@@ -336,3 +336,30 @@ describe('setCellResultMeta (resultMeta write-back)', () => {
     ).not.toThrow();
   });
 });
+
+describe('setCellChart (チャート設定の永続化)', () => {
+  const chart = {
+    type: 'bars' as const,
+    xIndex: 0,
+    yIndices: [1],
+    sort: 'none' as const,
+    limit: 'all' as const,
+    groupIndex: null,
+    sizeIndex: null,
+  };
+
+  test('writes the chart config into the owning notebook cell and marks dirty', () => {
+    useNotebookStore.getState().openNotebook(makeNotebook({ id: 'a' }));
+    useNotebookStore.getState().setCellChart('c1', chart);
+    const cell = useNotebookStore.getState().open['a']!.notebook.cells.find((c) => c.id === 'c1');
+    expect(cell?.chart).toEqual(chart);
+    // ユーザーコンテンツの変更なので dirty になり、次回の永続化に乗る。
+    expect(useNotebookStore.getState().open['a']!.dirty).toBe(true);
+  });
+
+  test('unknown cell id is a no-op', () => {
+    useNotebookStore.getState().openNotebook(makeNotebook({ id: 'a' }));
+    expect(() => useNotebookStore.getState().setCellChart('nope', chart)).not.toThrow();
+    expect(useNotebookStore.getState().open['a']!.dirty).toBe(false);
+  });
+});
