@@ -146,6 +146,8 @@ export class GithubGovernanceService {
       }
       case 'alert':
         return [];
+      case 'dashboard':
+        return [];
     }
   }
 
@@ -161,6 +163,8 @@ export class GithubGovernanceService {
       case 'workflow':
         return this.deps.workflows.getById(id);
       case 'alert':
+        return undefined;
+      case 'dashboard':
         return undefined;
     }
   }

@@ -12,18 +12,21 @@ import type {
   GithubStatusResponse,
   Notebook,
   SavedQuery,
+  Dashboard,
 } from '@hubble/contracts';
 import type { Principal } from '../auth/principal';
 import type { GithubConfig } from '../config';
 import { AppError } from '../errors';
 import type { AuditLogger } from '../audit';
 import type { NotebookRepository } from '../store/notebooks';
+import type { DashboardRepository } from '../store/dashboards';
 import type { SavedQueryRepository } from '../store/savedQueries';
 import type { WorkflowRecord, WorkflowRepository } from '../store/workflows';
 import type { AlertRecord, AlertRepository } from '../store/alerts';
 import { branchNameFor, contentHash, documentPath, documentToContent } from './canonical';
 import {
   parseAlertContent,
+  parseDashboardContent,
   parseNotebookContent,
   parseSavedQueryContent,
   parseWorkflowContent,
@@ -58,6 +61,7 @@ export interface GithubSyncServiceDeps {
   links: DocumentGitLinkRepository;
   savedQueries: SavedQueryRepository;
   notebooks: NotebookRepository;
+  dashboards: DashboardRepository;
   workflows: WorkflowRepository;
   alerts: AlertRepository;
   audit: AuditLogger;
@@ -539,13 +543,15 @@ export class GithubSyncService {
         return (await this.deps.workflows.getById(id))?.owner;
       case 'alert':
         return (await this.deps.alerts.getById(id))?.owner;
+      case 'dashboard':
+        return this.deps.dashboards.getOwner(id);
     }
   }
 
   private async loadDocumentUnscoped(
     type: DocumentGitType,
     id: string,
-  ): Promise<SavedQuery | Notebook | WorkflowRecord | AlertRecord | undefined> {
+  ): Promise<SavedQuery | Notebook | WorkflowRecord | AlertRecord | Dashboard | undefined> {
     switch (type) {
       case 'saved_query':
         return this.deps.savedQueries.getByIdUnscoped(id);
@@ -555,6 +561,8 @@ export class GithubSyncService {
         return this.deps.workflows.getById(id);
       case 'alert':
         return this.deps.alerts.getById(id);
+      case 'dashboard':
+        return this.deps.dashboards.getByIdUnscoped(id);
     }
   }
 
@@ -622,6 +630,19 @@ export class GithubSyncService {
           muted: parsed.muted,
           cron: parsed.cron,
           notifications: parsed.notifications,
+        });
+        break;
+      }
+      case 'dashboard': {
+        const parsed = parseDashboardContent(contentText);
+        const existing = await this.deps.dashboards.getByIdUnscoped(id);
+        if (!existing) {
+          throw AppError.notFound('Dashboard not found');
+        }
+        await this.deps.dashboards.update(accessor, id, {
+          name: parsed.name,
+          description: parsed.description,
+          widgets: parsed.widgets,
         });
         break;
       }
@@ -763,6 +784,16 @@ export class GithubSyncService {
       case 'alert': {
         const doc = await this.deps.alerts.get(principal.user, id);
         if (!doc) throw AppError.notFound('Alert not found');
+        name = doc.name;
+        content = documentToContent(type, doc);
+        break;
+      }
+      case 'dashboard': {
+        const doc = await this.deps.dashboards.get(accessor, id);
+        if (!doc) throw AppError.notFound('Dashboard not found');
+        if (requireOwner && doc.myPermission !== 'owner') {
+          throw AppError.forbidden('Only the document owner can push to GitHub');
+        }
         name = doc.name;
         content = documentToContent(type, doc);
         break;

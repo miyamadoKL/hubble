@@ -9,10 +9,14 @@ import {
   alertOpSchema,
   alertSelectorSchema,
   chartConfigSchema,
+  counterConfigSchema,
   cronExpression,
+  dashboardWidgetSchema,
   notebookContextSchema,
   retryPolicySchema,
   variableSchema,
+  widgetPositionSchema,
+  widgetVizSchema,
   workflowDefinitionSchema,
   cellKindSchema,
 } from '@hubble/contracts';
@@ -71,6 +75,13 @@ export interface ParsedAlertContent {
   notifications: z.infer<typeof alertNotificationsSchema>;
 }
 
+/** Dashboard 正規形のパース結果。 */
+export interface ParsedDashboardContent {
+  name: string;
+  description: string;
+  widgets: z.infer<typeof dashboardWidgetSchema>[];
+}
+
 const notebookCellContentSchema = z.object({
   kind: cellKindSchema,
   source: z.string(),
@@ -107,6 +118,33 @@ const alertContentSchema = z.object({
   muted: z.boolean(),
   cron: cronExpression,
   notifications: alertNotificationsSchema,
+});
+
+const dashboardQueryWidgetContentSchema = z.object({
+  kind: z.literal('query'),
+  position: widgetPositionSchema,
+  savedQueryId: z.string().min(1),
+  viz: widgetVizSchema,
+  chart: chartConfigSchema.optional(),
+  counter: counterConfigSchema.optional(),
+  title: z.string().optional(),
+});
+
+const dashboardTextWidgetContentSchema = z.object({
+  kind: z.literal('text'),
+  position: widgetPositionSchema,
+  text: z.string(),
+});
+
+const dashboardWidgetContentSchema = z.discriminatedUnion('kind', [
+  dashboardQueryWidgetContentSchema,
+  dashboardTextWidgetContentSchema,
+]);
+
+const dashboardContentSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  widgets: z.array(dashboardWidgetContentSchema),
 });
 
 function parseError(message: string): Error {
@@ -263,4 +301,35 @@ export function parseAlertContent(content: string): ParsedAlertContent {
   }
 
   return result.data;
+}
+
+/**
+ * Dashboard の YAML 正規形をパースする。widget id は pull 時に新規採番する。
+ * savedQueryId の参照先存在は検証しない。
+ * @param content - GitHub 上の .yaml 本文。
+ */
+export function parseDashboardContent(content: string): ParsedDashboardContent {
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(content);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw parseError(`Invalid dashboard YAML: ${message}`);
+  }
+
+  const result = dashboardContentSchema.safeParse(parsed);
+  if (!result.success) {
+    throw parseError(`Invalid dashboard content: ${result.error.message}`);
+  }
+
+  return {
+    name: result.data.name,
+    description: result.data.description,
+    widgets: result.data.widgets.map((widget) =>
+      dashboardWidgetSchema.parse({
+        id: newId('wgt_'),
+        ...widget,
+      }),
+    ),
+  };
 }

@@ -3,6 +3,7 @@ import { AuditLogger, AuditRepository } from '../audit';
 import { loadServerConfig } from '../config';
 import type { Principal } from '../auth/principal';
 import { NotebookRepository } from '../store/notebooks';
+import { DashboardRepository } from '../store/dashboards';
 import { SavedQueryRepository } from '../store/savedQueries';
 import { DocumentShareRepository } from '../store/documentShares';
 import { WorkflowRepository } from '../store/workflows';
@@ -110,6 +111,7 @@ function buildService(
   const shares = new DocumentShareRepository(db);
   const savedQueries = new SavedQueryRepository(db, shares);
   const notebooks = new NotebookRepository(db, shares);
+  const dashboards = new DashboardRepository(db, shares);
   const workflows = new WorkflowRepository(db);
   const alerts = new AlertRepository(db);
   const audit = new AuditLogger(new AuditRepository(db));
@@ -129,13 +131,14 @@ function buildService(
     links,
     savedQueries,
     notebooks,
+    dashboards,
     workflows,
     alerts,
     audit,
     encryptionKey: KEY,
     now,
   });
-  return { service, savedQueries, notebooks, workflows, links, shares, audit, config };
+  return { service, savedQueries, notebooks, dashboards, workflows, links, shares, audit, config };
 }
 
 const principalAlice = {
@@ -458,6 +461,56 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
     expect(updated?.cells[0]?.source).toBe('SELECT 2');
     expect(updated?.cells[0]?.id).not.toBe('c_local');
     expect(updated?.cells[0]?.id.startsWith('c_')).toBe(true);
+    await db.close();
+  });
+
+  it('pullDocument assigns new dashboard widget ids and accepts missing savedQueryId refs', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, dashboards, links } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const dashboard = await dashboards.create('alice', {
+      name: 'Board',
+      widgets: [
+        {
+          id: 'w_local',
+          kind: 'text',
+          position: { col: 0, row: 0, sizeX: 4, sizeY: 2 },
+          text: 'Local',
+        },
+      ],
+    });
+    const remoteContent = documentToContent('dashboard', {
+      ...dashboard,
+      widgets: [
+        {
+          id: 'w_ignored',
+          kind: 'query',
+          position: { col: 0, row: 0, sizeX: 6, sizeY: 4 },
+          savedQueryId: 'sq_missing',
+          viz: 'table',
+        },
+      ],
+    });
+    await links.upsert('dashboard', dashboard.id, {
+      path: documentPath('dashboard', dashboard.id),
+      approvedHash: contentHash(documentToContent('dashboard', dashboard)),
+    });
+    client.files.set(`${DEFAULT_BRANCH}:dashboards/${dashboard.id}.yaml`, {
+      contentText: remoteContent,
+      sha: 'dsh-sha',
+    });
+
+    await service.pullDocument(principalAlice, 'dashboard', dashboard.id);
+    const updated = await dashboards.get(accessorAlice, dashboard.id);
+    expect(updated?.widgets).toHaveLength(1);
+    const widget = updated?.widgets[0];
+    expect(widget?.kind).toBe('query');
+    if (widget?.kind === 'query') {
+      expect(widget.savedQueryId).toBe('sq_missing');
+      expect(widget.id).not.toBe('w_local');
+      expect(widget.id.startsWith('wgt_')).toBe(true);
+    }
     await db.close();
   });
 
