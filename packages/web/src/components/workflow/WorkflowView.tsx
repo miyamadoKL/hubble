@@ -1,0 +1,683 @@
+/**
+ * ワークフロービュー (メインエリア)。
+ *
+ * ワークフローの定義編集と実行状態の確認を 1 つのキャンバスで行う画面。
+ * ステージを左から右への列として描画し (実行順が視覚的に分かる)、ステージ内の
+ * ステップは縦に積んだカードで表す。run を選択している間は各カードに
+ * 成功/失敗/実行中などの状態が色とアイコンで重ね描きされ、実行中はポーリングで
+ * ライブ更新される。ヘッダーは [戻る] [名前] [ステータス] [Runs] [Run] [Save] と
+ * 設定/削除だけの最小構成にし、SQL の編集などの詳細はステップカードを
+ * クリックして開くモーダルに集約する。
+ *
+ * 外側の `WorkflowView` がデータ取得と読み込み状態を担当し、編集本体の
+ * `WorkflowEditor` は workflowId をキーに再マウントされる。これによりドラフトの
+ * 初期化を effect ではなくマウント時の useState 初期値で行える。
+ */
+import { useMemo, useState } from 'react';
+import type { DatasourceSummary, Workflow, WorkflowStep, WorkflowStepRun } from '@hubble/contracts';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ChevronRight,
+  CircleSlash,
+  Clock,
+  History as HistoryIcon,
+  OctagonX,
+  Play,
+  Plus,
+  Save,
+  Settings2,
+  Table2,
+  Trash2,
+  TriangleAlert,
+  Workflow as WorkflowIcon,
+  X,
+} from 'lucide-react';
+import { Button } from '../common/Button';
+import { Spinner } from '../common/Spinner';
+import { EmptyState } from '../common/EmptyState';
+import { Modal } from '../common/Modal';
+import { toast } from '../common/Toast';
+import { ApiClientError } from '../../api/client';
+import { useUiStore } from '../../stores/uiStore';
+import { useDatasources, resolveDatasourceLabel } from '../../hooks/useDatasources';
+import {
+  useWorkflow,
+  useCreateWorkflow,
+  useUpdateWorkflow,
+  useDeleteWorkflow,
+  useRunWorkflowNow,
+  useWorkflowRun,
+} from '../../hooks/useWorkflows';
+import { WorkflowStatusBadge } from './WorkflowStatusBadge';
+import { StepEditorModal } from './StepEditorModal';
+import { WorkflowSettingsModal, type WorkflowSettings } from './WorkflowSettingsModal';
+import { WorkflowRunsModal } from './WorkflowRunsModal';
+import { StepResultModal } from './StepResultModal';
+import {
+  blankDraft,
+  blankStep,
+  draftEquals,
+  draftFromWorkflow,
+  draftProblem,
+  draftToCreateRequest,
+  draftToUpdateRequest,
+  stepStatusTone,
+  totalSteps,
+  type WorkflowDraft,
+  type WorkflowTone,
+} from './workflowFormat';
+import { cn } from '../../utils/cn';
+
+// ステップカードの左ボーダーの色 (トーン別)。
+const cardToneBorder: Record<WorkflowTone, string> = {
+  running: 'border-l-running',
+  success: 'border-l-success',
+  error: 'border-l-error',
+  warning: 'border-l-warning',
+  neutral: 'border-l-border-strong',
+};
+
+// ステップ編集モーダルの対象。stepIndex が null なら「stageIndex へ新規追加」。
+interface StepEditorTarget {
+  stageIndex: number;
+  stepIndex: number | null;
+  step: WorkflowStep;
+}
+
+// サーバー保存時に返ったステップ単位のバリデーションエラー。
+interface StepValidationError {
+  stepId: string | null;
+  message: string;
+}
+
+/**
+ * ステップの実行状態をアイコンで表す。定義編集のみ (run 未選択) の場合は null。
+ */
+function StepStatusIcon({ stepRun }: { stepRun: WorkflowStepRun | undefined }) {
+  if (!stepRun) return null;
+  switch (stepRun.status) {
+    case 'running':
+      return <Spinner size={13} className="text-running" />;
+    case 'success':
+      return <Check size={14} strokeWidth={2.25} className="text-success" />;
+    case 'failed':
+      return <X size={14} strokeWidth={2.25} className="text-error" />;
+    case 'blocked':
+      return <OctagonX size={13} strokeWidth={2} className="text-error" />;
+    case 'skipped':
+      return <CircleSlash size={13} strokeWidth={2} className="text-ink-subtle" />;
+    case 'aborted':
+      return <TriangleAlert size={13} strokeWidth={2} className="text-ink-subtle" />;
+    case 'pending':
+      return <Clock size={13} strokeWidth={2} className="text-ink-subtle" />;
+  }
+}
+
+/**
+ * ステップカード 1 枚を描画する。
+ * 定義 (名前、SQL 1 行要約、失敗ポリシー) と、run 選択中はその実行状態
+ * (アイコン、行数、所要時間、エラー、結果閲覧ボタン) を重ねて表示する。
+ * @param step ステップ定義。
+ * @param stepRun 選択中 run におけるこのステップの実行記録 (未選択なら undefined)。
+ * @param invalid サーバー保存時にこのステップがバリデーションエラーになったかどうか。
+ * @param onEdit カードクリックで編集モーダルを開くコールバック。
+ * @param onShowResult 結果閲覧ボタン押下時のコールバック。
+ */
+function StepCard({
+  step,
+  stepRun,
+  invalid,
+  onEdit,
+  onShowResult,
+}: {
+  step: WorkflowStep;
+  stepRun: WorkflowStepRun | undefined;
+  invalid: boolean;
+  onEdit: () => void;
+  onShowResult: () => void;
+}) {
+  const tone: WorkflowTone = stepRun ? stepStatusTone(stepRun.status) : 'neutral';
+  // SQL の改行を畳んだ 1 行要約。
+  const oneLine = step.statement.replace(/\s+/g, ' ').trim();
+  return (
+    <div
+      className={cn(
+        'rounded-md border border-l-2 border-border-base bg-surface-raised shadow-sm transition-colors',
+        cardToneBorder[tone],
+        invalid && 'border-error',
+        stepRun?.status === 'skipped' && 'opacity-60',
+      )}
+    >
+      <button type="button" onClick={onEdit} className="w-full px-3 pt-2.5 pb-1.5 text-left">
+        <span className="flex items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-strong">
+            {step.name || <span className="text-ink-subtle italic">untitled step</span>}
+          </span>
+          <StepStatusIcon stepRun={stepRun} />
+        </span>
+        <span className="mt-1 block truncate font-mono text-2xs text-ink-subtle">
+          {oneLine || 'SELECT …'}
+        </span>
+      </button>
+
+      {/* フッター: 失敗ポリシーと run のメトリクス。 */}
+      <div className="flex items-center gap-2 px-3 pb-2">
+        <span
+          className="inline-flex items-center gap-1 font-mono text-2xs text-ink-subtle"
+          title={
+            step.onFailure === 'stop' ? 'On failure: stop the workflow' : 'On failure: continue'
+          }
+        >
+          {step.onFailure === 'stop' ? (
+            <OctagonX size={11} strokeWidth={2} />
+          ) : (
+            <ArrowRight size={11} strokeWidth={2} />
+          )}
+          {step.onFailure}
+        </span>
+        {stepRun?.rowCount !== null && stepRun?.rowCount !== undefined && (
+          <span className="font-mono text-2xs text-ink-subtle">
+            {stepRun.rowCount.toLocaleString()} rows
+          </span>
+        )}
+        {stepRun?.elapsedMs !== null && stepRun?.elapsedMs !== undefined && (
+          <span className="font-mono text-2xs text-ink-subtle">
+            {stepRun.elapsedMs < 1000
+              ? `${stepRun.elapsedMs}ms`
+              : `${(stepRun.elapsedMs / 1000).toFixed(1)}s`}
+          </span>
+        )}
+        {/* 永続化済み結果があれば閲覧ボタンを出す。 */}
+        {stepRun?.resultAvailable && (
+          <button
+            type="button"
+            onClick={onShowResult}
+            title="View persisted result"
+            aria-label={`View result of ${step.name}`}
+            className="ml-auto rounded-sm p-0.5 text-ink-subtle hover:text-accent"
+          >
+            <Table2 size={13} strokeWidth={2} />
+          </button>
+        )}
+      </div>
+
+      {/* 失敗時はエラーメッセージを 2 行まで表示する (全文は title で確認可能)。 */}
+      {stepRun?.errorMessage && (
+        <p
+          className="mx-3 mb-2 line-clamp-2 border-t border-border-subtle pt-1.5 text-2xs text-error"
+          title={stepRun.errorMessage}
+        >
+          {stepRun.errorMessage}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ワークフロービューの外殻。uiStore の workflowView (開いている id または新規作成) を
+ * 読み、既存ワークフローの取得と読み込み/エラー表示を担当する。データが揃ったら
+ * workflowId をキーに WorkflowEditor を再マウントする。
+ */
+export function WorkflowView() {
+  const view = useUiStore((s) => s.workflowView);
+  const closeWorkflow = useUiStore((s) => s.closeWorkflow);
+  const { datasources, selectedId: shellDatasourceId } = useDatasources();
+
+  const workflowId = view?.kind === 'workflow' ? view.id : null;
+  const isNew = view?.kind === 'new-workflow';
+  const workflowQuery = useWorkflow(workflowId);
+
+  if (!view) return null;
+
+  // 既存ワークフローの読み込み中/失敗時の表示。
+  if (!isNew && workflowQuery.isPending) {
+    return (
+      <div className="flex h-full items-center justify-center gap-2 font-mono text-2xs text-ink-subtle">
+        <Spinner size={14} /> Loading workflow…
+      </div>
+    );
+  }
+  if (!isNew && workflowQuery.isError) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <EmptyState
+          icon={WorkflowIcon}
+          title="Couldn't load the workflow"
+          description="It may have been deleted."
+          action={
+            <Button variant="default" size="sm" icon={ArrowLeft} onClick={closeWorkflow}>
+              Back to notebooks
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  const workflow = isNew ? null : (workflowQuery.data ?? null);
+  if (!isNew && !workflow) return null;
+
+  return (
+    <WorkflowEditor
+      // id が変わったら (別ワークフローを開いた、新規→保存済みへ遷移した) 再マウント
+      // してドラフトと選択 run を初期化し直す。
+      key={workflowId ?? 'new'}
+      workflowId={workflowId}
+      workflow={workflow}
+      datasources={datasources}
+      fallbackDatasourceId={shellDatasourceId ?? datasources[0]?.id ?? ''}
+    />
+  );
+}
+
+/**
+ * ワークフロー編集/実行ビューの本体。マウント時にドラフトを初期化し、以後の
+ * 編集、保存、実行、run 表示を統括する。workflowId が変わる場合は親が key で
+ * 再マウントする前提のため、同期用の effect を持たない。
+ * @param workflowId 編集対象の id。新規作成中は null。
+ * @param workflow サーバー取得済みのワークフロー。新規作成中は null。
+ * @param datasources データソース一覧 (セレクトとバッジ表示用)。
+ * @param fallbackDatasourceId 新規作成時の既定 datasource id。
+ */
+function WorkflowEditor({
+  workflowId,
+  workflow,
+  datasources,
+  fallbackDatasourceId,
+}: {
+  workflowId: string | null;
+  workflow: Workflow | null;
+  datasources: DatasourceSummary[];
+  fallbackDatasourceId: string;
+}) {
+  const openWorkflow = useUiStore((s) => s.openWorkflow);
+  const closeWorkflow = useUiStore((s) => s.closeWorkflow);
+  const isNew = workflowId === null;
+
+  // 編集ドラフトと、dirty 判定の基準となるベースライン。マウント時に一度だけ初期化する。
+  const [draft, setDraft] = useState<WorkflowDraft>(() =>
+    workflow ? draftFromWorkflow(workflow) : blankDraft(fallbackDatasourceId),
+  );
+  const [baseline, setBaseline] = useState<WorkflowDraft>(draft);
+  // キャンバスに状態を重ねる対象の run id。初期値は直近 run。
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(
+    () => workflow?.lastRun?.id ?? null,
+  );
+  // 各モーダルの開閉状態。
+  const [stepEditor, setStepEditor] = useState<StepEditorTarget | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [runsOpen, setRunsOpen] = useState(false);
+  const [resultFor, setResultFor] = useState<{ stepRunId: string; name: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  // サーバー保存時のステップ単位バリデーションエラー。
+  const [stepError, setStepError] = useState<StepValidationError | null>(null);
+
+  const create = useCreateWorkflow();
+  const update = useUpdateWorkflow();
+  const remove = useDeleteWorkflow();
+  const runNow = useRunWorkflowNow();
+  const runQuery = useWorkflowRun(selectedRunId);
+
+  const dirty = !draftEquals(draft, baseline);
+
+  // 選択中 run のステップ状態を stepId で引ける Map にする。
+  const stepRunById = useMemo(() => {
+    const map = new Map<string, WorkflowStepRun>();
+    const run = runQuery.data;
+    if (run && (workflowId === null || run.workflowId === workflowId)) {
+      for (const stepRun of run.steps) map.set(stepRun.stepId, stepRun);
+    }
+    return map;
+  }, [runQuery.data, workflowId]);
+
+  const runInFlight = runQuery.data?.status === 'running';
+  const problem = draftProblem(draft);
+  const saving = create.isPending || update.isPending;
+
+  // ドラフト更新のショートハンド (バリデーションエラー表示もリセットする)。
+  const patchDraft = (patch: Partial<WorkflowDraft>) => {
+    setStepError(null);
+    setDraft((cur) => ({ ...cur, ...patch }));
+  };
+
+  // ステップ編集モーダルの確定処理 (新規追加または置換)。
+  const applyStep = (target: StepEditorTarget, step: WorkflowStep) => {
+    setStepError(null);
+    setDraft((cur) => {
+      const stages = cur.stages.map((stage) => ({ steps: [...stage.steps] }));
+      const stage = stages[target.stageIndex];
+      if (!stage) return cur;
+      if (target.stepIndex === null) stage.steps.push(step);
+      else stage.steps[target.stepIndex] = step;
+      return { ...cur, stages };
+    });
+    setStepEditor(null);
+  };
+
+  // ステップの削除。ステージが空になっても残す (Save 時に空ステージは除外される)。
+  const removeStep = (target: StepEditorTarget) => {
+    setStepError(null);
+    setDraft((cur) => {
+      if (target.stepIndex === null) return cur;
+      const stages = cur.stages.map((stage) => ({ steps: [...stage.steps] }));
+      stages[target.stageIndex]!.steps.splice(target.stepIndex, 1);
+      return { ...cur, stages };
+    });
+    setStepEditor(null);
+  };
+
+  // 空ステージを取り除く (空ステージの "Remove stage" 用)。
+  const removeEmptyStage = (stageIndex: number) => {
+    setDraft((cur) => {
+      const stages = cur.stages.filter((stage, i) => i !== stageIndex || stage.steps.length > 0);
+      return { ...cur, stages: stages.length > 0 ? stages : [{ steps: [] }] };
+    });
+  };
+
+  // サーバーエラーからステップ単位のバリデーション情報を取り出す。
+  const captureServerError = (error: unknown) => {
+    if (error instanceof ApiClientError) {
+      const details = error.detail.details as { stepId?: string; message?: string } | undefined;
+      setStepError({
+        stepId: typeof details?.stepId === 'string' ? details.stepId : null,
+        message: details?.message ?? error.detail.message,
+      });
+      toast.error('Save failed', details?.message ?? error.detail.message);
+    } else {
+      toast.error('Save failed', 'Could not reach the server.');
+    }
+  };
+
+  // 保存 (新規作成または更新)。成功時はベースラインを更新して dirty を解消する。
+  const save = () => {
+    if (problem) return;
+    setStepError(null);
+    if (isNew) {
+      create.mutate(draftToCreateRequest(draft), {
+        onSuccess: (created) => {
+          toast.success('Workflow created', `“${created.name}” is ready to run.`);
+          // 保存済み id で開き直す (key が変わり、サーバー確定値で再マウントされる)。
+          openWorkflow(created.id);
+        },
+        onError: captureServerError,
+      });
+      return;
+    }
+    update.mutate(
+      { id: workflowId, body: draftToUpdateRequest(draft) },
+      {
+        onSuccess: (updated) => {
+          const next = draftFromWorkflow(updated);
+          setDraft(next);
+          setBaseline(next);
+          toast.success('Workflow saved', `“${updated.name}” saved.`);
+        },
+        onError: captureServerError,
+      },
+    );
+  };
+
+  // 手動実行。開始した run をそのままキャンバスの表示対象にする。
+  const run = () => {
+    if (isNew) return;
+    runNow.mutate(workflowId, {
+      onSuccess: (runId) => {
+        setSelectedRunId(runId);
+        toast.info('Run started', `“${draft.name}” is running.`);
+      },
+      onError: (error) => {
+        if (error instanceof ApiClientError && error.status === 409) {
+          toast.error('Already running', 'This workflow has a run in progress.');
+        } else {
+          toast.error('Run failed', 'Could not start the run.');
+        }
+      },
+    });
+  };
+
+  const defaultDatasourceLabel = resolveDatasourceLabel(datasources, draft.datasourceId);
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* ヘッダー: 戻る、名前 (インライン編集)、run ステータス、主要アクション。 */}
+      <header className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-4 py-2.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={ArrowLeft}
+          onClick={closeWorkflow}
+          aria-label="Back to notebooks"
+        />
+        <input
+          value={draft.name}
+          onChange={(e) => patchDraft({ name: e.target.value })}
+          placeholder="Untitled workflow"
+          aria-label="Workflow name"
+          className="w-56 min-w-0 bg-transparent text-base font-semibold text-ink-strong placeholder:text-ink-subtle focus:outline-none"
+        />
+        {runQuery.data && <WorkflowStatusBadge status={runQuery.data.status} />}
+
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* dirty のときは Run より Save を促す (実行は保存済み定義に対して行われるため)。 */}
+          {(dirty || isNew) && (
+            <span className="mr-1 font-mono text-2xs text-warning">unsaved changes</span>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={HistoryIcon}
+            onClick={() => setRunsOpen(true)}
+            disabled={isNew}
+          >
+            Runs
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={Settings2}
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Workflow settings"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={Trash2}
+            onClick={() => setConfirmDelete(true)}
+            disabled={isNew}
+            aria-label="Delete workflow"
+            className="text-ink-subtle hover:text-error"
+          />
+          <Button
+            variant="default"
+            size="sm"
+            icon={Save}
+            onClick={save}
+            disabled={saving || (!dirty && !isNew)}
+            title={problem ?? undefined}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Play}
+            onClick={run}
+            disabled={isNew || dirty || runInFlight || runNow.isPending}
+            title={isNew || dirty ? 'Save the workflow before running' : 'Run all stages in order'}
+          >
+            {runInFlight ? 'Running…' : 'Run'}
+          </Button>
+        </div>
+      </header>
+
+      {/* 保存時のステップバリデーションエラー。該当カードも赤枠でハイライトされる。 */}
+      {stepError && (
+        <p className="border-b border-error/30 bg-error/5 px-4 py-1.5 text-xs text-error">
+          {stepError.message}
+        </p>
+      )}
+
+      {/* キャンバス: ステージを左から右へ並べる。縦の伸びを避け、横スクロールに逃がす。 */}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className="flex items-start gap-1">
+          {draft.stages.map((stage, stageIndex) => (
+            <div key={stageIndex} className="flex items-start gap-1">
+              {/* ステージ間の実行方向を示す矢印。 */}
+              {stageIndex > 0 && (
+                <ChevronRight
+                  size={18}
+                  strokeWidth={2}
+                  className="mt-16 shrink-0 text-ink-subtle"
+                />
+              )}
+              <section className="w-64 shrink-0 rounded-lg border border-border-subtle bg-surface-sunken/40 p-2">
+                <header className="flex items-center justify-between px-1 pb-2">
+                  <h3 className="font-mono text-2xs font-semibold tracking-wide text-ink-muted uppercase">
+                    Stage {stageIndex + 1}
+                  </h3>
+                  <span className="font-mono text-2xs text-ink-subtle">
+                    {stage.steps.length > 1 ? `${stage.steps.length} parallel` : ''}
+                  </span>
+                </header>
+                <div className="flex flex-col gap-2">
+                  {stage.steps.map((step, stepIndex) => (
+                    <StepCard
+                      key={step.id}
+                      step={step}
+                      stepRun={stepRunById.get(step.id)}
+                      invalid={stepError?.stepId === step.id}
+                      onEdit={() => setStepEditor({ stageIndex, stepIndex, step })}
+                      onShowResult={() => {
+                        const stepRun = stepRunById.get(step.id);
+                        if (stepRun) setResultFor({ stepRunId: stepRun.id, name: step.name });
+                      }}
+                    />
+                  ))}
+                  {/* ステップ追加。空ステージにはステージ削除も出す。 */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={Plus}
+                    onClick={() =>
+                      setStepEditor({ stageIndex, stepIndex: null, step: blankStep() })
+                    }
+                    className="justify-center border border-dashed border-border-base"
+                  >
+                    Add step
+                  </Button>
+                  {stage.steps.length === 0 && draft.stages.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeEmptyStage(stageIndex)}
+                      className="font-mono text-2xs text-ink-subtle hover:text-error"
+                    >
+                      Remove empty stage
+                    </button>
+                  )}
+                </div>
+              </section>
+            </div>
+          ))}
+
+          {/* 末尾の「ステージ追加」スタブ列。 */}
+          <div className="flex items-start">
+            <ChevronRight size={18} strokeWidth={2} className="mt-16 shrink-0 text-ink-subtle" />
+            <button
+              type="button"
+              onClick={() =>
+                setDraft((cur) => ({ ...cur, stages: [...cur.stages, { steps: [] }] }))
+              }
+              className="flex w-40 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border-base px-3 py-6 font-mono text-2xs text-ink-subtle transition-colors hover:border-accent hover:text-accent"
+            >
+              <Plus size={13} strokeWidth={2} /> Add stage
+            </button>
+          </div>
+        </div>
+
+        {/* 初回 (ステップゼロ) 向けのガイド。 */}
+        {totalSteps(draft) === 0 && (
+          <p className="mt-6 max-w-md text-sm text-ink-muted">
+            Add steps to Stage 1. Steps in the same stage run in parallel; stages run left to right.
+            Each step can stop the workflow or let it continue when it fails.
+          </p>
+        )}
+      </div>
+
+      {/* 各モーダル。 */}
+      <StepEditorModal
+        open={stepEditor !== null}
+        step={stepEditor?.step ?? null}
+        isNew={stepEditor?.stepIndex === null}
+        datasources={datasources}
+        defaultDatasourceLabel={defaultDatasourceLabel}
+        onApply={(step) => stepEditor && applyStep(stepEditor, step)}
+        onDelete={
+          stepEditor?.stepIndex !== null ? () => stepEditor && removeStep(stepEditor) : undefined
+        }
+        onClose={() => setStepEditor(null)}
+      />
+      <WorkflowSettingsModal
+        open={settingsOpen}
+        draft={draft}
+        datasources={datasources}
+        onApply={(settings: WorkflowSettings) => {
+          patchDraft(settings);
+          setSettingsOpen(false);
+        }}
+        onClose={() => setSettingsOpen(false)}
+      />
+      <WorkflowRunsModal
+        open={runsOpen}
+        workflowId={workflowId}
+        selectedRunId={selectedRunId}
+        onSelect={setSelectedRunId}
+        onClose={() => setRunsOpen(false)}
+      />
+      <StepResultModal
+        open={resultFor !== null}
+        runId={selectedRunId}
+        stepRunId={resultFor?.stepRunId ?? null}
+        stepName={resultFor?.name ?? ''}
+        onClose={() => setResultFor(null)}
+      />
+
+      {/* 削除確認モーダル。 */}
+      <Modal
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete workflow?"
+        description={
+          workflow
+            ? `“${workflow.name}” and its run history will be permanently removed.`
+            : undefined
+        }
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setConfirmDelete(false);
+                if (isNew) return;
+                remove.mutate(workflowId, {
+                  onSuccess: () => {
+                    toast.info('Deleted', 'Workflow removed.');
+                    closeWorkflow();
+                  },
+                  onError: () => toast.error('Delete failed', 'Could not reach the server.'),
+                });
+              }}
+            >
+              Delete
+            </Button>
+          </>
+        }
+      />
+    </div>
+  );
+}

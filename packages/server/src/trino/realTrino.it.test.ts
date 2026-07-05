@@ -228,6 +228,7 @@ describeIt('real Trino integration', () => {
   it('manual run executes against Trino, recording success + row_count + query id', async () => {
     const { app, services } = await makeApp({ SCHEDULER_ENABLED: 'false' });
     await services.scheduler.start();
+    await services.workflowRunner.start();
     const createRes = await app.request('/api/schedules', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

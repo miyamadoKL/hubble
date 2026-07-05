@@ -24,6 +24,7 @@ import { datasourceMetadataRoutes, metadataRoutes } from './http/metadataRoutes'
 import { queryRoutes } from './http/queryRoutes';
 import { historyRoutes, notebookRoutes, savedQueryRoutes } from './http/storeRoutes';
 import { scheduleRoutes } from './http/scheduleRoutes';
+import { workflowRoutes, workflowRunRoutes } from './http/workflowRoutes';
 import { adminRoutes } from './http/adminRoutes';
 import { registerStaticServing } from './http/staticRoutes';
 import { filterDatasourcesForRole } from './rbac/check';
@@ -126,6 +127,8 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   app.route('/api/saved-queries', savedQueryRoutes(services));
   app.route('/api/history', historyRoutes(services));
   app.route('/api/schedules', scheduleRoutes(services));
+  app.route('/api/workflows', workflowRoutes(services));
+  app.route('/api/workflow-runs', workflowRunRoutes(services));
   // Metadata router owns `/catalogs/...` and `/metadata/refresh` under `/api`.
   app.route('/api', metadataRoutes(services));
 

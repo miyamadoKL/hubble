@@ -18,7 +18,9 @@ import { SavedQueryRepository } from './store/savedQueries';
 import { DocumentShareRepository } from './store/documentShares';
 import { HistoryRepository } from './store/history';
 import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
+import { WorkflowRepository, WorkflowRunRepository } from './store/workflows';
 import { Scheduler } from './schedule/scheduler';
+import { WorkflowRunner } from './workflow/runner';
 import { backfillOwners } from './db/backfill';
 import { loadDatasources } from './datasource/loader';
 import { loadRbac } from './rbac/loader';
@@ -52,6 +54,9 @@ export interface Services {
   schedules: ScheduleRepository;
   scheduleRuns: ScheduleRunRepository;
   scheduler: Scheduler;
+  workflows: WorkflowRepository;
+  workflowRuns: WorkflowRunRepository;
+  workflowRunner: WorkflowRunner;
   audit: AuditLogger;
   resultStore: ResultStore;
   resultExpiry: ResultExpiryService;
@@ -69,6 +74,8 @@ export interface BuildServicesOptions {
   now?: () => number;
   schedulerSleep?: (ms: number) => Promise<void>;
   schedulerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
+  workflowRunnerSleep?: (ms: number) => Promise<void>;
+  workflowRunnerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   mysqlPoolFactory?: MysqlPoolFactory;
   pgPoolFactory?: PgPoolFactory;
   reloadLogError?: (message: string, err: unknown) => void;
@@ -159,6 +166,8 @@ export async function buildServices(
   );
   const schedules = new ScheduleRepository(db);
   const scheduleRuns = new ScheduleRunRepository(db, config.scheduler.runsRetention);
+  const workflows = new WorkflowRepository(db);
+  const workflowRuns = new WorkflowRunRepository(db, config.scheduler.runsRetention);
   const scheduler = new Scheduler({
     schedules,
     runs: scheduleRuns,
@@ -180,8 +189,33 @@ export async function buildServices(
     sleep: options.schedulerSleep,
     setTimer: options.schedulerSetTimer,
   });
+  const workflowRunner = new WorkflowRunner({
+    workflows,
+    runs: workflowRuns,
+    engines,
+    defaultDatasourceId: runtime.defaultDatasourceId,
+    estimate,
+    getRbac: () => rbacState.current,
+    guardConfig: config.guard,
+    audit,
+    resultStore,
+    resultKeyPrefix:
+      config.resultStore.kind === 's3' ? config.resultStore.prefix : 'hubble-results/',
+    resultTtlDays: config.resultStore.ttlDays,
+    config: {
+      enabled: config.scheduler.enabled,
+      tickSeconds: config.scheduler.tickSeconds,
+      maxConcurrent: config.scheduler.maxConcurrent,
+      runsRetention: config.scheduler.runsRetention,
+      guardMode: config.guard.mode,
+    },
+    now: options.now,
+    sleep: options.workflowRunnerSleep ?? options.schedulerSleep,
+    setTimer: options.workflowRunnerSetTimer ?? options.schedulerSetTimer,
+  });
   const resultExpiry = new ResultExpiryService({
     history,
+    workflowRuns,
     resultStore,
     now: options.now,
     logWarn: options.resultStoreLogWarn,
@@ -220,6 +254,7 @@ export async function buildServices(
             registry.setDefaultDatasourceId(id);
             estimate.setDefaultDatasourceId(id);
             scheduler.setDefaultDatasourceId(id);
+            workflowRunner.setDefaultDatasourceId(id);
           },
           invalidateDatasource: (id) => {
             metadata.invalidateDatasource(id);
@@ -257,6 +292,9 @@ export async function buildServices(
     schedules,
     scheduleRuns,
     scheduler,
+    workflows,
+    workflowRuns,
+    workflowRunner,
     audit,
     resultStore,
     resultExpiry,
@@ -265,6 +303,7 @@ export async function buildServices(
     reloadRbac,
     shutdown: async () => {
       resultExpiry.stop();
+      await workflowRunner.stop();
       await scheduler.stop();
       await registry.shutdown();
       await db.close();

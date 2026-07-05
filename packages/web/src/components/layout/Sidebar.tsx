@@ -13,6 +13,7 @@ import {
   History,
   NotebookText,
   PanelLeftClose,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -29,6 +30,7 @@ import { NotebookListPanel } from '../panels/NotebookListPanel';
 import { SavedQueriesPanel } from '../panels/SavedQueriesPanel';
 import { HistoryPanel } from '../panels/HistoryPanel';
 import { SchedulesPanel } from '../panels/SchedulesPanel';
+import { WorkflowsPanel } from '../workflow/WorkflowsPanel';
 import { OperationsPanel } from '../panels/OperationsPanel';
 import { useMe } from '../../hooks/useMe';
 import { hasPermission } from '../../permissions';
@@ -57,6 +59,7 @@ const RAIL: RailItem[] = [
   { id: 'saved', icon: BookMarked, label: 'Saved' },
   { id: 'history', icon: History, label: 'History' },
   { id: 'schedules', icon: CalendarClock, label: 'Schedules' },
+  { id: 'workflows', icon: Workflow, label: 'Workflows' },
   { id: 'operations', icon: Activity, label: 'Operations' },
 ];
 
@@ -67,6 +70,7 @@ const PANEL_TITLE: Record<SidebarTab, string> = {
   saved: 'Saved queries',
   history: 'History',
   schedules: 'Schedules',
+  workflows: 'Workflows',
   operations: 'Operations',
 };
 
@@ -77,6 +81,7 @@ const PANEL_PLACEHOLDER: Record<SidebarTab, string> = {
   saved: 'Search saved queries…',
   history: 'Search history…',
   schedules: 'Search schedules…',
+  workflows: 'Search workflows…',
   operations: 'Filter queries…',
 };
 
@@ -249,6 +254,7 @@ export function Sidebar({
             {effectiveTab === 'saved' && <SavedQueriesPanel search={search} />}
             {effectiveTab === 'history' && <HistoryPanel />}
             {effectiveTab === 'schedules' && <SchedulesPanel search={search} />}
+            {effectiveTab === 'workflows' && <WorkflowsPanel search={search} />}
             {effectiveTab === 'operations' && <OperationsPanel />}
           </div>
 
