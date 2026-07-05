@@ -59,6 +59,9 @@ export function notebookToContent(nb: Notebook): string {
       };
       if (cell.name !== undefined) item.name = cell.name;
       if (cell.collapsed !== undefined) item.collapsed = cell.collapsed;
+      // チャート設定はユーザーが編集するコンテンツなので正規形に含める
+      // (resultMeta のような実行結果由来の揮発フィールドは含めない)。
+      if (cell.chart !== undefined) item.chart = cell.chart;
       return item;
     }),
   };

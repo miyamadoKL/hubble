@@ -19,15 +19,24 @@
 // option assembly lives in `chartOptions.ts`, and the theme (token colors / font)
 // in `chartTheme.ts`.
 
-import type { QueryColumn } from '@hubble/contracts';
+import type {
+  ChartConfig,
+  ChartType,
+  LimitOption,
+  QueryColumn,
+  SortOrder,
+} from '@hubble/contracts';
+import { CHART_LIMIT_OPTIONS } from '@hubble/contracts';
 import type { ResultRow } from '../execution';
 
 /**
  * The five chart kinds we support.
  * サポートするチャート種別: 棒グラフ(bars) / 折れ線(lines) / タイムライン(timeline)
  * / 円グラフ(pie) / 散布図(scatter) の5種類。
+ * 型定義は契約層（@hubble/contracts の chart.ts）へ昇格済みで、ここでは
+ * 既存の import 経路を保つために再エクスポートしている。
  */
-export type ChartType = 'bars' | 'lines' | 'timeline' | 'pie' | 'scatter';
+export type { ChartConfig, ChartType, LimitOption, SortOrder };
 
 /**
  * Coarse value class derived from a Trino column type string.
@@ -37,17 +46,10 @@ export type ChartType = 'bars' | 'lines' | 'timeline' | 'pie' | 'scatter';
  */
 export type ValueClass = 'number' | 'temporal' | 'string';
 
-/**
- * ソート順の指定。'none' はソートなし（クエリ結果の並び順のまま）、
- * 'asc' は第一Y測定値の昇順、'desc' は同降順（`applySortLimit` 参照）。
- */
-export type SortOrder = 'none' | 'asc' | 'desc';
-
 /** Row-count caps offered in the UI; `all` means "the loaded range". */
 // UI 上で選択可能な表示件数の上限候補。'all' はロード済みの全行を表示する特別値。
-export const LIMIT_OPTIONS = [5, 10, 25, 50, 100, 'all'] as const;
-/** LIMIT_OPTIONS の要素から導かれる型（5 | 10 | 25 | 50 | 100 | 'all'）。 */
-export type LimitOption = (typeof LIMIT_OPTIONS)[number];
+// 実体は契約層の CHART_LIMIT_OPTIONS（既存の import 経路を保つための別名）。
+export const LIMIT_OPTIONS = CHART_LIMIT_OPTIONS;
 
 // カラム型文字列が数値系かどうかを判定する正規表現（先頭一致、大文字小文字無視）。
 // bigint/integer/int/smallint/tinyint は整数系、double/real/decimal/float/numeric は浮動小数と精度指定系。
@@ -92,33 +94,6 @@ export function describeColumns(columns: QueryColumn[]): ColumnInfo[] {
     type: c.type,
     valueClass: classifyType(c.type),
   }));
-}
-
-/**
- * Per-cell chart configuration. Column references are by index so they survive a
- * rename and map straight onto a row's positional cells. `yIndices` is the set of
- * (numeric) measures to plot; for pie/scatter only the first is used as the
- * primary value.
- * セル単位のチャート設定。カラムはカラム名ではなく index（位置）で参照するため、
- * カラム名の変更があっても設定が壊れにくく、また行データへのアクセスも
- * ポジショナルにそのまま行える。yIndices は描画対象とする（数値）測定値の集合で、
- * pie（円グラフ）や scatter（散布図）では先頭の要素のみが主たる値として使われる。
- */
-export interface ChartConfig {
-  /** チャート種別。 */
-  type: ChartType;
-  /** X軸に使うカラムの index。未選択の場合は null。 */
-  xIndex: number | null;
-  /** Y軸（測定値）に使うカラムの index の配列。複数選択で複数系列になる。 */
-  yIndices: number[];
-  /** 行のソート順。 */
-  sort: SortOrder;
-  /** 表示行数の上限。'all' は上限なし。 */
-  limit: LimitOption;
-  /** scatter only: optional series-grouping (categorical) column. */
-  groupIndex?: number | null;
-  /** scatter only: optional point-size (numeric) column. */
-  sizeIndex?: number | null;
 }
 
 /**

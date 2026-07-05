@@ -5,6 +5,7 @@
  */
 import { parse as parseYaml } from 'yaml';
 import {
+  chartConfigSchema,
   cronExpression,
   notebookContextSchema,
   retryPolicySchema,
@@ -39,6 +40,7 @@ export interface ParsedNotebookContent {
     source: string;
     name?: string;
     collapsed?: boolean;
+    chart?: z.infer<typeof chartConfigSchema>;
   }>;
 }
 
@@ -57,6 +59,7 @@ const notebookCellContentSchema = z.object({
   source: z.string(),
   name: z.string().optional(),
   collapsed: z.boolean().optional(),
+  chart: chartConfigSchema.optional(),
 });
 
 const notebookContentSchema = z.object({
@@ -178,6 +181,7 @@ export function parseNotebookContent(content: string): ParsedNotebookContent {
       source: cell.source,
       ...(cell.name !== undefined ? { name: cell.name } : {}),
       ...(cell.collapsed !== undefined ? { collapsed: cell.collapsed } : {}),
+      ...(cell.chart !== undefined ? { chart: cell.chart } : {}),
     })),
   };
 }
