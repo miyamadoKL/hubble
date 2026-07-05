@@ -18,8 +18,10 @@ import { SavedQueryRepository } from './store/savedQueries';
 import { DocumentShareRepository } from './store/documentShares';
 import { HistoryRepository } from './store/history';
 import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
+import { AlertRepository } from './store/alerts';
 import { WorkflowRepository, WorkflowRunRepository } from './store/workflows';
 import { Scheduler } from './schedule/scheduler';
+import { AlertEvaluator } from './alert/evaluator';
 import { WorkflowRunner } from './workflow/runner';
 import { backfillOwners } from './db/backfill';
 import { loadDatasources } from './datasource/loader';
@@ -35,7 +37,7 @@ import { AuditLogger, AuditRepository } from './audit';
 import { createResultStore, type ResultStore } from './resultStore';
 import { ResultExpiryService } from './resultStore/cleanup';
 import { NotificationService } from './notification/service';
-import type { FailureNotificationSender } from './notification/service';
+import type { FailureNotificationSender, AlertNotificationSender } from './notification/service';
 import { GithubApiClient } from './github/client';
 import { GithubConnectionRepository, DocumentGitLinkRepository } from './github/store';
 import { GithubSyncService } from './github/syncService';
@@ -59,13 +61,15 @@ export interface Services {
   schedules: ScheduleRepository;
   scheduleRuns: ScheduleRunRepository;
   scheduler: Scheduler;
+  alerts: AlertRepository;
+  alertEvaluator: AlertEvaluator;
   workflows: WorkflowRepository;
   workflowRuns: WorkflowRunRepository;
   workflowRunner: WorkflowRunner;
   audit: AuditLogger;
   resultStore: ResultStore;
   resultExpiry: ResultExpiryService;
-  notifications: FailureNotificationSender;
+  notifications: FailureNotificationSender & AlertNotificationSender;
   github?: GithubSyncService;
   githubSyncScheduler?: GithubSyncScheduler;
   githubGovernance: GithubGovernanceService;
@@ -84,6 +88,7 @@ export interface BuildServicesOptions {
   now?: () => number;
   schedulerSleep?: (ms: number) => Promise<void>;
   schedulerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
+  alertEvaluatorSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   workflowRunnerSleep?: (ms: number) => Promise<void>;
   workflowRunnerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   mysqlPoolFactory?: MysqlPoolFactory;
@@ -95,7 +100,7 @@ export interface BuildServicesOptions {
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   notificationLogWarn?: (message: string, detail?: unknown) => void;
-  notificationSender?: FailureNotificationSender;
+  notificationSender?: FailureNotificationSender & AlertNotificationSender;
   githubClient?: import('./github/client').GithubClient;
   githubSyncSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
 }
@@ -178,6 +183,7 @@ export async function buildServices(
   );
   const schedules = new ScheduleRepository(db);
   const scheduleRuns = new ScheduleRunRepository(db, config.scheduler.runsRetention);
+  const alerts = new AlertRepository(db);
   const workflows = new WorkflowRepository(db);
   const workflowRuns = new WorkflowRunRepository(db, config.scheduler.runsRetention);
   const documentGitLinks = new DocumentGitLinkRepository(db);
@@ -209,6 +215,25 @@ export async function buildServices(
     now: options.now,
     sleep: options.schedulerSleep,
     setTimer: options.schedulerSetTimer,
+  });
+  const alertEvaluator = new AlertEvaluator({
+    alerts,
+    savedQueries,
+    engines,
+    defaultDatasourceId: runtime.defaultDatasourceId,
+    estimate,
+    getRbac: () => rbacState.current,
+    guardConfig: config.guard,
+    audit,
+    notifications,
+    config: {
+      enabled: config.scheduler.enabled,
+      tickSeconds: config.scheduler.tickSeconds,
+      maxConcurrent: config.scheduler.maxConcurrent,
+      guardMode: config.guard.mode,
+    },
+    now: options.now,
+    setTimer: options.alertEvaluatorSetTimer ?? options.schedulerSetTimer,
   });
   const workflowRunner = new WorkflowRunner({
     workflows,
@@ -263,6 +288,7 @@ export async function buildServices(
       savedQueries,
       notebooks,
       workflows,
+      alerts,
       audit,
       encryptionKey: config.github.tokenEncryptionKey!,
       now: githubNow,
@@ -307,6 +333,7 @@ export async function buildServices(
             registry.setDefaultDatasourceId(id);
             estimate.setDefaultDatasourceId(id);
             scheduler.setDefaultDatasourceId(id);
+            alertEvaluator.setDefaultDatasourceId(id);
             workflowRunner.setDefaultDatasourceId(id);
           },
           invalidateDatasource: (id) => {
@@ -345,6 +372,8 @@ export async function buildServices(
     schedules,
     scheduleRuns,
     scheduler,
+    alerts,
+    alertEvaluator,
     workflows,
     workflowRuns,
     workflowRunner,
@@ -362,6 +391,7 @@ export async function buildServices(
       resultExpiry.stop();
       await githubSyncScheduler?.stop();
       await workflowRunner.stop();
+      await alertEvaluator.stop();
       await scheduler.stop();
       await registry.shutdown();
       await db.close();

@@ -84,6 +84,7 @@ const DOC_CONTENT_KEYS: Record<DocumentGitType, readonly string[]> = {
   saved_query: ['saved-queries'],
   notebook: ['notebooks'],
   workflow: ['workflows'],
+  alert: ['alerts'],
 };
 
 /**

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { stringify as stringifyYaml } from 'yaml';
 import type { Notebook, SavedQuery } from '@hubble/contracts';
 import type { DocumentGitType } from '@hubble/contracts';
+import type { AlertRecord } from '../store/alerts';
 import type { WorkflowRecord } from '../store/workflows';
 
 /** 正規形 SQL/YAML 文字列の SHA-256 ハッシュ (hex)。 */
@@ -69,6 +70,27 @@ export function notebookToContent(nb: Notebook): string {
 }
 
 /**
+ * Alert を YAML 正規形へ変換する。実行時状態 (state, lastTriggeredAt) は含めない。
+ * @param a - Alert レコード。
+ */
+export function alertToContent(a: AlertRecord): string {
+  const payload = {
+    id: a.id,
+    name: a.name,
+    savedQueryId: a.savedQueryId,
+    columnName: a.columnName,
+    op: a.op,
+    value: a.value,
+    selector: a.selector,
+    rearm: a.rearm,
+    muted: a.muted,
+    cron: a.cron,
+    notifications: a.notifications,
+  };
+  return `${stringifyYaml(payload)}\n`;
+}
+
+/**
  * ワークフローを YAML 正規形へ変換する。
  * @param w - ワークフローレコード。
  */
@@ -111,6 +133,8 @@ export function documentPath(type: DocumentGitType, id: string): string {
       return `notebooks/${id}.yaml`;
     case 'workflow':
       return `workflows/${id}.yaml`;
+    case 'alert':
+      return `alerts/${id}.yaml`;
   }
 }
 
@@ -132,7 +156,7 @@ export function branchNameFor(user: string, type: DocumentGitType, id: string): 
  */
 export function documentToContent(
   type: DocumentGitType,
-  doc: SavedQuery | Notebook | WorkflowRecord,
+  doc: SavedQuery | Notebook | WorkflowRecord | AlertRecord,
 ): string {
   switch (type) {
     case 'saved_query':
@@ -141,5 +165,7 @@ export function documentToContent(
       return notebookToContent(doc as Notebook);
     case 'workflow':
       return workflowToContent(doc as WorkflowRecord);
+    case 'alert':
+      return alertToContent(doc as AlertRecord);
   }
 }

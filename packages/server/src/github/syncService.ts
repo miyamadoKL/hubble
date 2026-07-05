@@ -20,8 +20,10 @@ import type { AuditLogger } from '../audit';
 import type { NotebookRepository } from '../store/notebooks';
 import type { SavedQueryRepository } from '../store/savedQueries';
 import type { WorkflowRecord, WorkflowRepository } from '../store/workflows';
+import type { AlertRecord, AlertRepository } from '../store/alerts';
 import { branchNameFor, contentHash, documentPath, documentToContent } from './canonical';
 import {
+  parseAlertContent,
   parseNotebookContent,
   parseSavedQueryContent,
   parseWorkflowContent,
@@ -57,6 +59,7 @@ export interface GithubSyncServiceDeps {
   savedQueries: SavedQueryRepository;
   notebooks: NotebookRepository;
   workflows: WorkflowRepository;
+  alerts: AlertRepository;
   audit: AuditLogger;
   encryptionKey: Buffer;
   now?: () => number;
@@ -534,13 +537,15 @@ export class GithubSyncService {
         return this.deps.notebooks.getOwner(id);
       case 'workflow':
         return (await this.deps.workflows.getById(id))?.owner;
+      case 'alert':
+        return (await this.deps.alerts.getById(id))?.owner;
     }
   }
 
   private async loadDocumentUnscoped(
     type: DocumentGitType,
     id: string,
-  ): Promise<SavedQuery | Notebook | WorkflowRecord | undefined> {
+  ): Promise<SavedQuery | Notebook | WorkflowRecord | AlertRecord | undefined> {
     switch (type) {
       case 'saved_query':
         return this.deps.savedQueries.getByIdUnscoped(id);
@@ -548,6 +553,8 @@ export class GithubSyncService {
         return this.deps.notebooks.getByIdUnscoped(id);
       case 'workflow':
         return this.deps.workflows.getById(id);
+      case 'alert':
+        return this.deps.alerts.getById(id);
     }
   }
 
@@ -595,6 +602,26 @@ export class GithubSyncService {
           cron: parsed.cron,
           retry: parsed.retry,
           enabled: existing.enabled,
+        });
+        break;
+      }
+      case 'alert': {
+        const parsed = parseAlertContent(contentText);
+        const existing = await this.deps.alerts.getById(id);
+        if (!existing) {
+          throw AppError.notFound('Alert not found');
+        }
+        await this.deps.alerts.update(owner, id, {
+          name: parsed.name,
+          savedQueryId: parsed.savedQueryId,
+          columnName: parsed.columnName,
+          op: parsed.op,
+          value: parsed.value,
+          selector: parsed.selector,
+          rearm: parsed.rearm,
+          muted: parsed.muted,
+          cron: parsed.cron,
+          notifications: parsed.notifications,
         });
         break;
       }
@@ -729,6 +756,13 @@ export class GithubSyncService {
       case 'workflow': {
         const doc = await this.deps.workflows.get(principal.user, id);
         if (!doc) throw AppError.notFound('Workflow not found');
+        name = doc.name;
+        content = documentToContent(type, doc);
+        break;
+      }
+      case 'alert': {
+        const doc = await this.deps.alerts.get(principal.user, id);
+        if (!doc) throw AppError.notFound('Alert not found');
         name = doc.name;
         content = documentToContent(type, doc);
         break;

@@ -5,6 +5,9 @@
  */
 import { parse as parseYaml } from 'yaml';
 import {
+  alertNotificationsSchema,
+  alertOpSchema,
+  alertSelectorSchema,
   chartConfigSchema,
   cronExpression,
   notebookContextSchema,
@@ -54,6 +57,20 @@ export interface ParsedWorkflowContent {
   stages: z.infer<typeof workflowDefinitionSchema>;
 }
 
+/** Alert 正規形のパース結果。 */
+export interface ParsedAlertContent {
+  name: string;
+  savedQueryId: string;
+  columnName: string;
+  op: z.infer<typeof alertOpSchema>;
+  value: string;
+  selector: z.infer<typeof alertSelectorSchema>;
+  rearm: number;
+  muted: boolean;
+  cron: string;
+  notifications: z.infer<typeof alertNotificationsSchema>;
+}
+
 const notebookCellContentSchema = z.object({
   kind: cellKindSchema,
   source: z.string(),
@@ -77,6 +94,19 @@ const workflowContentSchema = z.object({
   cron: cronExpression.nullable(),
   retry: retryPolicySchema,
   stages: workflowDefinitionSchema,
+});
+
+const alertContentSchema = z.object({
+  name: z.string().min(1),
+  savedQueryId: z.string().min(1),
+  columnName: z.string().min(1),
+  op: alertOpSchema,
+  value: z.string(),
+  selector: alertSelectorSchema,
+  rearm: z.number().int().nonnegative(),
+  muted: z.boolean(),
+  cron: cronExpression,
+  notifications: alertNotificationsSchema,
 });
 
 function parseError(message: string): Error {
@@ -212,4 +242,25 @@ export function parseWorkflowContent(content: string): ParsedWorkflowContent {
     retry: result.data.retry,
     stages: result.data.stages,
   };
+}
+
+/**
+ * Alert の YAML 正規形をパースする。
+ * @param content - GitHub 上の .yaml 本文。
+ */
+export function parseAlertContent(content: string): ParsedAlertContent {
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(content);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw parseError(`Invalid alert YAML: ${message}`);
+  }
+
+  const result = alertContentSchema.safeParse(parsed);
+  if (!result.success) {
+    throw parseError(`Invalid alert content: ${result.error.message}`);
+  }
+
+  return result.data;
 }

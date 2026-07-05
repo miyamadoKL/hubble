@@ -33,7 +33,8 @@ export type ThemeMode = 'light' | 'dark';
  * 'data'（データカタログ）、'notebooks'（ノートブック一覧）、
  * 'saved'（保存済みクエリ）、'history'（実行履歴）、
  * 'schedules'（クエリスケジュール、後から追加された機能）、
- * 'workflows'（クエリワークフロー）の7種類。
+ * 'alerts'（閾値監視アラート）、
+ * 'workflows'（クエリワークフロー）の8種類。
  */
 export type SidebarTab =
   | 'data'
@@ -41,6 +42,7 @@ export type SidebarTab =
   | 'saved'
   | 'history'
   | 'schedules'
+  | 'alerts'
   | 'workflows'
   | 'operations';
 

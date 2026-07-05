@@ -176,6 +176,7 @@ export async function createTestContext(
   // 日本語: enabled=false でもクラッシュ復旧 (abortOrphans) は必ず走るため、
   // tick ループを使わないテストでも start() は呼んでおく必要がある。
   await services.scheduler.start();
+  await services.alertEvaluator.start();
   await services.workflowRunner.start();
   const app = createApp({
     services,
