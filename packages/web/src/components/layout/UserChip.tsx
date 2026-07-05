@@ -5,8 +5,12 @@
  * クリック時には実効ロール、権限、アクセス可能なデータソースを表示する。
  */
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Database, ShieldCheck } from 'lucide-react';
+import { ChevronDown, Database, GitFork, ShieldCheck } from 'lucide-react';
 import { useMe } from '../../hooks/useMe';
+import { useDisconnectGithub, useGithubStatus } from '../../hooks/useGithub';
+import { githubConnectUrl } from '../../api/github';
+import { Button } from '../common/Button';
+import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
 
 /**
@@ -25,6 +29,9 @@ export function UserChip() {
   const rootRef = useRef<HTMLDivElement>(null);
   // サーバーから現在のユーザー情報を取得する。
   const { data: me } = useMe();
+  // GitHub 連携の有効状態と自分の接続状態 (機能無効なら enabled=false)。
+  const { data: github } = useGithubStatus();
+  const disconnectGithub = useDisconnectGithub();
 
   useEffect(() => {
     if (!open) return;
@@ -146,6 +153,44 @@ export function UserChip() {
                 <div className="text-xs text-ink-muted">No datasources</div>
               )}
             </section>
+
+            {/* GitHub 連携 (サーバー側で有効な場合のみ表示)。接続、解除を行う。 */}
+            {github?.enabled && (
+              <section>
+                <div className="mb-1.5 flex items-center gap-1.5 text-2xs font-semibold text-ink-muted uppercase">
+                  <GitFork size={13} strokeWidth={1.75} />
+                  GitHub
+                </div>
+                {github.connected ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-mono text-xs">@{github.login}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        disconnectGithub.mutate(undefined, {
+                          onSuccess: () => toast.info('Disconnected', 'GitHub account unlinked.'),
+                          onError: () =>
+                            toast.error('Disconnect failed', 'Could not reach the server.'),
+                        })
+                      }
+                      disabled={disconnectGithub.isPending}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    icon={GitFork}
+                    onClick={() => window.location.assign(githubConnectUrl())}
+                  >
+                    Connect GitHub
+                  </Button>
+                )}
+              </section>
+            )}
           </div>
         </div>
       )}

@@ -114,6 +114,17 @@ export const apiRoutes = {
   workflowRunDownloadZip: (runId: string) => `/api/workflow-runs/${enc(runId)}/download.zip`,
   workflowRunDownloadXlsx: (runId: string) => `/api/workflow-runs/${enc(runId)}/download.xlsx`,
   workflowRunExport: (runId: string) => `/api/workflow-runs/${enc(runId)}/export`,
+
+  // GitHub integration
+  githubStatus: () => '/api/github/status',
+  githubConnect: () => '/api/github/connect',
+  githubConnection: () => '/api/github/connection',
+  githubDocumentStatus: (type: string, id: string) =>
+    `/api/github/documents/${enc(type)}/${enc(id)}/status`,
+  githubDocumentPush: (type: string, id: string) =>
+    `/api/github/documents/${enc(type)}/${enc(id)}/push`,
+  githubDocumentPr: (type: string, id: string) =>
+    `/api/github/documents/${enc(type)}/${enc(id)}/pr`,
 } as const;
 
 /** apiRoutes オブジェクト全体の型（各エンドポイントの型を参照する際に使う）。 */

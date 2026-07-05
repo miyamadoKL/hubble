@@ -43,6 +43,8 @@ const OWNED_TABLES = [
   'workflows',
   'workflow_runs',
   'workflow_step_runs',
+  'github_connections',
+  'document_git_links',
 ] as const;
 
 // 日本語: SQLite バックエンド定義。open() のたびに新規のインメモリ DB を

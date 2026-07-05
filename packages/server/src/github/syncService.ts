@@ -1,0 +1,481 @@
+/**
+ * GitHub 連携の同期サービス。
+ *
+ * OAuth 接続、ドキュメント push、PR 作成、承認状態の判定を担う。
+ * ルート層 (http/githubRoutes.ts) から呼ばれ、GitHub API と永続化層を束ねる。
+ */
+import type {
+  DocumentGitType,
+  GithubDocumentPushResponse,
+  GithubDocumentStatusResponse,
+  GithubStatusResponse,
+} from '@hubble/contracts';
+import type { Principal } from '../auth/principal';
+import type { GithubConfig } from '../config';
+import { AppError } from '../errors';
+import type { AuditLogger } from '../audit';
+import type { NotebookRepository } from '../store/notebooks';
+import type { SavedQueryRepository } from '../store/savedQueries';
+import type { WorkflowRepository } from '../store/workflows';
+import { branchNameFor, contentHash, documentPath, documentToContent } from './canonical';
+import { decryptToken, encryptToken } from './crypto';
+import { GithubPullRequestExistsError, type GithubClient } from './client';
+import {
+  DocumentGitLinkRepository,
+  GithubConnectionRepository,
+  type DocumentGitLinkRecord,
+} from './store';
+
+interface ResolvedDocument {
+  name: string;
+  content: string;
+  hash: string;
+  path: string;
+}
+
+interface DecryptedConnection {
+  login: string;
+  accessToken: string;
+  refreshToken: string | null;
+  tokenExpiresAt: string | null;
+}
+
+export interface GithubSyncServiceDeps {
+  config: GithubConfig;
+  client: GithubClient;
+  connections: GithubConnectionRepository;
+  links: DocumentGitLinkRepository;
+  savedQueries: SavedQueryRepository;
+  notebooks: NotebookRepository;
+  workflows: WorkflowRepository;
+  audit: AuditLogger;
+  encryptionKey: Buffer;
+  now?: () => number;
+}
+
+/**
+ * GitHub 連携のビジネスロジック。
+ */
+export class GithubSyncService {
+  private readonly now: () => number;
+
+  constructor(private readonly deps: GithubSyncServiceDeps) {
+    this.now = deps.now ?? (() => Date.now());
+  }
+
+  /** 機能全体の状態を返す。 */
+  async getGlobalStatus(owner: string): Promise<GithubStatusResponse> {
+    const { config, connections } = this.deps;
+    const connection = await connections.get(owner);
+    return {
+      enabled: config.enabled,
+      connected: connection !== undefined,
+      login: connection?.githubLogin,
+      repo: config.repo,
+      governance: config.governance,
+    };
+  }
+
+  /** OAuth code から接続を確立する。 */
+  async connect(owner: string, code: string): Promise<void> {
+    const token = await this.deps.client.exchangeCode(code);
+    const user = await this.deps.client.getAuthenticatedUser(token.accessToken);
+    await this.deps.connections.upsert(owner, {
+      githubLogin: user.login,
+      accessTokenEnc: encryptToken(this.deps.encryptionKey, token.accessToken),
+      refreshTokenEnc: token.refreshToken
+        ? encryptToken(this.deps.encryptionKey, token.refreshToken)
+        : null,
+      tokenExpiresAt: token.expiresAt ?? null,
+    });
+    await this.deps.audit.record({
+      actor: owner,
+      action: 'github.connect',
+      detail: { login: user.login },
+    });
+  }
+
+  /** 接続を解除する。 */
+  async disconnect(owner: string): Promise<void> {
+    await this.deps.connections.delete(owner);
+    await this.deps.audit.record({
+      actor: owner,
+      action: 'github.connect',
+      detail: { action: 'disconnect' },
+    });
+  }
+
+  /** ドキュメントの Git 承認状態を返す。 */
+  async getStatus(
+    principal: Principal,
+    type: DocumentGitType,
+    id: string,
+  ): Promise<GithubDocumentStatusResponse> {
+    this.assertEnabled();
+    const resolved = await this.resolveDocument(principal, type, id, false);
+    const link = await this.deps.links.get(type, id);
+    const repo = this.deps.config.repo!;
+    const defaultBranch = this.deps.config.defaultBranch;
+    const htmlUrl = `https://github.com/${repo}/blob/${defaultBranch}/${resolved.path}`;
+    const base: GithubDocumentStatusResponse = {
+      status: 'unlinked',
+      path: resolved.path,
+      repo,
+      htmlUrl,
+    };
+
+    if (!link) {
+      const connection = await this.deps.connections.get(principal.user);
+      return { ...base, connected: connection !== undefined };
+    }
+
+    let approvedHash = link.approvedHash;
+    let approvedCommit = link.approvedCommit;
+    let stale = false;
+    const connection = await this.deps.connections.get(principal.user);
+    const connected = connection !== undefined;
+
+    if (connected) {
+      const verification = await this.verifyApprovedHash(principal.user, link, resolved.path);
+      approvedHash = verification.approvedHash;
+      approvedCommit = verification.approvedCommit;
+      stale = verification.stale;
+    }
+
+    const status = this.resolveStatus(resolved.hash, link, approvedHash);
+    return {
+      status,
+      path: link.path,
+      branch: link.branch ?? undefined,
+      prNumber: link.prNumber ?? undefined,
+      prUrl: link.prUrl ?? undefined,
+      approvedCommit: approvedCommit ?? undefined,
+      repo,
+      htmlUrl,
+      connected,
+      ...(stale ? { stale: true } : {}),
+    };
+  }
+
+  /** ドキュメントを feature ブランチへ push する。 */
+  async push(
+    principal: Principal,
+    type: DocumentGitType,
+    id: string,
+    options: { message?: string } = {},
+  ): Promise<GithubDocumentPushResponse> {
+    this.assertEnabled();
+    const resolved = await this.resolveDocument(principal, type, id, true);
+    const { accessToken } = await this.requireConnection(principal.user);
+    const repo = this.deps.config.repo!;
+    const defaultBranch = this.deps.config.defaultBranch;
+    const branch = branchNameFor(principal.user, type, id);
+    if (branch === defaultBranch) {
+      throw AppError.internal('Refusing to push to default branch');
+    }
+
+    const headSha = await this.deps.client.getBranchHeadSha(accessToken, repo, defaultBranch);
+    if (!headSha) {
+      throw new AppError(502, {
+        code: 'GITHUB_ERROR',
+        message: `Default branch ${defaultBranch} not found`,
+      });
+    }
+
+    const existingBranchSha = await this.deps.client.getBranchHeadSha(accessToken, repo, branch);
+    if (!existingBranchSha) {
+      await this.deps.client.createBranch(accessToken, repo, branch, headSha);
+    }
+
+    const existingFile = await this.deps.client.getFile(accessToken, repo, resolved.path, branch);
+    const message = options.message ?? `Update ${resolved.path} via Hubble`;
+    const putResult = await this.deps.client.putFile(accessToken, repo, {
+      path: resolved.path,
+      branch,
+      contentText: resolved.content,
+      message,
+      sha: existingFile?.sha,
+    });
+
+    await this.deps.links.upsert(type, id, {
+      path: resolved.path,
+      branch,
+      lastPushedCommit: putResult.commitSha,
+      lastPushedHash: resolved.hash,
+    });
+
+    await this.deps.audit.record({
+      actor: principal.user,
+      action: 'github.push',
+      target: `${type}:${id}`,
+      detail: {
+        repo,
+        branch,
+        path: resolved.path,
+        commitSha: putResult.commitSha,
+      },
+    });
+
+    return {
+      branch,
+      path: resolved.path,
+      commitSha: putResult.commitSha,
+      compareUrl: `https://github.com/${repo}/compare/${defaultBranch}...${branch}`,
+    };
+  }
+
+  /** feature ブランチから PR を作成する。 */
+  async createPullRequest(
+    principal: Principal,
+    type: DocumentGitType,
+    id: string,
+    options: { title?: string; body?: string } = {},
+  ): Promise<{ prNumber: number; prUrl: string }> {
+    this.assertEnabled();
+    const resolved = await this.resolveDocument(principal, type, id, true);
+    const { accessToken } = await this.requireConnection(principal.user);
+    const link = await this.deps.links.get(type, id);
+    if (!link?.branch) {
+      throw AppError.badRequest('Push the document to GitHub before creating a pull request');
+    }
+
+    const repo = this.deps.config.repo!;
+    const defaultBranch = this.deps.config.defaultBranch;
+    const [repoOwner] = repo.split('/');
+    const title = options.title ?? `Update ${resolved.path}`;
+    const body =
+      options.body ?? `Updated from Hubble.\n\nDocument: ${resolved.name}\nPath: ${resolved.path}`;
+
+    let prNumber: number;
+    let prUrl: string;
+    try {
+      const created = await this.deps.client.createPullRequest(accessToken, repo, {
+        head: link.branch,
+        base: defaultBranch,
+        title,
+        body,
+      });
+      prNumber = created.number;
+      prUrl = created.url;
+    } catch (err) {
+      if (!(err instanceof GithubPullRequestExistsError)) throw err;
+      const head = `${repoOwner}:${link.branch}`;
+      const existing = await this.deps.client.listPullRequests(accessToken, repo, head);
+      const open = existing.find((item) => item.state === 'open');
+      if (!open) {
+        throw err;
+      }
+      prNumber = open.number;
+      prUrl = open.url;
+    }
+
+    await this.deps.links.upsert(type, id, {
+      path: resolved.path,
+      prNumber,
+      prUrl,
+    });
+
+    await this.deps.audit.record({
+      actor: principal.user,
+      action: 'github.pr.create',
+      target: `${type}:${id}`,
+      detail: {
+        repo,
+        branch: link.branch,
+        path: resolved.path,
+        prNumber,
+        prUrl,
+      },
+    });
+
+    return { prNumber, prUrl };
+  }
+
+  private assertEnabled(): void {
+    if (!this.deps.config.enabled) {
+      throw new AppError(404, {
+        code: 'GITHUB_DISABLED',
+        message: 'GitHub integration is disabled',
+      });
+    }
+  }
+
+  private async requireConnection(owner: string): Promise<DecryptedConnection> {
+    const connection = await this.getConnection(owner);
+    if (!connection) {
+      throw new AppError(401, {
+        code: 'GITHUB_NOT_CONNECTED',
+        message: 'Connect your GitHub account before using this feature',
+      });
+    }
+    return connection;
+  }
+
+  /** 復号済みトークンを返す。期限切れなら refresh する。 */
+  async getConnection(owner: string): Promise<DecryptedConnection | undefined> {
+    const row = await this.deps.connections.get(owner);
+    if (!row) return undefined;
+
+    let accessToken = decryptToken(this.deps.encryptionKey, row.accessTokenEnc);
+    let refreshToken = row.refreshTokenEnc
+      ? decryptToken(this.deps.encryptionKey, row.refreshTokenEnc)
+      : null;
+    let tokenExpiresAt = row.tokenExpiresAt;
+
+    if (this.isExpired(tokenExpiresAt) && refreshToken) {
+      try {
+        const refreshed = await this.deps.client.refreshAccessToken(refreshToken);
+        accessToken = refreshed.accessToken;
+        refreshToken = refreshed.refreshToken ?? refreshToken;
+        tokenExpiresAt = refreshed.expiresAt ?? null;
+        await this.deps.connections.upsert(owner, {
+          githubLogin: row.githubLogin,
+          accessTokenEnc: encryptToken(this.deps.encryptionKey, accessToken),
+          refreshTokenEnc: refreshToken
+            ? encryptToken(this.deps.encryptionKey, refreshToken)
+            : null,
+          tokenExpiresAt,
+        });
+      } catch (err) {
+        if (err instanceof AppError && err.detail.code === 'GITHUB_TOKEN_INVALID') {
+          throw err;
+        }
+        throw new AppError(401, {
+          code: 'GITHUB_TOKEN_INVALID',
+          message: 'GitHub token is invalid or expired',
+        });
+      }
+    }
+
+    return {
+      login: row.githubLogin,
+      accessToken,
+      refreshToken,
+      tokenExpiresAt,
+    };
+  }
+
+  private isExpired(tokenExpiresAt: string | null | undefined): boolean {
+    if (!tokenExpiresAt) return false;
+    return Date.parse(tokenExpiresAt) <= this.now();
+  }
+
+  private async resolveDocument(
+    principal: Principal,
+    type: DocumentGitType,
+    id: string,
+    requireOwner: boolean,
+  ): Promise<ResolvedDocument> {
+    const accessor = {
+      user: principal.user,
+      groups: principal.groups ?? [],
+      role: principal.role.name,
+    };
+
+    let name: string;
+    let content: string;
+
+    switch (type) {
+      case 'saved_query': {
+        const doc = await this.deps.savedQueries.get(accessor, id);
+        if (!doc) throw AppError.notFound('Saved query not found');
+        if (requireOwner && doc.myPermission !== 'owner') {
+          throw AppError.forbidden('Only the document owner can push to GitHub');
+        }
+        name = doc.name;
+        content = documentToContent(type, doc);
+        break;
+      }
+      case 'notebook': {
+        const doc = await this.deps.notebooks.get(accessor, id);
+        if (!doc) throw AppError.notFound('Notebook not found');
+        if (requireOwner && doc.myPermission !== 'owner') {
+          throw AppError.forbidden('Only the document owner can push to GitHub');
+        }
+        name = doc.name;
+        content = documentToContent(type, doc);
+        break;
+      }
+      case 'workflow': {
+        const doc = await this.deps.workflows.get(principal.user, id);
+        if (!doc) throw AppError.notFound('Workflow not found');
+        name = doc.name;
+        content = documentToContent(type, doc);
+        break;
+      }
+    }
+
+    const path = documentPath(type, id);
+    return { name, content, hash: contentHash(content), path };
+  }
+
+  private resolveStatus(
+    currentHash: string,
+    link: DocumentGitLinkRecord,
+    approvedHash: string | null,
+  ): GithubDocumentStatusResponse['status'] {
+    if (approvedHash && currentHash === approvedHash) {
+      return 'approved';
+    }
+    if (
+      link.lastPushedHash &&
+      currentHash === link.lastPushedHash &&
+      currentHash !== approvedHash
+    ) {
+      return 'in_review';
+    }
+    return 'modified';
+  }
+
+  private async verifyApprovedHash(
+    owner: string,
+    link: DocumentGitLinkRecord,
+    path: string,
+  ): Promise<{ approvedHash: string | null; approvedCommit: string | null; stale: boolean }> {
+    const ttlMs = this.deps.config.statusTtlSeconds * 1000;
+    const checkedAt = link.checkedAt ? Date.parse(link.checkedAt) : 0;
+    if (link.checkedAt && this.now() - checkedAt < ttlMs) {
+      return {
+        approvedHash: link.approvedHash,
+        approvedCommit: link.approvedCommit,
+        stale: false,
+      };
+    }
+
+    try {
+      const connection = await this.requireConnection(owner);
+      const repo = this.deps.config.repo!;
+      const defaultBranch = this.deps.config.defaultBranch;
+      const file = await this.deps.client.getFile(
+        connection.accessToken,
+        repo,
+        path,
+        defaultBranch,
+      );
+      const nowIso = new Date(this.now()).toISOString();
+      if (!file) {
+        await this.deps.links.upsert(link.documentType, link.documentId, {
+          path: link.path,
+          approvedHash: null,
+          approvedCommit: null,
+          checkedAt: nowIso,
+        });
+        return { approvedHash: null, approvedCommit: null, stale: false };
+      }
+      const approvedHash = contentHash(file.contentText);
+      await this.deps.links.upsert(link.documentType, link.documentId, {
+        path: link.path,
+        approvedHash,
+        approvedCommit: file.sha,
+        checkedAt: nowIso,
+      });
+      return { approvedHash, approvedCommit: file.sha, stale: false };
+    } catch {
+      return {
+        approvedHash: link.approvedHash,
+        approvedCommit: link.approvedCommit,
+        stale: true,
+      };
+    }
+  }
+}

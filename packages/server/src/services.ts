@@ -36,6 +36,9 @@ import { createResultStore, type ResultStore } from './resultStore';
 import { ResultExpiryService } from './resultStore/cleanup';
 import { NotificationService } from './notification/service';
 import type { FailureNotificationSender } from './notification/service';
+import { GithubApiClient } from './github/client';
+import { GithubConnectionRepository, DocumentGitLinkRepository } from './github/store';
+import { GithubSyncService } from './github/syncService';
 
 export interface Services {
   config: ServerConfig;
@@ -61,6 +64,9 @@ export interface Services {
   resultStore: ResultStore;
   resultExpiry: ResultExpiryService;
   notifications: FailureNotificationSender;
+  github?: GithubSyncService;
+  /** GitHub OAuth state 生成用の now 注入 (テスト用)。 */
+  githubNow?: () => number;
   reloadDatasources: () => Promise<void>;
   reloadRbac: () => Promise<void>;
   shutdown: () => Promise<void>;
@@ -86,6 +92,7 @@ export interface BuildServicesOptions {
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   notificationLogWarn?: (message: string, detail?: unknown) => void;
   notificationSender?: FailureNotificationSender;
+  githubClient?: import('./github/client').GithubClient;
 }
 
 export async function buildServices(
@@ -223,6 +230,30 @@ export async function buildServices(
   });
   resultExpiry.start();
 
+  const githubNow = options.now ?? (() => Date.now());
+  let github: GithubSyncService | undefined;
+  if (config.github.enabled) {
+    const githubClient = new GithubApiClient({
+      clientId: config.github.clientId!,
+      clientSecret: config.github.clientSecret!,
+      fetchImpl: options.fetchImpl,
+    });
+    const githubConnections = new GithubConnectionRepository(db);
+    const documentGitLinks = new DocumentGitLinkRepository(db);
+    github = new GithubSyncService({
+      config: config.github,
+      client: options.githubClient ?? githubClient,
+      connections: githubConnections,
+      links: documentGitLinks,
+      savedQueries,
+      notebooks,
+      workflows,
+      audit,
+      encryptionKey: config.github.tokenEncryptionKey!,
+      now: githubNow,
+    });
+  }
+
   let reloadInFlight = false;
   let rbacReloadInFlight = false;
   const reloadLogError = options.reloadLogError ?? ((m, e) => console.error(m, e));
@@ -299,6 +330,8 @@ export async function buildServices(
     resultStore,
     resultExpiry,
     notifications,
+    github,
+    githubNow,
     reloadDatasources,
     reloadRbac,
     shutdown: async () => {
