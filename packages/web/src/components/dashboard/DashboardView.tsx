@@ -26,6 +26,7 @@ import {
   useDeleteDashboard,
   useUpdateDashboard,
 } from '../../hooks/useDashboards';
+import { GitSyncControl } from '../github/GitSyncControl';
 import { AddWidgetModal } from './AddWidgetModal';
 import { WidgetCard } from './WidgetCard';
 
@@ -190,6 +191,8 @@ function DashboardEditor({
         ) : (
           <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-ink-strong">{name}</h1>
         )}
+        {/* GitHub 連携ステータス (連携有効時のみ表示、クリックで同期モーダル)。 */}
+        <GitSyncControl type="dashboard" id={dashboard?.id ?? null} documentName={name} />
         <div className="flex shrink-0 items-center gap-1.5">
           {editing && (
             <Button variant="default" size="sm" icon={Plus} onClick={() => setAddOpen(true)}>
