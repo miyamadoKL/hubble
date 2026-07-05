@@ -23,6 +23,10 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 | -------------------------------------------------------------- |
 | ![Query workflow canvas](docs/screenshots/workflow-canvas.png) |
 
+| Dashboard                                                                                  | Alerts (threshold monitoring)                                            |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| ![Saved-query results and charts on a dashboard grid](docs/screenshots/dashboard-grid.png) | ![Alert list panel with state badges](docs/screenshots/alerts-panel.png) |
+
 > Multi-datasource support (Trino, MySQL, PostgreSQL) and RBAC are available
 > (see the "Datasource configuration" and "RBAC" sections below). Saved queries
 > and notebooks can be shared between users (`docs/user-guide.md` §10.3).
