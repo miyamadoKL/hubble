@@ -30,17 +30,6 @@ const SERVER_PORT = 8081;
 const SERVER_URL = `http://localhost:${SERVER_PORT}`;
 const VIEWPORT = { width: 1440, height: 900 };
 
-/** コマンドを起動し、完了を Promise で返す。 */
-function run(cmd, args, opts = {}) {
-  return new Promise((res, rej) => {
-    const child = spawn(cmd, args, { stdio: 'inherit', ...opts });
-    child.on('exit', (code) =>
-      code === 0 ? res() : rej(new Error(`${cmd} ${args.join(' ')} exited ${code}`)),
-    );
-    child.on('error', rej);
-  });
-}
-
 /**
  * コマンドをバックグラウンドで起動し、プロセスオブジェクトを返す。
  * detached で新しいプロセスグループを作り、停止時に pnpm 配下の子プロセス
