@@ -71,6 +71,7 @@ export const workflowRunStatusSchema = z.enum([
   'success',
   'partial',
   'failed',
+  'blocked',
   'aborted',
 ]);
 export type WorkflowRunStatus = z.infer<typeof workflowRunStatusSchema>;

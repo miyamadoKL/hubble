@@ -39,6 +39,7 @@ import type { FailureNotificationSender } from './notification/service';
 import { GithubApiClient } from './github/client';
 import { GithubConnectionRepository, DocumentGitLinkRepository } from './github/store';
 import { GithubSyncService } from './github/syncService';
+import { GithubGovernanceService } from './github/governance';
 
 export interface Services {
   config: ServerConfig;
@@ -65,6 +66,7 @@ export interface Services {
   resultExpiry: ResultExpiryService;
   notifications: FailureNotificationSender;
   github?: GithubSyncService;
+  githubGovernance: GithubGovernanceService;
   /** GitHub OAuth state 生成用の now 注入 (テスト用)。 */
   githubNow?: () => number;
   reloadDatasources: () => Promise<void>;
@@ -175,6 +177,15 @@ export async function buildServices(
   const scheduleRuns = new ScheduleRunRepository(db, config.scheduler.runsRetention);
   const workflows = new WorkflowRepository(db);
   const workflowRuns = new WorkflowRunRepository(db, config.scheduler.runsRetention);
+  const documentGitLinks = new DocumentGitLinkRepository(db);
+  const githubGovernance = new GithubGovernanceService({
+    config: config.github,
+    links: documentGitLinks,
+    savedQueries,
+    notebooks,
+    workflows,
+    now: options.now,
+  });
   const scheduler = new Scheduler({
     schedules,
     runs: scheduleRuns,
@@ -209,6 +220,7 @@ export async function buildServices(
     resultKeyPrefix:
       config.resultStore.kind === 's3' ? config.resultStore.prefix : 'hubble-results/',
     resultTtlDays: config.resultStore.ttlDays,
+    githubGovernance,
     config: {
       enabled: config.scheduler.enabled,
       tickSeconds: config.scheduler.tickSeconds,
@@ -239,7 +251,6 @@ export async function buildServices(
       fetchImpl: options.fetchImpl,
     });
     const githubConnections = new GithubConnectionRepository(db);
-    const documentGitLinks = new DocumentGitLinkRepository(db);
     github = new GithubSyncService({
       config: config.github,
       client: options.githubClient ?? githubClient,
@@ -331,6 +342,7 @@ export async function buildServices(
     resultExpiry,
     notifications,
     github,
+    githubGovernance,
     githubNow,
     reloadDatasources,
     reloadRbac,

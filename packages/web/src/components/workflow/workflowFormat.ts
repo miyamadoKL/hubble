@@ -27,6 +27,8 @@ export function runStatusTone(status: WorkflowRunStatus): WorkflowTone {
       return 'error';
     case 'partial':
       return 'warning';
+    case 'blocked':
+      return 'error';
     case 'aborted':
       return 'neutral';
   }

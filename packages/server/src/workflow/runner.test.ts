@@ -8,6 +8,13 @@ import { openMemoryDatabase } from '../db';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { EstimateService } from '../query/estimateService';
 import { WorkflowRepository, WorkflowRunRepository } from '../store/workflows';
+import { DocumentShareRepository } from '../store/documentShares';
+import { SavedQueryRepository } from '../store/savedQueries';
+import { NotebookRepository } from '../store/notebooks';
+import { DocumentGitLinkRepository } from '../github/store';
+import { GithubGovernanceService } from '../github/governance';
+import { loadServerConfig } from '../config';
+import { contentHash, workflowToContent } from '../github/canonical';
 import { FakeTrino, type FakeScenario } from '../test/fakeTrino';
 import { loadRbac } from '../rbac/loader';
 import type { LoadedRbac } from '../rbac/types';
@@ -68,12 +75,19 @@ interface Harness {
   runner: WorkflowRunner;
   audit: AuditLogger;
   resultStore: ResultStore;
+  links: DocumentGitLinkRepository;
   sleeps: number[];
+  now: () => number;
+  setNow: (ms: number) => void;
 }
 
 async function makeHarness(
   scenarios: FakeScenario[],
-  configOverrides: { guardMode?: 'off' | 'warn' | 'enforce' } = {},
+  configOverrides: {
+    guardMode?: 'off' | 'warn' | 'enforce';
+    governance?: 'off' | 'on';
+    runnerEnabled?: boolean;
+  } = {},
   getRbac?: () => LoadedRbac,
   resultStore?: ResultStore,
   onSleep?: () => void,
@@ -85,6 +99,29 @@ async function makeHarness(
   const runs = new WorkflowRunRepository(db, 50);
   const audit = new AuditLogger(new AuditRepository(db));
   const store = resultStore ?? new MemoryResultStore();
+  const shares = new DocumentShareRepository(db);
+  const savedQueries = new SavedQueryRepository(db, shares);
+  const notebooks = new NotebookRepository(db, shares);
+  const links = new DocumentGitLinkRepository(db);
+  let nowMs = Date.parse('2026-01-01T00:00:00.000Z');
+  const now = (): number => nowMs;
+  const githubConfig = {
+    ...loadServerConfig({
+      GITHUB_REPO: 'acme/hubble-docs',
+      GITHUB_APP_CLIENT_ID: 'cid',
+      GITHUB_APP_CLIENT_SECRET: 'sec',
+      GITHUB_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 5).toString('base64'),
+    }).github,
+    governance: configOverrides.governance ?? 'off',
+  };
+  const githubGovernance = new GithubGovernanceService({
+    config: githubConfig,
+    links,
+    savedQueries,
+    notebooks,
+    workflows,
+    now,
+  });
   const estimate = new EstimateService(engines, defaultDatasourceId, {
     mode: configOverrides.guardMode ?? 'warn',
     maxScanBytes: 0,
@@ -115,20 +152,36 @@ async function makeHarness(
     resultStore: store,
     resultKeyPrefix: 'hubble-results/',
     resultTtlDays: 7,
+    githubGovernance,
     config: {
-      enabled: false,
+      enabled: configOverrides.runnerEnabled ?? false,
       tickSeconds: 15,
       maxConcurrent: 2,
       runsRetention: 50,
       guardMode: configOverrides.guardMode ?? 'warn',
     },
+    now,
     sleep: (ms) => {
       onSleep?.();
       sleeps.push(ms);
       return Promise.resolve();
     },
   });
-  return { db, fake, workflows, runs, runner, audit, resultStore: store, sleeps };
+  return {
+    db,
+    fake,
+    workflows,
+    runs,
+    runner,
+    audit,
+    resultStore: store,
+    links,
+    sleeps,
+    now,
+    setNow: (ms: number) => {
+      nowMs = ms;
+    },
+  };
 }
 
 function executedStatements(fake: FakeTrino): string[] {
@@ -420,5 +473,120 @@ defaultRole: trino-prod-only
     await h.runner.start();
     const run = await h.runs.getRun(runId);
     expect(run?.status).toBe('aborted');
+  });
+});
+
+describe('WorkflowRunner GitHub governance', () => {
+  let h: Harness;
+  afterEach(async () => {
+    if (h?.db) await h.db.close();
+  });
+
+  it('blocks unapproved workflow on cron with skipped steps and no execution', async () => {
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'SELECT_GOV',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      { governance: 'on', runnerEnabled: true },
+    );
+    const w = await h.workflows.create('alice', {
+      name: 'cron-gov',
+      cron: '* * * * *',
+      stages: workflowDefinitionSchema.parse([
+        { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_GOV' }] },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    await h.runner.start();
+    await h.runner.tick();
+    expect(await h.runs.listRuns(w.id, 10)).toHaveLength(0);
+    h.setNow(h.now() + 61_000);
+    await h.runner.tick();
+    await h.runner.whenIdle();
+    const runs = await h.runs.listRuns(w.id, 10);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.status).toBe('blocked');
+    const detail = await h.runs.getRun(runs[0]!.id);
+    expect(detail?.steps.every((s) => s.status === 'skipped')).toBe(true);
+    expect(executedStatements(h.fake)).toHaveLength(0);
+    const auditRows = await h.audit.listForTest();
+    expect(
+      auditRows.some((row) => {
+        const detail = row.detail;
+        return (
+          detail !== null &&
+          typeof detail === 'object' &&
+          !Array.isArray(detail) &&
+          detail.governance === 'blocked'
+        );
+      }),
+    ).toBe(true);
+  });
+
+  it('runs manual unapproved workflow without persisting step results', async () => {
+    const store = new MemoryResultStore();
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'SELECT_GOV_MANUAL',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1], [2]] }],
+        },
+      ],
+      { governance: 'on' },
+      undefined,
+      store,
+    );
+    const w = await h.workflows.create('alice', {
+      name: 'manual-gov',
+      stages: workflowDefinitionSchema.parse([
+        { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_GOV_MANUAL' }] },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const { runId } = await h.runner.runManual(w);
+    await h.runner.whenIdle();
+    const run = await h.runs.getRun(runId);
+    expect(run?.status).toBe('success');
+    expect(run?.steps[0]?.resultAvailable).toBe(false);
+    expect(store.objects.size).toBe(0);
+    expect(executedStatements(h.fake)).toContain('SELECT_GOV_MANUAL');
+  });
+
+  it('persists step results for approved workflow under governance', async () => {
+    const store = new MemoryResultStore();
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'SELECT_GOV_OK',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      { governance: 'on' },
+      undefined,
+      store,
+    );
+    const w = await h.workflows.create('alice', {
+      name: 'approved',
+      stages: workflowDefinitionSchema.parse([
+        { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_GOV_OK' }] },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    await h.links.upsert('workflow', w.id, {
+      path: `workflows/${w.id}.yaml`,
+      approvedHash: contentHash(workflowToContent(w)),
+    });
+    const { runId } = await h.runner.runManual(w);
+    await h.runner.whenIdle();
+    const run = await h.runs.getRun(runId);
+    expect(run?.status).toBe('success');
+    expect(run?.steps[0]?.resultAvailable).toBe(true);
+    expect(store.objects.size).toBeGreaterThan(0);
   });
 });

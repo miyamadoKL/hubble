@@ -52,6 +52,8 @@ export interface SubmitQueryParams {
   overflowMode?: OverflowMode;
   notebookId?: string;
   cellId?: string;
+  /** false のとき RESULT_STORE への結果永続化を行わない (既定 true)。 */
+  persistResult?: boolean;
 }
 
 /**
@@ -78,6 +80,7 @@ export class QueryService {
    */
   submit(params: SubmitQueryParams): QueryExecution {
     let capture: ResultJsonlCapture | undefined;
+    const persistResult = params.persistResult !== false;
     const expiresAt = this.resultExpiresAt();
     const exec = this.params.registry.submit({
       statement: params.statement,
@@ -88,6 +91,7 @@ export class QueryService {
       maxRows: params.maxRows,
       overflowMode: params.overflowMode,
       makeResultObserver: (queryId) => {
+        if (!persistResult) return undefined;
         capture = this.createResultCapture(queryId);
         return capture ? this.createResultObserver(capture) : undefined;
       },

@@ -42,6 +42,7 @@ import { toast } from '../common/Toast';
 import { ApiClientError } from '../../api/client';
 import { useUiStore } from '../../stores/uiStore';
 import { useDatasources, resolveDatasourceLabel } from '../../hooks/useDatasources';
+import { useDocumentGitStatus, useGithubStatus } from '../../hooks/useGithub';
 import {
   useWorkflow,
   useCreateWorkflow,
@@ -322,6 +323,18 @@ function WorkflowEditor({
   const remove = useDeleteWorkflow();
   const runNow = useRunWorkflowNow();
   const runQuery = useWorkflowRun(selectedRunId);
+  // ガバナンス強制 (GITHUB_GOVERNANCE=on) 時の注意表示用。承認済みでない
+  // ワークフローは cron 実行がブロックされ、結果も永続化されない。
+  const githubStatus = useGithubStatus();
+  const gitDocStatus = useDocumentGitStatus(
+    'workflow',
+    workflowId,
+    githubStatus.data?.enabled ?? false,
+  );
+  const governanceBlocked =
+    githubStatus.data?.governance === 'on' &&
+    gitDocStatus.data !== undefined &&
+    gitDocStatus.data.status !== 'approved';
 
   const dirty = !draftEquals(draft, baseline);
 
@@ -526,6 +539,14 @@ function WorkflowEditor({
           </Button>
         </div>
       </header>
+
+      {/* ガバナンス強制中の未承認ワークフローへの注意。cron ブロックと永続化制限を伝える。 */}
+      {governanceBlocked && (
+        <p className="border-b border-warning/30 bg-warning-soft/40 px-4 py-1.5 text-xs text-warning">
+          Governance is on: scheduled (cron) runs are blocked and results are not persisted until
+          this workflow is approved on GitHub. Push it and get the pull request merged.
+        </p>
+      )}
 
       {/* 保存時のステップバリデーションエラー。該当カードも赤枠でハイライトされる。 */}
       {stepError && (
