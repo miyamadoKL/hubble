@@ -65,6 +65,11 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 - **Document sharing** — share saved queries and notebooks with users, SSO
   groups, or RBAC roles at view or edit level. Query execution still uses the
   runner's own RBAC; sharing does not delegate data access.
+- **GitHub integration** — push saved queries (`.sql`), notebooks (`.yaml`), and
+  workflows (`.yaml`) to an operator-configured GitHub repository from the UI,
+  open pull requests, and track approval status (unlinked / in review / approved /
+  modified). No local git required (`docs/user-guide.md` §13, `docs/operations.md`
+  §13).
 
 ## Architecture
 

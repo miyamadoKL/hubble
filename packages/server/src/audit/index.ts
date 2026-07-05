@@ -17,6 +17,9 @@ export const auditActionSchema = z.enum([
   'workflow.execute',
   'notification.send',
   'document.share.update',
+  'github.connect',
+  'github.push',
+  'github.pr.create',
 ]);
 
 export type AuditAction = z.infer<typeof auditActionSchema>;

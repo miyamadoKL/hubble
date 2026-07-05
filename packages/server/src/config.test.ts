@@ -101,4 +101,48 @@ describe('loadServerConfig integer bounds', () => {
       },
     });
   });
+
+  it('defaults GitHub integration to disabled', () => {
+    expect(loadServerConfig({}).github).toEqual({
+      enabled: false,
+      defaultBranch: 'main',
+      governance: 'off',
+      statusTtlSeconds: 120,
+    });
+  });
+
+  it('loads GitHub integration settings when repo is configured', () => {
+    const key = Buffer.alloc(32, 9).toString('base64');
+    expect(
+      loadServerConfig({
+        GITHUB_REPO: 'acme/docs',
+        GITHUB_APP_CLIENT_ID: 'cid',
+        GITHUB_APP_CLIENT_SECRET: 'sec',
+        GITHUB_TOKEN_ENCRYPTION_KEY: key,
+        GITHUB_GOVERNANCE: 'on',
+        GITHUB_DEFAULT_BRANCH: 'develop',
+        GITHUB_STATUS_TTL_SECONDS: '60',
+      }).github,
+    ).toEqual({
+      enabled: true,
+      repo: 'acme/docs',
+      defaultBranch: 'develop',
+      clientId: 'cid',
+      clientSecret: 'sec',
+      tokenEncryptionKey: Buffer.from(key, 'base64'),
+      governance: 'on',
+      statusTtlSeconds: 60,
+    });
+  });
+
+  it('rejects invalid GitHub encryption key when repo is configured', () => {
+    expect(() =>
+      loadServerConfig({
+        GITHUB_REPO: 'acme/docs',
+        GITHUB_APP_CLIENT_ID: 'cid',
+        GITHUB_APP_CLIENT_SECRET: 'sec',
+        GITHUB_TOKEN_ENCRYPTION_KEY: Buffer.alloc(16).toString('base64'),
+      }),
+    ).toThrow(/expected 32 bytes/);
+  });
 });

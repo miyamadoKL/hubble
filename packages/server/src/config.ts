@@ -224,8 +224,33 @@ export interface ServerConfig {
       from?: string;
     };
   };
+  /** GitHub 連携設定。 */
+  github: GithubConfig;
   /** 日本語: `APP_VERSION`（既定 `0.1.0`）。`GET /api/config` で公開されるバージョン表示用文字列。 */
   version: string;
+}
+
+/** GitHub 連携のガバナンスモード。強制は後続タスクで実装する。 */
+export type GithubGovernance = 'off' | 'on';
+
+/** GitHub 連携設定。`GITHUB_REPO` 未設定時は enabled=false。 */
+export interface GithubConfig {
+  /** GITHUB_REPO が設定されている場合のみ true。 */
+  enabled: boolean;
+  /** owner/repo 形式。enabled 時のみ設定される。 */
+  repo?: string;
+  /** デフォルトブランチ名。 */
+  defaultBranch: string;
+  /** GitHub App OAuth client id。enabled 時のみ設定される。 */
+  clientId?: string;
+  /** GitHub App OAuth client secret。enabled 時のみ設定される。 */
+  clientSecret?: string;
+  /** AES-256-GCM 用 32 バイト鍵。enabled 時のみ設定される。 */
+  tokenEncryptionKey?: Buffer;
+  /** ガバナンスモード (config 載せのみ)。 */
+  governance: GithubGovernance;
+  /** 承認状態キャッシュの TTL (秒)。 */
+  statusTtlSeconds: number;
 }
 
 // 日本語: 以降は環境変数を型付きの値へ変換する小さなヘルパー群。
@@ -348,6 +373,63 @@ export function resolveResultStoreConfig(env: Env): ResultStoreConfig {
   };
 }
 
+/** GITHUB_* 関連の環境変数を解決する。 */
+export function resolveGithubConfig(env: Env): GithubConfig {
+  const repo = envOptional(env, 'GITHUB_REPO');
+  const governance = envEnum(env, 'GITHUB_GOVERNANCE', ['off', 'on'] as const, 'off');
+  const defaultBranch = envStr(env, 'GITHUB_DEFAULT_BRANCH', 'main');
+  const statusTtlSeconds = envPositiveInt(env, 'GITHUB_STATUS_TTL_SECONDS', 120);
+
+  if (repo === undefined) {
+    return {
+      enabled: false,
+      defaultBranch,
+      governance,
+      statusTtlSeconds,
+    };
+  }
+
+  const ownerRepo = /^[^/]+\/[^/]+$/.test(repo);
+  if (!ownerRepo) {
+    throw new Error(`Invalid GITHUB_REPO: ${JSON.stringify(repo)} (expected owner/repo format)`);
+  }
+
+  const clientId = envOptional(env, 'GITHUB_APP_CLIENT_ID');
+  const clientSecret = envOptional(env, 'GITHUB_APP_CLIENT_SECRET');
+  if (clientId === undefined || clientSecret === undefined) {
+    throw new Error(
+      'GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET are required when GITHUB_REPO is set',
+    );
+  }
+
+  const keyRaw = envOptional(env, 'GITHUB_TOKEN_ENCRYPTION_KEY');
+  if (keyRaw === undefined) {
+    throw new Error('GITHUB_TOKEN_ENCRYPTION_KEY is required when GITHUB_REPO is set');
+  }
+  let tokenEncryptionKey: Buffer;
+  try {
+    tokenEncryptionKey = Buffer.from(keyRaw, 'base64');
+  } catch {
+    throw new Error('Invalid GITHUB_TOKEN_ENCRYPTION_KEY: not valid base64');
+  }
+  if (tokenEncryptionKey.length !== 32) {
+    throw new Error(
+      `Invalid GITHUB_TOKEN_ENCRYPTION_KEY: decoded length is ${tokenEncryptionKey.length}, expected 32 bytes`,
+    );
+  }
+
+  return {
+    enabled: true,
+    repo,
+    defaultBranch,
+    clientId,
+    clientSecret,
+    tokenEncryptionKey,
+    governance,
+    statusTtlSeconds,
+  };
+}
+
 /** EXPORT_* 関連の環境変数を解決する。 */
 export function resolveExportConfig(env: Env): ExportConfig {
   return {
@@ -444,6 +526,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
         from: envOptional(env, 'NOTIFY_SMTP_FROM'),
       },
     },
+    github: resolveGithubConfig(env),
     version: envStr(env, 'APP_VERSION', '0.1.0'),
   };
 }

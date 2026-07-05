@@ -8,7 +8,7 @@
  * 画面上はタブで開いたノートブックのメインコンテンツ領域（中央カラム）に相当し、
  * 個々のセルの見た目や編集ロジック自体は SqlCell / MarkdownCell / CellToolbar に委譲する。
  */
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import type { Cell } from '@hubble/contracts';
 import { CellFrame, type CellStatus } from './CellFrame';
 import { CellToolbar } from './CellToolbar';
@@ -22,6 +22,7 @@ import { EmptyState } from '../common/EmptyState';
 import { NotebookText, Share2 } from 'lucide-react';
 import { toast } from '../common/Toast';
 import { ShareModal } from '../common/ShareModal';
+import { GitSyncControl } from '../github/GitSyncControl';
 import { listNotebookShares, updateNotebookShares } from '../../api/notebooks';
 import { isDocumentOwner } from '../../utils/documentShare';
 import {
@@ -209,6 +210,14 @@ export function NotebookView({
         onShare={() => setShareOpen(true)}
         onRename={(name) => store.getState().renameNotebook(notebookId, name)}
         onDescribe={(d) => store.getState().setDescription(notebookId, d)}
+        gitControl={
+          // 未保存ドラフトには出さない (サーバー保存後に push 可能になる)。
+          <GitSyncControl
+            type="notebook"
+            id={entry.draft ? null : notebookId}
+            documentName={notebook.name}
+          />
+        }
       />
 
       {/* 変数パネル：ノートブック変数の一覧編集と、Ctrl/Cmd+Enter によるアクティブセル実行 */}
@@ -385,6 +394,7 @@ function NotebookHeader({
   onShare,
   onRename,
   onDescribe,
+  gitControl,
 }: {
   name: string;
   description: string;
@@ -393,6 +403,8 @@ function NotebookHeader({
   onShare: () => void;
   onRename: (name: string) => void;
   onDescribe: (description: string) => void;
+  /** GitHub 同期コントロール (連携無効時は null を描画するコンポーネント)。 */
+  gitControl?: ReactNode;
 }) {
   // 名前と説明それぞれに「編集中か」フラグと編集中ドラフト値を持つ（互いに独立して編集できる）。
   const [editingName, setEditingName] = useState(false);
@@ -482,6 +494,8 @@ function NotebookHeader({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {/* GitHub 同期ステータス (連携有効時のみ表示される)。 */}
+          {gitControl}
           {readOnly && (
             <span className="rounded-full bg-surface-sunken px-2.5 py-0.5 font-mono text-2xs text-ink-muted">
               Read-only

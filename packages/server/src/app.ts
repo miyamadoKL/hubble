@@ -25,6 +25,7 @@ import { queryRoutes } from './http/queryRoutes';
 import { historyRoutes, notebookRoutes, savedQueryRoutes } from './http/storeRoutes';
 import { scheduleRoutes } from './http/scheduleRoutes';
 import { workflowRoutes, workflowRunRoutes } from './http/workflowRoutes';
+import { githubRoutes } from './http/githubRoutes';
 import { adminRoutes } from './http/adminRoutes';
 import { registerStaticServing } from './http/staticRoutes';
 import { filterDatasourcesForRole } from './rbac/check';
@@ -130,6 +131,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   app.route('/api/history', historyRoutes(services));
   app.route('/api/schedules', scheduleRoutes(services));
   app.route('/api/workflows', workflowRoutes(services));
+  app.route('/api/github', githubRoutes(services));
   app.route(
     '/api/workflow-runs',
     workflowRunRoutes(services, { sheetsClientFactory: deps.sheetsClientFactory }),

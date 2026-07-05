@@ -26,6 +26,7 @@ import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
 import { ShareModal } from '../common/ShareModal';
 import { DocumentShareBadge } from '../common/DocumentShareBadge';
+import { GitSyncControl } from '../github/GitSyncControl';
 import { cn } from '../../utils/cn';
 import { isDocumentOwner } from '../../utils/documentShare';
 import { useDatasources } from '../../hooks/useDatasources';
@@ -131,6 +132,10 @@ function SavedRow({
           <pre className="max-h-40 overflow-auto rounded-md border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-2xs whitespace-pre-wrap text-ink-base">
             {query.statement}
           </pre>
+          {/* GitHub 同期ステータス (連携有効時のみ、展開中の行にだけ取得と表示を行う)。 */}
+          <div className="mt-2">
+            <GitSyncControl type="saved_query" id={query.id} documentName={query.name} />
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {/* 現在アクティブなセルのカーソル位置に SQL 文を挿入する。 */}
             <Button variant="default" size="sm" icon={TextCursorInput} onClick={onInsert}>

@@ -107,6 +107,10 @@ export async function createTestContext(
     resultStore?: ResultStore;
     resultStoreLogWarn?: (message: string, err?: unknown) => void;
     sheetsClientFactory?: import('../query/exportSheets').SheetsClientFactory;
+    /** Override fetch for non-Trino HTTP (e.g. GitHub API). When set, used instead of fake.fetch. */
+    fetchImpl?: typeof fetch;
+    /** Inject a fake GitHub API client into GithubSyncService. */
+    githubClient?: import('../github/client').GithubClient;
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
@@ -145,6 +149,7 @@ export async function createTestContext(
       enabled: options.startScheduler ?? false,
       ...options.configOverrides?.scheduler,
     },
+    github: { ...baseConfig.github, ...options.configOverrides?.github },
   };
 
   const db = await openMemoryDatabase();
@@ -152,7 +157,8 @@ export async function createTestContext(
   const services = await buildServices(config, db, {
     env: options.env,
     cwd,
-    fetchImpl: fake.fetch,
+    fetchImpl: options.fetchImpl ?? fake.fetch,
+    githubClient: options.githubClient,
     // 日本語: 既定では待たずに即 resolve するので、バックオフ待ちが原因で
     // テストが遅くなることはない。実際の待ち時間を検証したいテストのみ
     // sleepImpl を渡して記録し、制御する。

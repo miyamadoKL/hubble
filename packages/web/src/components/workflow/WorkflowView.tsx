@@ -51,6 +51,7 @@ import {
   useWorkflowRun,
 } from '../../hooks/useWorkflows';
 import { WorkflowStatusBadge } from './WorkflowStatusBadge';
+import { GitSyncControl } from '../github/GitSyncControl';
 import { RunExportMenu } from './RunExportMenu';
 import { StepEditorModal } from './StepEditorModal';
 import { WorkflowSettingsModal, type WorkflowSettings } from './WorkflowSettingsModal';
@@ -468,6 +469,8 @@ function WorkflowEditor({
           className="w-56 min-w-0 bg-transparent text-base font-semibold text-ink-strong placeholder:text-ink-subtle focus:outline-none"
         />
         {runQuery.data && <WorkflowStatusBadge status={runQuery.data.status} />}
+        {/* GitHub 連携ステータス (連携有効時のみ表示、クリックで同期モーダル)。 */}
+        <GitSyncControl type="workflow" id={workflowId} documentName={draft.name} />
 
         <div className="ml-auto flex items-center gap-1.5">
           {/* dirty のときは Run より Save を促す (実行は保存済み定義に対して行われるため)。 */}

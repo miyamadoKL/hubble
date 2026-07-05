@@ -42,5 +42,7 @@ export * from './history';
 export * from './schedule';
 // クエリワークフロー（多段 SQL オーケストレーション）の契約
 export * from './workflow';
+// GitHub 連携の契約
+export * from './github';
 // API パス定数とパスビルダー
 export * from './routes';
