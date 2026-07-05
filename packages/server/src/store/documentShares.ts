@@ -9,7 +9,7 @@ import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 
 /** 共有対象のドキュメント種別。 */
-export type DocumentType = 'saved_query' | 'notebook';
+export type DocumentType = 'saved_query' | 'notebook' | 'dashboard';
 
 /** permission 解決時に参照する principal 属性。 */
 export interface ShareAccessor {

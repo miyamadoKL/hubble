@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 import { stringify as stringifyYaml } from 'yaml';
-import type { Notebook, SavedQuery } from '@hubble/contracts';
+import type { Notebook, SavedQuery, Dashboard } from '@hubble/contracts';
 import type { DocumentGitType } from '@hubble/contracts';
 import type { AlertRecord } from '../store/alerts';
 import type { WorkflowRecord } from '../store/workflows';
@@ -64,6 +64,38 @@ export function notebookToContent(nb: Notebook): string {
       // (resultMeta のような実行結果由来の揮発フィールドは含めない)。
       if (cell.chart !== undefined) item.chart = cell.chart;
       return item;
+    }),
+  };
+  return `${stringifyYaml(payload)}\n`;
+}
+
+/**
+ * Dashboard を YAML 正規形へ変換する。owner やタイムスタンプは含めない。
+ * @param d - Dashboard。
+ */
+export function dashboardToContent(d: Dashboard): string {
+  const payload = {
+    id: d.id,
+    name: d.name,
+    description: d.description,
+    widgets: d.widgets.map((widget) => {
+      if (widget.kind === 'query') {
+        const item: Record<string, unknown> = {
+          kind: widget.kind,
+          position: widget.position,
+          savedQueryId: widget.savedQueryId,
+          viz: widget.viz,
+        };
+        if (widget.chart !== undefined) item.chart = widget.chart;
+        if (widget.counter !== undefined) item.counter = widget.counter;
+        if (widget.title !== undefined) item.title = widget.title;
+        return item;
+      }
+      return {
+        kind: widget.kind,
+        position: widget.position,
+        text: widget.text,
+      };
     }),
   };
   return `${stringifyYaml(payload)}\n`;
@@ -135,6 +167,8 @@ export function documentPath(type: DocumentGitType, id: string): string {
       return `workflows/${id}.yaml`;
     case 'alert':
       return `alerts/${id}.yaml`;
+    case 'dashboard':
+      return `dashboards/${id}.yaml`;
   }
 }
 
@@ -156,7 +190,7 @@ export function branchNameFor(user: string, type: DocumentGitType, id: string): 
  */
 export function documentToContent(
   type: DocumentGitType,
-  doc: SavedQuery | Notebook | WorkflowRecord | AlertRecord,
+  doc: SavedQuery | Notebook | WorkflowRecord | AlertRecord | Dashboard,
 ): string {
   switch (type) {
     case 'saved_query':
@@ -167,5 +201,7 @@ export function documentToContent(
       return workflowToContent(doc as WorkflowRecord);
     case 'alert':
       return alertToContent(doc as AlertRecord);
+    case 'dashboard':
+      return dashboardToContent(doc as Dashboard);
   }
 }

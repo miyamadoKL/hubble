@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
 /** GitHub 連携で扱うドキュメント種別。 */
-export const documentGitTypeSchema = z.enum(['saved_query', 'notebook', 'workflow', 'alert']);
+export const documentGitTypeSchema = z.enum([
+  'saved_query',
+  'notebook',
+  'workflow',
+  'alert',
+  'dashboard',
+]);
 export type DocumentGitType = z.infer<typeof documentGitTypeSchema>;
 
 /** ドキュメントの Git 承認状態。 */

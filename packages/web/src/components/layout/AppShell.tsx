@@ -8,6 +8,7 @@ import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
 import { NotebookView } from '../notebook/NotebookView';
 import { WorkflowView } from '../workflow/WorkflowView';
+import { DashboardView } from '../dashboard/DashboardView';
 import { SaveNotebookModal } from '../notebook/SaveNotebookModal';
 import { CommandPalette } from '../palette/CommandPalette';
 import { PresentationView } from '../notebook/PresentationView';
@@ -127,6 +128,7 @@ export function AppShell() {
   // ---- Help modal + presentation mode ----
   // ---- ヘルプモーダルとプレゼンテーションモード ----
   const workflowView = useUiStore((s) => s.workflowView);
+  const dashboardView = useUiStore((s) => s.dashboardView);
   const shortcutsHelpOpen = useUiStore((s) => s.shortcutsHelpOpen);
   const setShortcutsHelpOpen = useUiStore((s) => s.setShortcutsHelpOpen);
   const presentationMode = useUiStore((s) => s.presentationMode);
@@ -209,9 +211,11 @@ export function AppShell() {
           flattenCatalog={selectedDatasource ? !selectedDatasource.capabilities.catalogs : false}
         />
         <main className="min-w-0 flex-1 overflow-auto bg-surface-base">
-          {/* ワークフロービューが開かれている間はノートブックの代わりに表示する。 */}
+          {/* ワークフロー/ダッシュボードビューが開かれている間はノートブックの代わりに表示する。 */}
           {workflowView ? (
             <WorkflowView />
+          ) : dashboardView ? (
+            <DashboardView />
           ) : (
             datasourceId && (
               <EditorRuntimeProvider

@@ -12,6 +12,7 @@ import {
   CalendarClock,
   Database,
   History,
+  LayoutDashboard,
   NotebookText,
   PanelLeftClose,
   Workflow,
@@ -33,6 +34,7 @@ import { HistoryPanel } from '../panels/HistoryPanel';
 import { SchedulesPanel } from '../panels/SchedulesPanel';
 import { AlertsPanel } from '../panels/AlertsPanel';
 import { WorkflowsPanel } from '../workflow/WorkflowsPanel';
+import { DashboardsPanel } from '../dashboard/DashboardsPanel';
 import { OperationsPanel } from '../panels/OperationsPanel';
 import { useMe } from '../../hooks/useMe';
 import { hasPermission } from '../../permissions';
@@ -62,6 +64,7 @@ const RAIL: RailItem[] = [
   { id: 'history', icon: History, label: 'History' },
   { id: 'schedules', icon: CalendarClock, label: 'Schedules' },
   { id: 'alerts', icon: Bell, label: 'Alerts' },
+  { id: 'dashboards', icon: LayoutDashboard, label: 'Dashboards' },
   { id: 'workflows', icon: Workflow, label: 'Workflows' },
   { id: 'operations', icon: Activity, label: 'Operations' },
 ];
@@ -74,6 +77,7 @@ const PANEL_TITLE: Record<SidebarTab, string> = {
   history: 'History',
   schedules: 'Schedules',
   alerts: 'Alerts',
+  dashboards: 'Dashboards',
   workflows: 'Workflows',
   operations: 'Operations',
 };
@@ -86,6 +90,7 @@ const PANEL_PLACEHOLDER: Record<SidebarTab, string> = {
   history: 'Search history…',
   schedules: 'Search schedules…',
   alerts: 'Search alerts…',
+  dashboards: 'Search dashboards…',
   workflows: 'Search workflows…',
   operations: 'Filter queries…',
 };
@@ -260,6 +265,7 @@ export function Sidebar({
             {effectiveTab === 'history' && <HistoryPanel />}
             {effectiveTab === 'schedules' && <SchedulesPanel search={search} />}
             {effectiveTab === 'alerts' && <AlertsPanel search={search} />}
+            {effectiveTab === 'dashboards' && <DashboardsPanel search={search} />}
             {effectiveTab === 'workflows' && <WorkflowsPanel search={search} />}
             {effectiveTab === 'operations' && <OperationsPanel />}
           </div>

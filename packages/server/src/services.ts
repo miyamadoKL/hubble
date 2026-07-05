@@ -14,6 +14,7 @@ import { QueryRegistry } from './query/registry';
 import { QueryService } from './query/service';
 import { EstimateService } from './query/estimateService';
 import { NotebookRepository } from './store/notebooks';
+import { DashboardRepository } from './store/dashboards';
 import { SavedQueryRepository } from './store/savedQueries';
 import { DocumentShareRepository } from './store/documentShares';
 import { HistoryRepository } from './store/history';
@@ -55,6 +56,7 @@ export interface Services {
   registry: QueryRegistry;
   estimate: EstimateService;
   notebooks: NotebookRepository;
+  dashboards: DashboardRepository;
   savedQueries: SavedQueryRepository;
   documentShares: DocumentShareRepository;
   history: HistoryRepository;
@@ -146,6 +148,7 @@ export async function buildServices(
   const history = new HistoryRepository(db);
   const documentShares = new DocumentShareRepository(db);
   const notebooks = new NotebookRepository(db, documentShares);
+  const dashboards = new DashboardRepository(db, documentShares);
   const savedQueries = new SavedQueryRepository(db, documentShares);
   const registry = new QueryRegistry({
     engines,
@@ -287,6 +290,7 @@ export async function buildServices(
       links: documentGitLinks,
       savedQueries,
       notebooks,
+      dashboards,
       workflows,
       alerts,
       audit,
@@ -366,6 +370,7 @@ export async function buildServices(
     registry,
     estimate,
     notebooks,
+    dashboards,
     savedQueries,
     documentShares,
     history,

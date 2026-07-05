@@ -6,14 +6,17 @@ import {
   savedQueryToContent,
   workflowToContent,
   alertToContent,
+  dashboardToContent,
 } from './canonical';
 import {
   parseAlertContent,
+  parseDashboardContent,
   parseNotebookContent,
   parseSavedQueryContent,
   parseWorkflowContent,
 } from './parse';
 import type { AlertRecord } from '../store/alerts';
+import type { Dashboard } from '@hubble/contracts';
 
 describe('parseSavedQueryContent', () => {
   it('round-trips saved query canonical content', () => {
@@ -210,5 +213,55 @@ describe('parseAlertContent', () => {
     expect(parsed.selector).toBe(original.selector);
     expect(parsed.rearm).toBe(original.rearm);
     expect(parsed.notifications).toEqual(original.notifications);
+  });
+});
+
+describe('parseDashboardContent', () => {
+  it('round-trips dashboard canonical content and assigns new widget ids', () => {
+    const original: Dashboard = {
+      id: 'dsh_1',
+      name: 'Board',
+      description: 'desc',
+      widgets: [
+        {
+          id: 'w_old',
+          kind: 'query',
+          position: { col: 0, row: 0, sizeX: 4, sizeY: 3 },
+          savedQueryId: 'sq_1',
+          viz: 'counter',
+          counter: { columnIndex: 0, label: 'Total' },
+        },
+        {
+          id: 'w_text',
+          kind: 'text',
+          position: { col: 4, row: 0, sizeX: 4, sizeY: 2 },
+          text: 'Hello',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const parsed = parseDashboardContent(dashboardToContent(original));
+    expect(parsed.name).toBe(original.name);
+    expect(parsed.description).toBe(original.description);
+    expect(parsed.widgets).toHaveLength(2);
+    const queryWidget = parsed.widgets[0];
+    expect(queryWidget?.kind).toBe('query');
+    if (queryWidget?.kind === 'query') {
+      expect(queryWidget.savedQueryId).toBe('sq_1');
+      expect(queryWidget.id).not.toBe('w_old');
+      expect(queryWidget.id.startsWith('wgt_')).toBe(true);
+    }
+    const textWidget = parsed.widgets[1];
+    expect(textWidget?.kind).toBe('text');
+    if (textWidget?.kind === 'text') {
+      expect(textWidget.text).toBe('Hello');
+    }
+  });
+
+  it('rejects invalid dashboard yaml', () => {
+    expect(() => parseDashboardContent('name: X\nwidgets: not-a-list\n')).toThrow(
+      /Invalid dashboard content/,
+    );
   });
 });

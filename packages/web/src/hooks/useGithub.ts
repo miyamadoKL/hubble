@@ -85,6 +85,7 @@ const DOC_CONTENT_KEYS: Record<DocumentGitType, readonly string[]> = {
   notebook: ['notebooks'],
   workflow: ['workflows'],
   alert: ['alerts'],
+  dashboard: ['dashboards'],
 };
 
 /**

@@ -108,6 +108,14 @@ export const apiRoutes = {
   alert: (id: string) => `/api/alerts/${enc(id)}`,
   alertEval: (id: string) => `/api/alerts/${enc(id)}/eval`,
 
+  // Dashboards (grid of query/chart panels)
+  // ダッシュボード一覧取得 / 新規作成の基点パス。
+  dashboards: () => '/api/dashboards',
+  // 単一ダッシュボードの取得、更新、削除。
+  dashboard: (id: string) => `/api/dashboards/${enc(id)}`,
+  // ダッシュボードの共有一覧取得と更新。
+  dashboardShares: (id: string) => `/api/dashboards/${enc(id)}/shares`,
+
   // Workflows (Query Workflow feature)
   workflows: () => '/api/workflows',
   workflow: (id: string) => `/api/workflows/${enc(id)}`,
