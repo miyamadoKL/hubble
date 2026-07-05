@@ -77,29 +77,36 @@ function AlertRow({
           />
         </button>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-ink-strong">{alert.name}</span>
-            <AlertStateBadge state={alert.state} />
-          </div>
-          <p className="mt-0.5 font-mono text-2xs text-ink-muted">
+          <p className="truncate text-sm font-medium text-ink-strong">{alert.name}</p>
+          <p className="mt-0.5 truncate font-mono text-2xs text-ink-muted">
             {alert.columnName} {alert.op} {alert.value} ({alert.selector})
           </p>
-          <p className="mt-0.5 font-mono text-2xs text-ink-subtle">
-            {alert.cron} · {nextEvalLabel(alert, now)}
-          </p>
         </div>
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Evaluate now"
-            disabled={evaluating}
-            icon={Play}
-            onClick={onEval}
-          />
-          <Button variant="ghost" size="sm" aria-label="Edit" icon={Pencil} onClick={onEdit} />
-          <Button variant="ghost" size="sm" aria-label="Delete" icon={Trash2} onClick={onDelete} />
-        </div>
+      </div>
+
+      {/* 状態バッジと cron、次回評価予定の相対表示 (SchedulesPanel と同じ 2 段目レイアウト)。 */}
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-9">
+        <AlertStateBadge state={alert.state} />
+        <span className="font-mono text-2xs text-ink-subtle">{alert.cron}</span>
+        <span className="font-mono text-2xs text-ink-subtle">next {nextEvalLabel(alert, now)}</span>
+      </div>
+
+      {/* 行アクション列。通常は透明で、行ホバーまたはフォーカス時のみ表示される。 */}
+      <div className="mt-2 flex items-center gap-1 pl-9 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <Button variant="default" size="sm" icon={Play} onClick={onEval} disabled={evaluating}>
+          {evaluating ? 'Evaluating…' : 'Eval now'}
+        </Button>
+        <Button variant="ghost" size="sm" icon={Pencil} onClick={onEdit}>
+          Edit
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={Trash2}
+          onClick={onDelete}
+          className="ml-auto text-ink-subtle hover:text-error"
+          aria-label="Delete alert"
+        />
       </div>
     </li>
   );
@@ -123,16 +130,19 @@ export function AlertsPanel({ search }: { search: string }) {
   const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
   const now = useMemo(() => new Date(), [list.data]);
 
+  // 検索語で絞り込み、名前順に並べ替える (Schedules/Workflows と同じ規則)。
   const filtered = useMemo(() => {
     const items = list.data ?? [];
     const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (a) =>
-        a.name.toLowerCase().includes(q) ||
-        a.columnName.toLowerCase().includes(q) ||
-        a.savedQueryId.toLowerCase().includes(q),
-    );
+    const matched = q
+      ? items.filter(
+          (a) =>
+            a.name.toLowerCase().includes(q) ||
+            a.columnName.toLowerCase().includes(q) ||
+            a.savedQueryId.toLowerCase().includes(q),
+        )
+      : items;
+    return [...matched].sort((a, b) => a.name.localeCompare(b.name));
   }, [list.data, search]);
 
   const openCreate = () => {
@@ -252,7 +262,7 @@ export function AlertsPanel({ search }: { search: string }) {
         onCreate={(body) => {
           create.mutate(body, {
             onSuccess: (created) => {
-              toast.success('Alert created', `"${created.name}" is ready.`);
+              toast.success('Alert created', `“${created.name}” is ready.`);
               closeForm();
             },
             onError: () => toast.error('Create failed', 'Could not reach the server.'),
@@ -264,7 +274,7 @@ export function AlertsPanel({ search }: { search: string }) {
             { id: editing.id, body },
             {
               onSuccess: (updated) => {
-                toast.success('Alert updated', `"${updated.name}" saved.`);
+                toast.success('Alert updated', `“${updated.name}” saved.`);
                 closeForm();
               },
               onError: () => toast.error('Update failed', 'Could not reach the server.'),
@@ -278,7 +288,7 @@ export function AlertsPanel({ search }: { search: string }) {
         onClose={() => setPendingDelete(null)}
         title="Delete alert?"
         description={
-          pendingDelete ? `"${pendingDelete.name}" will be permanently removed.` : undefined
+          pendingDelete ? `“${pendingDelete.name}” will be permanently removed.` : undefined
         }
         footer={
           <>

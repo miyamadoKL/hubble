@@ -142,10 +142,10 @@ export function AlertFormModal({
       title={editing ? 'Edit alert' : 'New alert'}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button variant="default" disabled={!canSave} onClick={submit}>
+          <Button variant="primary" disabled={!canSave} onClick={submit}>
             {submitting ? 'Saving…' : 'Save'}
           </Button>
         </>
@@ -232,10 +232,46 @@ export function AlertFormModal({
           </label>
         </div>
 
-        <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>Cron</span>
-          <input className={TEXT_INPUT} value={cron} onChange={(e) => setCron(e.target.value)} />
-        </label>
+        {/* Cron: ScheduleFormModal と同じプリセットチップ + 妥当性フィードバック。 */}
+        <div className="flex flex-col gap-1.5">
+          <span className={FIELD_LABEL}>Schedule (cron)</span>
+          <div className="flex flex-wrap gap-1.5">
+            {CRON_PRESETS.map((preset) => (
+              <button
+                key={preset.cron}
+                type="button"
+                aria-pressed={cron === preset.cron}
+                onClick={() => setCron(preset.cron)}
+                className={cn(
+                  'rounded-full px-2.5 py-0.5 text-2xs font-medium transition-colors',
+                  cron === preset.cron
+                    ? 'bg-accent-soft text-accent'
+                    : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
+                )}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <input
+            value={cron}
+            aria-label="Cron expression"
+            spellCheck={false}
+            onChange={(e) => setCron(e.target.value)}
+            placeholder="minute hour day-of-month month day-of-week"
+            className={cn(TEXT_INPUT, 'font-mono', !cronValid && 'border-error focus:border-error')}
+          />
+          {/* cron 式が 5 フィールド形式として妥当かどうかでエラー文言と補足説明を切り替える。 */}
+          {!cronValid ? (
+            <p role="alert" className="font-mono text-2xs text-error">
+              Must be a 5-field cron expression (minute hour day-of-month month day-of-week).
+            </p>
+          ) : (
+            <p className="font-mono text-2xs text-ink-subtle">
+              Next evaluation time is computed by the server and shown in the list after saving.
+            </p>
+          )}
+        </div>
 
         <label className="flex items-center gap-2 text-sm text-ink-strong">
           <input type="checkbox" checked={muted} onChange={(e) => setMuted(e.target.checked)} />

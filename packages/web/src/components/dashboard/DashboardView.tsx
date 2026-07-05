@@ -293,8 +293,8 @@ function DashboardEditor({
       <Modal
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
-        title="Delete dashboard"
-        description="This permanently deletes the dashboard. Saved queries it references are not affected."
+        title="Delete dashboard?"
+        description={`“${name}” will be permanently removed. Saved queries it references are not affected.`}
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
