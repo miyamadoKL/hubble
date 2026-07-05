@@ -103,6 +103,11 @@ export const apiRoutes = {
   // スケジュールの実行履歴一覧取得。
   scheduleRuns: (id: string) => `/api/schedules/${enc(id)}/runs`,
 
+  // Alerts (threshold-based notifications)
+  alerts: () => '/api/alerts',
+  alert: (id: string) => `/api/alerts/${enc(id)}`,
+  alertEval: (id: string) => `/api/alerts/${enc(id)}/eval`,
+
   // Workflows (Query Workflow feature)
   workflows: () => '/api/workflows',
   workflow: (id: string) => `/api/workflows/${enc(id)}`,

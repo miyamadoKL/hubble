@@ -40,6 +40,8 @@ export * from './share';
 export * from './history';
 // クエリスケジューリング（cron 実行）の契約
 export * from './schedule';
+// Alert（保存クエリ結果の閾値監視）の契約
+export * from './alert';
 // クエリワークフロー（多段 SQL オーケストレーション）の契約
 export * from './workflow';
 // GitHub 連携の契約
