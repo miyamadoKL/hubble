@@ -3,14 +3,13 @@
 // Explain（実行計画）/ Details（実行メタ情報）の4タブ構成で、エラー発生時は
 // 上部にエラーバナーも表示する。表示内容は execution ストアの CellExecution
 // レコードによって完全に駆動される。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   BarChart3,
   Check,
+  ChevronDown,
   Clipboard,
-  CloudUpload,
   Download,
-  FileSpreadsheet,
   FileText,
   Info,
   Table2,
@@ -20,14 +19,12 @@ import { Tabs, type TabItem } from '../common/Tabs';
 import { IconButton } from '../common/IconButton';
 import { Button } from '../common/Button';
 import { EmptyState } from '../common/EmptyState';
-import { Dropdown } from '../common/Dropdown';
 import { ResultGrid } from './ResultGrid';
 import { ChartPanel } from './ChartPanel';
 import { ErrorPanel } from './ErrorPanel';
 import { formatBytes, formatDuration, formatInt } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import { CSV_REEXEC_UNAVAILABLE } from '@hubble/contracts';
-import { Tooltip } from '../common/Tooltip';
 import { toast } from '../common/Toast';
 import {
   copyResultToClipboard,
@@ -36,7 +33,6 @@ import {
   exportQuery,
   isCellRunning,
   type CellExecution,
-  type DownloadFormat,
 } from '../../execution';
 
 /**
@@ -158,14 +154,12 @@ export function ResultPane({
             disabled={cell.rows.length === 0}
             onClick={onCopy}
           />
-          <CsvDownload
+          <ExportMenu
             queryId={cell.queryId}
             disabled={!cell.queryId || running}
             truncated={cell.truncated}
             csvReexecAllowed={cell.csvReexecAllowed}
           />
-          <XlsxDownload queryId={cell.queryId} disabled={!cell.queryId || running} />
-          <ExternalExport queryId={cell.queryId} disabled={!cell.queryId || running} />
         </div>
       </div>
 
@@ -297,13 +291,64 @@ function ExplainView({
   );
 }
 
-/** CSV download as plain `a[href]` so the server streams it (no buffering). */
+// S3 / Google Sheets への外部エクスポートの種類。
+type ExternalExportAction = 's3-csv' | 's3-xlsx' | 'sheets';
+
+/** ExportMenu のメニュー項目 1 行分。ダウンロード系は `a[href]`、外部エクスポート系はボタン。 */
+function ExportMenuItem({
+  href,
+  download,
+  onSelect,
+  disabled,
+  children,
+}: {
+  /** ダウンロード URL（指定時は `a[href]` として描画し、サーバーにストリーミングさせる）。 */
+  href?: string;
+  /** `a[download]` に設定するファイル名。 */
+  download?: string;
+  /** クリック時のハンドラー（外部エクスポート系、またはメニューを閉じる処理）。 */
+  onSelect: () => void;
+  /** 項目を無効化するかどうか。 */
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  const className = cn(
+    'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs',
+    disabled ? 'pointer-events-none text-ink-subtle opacity-50' : 'text-ink-base',
+    !disabled && 'hover:bg-accent-soft hover:text-accent',
+  );
+  // CSV / xlsx のダウンロードは fetch + blob 化のバッファリングを避けるため、
+  // 素の `a[href]` でサーバーのストリーミングレスポンスに直接つなぐ。
+  if (href !== undefined) {
+    return (
+      <a role="menuitem" href={href} download={download} className={className} onClick={onSelect}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <button type="button" role="menuitem" onClick={onSelect} className={className}>
+      {children}
+    </button>
+  );
+}
+
+/** ExportMenu のセクション見出し。 */
+function ExportMenuLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="px-2 pt-1.5 pb-0.5 text-2xs font-semibold tracking-wider text-ink-subtle uppercase">
+      {children}
+    </p>
+  );
+}
+
 /**
- * CSVダウンロードボタン + フォーマット切り替えドロップダウン。
- * サーバー側でストリーミング配信させるため、あえて素の `a[href]` タグを使い、
- * fetch＋blob化などのバッファリングを避けている。
+ * 結果のダウンロードと外部エクスポートを 1 つに集約したメニュー。
+ * 旧 UI では CSV / XLSX / S3 の 3 コントロールが並びサイズも不揃いだったため、
+ * 固定ラベル「Export」のトリガー 1 つにまとめ、メニュー内を
+ * Download（CSV zip / CSV / XLSX）と Export to（S3 / Google Sheets）に分ける。
  */
-function CsvDownload({
+function ExportMenu({
   queryId,
   disabled,
   truncated,
@@ -314,98 +359,43 @@ function CsvDownload({
   truncated: boolean;
   csvReexecAllowed: boolean;
 }) {
-  // 現在選択中のダウンロード形式（zip圧縮 or 生CSV）。
-  const [format, setFormat] = useState<DownloadFormat>('zip');
-  // ダウンロード先URL。disabled中はhrefを設定せずクリックを実質無効化する。
-  const href = disabled ? undefined : downloadCsvUrl(queryId, format);
-  // ダウンロードファイルの拡張子をフォーマットに応じて決定する。
-  const ext = format === 'zip' ? 'zip' : 'csv';
-  const partialOnly = truncated && !csvReexecAllowed;
-  const tooltip = partialOnly
-    ? `Download includes buffered rows only (${CSV_REEXEC_UNAVAILABLE}: full download cannot re-run this statement)`
-    : undefined;
-  const control = (
-    <div className="flex items-center">
-      <a
-        href={href}
-        download={disabled ? undefined : `result-${queryId}.${ext}`}
-        aria-disabled={disabled}
-        className={cn(
-          'inline-flex h-6 items-center gap-1 rounded-l-md border border-border-base px-2 text-2xs font-medium',
-          disabled
-            ? 'pointer-events-none text-ink-subtle opacity-40'
-            : 'text-ink-muted hover:bg-surface-sunken hover:text-ink-strong',
-        )}
-      >
-        <Download size={13} strokeWidth={1.75} />
-        {format === 'zip' ? 'CSV (zip)' : 'CSV'}
-      </a>
-      <Dropdown<DownloadFormat>
-        value={format}
-        onChange={setFormat}
-        options={[
-          { value: 'zip', label: 'Zipped .zip' },
-          { value: 'csv', label: 'Plain .csv' },
-        ]}
-        ariaLabel="Download format"
-        align="end"
-        className="h-6 rounded-l-none rounded-r-md border-l-0 text-2xs"
-        bare
-      />
-    </div>
-  );
-  if (tooltip) {
-    return <Tooltip label={tooltip}>{control}</Tooltip>;
-  }
-  return control;
-}
-
-/** xlsx download as plain `a[href]` so the server streams it. */
-/**
- * xlsx ダウンロードリンク。
- * サーバー側の streaming writer を使うため、CSV と同じく `a[href]` で直接開く。
- */
-function XlsxDownload({ queryId, disabled }: { queryId: string; disabled: boolean }) {
-  const href = disabled ? undefined : downloadXlsxUrl(queryId);
-  return (
-    <a
-      href={href}
-      download={disabled ? undefined : `result-${queryId}.xlsx`}
-      aria-disabled={disabled}
-      className={cn(
-        'inline-flex h-6 items-center gap-1 rounded-md border border-border-base px-2 text-2xs font-medium',
-        disabled
-          ? 'pointer-events-none text-ink-subtle opacity-40'
-          : 'text-ink-muted hover:bg-surface-sunken hover:text-ink-strong',
-      )}
-    >
-      <FileSpreadsheet size={13} strokeWidth={1.75} />
-      XLSX
-    </a>
-  );
-}
-
-type ExternalExportAction = 's3-csv' | 's3-xlsx' | 'sheets';
-
-/**
- * S3 と Google Sheets への外部エクスポートメニュー。
- */
-function ExternalExport({ queryId, disabled }: { queryId: string; disabled: boolean }) {
-  const [action, setAction] = useState<ExternalExportAction>('s3-csv');
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 外側クリック判定に使うルート要素への参照。
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  const runExport = async (next: ExternalExportAction) => {
-    setAction(next);
-    if (disabled || busy) return;
+  // メニューが開いている間だけ、外側クリックと Escape でメニューを閉じるリスナーを登録する。
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // 行数上限で打ち切られ、かつ全行の再実行ダウンロードもできないケースの注記。
+  const partialOnly = truncated && !csvReexecAllowed;
+
+  const runExport = async (action: ExternalExportAction) => {
+    setOpen(false);
+    if (busy) return;
     setBusy(true);
     try {
       const response =
-        next === 'sheets'
+        action === 'sheets'
           ? await exportQuery(queryId, { destination: 'sheets' })
           : await exportQuery(queryId, {
               destination: 's3',
-              format: next === 's3-xlsx' ? 'xlsx' : 'csv',
-              gzip: next === 's3-csv' ? true : undefined,
+              format: action === 's3-xlsx' ? 'xlsx' : 'csv',
+              gzip: action === 's3-csv' ? true : undefined,
             });
       if (response.destination === 's3') {
         toast.success('Exported to S3', response.objectKey);
@@ -421,20 +411,81 @@ function ExternalExport({ queryId, disabled }: { queryId: string; disabled: bool
   };
 
   return (
-    <div className={cn(disabled && 'pointer-events-none opacity-40')}>
-      <Dropdown<ExternalExportAction>
-        value={action}
-        onChange={runExport}
-        leading={<CloudUpload size={13} strokeWidth={1.75} />}
-        options={[
-          { value: 's3-csv', label: 'S3 CSV' },
-          { value: 's3-xlsx', label: 'S3 XLSX' },
-          { value: 'sheets', label: 'Google Sheets' },
-        ]}
-        ariaLabel="Export result"
-        align="end"
-        className="h-6 text-2xs"
-      />
+    <div ref={rootRef} className="relative">
+      {/* トリガー: 固定ラベル「Export」。IconButton (sm) と同じ h-6 で高さを揃える。 */}
+      <button
+        type="button"
+        aria-label="Export result"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'inline-flex h-6 items-center gap-1 rounded-md border border-border-base px-2 text-2xs font-medium transition-colors',
+          'text-ink-muted hover:bg-surface-sunken hover:text-ink-strong',
+          'focus-visible:outline-2 focus-visible:outline-offset-2',
+          'disabled:cursor-not-allowed disabled:opacity-40',
+          open && 'border-accent ring-1 ring-accent/30',
+        )}
+      >
+        <Download size={13} strokeWidth={1.75} />
+        Export
+        <ChevronDown
+          size={12}
+          strokeWidth={1.75}
+          className={cn('shrink-0 text-ink-subtle transition-transform', open && 'rotate-180')}
+        />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className={cn(
+            'absolute top-full right-0 z-50 mt-1 w-52 rounded-md border border-border-strong',
+            'bg-surface-overlay p-1 shadow-lg',
+            'animate-[fadeIn_150ms_ease-out]',
+          )}
+        >
+          <ExportMenuLabel>Download</ExportMenuLabel>
+          <ExportMenuItem
+            href={downloadCsvUrl(queryId, 'zip')}
+            download={`result-${queryId}.zip`}
+            onSelect={() => setOpen(false)}
+          >
+            CSV (zip)
+          </ExportMenuItem>
+          <ExportMenuItem
+            href={downloadCsvUrl(queryId, 'csv')}
+            download={`result-${queryId}.csv`}
+            onSelect={() => setOpen(false)}
+          >
+            CSV
+          </ExportMenuItem>
+          <ExportMenuItem
+            href={downloadXlsxUrl(queryId)}
+            download={`result-${queryId}.xlsx`}
+            onSelect={() => setOpen(false)}
+          >
+            XLSX
+          </ExportMenuItem>
+          <ExportMenuLabel>Export to</ExportMenuLabel>
+          <ExportMenuItem disabled={busy} onSelect={() => void runExport('s3-csv')}>
+            S3 (CSV, gzip)
+          </ExportMenuItem>
+          <ExportMenuItem disabled={busy} onSelect={() => void runExport('s3-xlsx')}>
+            S3 (XLSX)
+          </ExportMenuItem>
+          <ExportMenuItem disabled={busy} onSelect={() => void runExport('sheets')}>
+            Google Sheets
+          </ExportMenuItem>
+          {/* 打ち切り済みで再実行もできない場合、ダウンロードが部分データになる旨を注記する。 */}
+          {partialOnly && (
+            <p className="border-t border-border-subtle px-2 pt-1.5 pb-1 text-2xs text-warning">
+              Downloads include buffered rows only ({CSV_REEXEC_UNAVAILABLE}: full download cannot
+              re-run this statement).
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
