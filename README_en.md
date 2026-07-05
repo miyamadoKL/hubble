@@ -19,6 +19,10 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
 | ------------------------------------------------------------------------------------- |
 | ![Variable panel driving a parameterised query](docs/screenshots/final-variables.png) |
 
+| Workflow (stage execution)                                     |
+| -------------------------------------------------------------- |
+| ![Query workflow canvas](docs/screenshots/workflow-canvas.png) |
+
 > Multi-datasource support (Trino, MySQL, PostgreSQL) and RBAC are available
 > (see the "Datasource configuration" and "RBAC" sections below). Saved queries
 > and notebooks can be shared between users (`docs/user-guide.md` §10.3).
