@@ -23,6 +23,7 @@ import type { AuditJson, AuditLogger } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { ResultJsonlCapture } from '../resultStore/jsonl';
 import type { SchedulerConfig } from '../schedule/scheduler';
+import type { GithubGovernanceService } from '../github/governance';
 
 export interface WorkflowRunnerConfig {
   enabled: boolean;
@@ -44,6 +45,7 @@ export interface WorkflowRunnerDeps {
   resultStore: ResultStore;
   resultKeyPrefix?: string;
   resultTtlDays?: number;
+  githubGovernance: GithubGovernanceService;
   config: WorkflowRunnerConfig;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -216,7 +218,36 @@ export class WorkflowRunner {
   private async runOnce(workflow: WorkflowRecord, scheduledForIso: string): Promise<void> {
     const startedAt = new Date(this.now()).toISOString();
     const runId = await this.deps.runs.startRun(workflow, 'cron', scheduledForIso, startedAt);
+    const governance = this.deps.githubGovernance;
+    if (governance.enabled && !(await governance.isWorkflowApproved(workflow))) {
+      await this.finishGovernanceBlockedRun(workflow, runId, 'cron', scheduledForIso, startedAt);
+      return;
+    }
     await this.executeRun(workflow, runId, 'cron', scheduledForIso);
+  }
+
+  private async finishGovernanceBlockedRun(
+    workflow: WorkflowRecord,
+    runId: string,
+    trigger: 'manual' | 'cron',
+    scheduledForIso: string,
+    startedAtIso: string,
+  ): Promise<void> {
+    const finishedMs = this.now();
+    const elapsedMs = Math.max(finishedMs - Date.parse(startedAtIso), 0);
+    const finishedAt = new Date(finishedMs).toISOString();
+    await this.deps.runs.skipRemaining(runId, 0, finishedAt);
+    await this.deps.runs.finishRun(runId, workflow.id, {
+      status: 'blocked',
+      finishedAt,
+      elapsedMs,
+    });
+    const finalRun = await this.deps.runs.getRun(runId);
+    if (finalRun) {
+      await this.recordWorkflowOutcome(workflow, runId, trigger, scheduledForIso, finalRun, {
+        governance: 'blocked',
+      });
+    }
   }
 
   private async executeRun(
@@ -226,6 +257,9 @@ export class WorkflowRunner {
     scheduledForIso: string,
   ): Promise<void> {
     const startMs = this.now();
+    const persistStepResults =
+      !this.deps.githubGovernance.enabled ||
+      (await this.deps.githubGovernance.isWorkflowApproved(workflow));
     const workflowRole = resolveRoleForPrincipal(
       this.deps.getRbac(),
       schedulePrincipalIdentity(workflow.owner, workflow.principalSnapshot),
@@ -249,7 +283,7 @@ export class WorkflowRunner {
       const stageSteps = runDetail.steps.filter((s) => s.stageIndex === stageIndex);
       const outcomes = await Promise.all(
         stageSteps.map((stepRun) =>
-          this.executeStep(workflow, workflowRole, runId, stepRun.id, stepById),
+          this.executeStep(workflow, workflowRole, runId, stepRun.id, stepById, persistStepResults),
         ),
       );
 
@@ -302,6 +336,7 @@ export class WorkflowRunner {
     runId: string,
     stepRunId: string,
     stepById: Map<string, { step: WorkflowStep; stageIndex: number }>,
+    persistStepResults: boolean,
   ): Promise<StepOutcome> {
     const runDetail = await this.deps.runs.getRun(runId);
     const stepRun = runDetail?.steps.find((s) => s.id === stepRunId);
@@ -335,6 +370,7 @@ export class WorkflowRunner {
       step.datasourceId ?? workflow.datasourceId,
       runId,
       stepRunId,
+      persistStepResults,
     );
     const finishedAt = new Date(this.now()).toISOString();
     const elapsedMs = Math.max(this.now() - stepStartMs, 0);
@@ -359,6 +395,7 @@ export class WorkflowRunner {
     datasourceId: string,
     runId: string,
     stepRunId: string,
+    persistStepResults: boolean,
   ): Promise<StepOutcome> {
     const policy = workflow.retry;
     let attempt = 0;
@@ -461,7 +498,7 @@ export class WorkflowRunner {
         }
       }
 
-      const capture = this.createResultCapture(runId, stepRunId);
+      const capture = persistStepResults ? this.createResultCapture(runId, stepRunId) : undefined;
       try {
         const client = engine.executionClient({
           source: 'scheduled',
@@ -557,6 +594,7 @@ export class WorkflowRunner {
     trigger: 'manual' | 'cron',
     scheduledForIso: string,
     run: NonNullable<Awaited<ReturnType<WorkflowRunRepository['getRun']>>>,
+    extraDetail?: Record<string, AuditJson>,
   ): Promise<void> {
     if (!this.deps.audit) return;
     const detail: Record<string, AuditJson> = {
@@ -571,6 +609,7 @@ export class WorkflowRunner {
         rowCount: s.rowCount,
         errorType: s.errorType,
       })) as unknown as AuditJson,
+      ...extraDetail,
     };
     await this.deps.audit.record({
       actor: workflow.owner,

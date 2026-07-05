@@ -178,6 +178,10 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const overflowMode: OverflowMode | undefined =
       body.maxRows !== undefined ? services.config.query.overflowMode : undefined;
     const maxRows = effectiveMaxRows(body.maxRows, services.config.query.maxRows);
+    let persistResult = true;
+    if (services.githubGovernance.enabled) {
+      persistResult = await services.githubGovernance.isStatementApproved(body.statement);
+    }
     // 実行そのものは services.queries（実行レジストリ）に委譲し、ここでは queryId だけ返す。
     const exec = services.queries.submit({
       statement: body.statement,
@@ -190,6 +194,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       overflowMode,
       notebookId: body.notebookId,
       cellId: body.cellId,
+      persistResult,
     });
     await services.audit.record({
       actor: principal.user,

@@ -237,6 +237,14 @@ export class DocumentGitLinkRepository {
       [type, id],
     );
   }
+
+  /** approved_hash が設定されている全 Git リンクを返す (ガバナンス用)。 */
+  async listApproved(): Promise<DocumentGitLinkRecord[]> {
+    const rows = await this.db.query<DocumentGitLinkRow>(
+      'SELECT * FROM document_git_links WHERE approved_hash IS NOT NULL',
+    );
+    return rows.map(rowToLink);
+  }
 }
 
 function rowToConnection(row: GithubConnectionRow): GithubConnectionRecord {

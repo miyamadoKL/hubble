@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { SqlDatabase } from '../db/sqlDatabase';
 import { openMemoryDatabase } from '../db';
 import { loadServerConfig, type ServerConfig } from '../config';
 import { buildServices, type Services } from '../services';
@@ -66,6 +67,8 @@ export interface TestContext {
   app: Hono<{ Variables: AuthVariables }>;
   services: Services;
   fake: FakeTrino;
+  /** リポジトリ層を直接触るテスト用 (通常のルートテストでは使わない)。 */
+  db: SqlDatabase;
 }
 
 /**
@@ -179,7 +182,7 @@ export async function createTestContext(
     remoteAddress: options.remoteAddress,
     sheetsClientFactory: options.sheetsClientFactory,
   });
-  return { app, services, fake };
+  return { app, services, fake, db };
 }
 
 /** Poll until a query reaches a terminal state (test convenience). */

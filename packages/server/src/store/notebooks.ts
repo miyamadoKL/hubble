@@ -78,6 +78,15 @@ export class NotebookRepository {
     return items;
   }
 
+  /**
+   * owner 条件なしで id からノートブックを取得する。
+   * ガバナンス判定専用。認可は呼び出し側の責務で、返り値を API レスポンスへ直接使わないこと。
+   */
+  async getByIdUnscoped(id: string): Promise<Notebook | undefined> {
+    const row = await this.getRowById(id);
+    return row ? this.rowToNotebook(row) : undefined;
+  }
+
   /** accessor が参照可能な単一ノートブックを id で取得する（`data` 列を含む完全な形）。 */
   async get(accessor: ShareAccessor, id: string): Promise<Notebook | undefined> {
     const owned = await this.getOwnedRow(id, accessor.user);

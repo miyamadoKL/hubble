@@ -73,6 +73,15 @@ export class SavedQueryRepository {
     return sortSavedQueries(items);
   }
 
+  /**
+   * owner 条件なしで id から保存済みクエリを取得する。
+   * ガバナンス判定専用。認可は呼び出し側の責務で、返り値を API レスポンスへ直接使わないこと。
+   */
+  async getByIdUnscoped(id: string): Promise<SavedQuery | undefined> {
+    const row = await this.getRowById(id);
+    return row ? rowToSavedQuery(row) : undefined;
+  }
+
   /** accessor が参照可能な単一の保存済みクエリを id で取得する。存在しないか権限がなければ undefined。 */
   async get(accessor: ShareAccessor, id: string): Promise<SavedQuery | undefined> {
     const owned = await this.getOwnedRow(id, accessor.user);
