@@ -149,13 +149,12 @@ test('downloads CSV and the file content starts with the header row', async ({ p
   await expectFinished(page);
   await waitGrid(page);
 
-  // Default download is zip; pick "Plain .csv" to get an uncompressed file.
-  await resultPane(page).getByRole('button', { name: 'Download format' }).click();
-  await page.getByRole('option', { name: 'Plain .csv' }).click();
+  // Export メニューを開き、非圧縮の CSV を選ぶ。
+  await resultPane(page).getByRole('button', { name: 'Export result' }).click();
 
   const downloadPromise = page.waitForEvent('download');
-  // The CSV link is an <a download> in the result-pane toolbar.
-  await resultPane(page).getByRole('link', { name: /CSV/ }).click();
+  // ダウンロード項目はメニュー内の <a download> として描画される。
+  await page.getByRole('menuitem', { name: 'CSV', exact: true }).click();
   const download = await downloadPromise;
 
   const stream = await download.createReadStream();
@@ -178,11 +177,10 @@ test('downloads a zip whose single .csv entry has the header row', async ({ page
   await expectFinished(page);
   await waitGrid(page);
 
-  // Zip is the default format; click the download link directly.
+  // Export メニューから zip 圧縮の CSV を選ぶ。
+  await resultPane(page).getByRole('button', { name: 'Export result' }).click();
   const downloadPromise = page.waitForEvent('download');
-  await resultPane(page)
-    .getByRole('link', { name: /CSV \(zip\)/ })
-    .click();
+  await page.getByRole('menuitem', { name: 'CSV (zip)' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.zip$/);
 

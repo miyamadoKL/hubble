@@ -32,6 +32,23 @@ const ROW_HEIGHT = 28;
 const HEADER_HEIGHT = 28;
 // 仮想化のオーバースキャン数（画面外にも余分に描画しておく行数）。スクロール時のちらつき防止。
 const OVERSCAN = 12;
+// 列幅の見積もりでスキャンする行数の上限（全行スキャンは大量結果で無駄なため）。
+const WIDTH_SAMPLE_ROWS = 1000;
+// セル本文 (text-xs の等幅フォント) のおおよその 1 文字幅（px）。
+const CELL_CH_PX = 7.3;
+// ヘッダーのカラム名 (text-2xs、uppercase + tracking) のおおよその 1 文字幅（px）。
+const HEADER_NAME_CH_PX = 7;
+// ヘッダーの型ラベル (0.625rem の等幅フォント) のおおよその 1 文字幅（px）。
+const HEADER_TYPE_CH_PX = 6.5;
+// セルの左右 padding (px-3 = 24px) とボーダー分。
+const CELL_PADDING_PX = 26;
+// ヘッダーの padding、名前と型ラベルの間の gap、ソートアイコンの合計余白。
+const HEADER_EXTRA_PX = 46;
+// 列幅の下限と上限（px）。上限を超える長文は truncate + title 表示に任せる。
+const MIN_COL_PX = 80;
+const MAX_COL_PX = 480;
+// 行番号列の幅（px）。3.25rem 相当。
+const ROW_NUMBER_COL_PX = 52;
 // カラムの型名から「数値型かどうか」を判定するための正規表現（先頭一致）。
 const NUMERIC_TYPES = /^(bigint|integer|int|smallint|tinyint|double|real|decimal|float)/i;
 // カラムの型名から「小数を含みうる数値型かどうか」を判定するための正規表現。
@@ -211,13 +228,32 @@ export function ResultGrid({ columns, rows, className }: ResultGridProps) {
   };
 
   // Grid template: row-number column + one column per visible field.
-  // CSS Grid の grid-template-columns 文字列を組み立てる。先頭は行番号列固定幅、
-  // 以降は表示中の列ごとに、数値型なら少し狭め、文字列型なら少し広めの minmax を割り当てる。
-  const gridTemplate = `3.25rem ${visibleColumns
-    .map(({ col }) =>
-      isNumericType(col.type) ? 'minmax(7rem, max-content)' : 'minmax(9rem, max-content)',
-    )
-    .join(' ')}`;
+  // CSS Grid の grid-template-columns 文字列を組み立てる。
+  // ヘッダーと各仮想行はそれぞれ独立した grid コンテナなので、`max-content` のような
+  // コンテンツ依存の幅を使うとコンテナごとに解決結果が異なり、ヘッダーと値の列位置が
+  // ずれてしまう。そこで、ヘッダー文字列と読み込み済み行（先頭 WIDTH_SAMPLE_ROWS 件）の
+  // 表示テキスト長から列ごとの固定幅（px）を見積もり、全コンテナで同一のテンプレートを使う。
+  const columnWidths = useMemo(() => {
+    const sample = rows.slice(0, WIDTH_SAMPLE_ROWS);
+    return visibleColumns.map(({ col, index }) => {
+      // ヘッダー: カラム名 + 型ラベル + アイコンや gap などの余白。
+      const headerPx =
+        col.name.length * HEADER_NAME_CH_PX + col.type.length * HEADER_TYPE_CH_PX + HEADER_EXTRA_PX;
+      // 本文: サンプル行中で最長の表示テキスト（フォーマット適用後）の文字数。
+      let maxChars = 0;
+      for (const row of sample) {
+        const len = renderValue(row[index], col.type).text.length;
+        if (len > maxChars) maxChars = len;
+      }
+      const cellPx = maxChars * CELL_CH_PX + CELL_PADDING_PX;
+      return Math.round(Math.min(MAX_COL_PX, Math.max(MIN_COL_PX, headerPx, cellPx)));
+    });
+  }, [visibleColumns, rows]);
+  // すべて固定幅（px）のトラックにすることで、どの grid コンテナでも
+  // テンプレートの解決結果が同一になり、列位置のずれと余計な横スクロールを防ぐ。
+  // (1fr や max-content は intrinsic 幅の算出がコンテナごとのコンテンツに
+  // 依存するため使わない。)
+  const gridTemplate = `${ROW_NUMBER_COL_PX}px ${columnWidths.map((w) => `${w}px`).join(' ')}`;
 
   // 現在ビューポート内にある（描画すべき）仮想行の一覧。
   const virtualRows = rowVirtualizer.getVirtualItems();
