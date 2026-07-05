@@ -6,9 +6,12 @@
  */
 import type {
   DocumentGitType,
+  GithubDocumentPullResponse,
   GithubDocumentPushResponse,
   GithubDocumentStatusResponse,
   GithubStatusResponse,
+  Notebook,
+  SavedQuery,
 } from '@hubble/contracts';
 import type { Principal } from '../auth/principal';
 import type { GithubConfig } from '../config';
@@ -16,8 +19,14 @@ import { AppError } from '../errors';
 import type { AuditLogger } from '../audit';
 import type { NotebookRepository } from '../store/notebooks';
 import type { SavedQueryRepository } from '../store/savedQueries';
-import type { WorkflowRepository } from '../store/workflows';
+import type { WorkflowRecord, WorkflowRepository } from '../store/workflows';
 import { branchNameFor, contentHash, documentPath, documentToContent } from './canonical';
+import {
+  parseNotebookContent,
+  parseSavedQueryContent,
+  parseWorkflowContent,
+  type ParsedNotebookContent,
+} from './parse';
 import { decryptToken, encryptToken } from './crypto';
 import { GithubPullRequestExistsError, type GithubClient } from './client';
 import {
@@ -289,6 +298,327 @@ export class GithubSyncService {
     });
 
     return { prNumber, prUrl };
+  }
+
+  /**
+   * main の承認済み内容をローカルへ強制取り込みする (手動)。
+   * owner の GitHub 接続トークンで main を読む。
+   */
+  async pullDocument(
+    principal: Principal,
+    type: DocumentGitType,
+    id: string,
+  ): Promise<GithubDocumentPullResponse> {
+    this.assertEnabled();
+    await this.resolveDocument(principal, type, id, true);
+    const link = await this.deps.links.get(type, id);
+    if (!link) {
+      throw AppError.badRequest('Document is not linked to GitHub', 'GITHUB_NOT_LINKED');
+    }
+    const { accessToken } = await this.requireConnection(principal.user);
+    return this.pullFromMain({
+      type,
+      id,
+      link,
+      accessToken,
+      actor: principal.user,
+      trigger: 'manual',
+    });
+  }
+
+  /**
+   * 全リンク済みドキュメントを main と同期する (定時バッチ)。
+   *
+   * ローカルが最後の承認内容から変更されていないリンクのみ fast-forward 相当で更新する。
+   * 更新は各ドキュメント owner の名義で行うが、実行主体はサーバーである。
+   */
+  async syncAll(): Promise<{
+    updated: number;
+    skippedModified: number;
+    skippedNoToken: number;
+    failed: number;
+  }> {
+    this.assertEnabled();
+    const links = await this.deps.links.listAll();
+    let updated = 0;
+    let skippedModified = 0;
+    let skippedNoToken = 0;
+    let failed = 0;
+
+    for (const link of links) {
+      try {
+        const outcome = await this.syncOneLink(link);
+        switch (outcome) {
+          case 'updated':
+            updated += 1;
+            break;
+          case 'skippedModified':
+            skippedModified += 1;
+            break;
+          case 'skippedNoToken':
+            skippedNoToken += 1;
+            break;
+          case 'failed':
+            failed += 1;
+            break;
+          case 'unchanged':
+          case 'skippedMissingDoc':
+          case 'skippedUnapproved':
+          case 'skippedMissingFile':
+            break;
+        }
+      } catch (err) {
+        failed += 1;
+        console.warn(
+          `github sync: unexpected error for ${link.documentType}:${link.documentId}`,
+          err,
+        );
+      }
+    }
+
+    console.log(
+      `github sync: completed updated=${updated} skippedModified=${skippedModified} skippedNoToken=${skippedNoToken} failed=${failed}`,
+    );
+    return { updated, skippedModified, skippedNoToken, failed };
+  }
+
+  private async pullFromMain(params: {
+    type: DocumentGitType;
+    id: string;
+    link: DocumentGitLinkRecord;
+    accessToken: string;
+    actor: string;
+    trigger: 'manual' | 'scheduled';
+  }): Promise<GithubDocumentPullResponse> {
+    const { type, id, link, accessToken, actor, trigger } = params;
+    const repo = this.deps.config.repo!;
+    const defaultBranch = this.deps.config.defaultBranch;
+    const file = await this.deps.client.getFile(accessToken, repo, link.path, defaultBranch);
+    if (!file) {
+      throw new AppError(404, {
+        code: 'GITHUB_FILE_MISSING',
+        message: `File ${link.path} not found on ${defaultBranch}`,
+      });
+    }
+
+    await this.applyParsedContent(type, id, actor, file.contentText);
+
+    const hash = contentHash(file.contentText);
+    const nowIso = new Date(this.now()).toISOString();
+    await this.deps.links.upsert(type, id, {
+      path: link.path,
+      approvedHash: hash,
+      approvedCommit: file.sha,
+      lastPushedHash: hash,
+      lastPushedCommit: file.sha,
+      checkedAt: nowIso,
+    });
+
+    await this.deps.audit.record({
+      actor,
+      action: 'github.pull',
+      target: `${type}:${id}`,
+      detail: {
+        repo,
+        path: link.path,
+        commit: file.sha,
+        trigger,
+      },
+    });
+
+    return { pulled: true, commit: file.sha, status: 'approved' };
+  }
+
+  private async syncOneLink(
+    link: DocumentGitLinkRecord,
+  ): Promise<
+    | 'updated'
+    | 'skippedModified'
+    | 'skippedNoToken'
+    | 'failed'
+    | 'unchanged'
+    | 'skippedMissingDoc'
+    | 'skippedUnapproved'
+    | 'skippedMissingFile'
+  > {
+    const { documentType: type, documentId: id } = link;
+    const doc = await this.loadDocumentUnscoped(type, id);
+    if (!doc) {
+      return 'skippedMissingDoc';
+    }
+
+    const currentHash = contentHash(documentToContent(type, doc));
+    if (!link.approvedHash || currentHash !== link.approvedHash) {
+      return link.approvedHash ? 'skippedModified' : 'skippedUnapproved';
+    }
+
+    const owner = await this.getDocumentOwner(type, id);
+    if (!owner) {
+      return 'skippedMissingDoc';
+    }
+
+    const accessToken = await this.resolveReadToken(owner);
+    if (!accessToken) {
+      console.warn(`github sync: skipping ${type}:${id} (no read token for owner ${owner})`);
+      return 'skippedNoToken';
+    }
+
+    const repo = this.deps.config.repo!;
+    const defaultBranch = this.deps.config.defaultBranch;
+    const file = await this.deps.client.getFile(accessToken, repo, link.path, defaultBranch);
+    const nowIso = new Date(this.now()).toISOString();
+
+    if (!file) {
+      await this.deps.links.upsert(type, id, {
+        path: link.path,
+        approvedHash: null,
+        approvedCommit: null,
+        checkedAt: nowIso,
+      });
+      return 'skippedMissingFile';
+    }
+
+    const remoteHash = contentHash(file.contentText);
+    if (remoteHash === link.approvedHash) {
+      return 'unchanged';
+    }
+
+    try {
+      await this.applyParsedContent(type, id, owner, file.contentText);
+      await this.deps.links.upsert(type, id, {
+        path: link.path,
+        approvedHash: remoteHash,
+        approvedCommit: file.sha,
+        lastPushedHash: remoteHash,
+        lastPushedCommit: file.sha,
+        checkedAt: nowIso,
+      });
+      await this.deps.audit.record({
+        actor: owner,
+        action: 'github.pull',
+        target: `${type}:${id}`,
+        detail: {
+          repo,
+          path: link.path,
+          commit: file.sha,
+          trigger: 'scheduled',
+        },
+      });
+      return 'updated';
+    } catch (err) {
+      console.warn(`github sync: failed to pull ${type}:${id}`, err);
+      return 'failed';
+    }
+  }
+
+  private async resolveReadToken(owner: string): Promise<string | undefined> {
+    if (this.deps.config.syncToken) {
+      return this.deps.config.syncToken;
+    }
+    try {
+      const connection = await this.getConnection(owner);
+      return connection?.accessToken;
+    } catch (err) {
+      // トークン期限切れ + refresh 失敗 (GITHUB_TOKEN_INVALID) は定時同期の文脈では
+      // 「読み取りトークンが無い」と同じ扱いとし、failed でなく skippedNoToken に計上する。
+      console.warn(`github sync: failed to resolve read token for owner ${owner}`, err);
+      return undefined;
+    }
+  }
+
+  private async getDocumentOwner(type: DocumentGitType, id: string): Promise<string | undefined> {
+    switch (type) {
+      case 'saved_query':
+        return this.deps.savedQueries.getOwner(id);
+      case 'notebook':
+        return this.deps.notebooks.getOwner(id);
+      case 'workflow':
+        return (await this.deps.workflows.getById(id))?.owner;
+    }
+  }
+
+  private async loadDocumentUnscoped(
+    type: DocumentGitType,
+    id: string,
+  ): Promise<SavedQuery | Notebook | WorkflowRecord | undefined> {
+    switch (type) {
+      case 'saved_query':
+        return this.deps.savedQueries.getByIdUnscoped(id);
+      case 'notebook':
+        return this.deps.notebooks.getByIdUnscoped(id);
+      case 'workflow':
+        return this.deps.workflows.getById(id);
+    }
+  }
+
+  private async applyParsedContent(
+    type: DocumentGitType,
+    id: string,
+    owner: string,
+    contentText: string,
+  ): Promise<void> {
+    const accessor = { user: owner, groups: [] as string[], role: 'admin' };
+    switch (type) {
+      case 'saved_query': {
+        const parsed = parseSavedQueryContent(contentText);
+        const existing = await this.deps.savedQueries.getByIdUnscoped(id);
+        if (!existing) {
+          throw AppError.notFound('Saved query not found');
+        }
+        await this.deps.savedQueries.update(accessor, id, {
+          name: parsed.name,
+          description: parsed.description,
+          statement: parsed.statement,
+          catalog: parsed.catalog,
+          schema: parsed.schema,
+          datasourceId: parsed.datasourceId,
+          isFavorite: existing.isFavorite,
+        });
+        break;
+      }
+      case 'notebook': {
+        const parsed = parseNotebookContent(contentText);
+        await this.applyNotebookUpdate(accessor, id, parsed);
+        break;
+      }
+      case 'workflow': {
+        const parsed = parseWorkflowContent(contentText);
+        const existing = await this.deps.workflows.getById(id);
+        if (!existing) {
+          throw AppError.notFound('Workflow not found');
+        }
+        await this.deps.workflows.update(owner, id, {
+          name: parsed.name,
+          description: parsed.description,
+          stages: parsed.stages,
+          datasourceId: parsed.datasourceId,
+          cron: parsed.cron,
+          retry: parsed.retry,
+          enabled: existing.enabled,
+        });
+        break;
+      }
+    }
+  }
+
+  private async applyNotebookUpdate(
+    accessor: { user: string; groups: string[]; role: string },
+    id: string,
+    parsed: ParsedNotebookContent,
+  ): Promise<void> {
+    const result = await this.deps.notebooks.update(accessor, id, {
+      name: parsed.name,
+      description: parsed.description,
+      cells: parsed.cells,
+      variables: parsed.variables,
+      context: parsed.context,
+    });
+    if (result === 'forbidden') {
+      throw AppError.forbidden('Only the document owner can update this notebook');
+    }
+    if (!result) {
+      throw AppError.notFound('Notebook not found');
+    }
   }
 
   private assertEnabled(): void {

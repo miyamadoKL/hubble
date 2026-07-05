@@ -61,3 +61,11 @@ export const githubDocumentPrResponseSchema = z.object({
   prUrl: z.string().url(),
 });
 export type GithubDocumentPrResponse = z.infer<typeof githubDocumentPrResponseSchema>;
+
+/** `POST /api/github/documents/:type/:id/pull` のレスポンス。 */
+export const githubDocumentPullResponseSchema = z.object({
+  pulled: z.literal(true),
+  commit: z.string(),
+  status: documentGitStatusSchema,
+});
+export type GithubDocumentPullResponse = z.infer<typeof githubDocumentPullResponseSchema>;

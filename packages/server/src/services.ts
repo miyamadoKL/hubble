@@ -40,6 +40,7 @@ import { GithubApiClient } from './github/client';
 import { GithubConnectionRepository, DocumentGitLinkRepository } from './github/store';
 import { GithubSyncService } from './github/syncService';
 import { GithubGovernanceService } from './github/governance';
+import { GithubSyncScheduler } from './github/syncScheduler';
 
 export interface Services {
   config: ServerConfig;
@@ -66,6 +67,7 @@ export interface Services {
   resultExpiry: ResultExpiryService;
   notifications: FailureNotificationSender;
   github?: GithubSyncService;
+  githubSyncScheduler?: GithubSyncScheduler;
   githubGovernance: GithubGovernanceService;
   /** GitHub OAuth state 生成用の now 注入 (テスト用)。 */
   githubNow?: () => number;
@@ -95,6 +97,7 @@ export interface BuildServicesOptions {
   notificationLogWarn?: (message: string, detail?: unknown) => void;
   notificationSender?: FailureNotificationSender;
   githubClient?: import('./github/client').GithubClient;
+  githubSyncSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
 }
 
 export async function buildServices(
@@ -244,6 +247,7 @@ export async function buildServices(
 
   const githubNow = options.now ?? (() => Date.now());
   let github: GithubSyncService | undefined;
+  let githubSyncScheduler: GithubSyncScheduler | undefined;
   if (config.github.enabled) {
     const githubClient = new GithubApiClient({
       clientId: config.github.clientId!,
@@ -263,6 +267,13 @@ export async function buildServices(
       encryptionKey: config.github.tokenEncryptionKey!,
       now: githubNow,
     });
+    githubSyncScheduler = new GithubSyncScheduler({
+      syncService: github,
+      syncCron: config.github.syncCron,
+      now: githubNow,
+      setTimer: options.githubSyncSetTimer,
+    });
+    githubSyncScheduler.start();
   }
 
   let reloadInFlight = false;
@@ -342,12 +353,14 @@ export async function buildServices(
     resultExpiry,
     notifications,
     github,
+    githubSyncScheduler,
     githubGovernance,
     githubNow,
     reloadDatasources,
     reloadRbac,
     shutdown: async () => {
       resultExpiry.stop();
+      await githubSyncScheduler?.stop();
       await workflowRunner.stop();
       await scheduler.stop();
       await registry.shutdown();

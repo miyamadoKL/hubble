@@ -126,6 +126,12 @@ interface NotebookStoreState {
   // Lifecycle
   // notebook をタブとして開く（既に開いていれば何もしない）。
   openNotebook: (notebook: Notebook, opts?: { draft?: boolean; activate?: boolean }) => void;
+  /**
+   * 開いている notebook の内容をサーバー取得値で置き換える (GitHub pull 後の反映用)。
+   * ローカルの編集状態 (dirty) は破棄され、保存済み状態としてリセットされる。
+   * 開いていない id の場合は何もしない。
+   */
+  replaceNotebook: (notebook: Notebook) => void;
   // タブを閉じる。draft ならローカルの下書きも破棄し、アクティブだったタブを
   // 別のタブに付け替える。
   closeNotebook: (id: string) => void;
@@ -451,6 +457,19 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
         };
       });
       writeWorkspace(get());
+    },
+
+    replaceNotebook: (notebook) => {
+      const existing = get().open[notebook.id];
+      if (!existing) return;
+      // 保留中のオートセーブがあれば取り消す (古い内容を PUT しないため)。
+      clearAutosave(notebook.id);
+      set((s) => ({
+        open: {
+          ...s.open,
+          [notebook.id]: { notebook, dirty: false, draft: false, saving: false },
+        },
+      }));
     },
 
     closeNotebook: (id) => {

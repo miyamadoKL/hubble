@@ -7,11 +7,13 @@
 import {
   apiRoutes,
   githubDocumentPrResponseSchema,
+  githubDocumentPullResponseSchema,
   githubDocumentPushResponseSchema,
   githubDocumentStatusResponseSchema,
   githubStatusResponseSchema,
   type DocumentGitType,
   type GithubDocumentPrResponse,
+  type GithubDocumentPullResponse,
   type GithubDocumentPushResponse,
   type GithubDocumentStatusResponse,
   type GithubStatusResponse,
@@ -76,6 +78,21 @@ export function pushDocumentToGithub(
   return apiFetch(githubDocumentPushResponseSchema, apiRoutes.githubDocumentPush(type, id), {
     method: 'POST',
     body: message ? { message } : {},
+  });
+}
+
+/**
+ * `POST /api/github/documents/:type/:id/pull` を呼び出し、ローカル編集を破棄して
+ * デフォルトブランチ (main) の承認済み内容へ戻す (強制上書き)。
+ * @param type ドキュメント種別。
+ * @param id ドキュメント id。
+ */
+export function pullDocumentFromMain(
+  type: DocumentGitType,
+  id: string,
+): Promise<GithubDocumentPullResponse> {
+  return apiFetch(githubDocumentPullResponseSchema, apiRoutes.githubDocumentPull(type, id), {
+    method: 'POST',
   });
 }
 

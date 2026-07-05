@@ -14,6 +14,7 @@ import {
   disconnectGithub,
   getDocumentGitStatus,
   getGithubStatus,
+  pullDocumentFromMain,
   pushDocumentToGithub,
 } from '../api/github';
 
@@ -75,5 +76,27 @@ export function useCreateDocumentPr(type: DocumentGitType, id: string) {
   return useMutation({
     mutationFn: () => createDocumentPullRequest(type, id),
     onSuccess: () => void client.invalidateQueries({ queryKey: docStatusKey(type, id) }),
+  });
+}
+
+// ドキュメント種別ごとの一覧/詳細キャッシュキーの先頭部分。pull 後に本体を再取得させる。
+const DOC_CONTENT_KEYS: Record<DocumentGitType, readonly string[]> = {
+  saved_query: ['saved-queries'],
+  notebook: ['notebooks'],
+  workflow: ['workflows'],
+};
+
+/**
+ * main の内容へ強制的に戻す (pull) mutation hook。
+ * 成功時に Git ステータスとドキュメント本体のキャッシュを無効化する。
+ */
+export function usePullDocument(type: DocumentGitType, id: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => pullDocumentFromMain(type, id),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: docStatusKey(type, id) });
+      void client.invalidateQueries({ queryKey: DOC_CONTENT_KEYS[type] });
+    },
   });
 }

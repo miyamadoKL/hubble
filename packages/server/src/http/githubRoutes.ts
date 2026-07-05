@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import {
   documentGitTypeSchema,
   githubDocumentPrRequestSchema,
+  githubDocumentPullResponseSchema,
   githubDocumentPushRequestSchema,
   githubDocumentPrResponseSchema,
   githubDocumentPushResponseSchema,
@@ -104,6 +105,13 @@ export function githubRoutes(services: Services): App {
     const body = await parseJsonBody(c, githubDocumentPrRequestSchema);
     const result = await services.github!.createPullRequest(c.var.principal, type, id, body);
     return c.json(githubDocumentPrResponseSchema.parse(result));
+  });
+
+  app.post('/documents/:type/:id/pull', async (c) => {
+    const type = documentGitTypeSchema.parse(c.req.param('type'));
+    const id = c.req.param('id');
+    const result = await services.github!.pullDocument(c.var.principal, type, id);
+    return c.json(githubDocumentPullResponseSchema.parse(result));
   });
 
   return app;
