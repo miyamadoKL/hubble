@@ -12,7 +12,7 @@
 import { useMemo, useState } from 'react';
 import { GridLayout, useContainerWidth, type Layout } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
-import { ArrowLeft, LayoutDashboard, Pencil, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, LayoutDashboard, Pencil, Plus, Save, Share2, Trash2 } from 'lucide-react';
 import type { Dashboard, DashboardWidget } from '@hubble/contracts';
 import { Button } from '../common/Button';
 import { Spinner } from '../common/Spinner';
@@ -27,6 +27,9 @@ import {
   useUpdateDashboard,
 } from '../../hooks/useDashboards';
 import { GitSyncControl } from '../github/GitSyncControl';
+import { ShareModal } from '../common/ShareModal';
+import { listDashboardShares, updateDashboardShares } from '../../api/dashboards';
+import { isDocumentOwner } from '../../utils/documentShare';
 import { AddWidgetModal } from './AddWidgetModal';
 import { WidgetCard } from './WidgetCard';
 
@@ -95,7 +98,16 @@ export function DashboardView() {
       </div>
     );
   }
-  return <DashboardEditor key={query.data.id} dashboard={query.data} onClose={close} />;
+  return (
+    <DashboardEditor
+      // id または updatedAt が変わったら (別ダッシュボードを開いた、GitHub pull など
+      // サーバー側で内容が更新された) 再マウントして name/widgets を初期化し直す
+      // (WorkflowView と同じ構成)。
+      key={`${query.data.id}:${query.data.updatedAt}`}
+      dashboard={query.data}
+      onClose={close}
+    />
+  );
 }
 
 /**
@@ -117,6 +129,7 @@ function DashboardEditor({
   const [widgets, setWidgets] = useState<DashboardWidget[]>(dashboard?.widgets ?? []);
   const [dirty, setDirty] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const createMutation = useCreateDashboard();
@@ -126,6 +139,8 @@ function DashboardEditor({
 
   // 共有経由の view 権限では編集させない (サーバー側でも拒否されるが UI でも隠す)。
   const canEdit = isNew || dashboard.myPermission !== 'view';
+  // 削除と共有管理は所有者のみ (サーバーも owner 以外を 403 にする)。
+  const isOwner = !isNew && isDocumentOwner(dashboard.myPermission);
 
   const { width, containerRef, mounted } = useContainerWidth();
   const layout = useMemo(() => toLayout(widgets), [widgets]);
@@ -215,7 +230,12 @@ function DashboardEditor({
                 Edit
               </Button>
             ))}
-          {!isNew && canEdit && (
+          {isOwner && (
+            <Button variant="ghost" size="sm" icon={Share2} onClick={() => setShareOpen(true)}>
+              Share
+            </Button>
+          )}
+          {isOwner && (
             <Button
               variant="ghost"
               size="sm"
@@ -278,6 +298,17 @@ function DashboardEditor({
         <div className="shrink-0 border-t border-border-subtle px-3 py-1.5 font-mono text-2xs text-ink-subtle">
           Unsaved changes
         </div>
+      )}
+
+      {/* 共有編集モーダル (所有者のみ)。 */}
+      {isOwner && dashboard && (
+        <ShareModal
+          open={shareOpen}
+          onClose={() => setShareOpen(false)}
+          documentName={name}
+          fetchShares={() => listDashboardShares(dashboard.id)}
+          updateShares={(shares) => updateDashboardShares(dashboard.id, shares)}
+        />
       )}
 
       <AddWidgetModal

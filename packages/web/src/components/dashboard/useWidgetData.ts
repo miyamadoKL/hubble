@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { QueryColumn } from '@hubble/contracts';
 import { getSavedQuery } from '../../api/savedQueries';
-import { createQuery, fetchQueryRows, fetchQuerySnapshot } from '../../execution/api';
+import { cancelQuery, createQuery, fetchQueryRows, fetchQuerySnapshot } from '../../execution/api';
 import type { ResultRow } from '../../execution';
 
 /** widget が一度に読み込む最大行数 (チャートとテーブル表示には十分な量)。 */
@@ -54,9 +54,22 @@ export function useWidgetData(savedQueryId: string): WidgetData {
   const [queryName, setQueryName] = useState<string | null>(null);
   // 実行の世代番号。アンマウント後や refresh 後に古い実行の結果を反映しないためのガード。
   const generationRef = useRef(0);
+  // 進行中のクエリ id。アンマウントや refresh でサーバー側の実行を止めるために持つ。
+  const activeQueryIdRef = useRef<string | null>(null);
+
+  // 進行中のクエリがあればサーバーへキャンセルを送る (結果は待たない)。
+  const cancelActive = useCallback(() => {
+    const queryId = activeQueryIdRef.current;
+    if (queryId) {
+      activeQueryIdRef.current = null;
+      void cancelQuery(queryId);
+    }
+  }, []);
 
   const run = useCallback(async () => {
     const generation = ++generationRef.current;
+    // refresh 連打時などに前の実行が走り続けないよう先に止める。
+    cancelActive();
     setLoading(true);
     setError(null);
     try {
@@ -73,6 +86,12 @@ export function useWidgetData(savedQueryId: string): WidgetData {
         datasourceId: sq.datasourceId ?? undefined,
         maxRows: WIDGET_MAX_ROWS,
       });
+      // createQuery の応答待ちの間に世代が進んだ場合、作成済みクエリを孤児にしない。
+      if (generation !== generationRef.current) {
+        void cancelQuery(queryId);
+        return;
+      }
+      activeQueryIdRef.current = queryId;
 
       // 終端状態に達するまでスナップショットをポーリングする。
       const deadline = Date.now() + POLL_TIMEOUT_MS;
@@ -80,11 +99,15 @@ export function useWidgetData(savedQueryId: string): WidgetData {
       while (!TERMINAL_STATES.has(snapshot.state)) {
         if (generation !== generationRef.current) return;
         if (Date.now() > deadline) {
+          // タイムアウト時もサーバー側の実行を止めてから失敗として扱う。
+          cancelActive();
           throw new Error('Query timed out');
         }
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
         snapshot = await fetchQuerySnapshot(queryId);
       }
+      // 終端に達したのでキャンセル対象から外す (自分の世代のときだけ)。
+      if (activeQueryIdRef.current === queryId) activeQueryIdRef.current = null;
       if (generation !== generationRef.current) return;
       if (snapshot.state !== 'finished') {
         throw new Error(snapshot.error?.message ?? `Query ${snapshot.state}`);
@@ -101,7 +124,7 @@ export function useWidgetData(savedQueryId: string): WidgetData {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
-  }, [savedQueryId]);
+  }, [savedQueryId, cancelActive]);
 
   // マウント時と savedQueryId 変更時に自動実行する。
   // effect 内での同期 setState (カスケード再レンダー) を避けるため、
@@ -111,12 +134,14 @@ export function useWidgetData(savedQueryId: string): WidgetData {
     queueMicrotask(() => {
       if (!cancelled) void run();
     });
-    // アンマウント時に世代を進めることで、進行中の実行結果の反映を止める。
+    // アンマウント時に世代を進めて進行中の実行結果の反映を止め、
+    // サーバー側で走っているクエリもキャンセルする。
     return () => {
       cancelled = true;
       generationRef.current += 1;
+      cancelActive();
     };
-  }, [run]);
+  }, [run, cancelActive]);
 
   const refresh = useCallback(() => {
     void run();
