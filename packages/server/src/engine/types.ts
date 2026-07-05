@@ -27,7 +27,7 @@ export type StatementClient = Pick<TrinoClient, 'start' | 'advance' | 'cancel' |
 /** クエリ実行時にエンジンへ渡すコンテキスト。 */
 export interface ExecutionClientOptions {
   /** ユーザークエリかスケジュール実行か。 */
-  source: 'user' | 'scheduled';
+  source: 'user' | 'scheduled' | 'alert';
   /** impersonation 対象の principal（省略時は技術アカウント）。 */
   user?: string;
   /** RBAC 解決後の role 名。MySQL/PostgreSQL の roleCredentials 選択に使う。 */

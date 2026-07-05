@@ -3,9 +3,11 @@
  * スケジューラーから確定失敗だけを受け取り、Slack と email の送信処理、監査ログ記録、失敗時の warn ログをここに閉じ込める。
  */
 import nodemailer from 'nodemailer';
-import type { ScheduleNotificationChannel } from '@hubble/contracts';
+import type { ScheduleNotificationChannel, AlertNotificationChannel } from '@hubble/contracts';
 import type { ServerConfig } from '../config';
 import type { ScheduleRecord } from '../store/schedules';
+import type { AlertRecord } from '../store/alerts';
+import type { AlertEvalResponse } from '@hubble/contracts';
 import type { AuditJson, AuditLogger } from '../audit';
 
 interface MailSender {
@@ -38,6 +40,19 @@ export interface FailureNotificationSender {
   sendFailure(input: FailureNotificationInput): Promise<void>;
 }
 
+export interface AlertTriggeredNotificationInput {
+  alert: AlertRecord;
+  outcome: AlertEvalResponse;
+  savedQueryName: string;
+  datasourceId: string;
+  evaluatedAt: string;
+}
+
+/** Alert 評価器から見た発火通知送信の抽象。 */
+export interface AlertNotificationSender {
+  sendAlertTriggered(input: AlertTriggeredNotificationInput): Promise<void>;
+}
+
 /** 通知サービスの外部依存。テストでは fetch、メール送信、監査ログを差し替える。 */
 export interface NotificationServiceDeps {
   /** Slack webhook 呼び出しに使う fetch 実装。 */
@@ -55,7 +70,7 @@ const MAX_REASON_LENGTH = 500;
 /**
  * スケジュール失敗時の外部通知を送るサービス。
  */
-export class NotificationService implements FailureNotificationSender {
+export class NotificationService implements FailureNotificationSender, AlertNotificationSender {
   private readonly fetchImpl: typeof fetch;
   private readonly logWarn: (message: string, detail?: unknown) => void;
   private mailSender?: MailSender;
@@ -73,56 +88,113 @@ export class NotificationService implements FailureNotificationSender {
     const notifications = input.schedule.notifications;
     if (!notifications.onFailure) return;
     for (const channel of notifications.channels) {
-      await this.sendChannel(channel, input);
+      await this.sendScheduleChannel(channel, input);
     }
   }
 
-  private async sendChannel(
+  async sendAlertTriggered(input: AlertTriggeredNotificationInput): Promise<void> {
+    for (const channel of input.alert.notifications.channels) {
+      await this.sendAlertChannel(channel, input);
+    }
+  }
+
+  private async sendScheduleChannel(
     channel: ScheduleNotificationChannel,
     input: FailureNotificationInput,
   ): Promise<void> {
     try {
       if (channel === 'slack') {
-        await this.sendSlack(input);
+        await this.sendSlack(this.config.slackWebhookUrl, this.renderFailureText(input));
       } else {
-        await this.sendEmail(input);
+        await this.sendEmail(
+          input.schedule.notifications.emailTo ?? [],
+          `[Hubble] Schedule failed: ${input.schedule.name}`,
+          this.renderFailureText(input),
+        );
       }
-      await this.recordAudit(input, channel, true, { outcome: 'sent' });
+      await this.recordScheduleAudit(input, channel, true, { outcome: 'sent' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logWarn(`notification send skipped or failed: channel=${channel}`, err);
-      await this.recordAudit(input, channel, false, {
+      await this.recordScheduleAudit(input, channel, false, {
         outcome: message === 'NOT_CONFIGURED' ? 'skipped' : 'failed',
         error: message,
       });
     }
   }
 
-  private async sendSlack(input: FailureNotificationInput): Promise<void> {
-    const webhookUrl = this.config.slackWebhookUrl;
+  private async sendAlertChannel(
+    channel: AlertNotificationChannel,
+    input: AlertTriggeredNotificationInput,
+  ): Promise<void> {
+    const text = this.renderAlertText(input);
+    try {
+      if (channel === 'slack') {
+        await this.sendSlack(this.config.slackWebhookUrl, text);
+      } else if (channel === 'email') {
+        await this.sendEmail(
+          input.alert.notifications.emailTo ?? [],
+          `[Hubble] Alert triggered: ${input.alert.name}`,
+          text,
+        );
+      } else {
+        await this.sendWebhook(input.alert.notifications.webhookUrl!, text, input);
+      }
+      await this.recordAlertAudit(input, channel, true, { outcome: 'sent' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logWarn(`alert notification send skipped or failed: channel=${channel}`, err);
+      await this.recordAlertAudit(input, channel, false, {
+        outcome: message === 'NOT_CONFIGURED' ? 'skipped' : 'failed',
+        error: message,
+      });
+    }
+  }
+
+  private async sendSlack(webhookUrl: string | undefined, text: string): Promise<void> {
     if (!webhookUrl) throw new Error('NOT_CONFIGURED');
     const res = await this.fetchImpl(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: this.renderText(input) }),
+      body: JSON.stringify({ text }),
     });
     if (!res.ok) {
       throw new Error(`Slack webhook returned ${res.status}`);
     }
   }
 
-  private async sendEmail(input: FailureNotificationInput): Promise<void> {
+  private async sendEmail(to: string[], subject: string, text: string): Promise<void> {
     const { host, port, user, password, from } = this.config.smtp;
     if (!host || !from) throw new Error('NOT_CONFIGURED');
-    const to = input.schedule.notifications.emailTo ?? [];
     if (to.length === 0) throw new Error('NOT_CONFIGURED');
     const sender = this.mailSender ?? this.createMailSender(host, port, user, password);
-    await sender.sendMail({
-      from,
-      to,
-      subject: `[Hubble] Schedule failed: ${input.schedule.name}`,
-      text: this.renderText(input),
+    await sender.sendMail({ from, to, subject, text });
+  }
+
+  private async sendWebhook(
+    webhookUrl: string,
+    text: string,
+    input: AlertTriggeredNotificationInput,
+  ): Promise<void> {
+    const res = await this.fetchImpl(webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        alert: {
+          id: input.alert.id,
+          name: input.alert.name,
+          state: input.outcome.state,
+          observedValue: input.outcome.observedValue,
+          savedQueryId: input.alert.savedQueryId,
+          savedQueryName: input.savedQueryName,
+          evaluatedAt: input.evaluatedAt,
+        },
+      }),
     });
+    if (!res.ok) {
+      throw new Error(`Webhook returned ${res.status}`);
+    }
   }
 
   private createMailSender(
@@ -141,7 +213,7 @@ export class NotificationService implements FailureNotificationSender {
     return this.mailSender;
   }
 
-  private renderText(input: FailureNotificationInput): string {
+  private renderFailureText(input: FailureNotificationInput): string {
     const reason = truncate(input.errorMessage ?? input.errorType ?? 'Unknown failure');
     return [
       'Hubble schedule failed',
@@ -155,7 +227,21 @@ export class NotificationService implements FailureNotificationSender {
     ].join('\n');
   }
 
-  private async recordAudit(
+  private renderAlertText(input: AlertTriggeredNotificationInput): string {
+    return [
+      'Hubble alert triggered',
+      `Alert: ${input.alert.name}`,
+      `Saved query: ${input.savedQueryName}`,
+      `Datasource: ${input.datasourceId}`,
+      `Owner: ${input.alert.owner}`,
+      `Column: ${input.alert.columnName} ${input.alert.op} ${input.alert.value}`,
+      `Observed: ${input.outcome.observedValue ?? 'n/a'}`,
+      `State: ${input.outcome.previousState} → ${input.outcome.state}`,
+      `Evaluated at: ${input.evaluatedAt}`,
+    ].join('\n');
+  }
+
+  private async recordScheduleAudit(
     input: FailureNotificationInput,
     channel: ScheduleNotificationChannel,
     success: boolean,
@@ -172,6 +258,27 @@ export class NotificationService implements FailureNotificationSender {
         channel,
         success,
         notificationType: 'schedule_failure',
+        ...extra,
+      },
+    });
+  }
+
+  private async recordAlertAudit(
+    input: AlertTriggeredNotificationInput,
+    channel: AlertNotificationChannel,
+    success: boolean,
+    extra: Record<string, AuditJson>,
+  ): Promise<void> {
+    await this.deps.audit?.record({
+      actor: input.alert.owner,
+      action: 'notification.send',
+      target: input.alert.id,
+      datasource: input.datasourceId,
+      detail: {
+        alertId: input.alert.id,
+        channel,
+        success,
+        notificationType: 'alert_triggered',
         ...extra,
       },
     });
