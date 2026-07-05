@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Notebook, SavedQuery } from '@hubble/contracts';
 import type { WorkflowRecord } from '../store/workflows';
+import type { AlertRecord } from '../store/alerts';
 import {
+  alertToContent,
   branchNameFor,
   contentHash,
   documentPath,
@@ -62,6 +64,26 @@ const workflow: WorkflowRecord = {
   updatedAt: '2026-01-02T00:00:00.000Z',
 };
 
+const alert: AlertRecord = {
+  id: 'alt_1',
+  owner: 'alice',
+  name: 'Spike',
+  savedQueryId: 'sq_1',
+  columnName: 'count',
+  op: '>',
+  value: '100',
+  selector: 'first',
+  rearm: 0,
+  muted: false,
+  cron: '0 * * * *',
+  state: 'triggered',
+  lastTriggeredAt: '2026-01-01T00:00:00.000Z',
+  notifications: { channels: ['slack'] },
+  principalSnapshot: { user: 'alice' },
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-02T00:00:00.000Z',
+};
+
 describe('github canonical', () => {
   it('serializes saved query header and statement', () => {
     expect(savedQueryToContent(savedQuery)).toBe(
@@ -114,10 +136,20 @@ describe('github canonical', () => {
     expect(content).not.toContain('createdAt');
   });
 
+  it('serializes alert yaml without volatile fields', () => {
+    const content = alertToContent(alert);
+    expect(content).toContain('savedQueryId: sq_1');
+    expect(content).toContain('op: ">"');
+    expect(content).not.toContain('state');
+    expect(content).not.toContain('lastTriggeredAt');
+    expect(content).not.toContain('owner');
+  });
+
   it('builds stable document paths and branch names', () => {
     expect(documentPath('saved_query', 'sq_1')).toBe('saved-queries/sq_1.sql');
     expect(documentPath('notebook', 'nb_1')).toBe('notebooks/nb_1.yaml');
     expect(documentPath('workflow', 'wfl_1')).toBe('workflows/wfl_1.yaml');
+    expect(documentPath('alert', 'alt_1')).toBe('alerts/alt_1.yaml');
     expect(branchNameFor('alice@corp', 'saved_query', 'sq_1')).toBe(
       'hubble/alice-corp/saved_query-sq_1',
     );

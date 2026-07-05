@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { Notebook } from '@hubble/contracts';
 import type { WorkflowRecord } from '../store/workflows';
-import { notebookToContent, savedQueryToContent, workflowToContent } from './canonical';
-import { parseNotebookContent, parseSavedQueryContent, parseWorkflowContent } from './parse';
+import {
+  notebookToContent,
+  savedQueryToContent,
+  workflowToContent,
+  alertToContent,
+} from './canonical';
+import {
+  parseAlertContent,
+  parseNotebookContent,
+  parseSavedQueryContent,
+  parseWorkflowContent,
+} from './parse';
+import type { AlertRecord } from '../store/alerts';
 
 describe('parseSavedQueryContent', () => {
   it('round-trips saved query canonical content', () => {
@@ -141,5 +152,38 @@ retry:
 stages: []
 `;
     expect(() => parseWorkflowContent(content)).toThrow(/Invalid workflow content/);
+  });
+});
+
+describe('parseAlertContent', () => {
+  it('round-trips alert canonical content', () => {
+    const original: AlertRecord = {
+      id: 'alt_1',
+      owner: 'alice',
+      name: 'Spike',
+      savedQueryId: 'sq_1',
+      columnName: 'count',
+      op: '>',
+      value: '100',
+      selector: 'max',
+      rearm: 60,
+      muted: false,
+      cron: '0 * * * *',
+      state: 'unknown',
+      lastTriggeredAt: null,
+      notifications: { channels: ['webhook'], webhookUrl: 'https://example.com/hook' },
+      principalSnapshot: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const parsed = parseAlertContent(alertToContent(original));
+    expect(parsed.name).toBe(original.name);
+    expect(parsed.savedQueryId).toBe(original.savedQueryId);
+    expect(parsed.columnName).toBe(original.columnName);
+    expect(parsed.op).toBe(original.op);
+    expect(parsed.value).toBe(original.value);
+    expect(parsed.selector).toBe(original.selector);
+    expect(parsed.rearm).toBe(original.rearm);
+    expect(parsed.notifications).toEqual(original.notifications);
   });
 });

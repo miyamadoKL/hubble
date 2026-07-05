@@ -6,6 +6,7 @@ import { NotebookRepository } from '../store/notebooks';
 import { SavedQueryRepository } from '../store/savedQueries';
 import { DocumentShareRepository } from '../store/documentShares';
 import { WorkflowRepository } from '../store/workflows';
+import { AlertRepository } from '../store/alerts';
 import { dbBackends } from '../test/dbBackends';
 import { savedQueryToContent, contentHash, documentPath, documentToContent } from './canonical';
 import { GithubPullRequestExistsError, type GithubClient } from './client';
@@ -110,6 +111,7 @@ function buildService(
   const savedQueries = new SavedQueryRepository(db, shares);
   const notebooks = new NotebookRepository(db, shares);
   const workflows = new WorkflowRepository(db);
+  const alerts = new AlertRepository(db);
   const audit = new AuditLogger(new AuditRepository(db));
   const connections = new GithubConnectionRepository(db);
   const links = new DocumentGitLinkRepository(db);
@@ -128,6 +130,7 @@ function buildService(
     savedQueries,
     notebooks,
     workflows,
+    alerts,
     audit,
     encryptionKey: KEY,
     now,

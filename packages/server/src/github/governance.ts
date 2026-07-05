@@ -144,6 +144,8 @@ export class GithubGovernanceService {
         }
         return statements;
       }
+      case 'alert':
+        return [];
     }
   }
 
@@ -158,6 +160,8 @@ export class GithubGovernanceService {
         return this.deps.notebooks.getByIdUnscoped(id);
       case 'workflow':
         return this.deps.workflows.getById(id);
+      case 'alert':
+        return undefined;
     }
   }
 }
