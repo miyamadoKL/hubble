@@ -10,11 +10,13 @@ import {
   workflowSchema,
   workflowRunSchema,
   workflowRunsResponseSchema,
+  workflowRunExportResponseSchema,
   workflowStepResultPageSchema,
   type CreateWorkflowRequest,
   type UpdateWorkflowRequest,
   type Workflow,
   type WorkflowRun,
+  type WorkflowRunExportResponse,
   type WorkflowRunSummary,
   type WorkflowStepResultPage,
 } from '@hubble/contracts';
@@ -128,6 +130,30 @@ export function getWorkflowRun(runId: string): Promise<WorkflowRun> {
  * @returns 列メタデータと行データのページ。
  * @throws {ApiClientError} 結果が未永続化または期限切れの場合は 404。
  */
+/**
+ * `POST /api/workflow-runs/:runId/export` を呼び出し、run の永続化済みステップ結果を
+ * 1 つの Google Sheets ブック (ステップごとのシート) へエクスポートする。
+ * @param runId 対象の run id。
+ * @returns spreadsheetId と閲覧 URL。
+ * @throws {ApiClientError} 永続化結果なし (404)、Sheets 未設定 (501)、実行中 (409) など。
+ */
+export function exportWorkflowRunToSheets(runId: string): Promise<WorkflowRunExportResponse> {
+  return apiFetch(workflowRunExportResponseSchema, apiRoutes.workflowRunExport(runId), {
+    method: 'POST',
+    body: { destination: 'sheets' },
+  });
+}
+
+/** run の CSV zip 一括ダウンロード URL (a[href] で直接開く)。 */
+export function workflowRunZipUrl(runId: string): string {
+  return apiRoutes.workflowRunDownloadZip(runId);
+}
+
+/** run の xlsx 一括ダウンロード URL (a[href] で直接開く)。 */
+export function workflowRunXlsxUrl(runId: string): string {
+  return apiRoutes.workflowRunDownloadXlsx(runId);
+}
+
 export function getWorkflowStepResult(
   runId: string,
   stepRunId: string,

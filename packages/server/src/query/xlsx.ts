@@ -33,18 +33,21 @@ export function toXlsxCellValue(value: unknown): string | number | boolean | nul
   return formatCell(value);
 }
 
-/** 行イベントを xlsx workbook として writable stream へ書き込む。 */
-export async function writeXlsx(
-  events: AsyncGenerator<QueryResultEvent>,
-  output: Writable,
-  options: XlsxWriteOptions = {},
-): Promise<void> {
-  const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
-    stream: output,
-    useStyles: true,
-    useSharedStrings: false,
+/** 1 シートあたりのデータ行上限を超えていないか検証する。 */
+export function checkXlsxDataRowLimit(dataRows: number): void {
+  if (dataRows <= XLSX_MAX_DATA_ROWS) return;
+  throw new AppError(413, {
+    code: 'RESULT_TOO_LARGE',
+    message:
+      'xlsx export is limited to 1,048,576 worksheet rows. Use CSV export for larger results.',
   });
-  const worksheet = workbook.addWorksheet(options.sheetName ?? 'Results');
+}
+
+/** 1 シート分の行イベントを worksheet へ書き込む。 */
+async function writeWorksheetEvents(
+  worksheet: ExcelJS.Worksheet,
+  events: AsyncGenerator<QueryResultEvent>,
+): Promise<void> {
   let headerWritten = false;
   let dataRows = 0;
 
@@ -62,15 +65,40 @@ export async function writeXlsx(
       worksheet.addRow([]).commit();
     }
     dataRows += 1;
-    if (dataRows > XLSX_MAX_DATA_ROWS) {
-      throw new AppError(413, {
-        code: 'RESULT_TOO_LARGE',
-        message:
-          'xlsx export is limited to 1,048,576 worksheet rows. Use CSV export for larger results.',
-      });
-    }
+    checkXlsxDataRowLimit(dataRows);
     worksheet.addRow(event.row.map(toXlsxCellValue)).commit();
   }
+}
 
+/** 行イベントを xlsx workbook として writable stream へ書き込む。 */
+export async function writeXlsx(
+  events: AsyncGenerator<QueryResultEvent>,
+  output: Writable,
+  options: XlsxWriteOptions = {},
+): Promise<void> {
+  const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+    stream: output,
+    useStyles: true,
+    useSharedStrings: false,
+  });
+  const worksheet = workbook.addWorksheet(options.sheetName ?? 'Results');
+  await writeWorksheetEvents(worksheet, events);
+  await workbook.commit();
+}
+
+/** 複数シートを 1 つの xlsx workbook として writable stream へ書き込む。 */
+export async function writeXlsxWorkbook(
+  sheets: ReadonlyArray<{ name: string; events: AsyncGenerator<QueryResultEvent> }>,
+  output: Writable,
+): Promise<void> {
+  const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+    stream: output,
+    useStyles: true,
+    useSharedStrings: false,
+  });
+  for (const sheet of sheets) {
+    const worksheet = workbook.addWorksheet(sheet.name);
+    await writeWorksheetEvents(worksheet, sheet.events);
+  }
   await workbook.commit();
 }

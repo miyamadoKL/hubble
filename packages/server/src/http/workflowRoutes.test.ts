@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import {
+  workflowRunExportResponseSchema,
   workflowRunSchema,
   workflowSchema,
   workflowStepResultPageSchema,
@@ -9,6 +13,7 @@ import {
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 import type { ResultStore } from '../resultStore';
+import type { SheetsApiClient } from '../query/exportSheets';
 
 const VALIDATE_OK: FakeScenario = {
   match: 'EXPLAIN (TYPE VALIDATE)',
@@ -46,6 +51,50 @@ class MemoryResultStore implements ResultStore {
 }
 
 const sampleStages = [{ steps: [{ id: 'st_ok', name: 'Ok', statement: 'SELECT_OK' }] }];
+
+const twoStepStages = [
+  {
+    steps: [
+      { id: 'st_a', name: 'Step A', statement: 'SELECT_A' },
+      { id: 'st_b', name: 'Step B', statement: 'SELECT_B' },
+    ],
+  },
+];
+
+const twoStepScenarios: FakeScenario[] = [
+  VALIDATE_OK,
+  {
+    match: 'SELECT_A',
+    pages: [{ columns: [{ name: 'a', type: 'bigint' }], data: [[1]] }],
+  },
+  {
+    match: 'SELECT_B',
+    pages: [{ columns: [{ name: 'b', type: 'bigint' }], data: [[2], [3]] }],
+  },
+];
+
+async function createTwoStepRun(
+  ctx: Awaited<ReturnType<typeof createTestContext>>,
+  extraHeaders: Record<string, string> = {},
+): Promise<{
+  workflow: Workflow;
+  runId: string;
+}> {
+  const headers = { ...jsonHeaders(), ...extraHeaders };
+  const createRes = await ctx.app.request('/api/workflows', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ name: 'export-flow', stages: twoStepStages }),
+  });
+  const workflow = workflowSchema.parse(await createRes.json()) as Workflow;
+  const runRes = await ctx.app.request(`/api/workflows/${workflow.id}/run`, {
+    method: 'POST',
+    headers: extraHeaders,
+  });
+  const { runId } = (await runRes.json()) as { runId: string };
+  await ctx.services.workflowRunner.whenIdle();
+  return { workflow, runId };
+}
 
 describe('workflow routes', () => {
   it('rejects creation with step validation details on USER_ERROR', async () => {
@@ -190,5 +239,195 @@ describe('workflow routes', () => {
     expect(first.status).toBe(202);
     const second = await ctx.app.request(`/api/workflows/${workflow.id}/run`, { method: 'POST' });
     expect(second.status).toBe(409);
+  });
+});
+
+describe('workflow run bulk export routes', () => {
+  const aliceHeaders = { 'x-forwarded-email': 'alice@example.com' };
+
+  it('downloads zip and xlsx, exports sheets, and records audit', async () => {
+    const addSheet = vi.fn<SheetsApiClient['addSheet']>(async () => undefined);
+    const renameFirstSheet = vi.fn<SheetsApiClient['renameFirstSheet']>(async () => undefined);
+    const appendValues = vi.fn<SheetsApiClient['appendValues']>(async () => undefined);
+    const shareWithWriter = vi.fn<SheetsApiClient['shareWithWriter']>(async () => undefined);
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({
+      scenarios: twoStepScenarios,
+      resultStore: store,
+      env: { AUTH_MODE: 'proxy', EXPORT_SHEETS_CREDENTIALS_FILE: '/secure/key.json' },
+      remoteAddress: () => '127.0.0.1',
+      sheetsClientFactory: async () => ({
+        createSpreadsheet: async () => ({
+          spreadsheetId: 'wf_sheet_1',
+          url: 'https://docs.google.com/spreadsheets/d/wf_sheet_1',
+        }),
+        appendValues,
+        renameFirstSheet,
+        addSheet,
+        shareWithWriter,
+      }),
+    });
+
+    const { runId } = await createTwoStepRun(ctx, aliceHeaders);
+
+    const zipRes = await ctx.app.request(`/api/workflow-runs/${runId}/download.zip`, {
+      headers: aliceHeaders,
+    });
+    expect(zipRes.status).toBe(200);
+    const zipBytes = Buffer.from(await zipRes.arrayBuffer());
+    expect(zipBytes.subarray(0, 2).toString('utf8')).toBe('PK');
+
+    const xlsxRes = await ctx.app.request(`/api/workflow-runs/${runId}/download.xlsx`, {
+      headers: aliceHeaders,
+    });
+    expect(xlsxRes.status).toBe(200);
+    const xlsxBytes = Buffer.from(await xlsxRes.arrayBuffer());
+    expect(xlsxBytes.subarray(0, 2).toString('utf8')).toBe('PK');
+    expect(xlsxRes.headers.get('content-type')).toContain('spreadsheetml.sheet');
+
+    const sheetsRes = await ctx.app.request(`/api/workflow-runs/${runId}/export`, {
+      method: 'POST',
+      headers: {
+        ...jsonHeaders(),
+        ...aliceHeaders,
+      },
+      body: JSON.stringify({ destination: 'sheets' }),
+    });
+    expect(sheetsRes.status).toBe(200);
+    const exported = workflowRunExportResponseSchema.parse(await sheetsRes.json());
+    expect(exported.spreadsheetId).toBe('wf_sheet_1');
+    expect(renameFirstSheet).toHaveBeenCalled();
+    expect(addSheet).toHaveBeenCalledTimes(1);
+
+    const auditRows = await ctx.services.audit.listForTest();
+    expect(
+      auditRows.some(
+        (row) => row.action === 'csv.download' && row.target === `workflow-run:${runId}`,
+      ),
+    ).toBe(true);
+    expect(
+      auditRows.some(
+        (row) => row.action === 'export.xlsx' && row.target === `workflow-run:${runId}`,
+      ),
+    ).toBe(true);
+    expect(
+      auditRows.some(
+        (row) => row.action === 'export.sheets' && row.target === `workflow-run:${runId}`,
+      ),
+    ).toBe(true);
+    await ctx.services.shutdown();
+  });
+
+  it('returns 404 for non-owner', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({
+      scenarios: twoStepScenarios,
+      resultStore: store,
+      env: { AUTH_MODE: 'proxy' },
+      remoteAddress: () => '127.0.0.1',
+    });
+    const { runId } = await createTwoStepRun(ctx, aliceHeaders);
+
+    const res = await ctx.app.request(`/api/workflow-runs/${runId}/download.zip`, {
+      headers: { 'x-forwarded-email': 'bob@example.com' },
+    });
+    expect(res.status).toBe(404);
+    await ctx.services.shutdown();
+  });
+
+  it('returns 409 while run is still running', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({
+      scenarios: [
+        VALIDATE_OK,
+        {
+          match: 'SELECT_HOLD',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      resultStore: store,
+    });
+    const createRes = await ctx.app.request('/api/workflows', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        name: 'hold-export',
+        stages: [{ steps: [{ id: 'st_hold', name: 'Hold', statement: 'SELECT_HOLD' }] }],
+      }),
+    });
+    const workflow = workflowSchema.parse(await createRes.json()) as Workflow;
+    ctx.fake.holdAdvance = new Promise(() => {});
+    const runRes = await ctx.app.request(`/api/workflows/${workflow.id}/run`, { method: 'POST' });
+    const { runId } = (await runRes.json()) as { runId: string };
+
+    const res = await ctx.app.request(`/api/workflow-runs/${runId}/download.zip`);
+    expect(res.status).toBe(409);
+  });
+
+  it('returns RESULT_NOT_PERSISTED when no persisted results exist', async () => {
+    const ctx = await createTestContext({ scenarios: twoStepScenarios });
+    const { runId } = await createTwoStepRun(ctx);
+
+    const res = await ctx.app.request(`/api/workflow-runs/${runId}/download.zip`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('RESULT_NOT_PERSISTED');
+    await ctx.services.shutdown();
+  });
+
+  it('returns 403 when a step datasource is outside the role allowlist', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-workflow-export-rbac-'));
+    try {
+      writeFileSync(
+        join(dir, 'rbac.yaml'),
+        `roles:
+  unrestricted:
+    permissions: [query.write]
+    datasources: ['*']
+  trino-prod-only:
+    permissions: [query.write]
+    datasources: [trino-prod]
+assignments:
+  - user: alice
+    role: unrestricted
+defaultRole: unrestricted
+`,
+        'utf8',
+      );
+      const store = new MemoryResultStore();
+      const ctx = await createTestContext({
+        scenarios: twoStepScenarios,
+        resultStore: store,
+        cwd: dir,
+        env: { RBAC_PATH: join(dir, 'rbac.yaml'), AUTH_MODE: 'proxy' },
+        remoteAddress: () => '127.0.0.1',
+      });
+      const { runId } = await createTwoStepRun(ctx, aliceHeaders);
+
+      writeFileSync(
+        join(dir, 'rbac.yaml'),
+        `roles:
+  trino-prod-only:
+    permissions: [query.write]
+    datasources: [trino-prod]
+assignments:
+  - user: alice
+    role: trino-prod-only
+defaultRole: trino-prod-only
+`,
+        'utf8',
+      );
+      await ctx.services.reloadRbac();
+
+      const res = await ctx.app.request(`/api/workflow-runs/${runId}/download.zip`, {
+        headers: aliceHeaders,
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toContain('trino-default');
+      await ctx.services.shutdown();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

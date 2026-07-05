@@ -111,6 +111,9 @@ export const apiRoutes = {
   workflowRunDetail: (runId: string) => `/api/workflow-runs/${enc(runId)}`,
   workflowStepResult: (runId: string, stepRunId: string) =>
     `/api/workflow-runs/${enc(runId)}/steps/${enc(stepRunId)}/result`,
+  workflowRunDownloadZip: (runId: string) => `/api/workflow-runs/${enc(runId)}/download.zip`,
+  workflowRunDownloadXlsx: (runId: string) => `/api/workflow-runs/${enc(runId)}/download.xlsx`,
+  workflowRunExport: (runId: string) => `/api/workflow-runs/${enc(runId)}/export`,
 } as const;
 
 /** apiRoutes オブジェクト全体の型（各エンドポイントの型を参照する際に使う）。 */
