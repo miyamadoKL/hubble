@@ -7,7 +7,9 @@ import type { LoadedRbac, ResolvedRole, RbacAssignment } from './types';
 /** rbac.yaml が無いときの組み込みロール（従来挙動と等価）。 */
 export const UNRESTRICTED_ROLE_NAME = 'unrestricted';
 
-const UNRESTRICTED_PERMISSIONS: ReadonlySet<Permission> = new Set(['query.write']);
+// rbac.yaml が無い運用でも AI アシスタントを使えるように ai.use を含める。
+// provider が off のときは POST /api/ai/assist が 501 になるため安全。
+const UNRESTRICTED_PERMISSIONS: ReadonlySet<Permission> = new Set(['query.write', 'ai.use']);
 
 /** 組み込み unrestricted ロール（全員に割り当て）。 */
 export function builtInUnrestrictedRole(): ResolvedRole {

@@ -50,5 +50,7 @@ export * from './dashboard';
 export * from './workflow';
 // GitHub 連携の契約
 export * from './github';
+// AI アシスタントの契約
+export * from './ai';
 // API パス定数とパスビルダー
 export * from './routes';

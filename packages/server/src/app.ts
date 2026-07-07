@@ -29,6 +29,7 @@ import { dashboardRoutes } from './http/dashboardRoutes';
 import { workflowRoutes, workflowRunRoutes } from './http/workflowRoutes';
 import { githubRoutes } from './http/githubRoutes';
 import { adminRoutes } from './http/adminRoutes';
+import { aiRoutes } from './http/aiRoutes';
 import { registerStaticServing } from './http/staticRoutes';
 import { filterDatasourcesForRole } from './rbac/check';
 import { toDatasourceSummaries } from './datasource/summary';
@@ -127,6 +128,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   // より具体的なプレフィックス（/api/queries 等）を先に、包括的な metadataRoutes
   // （/api 直下に catalogs/metadata を生やす）を最後に登録する。
   app.route('/api/admin', adminRoutes(services));
+  app.route('/api/ai', aiRoutes(services));
   app.route('/api/queries', queryRoutes(services));
   app.route('/api/notebooks', notebookRoutes(services));
   app.route('/api/saved-queries', savedQueryRoutes(services));

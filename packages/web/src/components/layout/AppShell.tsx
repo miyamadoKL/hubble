@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
+import { AiPanel } from '../ai/AiPanel';
 import { NotebookView } from '../notebook/NotebookView';
 import { WorkflowView } from '../workflow/WorkflowView';
 import { DashboardView } from '../dashboard/DashboardView';
@@ -18,6 +19,8 @@ import { toast } from '../common/Toast';
 import { useGlobalShortcuts } from '../../hooks/useGlobalShortcuts';
 import { useConfig, useDefaultLimit } from '../../hooks/useConfig';
 import { useDatasources } from '../../hooks/useDatasources';
+import { useMe } from '../../hooks/useMe';
+import { hasPermission } from '../../permissions';
 import { EditorRuntimeProvider } from '../../editor/EditorRuntime';
 import { useUiStore } from '../../stores/uiStore';
 import {
@@ -124,6 +127,12 @@ export function AppShell() {
     if (activeId) useNotebookStore.getState().setContext(activeId, next);
     recordRecentContext(next);
   };
+
+  // ---- AI アシスタントパネル ----
+  // server 設定で AI が有効、かつ ai.use 権限を持ち、パネルが開かれている場合のみ描画する。
+  const { data: me } = useMe();
+  const aiPanelOpen = useUiStore((s) => s.aiPanelOpen);
+  const showAiPanel = aiPanelOpen && (config?.ai.enabled ?? false) && hasPermission(me, 'ai.use');
 
   // ---- Help modal + presentation mode ----
   // ---- ヘルプモーダルとプレゼンテーションモード ----
@@ -233,6 +242,8 @@ export function AppShell() {
             )
           )}
         </main>
+        {/* AI アシスタントパネル（メインエリアの右側）。 */}
+        {showAiPanel && <AiPanel />}
       </div>
 
       {/* 画面横断のオーバーレイ群: コマンドパレット、ショートカットヘルプ、

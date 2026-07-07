@@ -232,6 +232,10 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 | `GITHUB_STATUS_TTL_SECONDS`       | `120`                             | ドキュメント承認ステータス (デフォルトブランチとのハッシュ比較) のキャッシュ TTL (秒)                                                                                                                                           |
 | `GITHUB_SYNC_CRON`                | `0 3 * * *`                       | デフォルトブランチ (`GITHUB_DEFAULT_BRANCH`) からの定時取り込み cron (5 フィールド、サーバーのローカル TZ)。`off` で無効 ([§13](#13-github-連携) の定時同期)                                                                    |
 | `GITHUB_SYNC_TOKEN`               | （未設定）                        | 定時取り込み用の読み取りトークン (任意。fine-grained PAT で `contents:read`)。設定時は各ドキュメント owner の接続トークンより優先 ([§13](#13-github-連携) の定時同期)                                                           |
+| `AI_PROVIDER`                     | `off`                             | AI アシスタント provider（`off` / `gemini-api` / `github-models`）。`off` のとき `POST /api/ai/assist` は HTTP 501 で拒否し、UI にも入口を表示しません                                                                          |
+| `AI_MODEL`                        | provider ごとに既定               | 使用モデル名。`gemini-api` の既定は `gemini-2.5-flash`、`github-models` の既定は `openai/gpt-4o-mini`                                                                                                                           |
+| `AI_API_KEY_ENV`                  | provider ごとに既定               | API key/token を読む環境変数名。`gemini-api` の既定は `GEMINI_API_KEY`、`github-models` の既定は `GITHUB_MODELS_TOKEN`。指し先の環境変数が未設定なら起動時エラー                                                                |
+| `AI_TIMEOUT_MS`                   | `60000`                           | AI provider 呼び出しのタイムアウト（ミリ秒）。超過時はストリームに `error` イベントを送出                                                                                                                                       |
 
 不正な整数・列挙値（例 `AUTH_MODE=foo`）は起動時にエラーで停止します。
 
@@ -1111,7 +1115,48 @@ GitHub 同期モーダルの **Revert to main** (2 段階確認) からも同じ
 
 ---
 
-## 14. 関連ドキュメント
+## 14. AI アシスタント
+
+`AI_PROVIDER` を設定すると、SQL の説明、エラー修正、下書き、書き換えを行う
+AI アシスタント（`POST /api/ai/assist`、SSE ストリーム）が有効になります。
+既定は `off` で、その場合 API は HTTP 501 を返し、UI にも入口を表示しません。
+
+### 14.1 有効化
+
+```bash
+# Gemini API を使う場合
+AI_PROVIDER=gemini-api
+GEMINI_API_KEY=...            # AI_API_KEY_ENV で読み先の変数名を変更可能
+# AI_MODEL=gemini-2.5-flash   # 既定値
+
+# GitHub Models を使う場合
+AI_PROVIDER=github-models
+GITHUB_MODELS_TOKEN=...       # models:read 権限の PAT
+# AI_MODEL=openai/gpt-4o-mini # 既定値
+```
+
+環境変数の詳細は [§4](#4-環境変数リファレンス) を参照してください。
+
+### 14.2 権限
+
+利用には RBAC permission `ai.use` が必要です（`rbac.yaml.example` 参照）。
+`rbac.yaml` が無い環境では組み込みロール `unrestricted` が `ai.use` を含むため、
+provider を有効化すると全ユーザーが利用できます。加えてリクエスト対象の
+datasource に対する allowlist チェックも通常クエリと同様に適用されます。
+
+### 14.3 データの扱い
+
+- prompt には対象 SQL、エラーメッセージ、ユーザーが明示的に指定したテーブルの
+  スキーマ（列名と型）が含まれ、外部の LLM provider へ送信されます。
+  テーブルの**データ本体は送信されません**。
+- 監査ログ（action: `ai.assist`）には task 種別、provider、モデル名、成否、
+  応答文字数、SQL のハッシュのみを記録し、prompt 本文と応答本文は保存しません。
+- AI が提案した SQL は自動実行されません。利用者が diff を確認して適用し、
+  実行時には通常の RBAC と Query Guard がそのまま適用されます。
+
+---
+
+## 15. 関連ドキュメント
 
 - 利用者向け操作: [`user-guide.md`](user-guide.md)
 - Docker / Compose / Kubernetes デプロイ: [`deployment.md`](deployment.md)

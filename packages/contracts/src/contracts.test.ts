@@ -84,6 +84,8 @@ describe('config', () => {
       onUnknown: 'warn',
       bytesPerSecond: 0,
     },
+    // AI アシスタント無効時の公開設定（provider 未設定の既定値）。
+    ai: { enabled: false, provider: 'off' },
     version: '0.1.0',
   };
 

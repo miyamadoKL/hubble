@@ -22,6 +22,7 @@ export const auditActionSchema = z.enum([
   'github.push',
   'github.pr.create',
   'github.pull',
+  'ai.assist',
 ]);
 
 export type AuditAction = z.infer<typeof auditActionSchema>;

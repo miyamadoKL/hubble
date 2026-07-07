@@ -3,7 +3,13 @@ import { z } from 'zod';
 /**
  * RBAC の権限名。Phase A では /api/me への露出のみ。強制は Phase B。
  */
-export const permissionSchema = z.enum(['query.write', 'query.killAny', 'queries.viewAll']);
+export const permissionSchema = z.enum([
+  'query.write',
+  'query.killAny',
+  'queries.viewAll',
+  // AI アシスタント（/api/ai/*）の利用権限。
+  'ai.use',
+]);
 /** 権限の推論型。 */
 export type Permission = z.infer<typeof permissionSchema>;
 

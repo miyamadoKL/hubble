@@ -66,6 +66,13 @@ export type DashboardViewState =
   | { kind: 'new-dashboard' }
   | null;
 
+/** AI パネルの最小幅（ピクセル）。 */
+export const AI_PANEL_MIN_WIDTH = 280;
+/** AI パネルの最大幅（ピクセル）。 */
+export const AI_PANEL_MAX_WIDTH = 640;
+/** AI パネルの初期表示幅（ピクセル）。 */
+export const AI_PANEL_DEFAULT_WIDTH = 360;
+
 /** サイドバーの最小幅（ピクセル）。これより狭くはドラッグでリサイズできない。 */
 export const SIDEBAR_MIN_WIDTH = 200;
 /** サイドバーの最大幅（ピクセル）。これより広くはドラッグでリサイズできない。 */
@@ -88,6 +95,11 @@ function applyTheme(mode: ThemeMode): void {
 // 常に妥当な幅に丸め込まれる。整数に丸めてから min/max でクランプする。
 function clampWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
+
+// AI パネル幅を許容範囲（AI_PANEL_MIN_WIDTH 〜 AI_PANEL_MAX_WIDTH）に収める。
+function clampAiPanelWidth(width: number): number {
+  return Math.min(AI_PANEL_MAX_WIDTH, Math.max(AI_PANEL_MIN_WIDTH, Math.round(width)));
 }
 
 /**
@@ -147,6 +159,10 @@ interface UiState {
   workflowView: WorkflowViewState;
   /** メインエリアに表示するダッシュボードビュー。null ならノートブック表示。 */
   dashboardView: DashboardViewState;
+  /** AI アシスタントパネルが開いているかどうか。永続化される。 */
+  aiPanelOpen: boolean;
+  /** AI アシスタントパネルの幅（ピクセル）。永続化される。 */
+  aiPanelWidth: number;
 
   /** テーマを指定した値に設定し、DOM にも即座に反映する。 */
   setTheme: (mode: ThemeMode) => void;
@@ -191,6 +207,10 @@ interface UiState {
   openNewDashboard: () => void;
   /** ダッシュボードビューを閉じてノートブック表示へ戻る。 */
   closeDashboard: () => void;
+  /** AI パネルの開閉状態を反転させる。 */
+  toggleAiPanel: () => void;
+  /** AI パネルの幅を設定する（許容範囲にクランプしてから保存する）。 */
+  setAiPanelWidth: (width: number) => void;
 }
 
 /**
@@ -218,6 +238,8 @@ export const useUiStore = create<UiState>()(
       shellDefaultLimit: 5000,
       workflowView: null,
       dashboardView: null,
+      aiPanelOpen: false,
+      aiPanelWidth: AI_PANEL_DEFAULT_WIDTH,
 
       // --- 各アクション（状態を更新する関数）の実装 ---
 
@@ -280,6 +302,10 @@ export const useUiStore = create<UiState>()(
       openNewDashboard: () => set({ dashboardView: { kind: 'new-dashboard' }, workflowView: null }),
       // ダッシュボードビューを閉じてノートブック表示へ戻す。
       closeDashboard: () => set({ dashboardView: null }),
+      // AI パネルの開閉をトグルする。
+      toggleAiPanel: () => set((s) => ({ aiPanelOpen: !s.aiPanelOpen })),
+      // AI パネル幅を設定する。事前に clampAiPanelWidth で許容範囲に丸める。
+      setAiPanelWidth: (width) => set({ aiPanelWidth: clampAiPanelWidth(width) }),
     }),
     {
       // localStorage に保存する際のキー名。
@@ -293,6 +319,8 @@ export const useUiStore = create<UiState>()(
         sidebarTab: s.sidebarTab,
         sidebarWidth: s.sidebarWidth,
         sidebarCollapsed: s.sidebarCollapsed,
+        aiPanelOpen: s.aiPanelOpen,
+        aiPanelWidth: s.aiPanelWidth,
       }),
       // localStorage から状態が復元（rehydrate）された直後に呼ばれるコールバック。
       // 復元されたテーマを DOM にも反映することで、ページ再読み込み後に

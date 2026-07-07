@@ -58,7 +58,9 @@ describe('loadRbac', () => {
   it('falls back to unrestricted when no rbac file exists', () => {
     const rbac = loadRbac({ env: {}, cwd: tempDir });
     expect(rbac.defaultRole).toBe(UNRESTRICTED_ROLE_NAME);
-    expect(rbac.roles.get(UNRESTRICTED_ROLE_NAME)?.permissions).toEqual(new Set(['query.write']));
+    expect(rbac.roles.get(UNRESTRICTED_ROLE_NAME)?.permissions).toEqual(
+      new Set(['ai.use', 'query.write']),
+    );
     expect(rbac.assignments).toEqual([]);
   });
 
