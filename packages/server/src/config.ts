@@ -227,9 +227,21 @@ export interface ServerConfig {
   };
   /** GitHub 連携設定。 */
   github: GithubConfig;
+  /** AI アシスタント設定（`AI_*` 環境変数群）。 */
+  ai: AiConfig;
   /** 日本語: `APP_VERSION`（既定 `0.1.0`）。`GET /api/config` で公開されるバージョン表示用文字列。 */
   version: string;
 }
+
+/** AI アシスタント設定。provider が off のときは API key 等を持たない。 */
+export type AiConfig =
+  | { provider: 'off' }
+  | {
+      provider: 'gemini-api' | 'github-models';
+      model: string;
+      apiKey: string;
+      timeoutMs: number;
+    };
 
 /** GitHub 連携のガバナンスモード。強制は後続タスクで実装する。 */
 export type GithubGovernance = 'off' | 'on';
@@ -451,6 +463,30 @@ export function resolveGithubConfig(env: Env): GithubConfig {
   };
 }
 
+/** AI_* 関連の環境変数を解決する。 */
+export function resolveAiConfig(env: Env): AiConfig {
+  const provider = envEnum(
+    env,
+    'AI_PROVIDER',
+    ['off', 'gemini-api', 'github-models'] as const,
+    'off',
+  );
+  if (provider === 'off') {
+    return { provider: 'off' };
+  }
+
+  const defaultModel = provider === 'gemini-api' ? 'gemini-2.5-flash' : 'openai/gpt-4o-mini';
+  const defaultApiKeyEnv = provider === 'gemini-api' ? 'GEMINI_API_KEY' : 'GITHUB_MODELS_TOKEN';
+  const model = envStr(env, 'AI_MODEL', defaultModel);
+  const apiKeyEnv = envStr(env, 'AI_API_KEY_ENV', defaultApiKeyEnv);
+  const apiKey = envOptional(env, apiKeyEnv);
+  if (apiKey === undefined) {
+    throw new Error(`${apiKeyEnv} is required when AI_PROVIDER=${provider}`);
+  }
+  const timeoutMs = envPositiveInt(env, 'AI_TIMEOUT_MS', 60_000);
+  return { provider, model, apiKey, timeoutMs };
+}
+
 /** EXPORT_* 関連の環境変数を解決する。 */
 export function resolveExportConfig(env: Env): ExportConfig {
   return {
@@ -548,6 +584,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       },
     },
     github: resolveGithubConfig(env),
+    ai: resolveAiConfig(env),
     version: envStr(env, 'APP_VERSION', '0.1.0'),
   };
 }
@@ -597,6 +634,10 @@ export function toAppConfig(
       onUnknown: config.guard.onUnknown,
       bytesPerSecond: config.guard.bytesPerSecond,
     },
+    ai:
+      config.ai.provider === 'off'
+        ? { enabled: false, provider: 'off' }
+        : { enabled: true, provider: config.ai.provider, model: config.ai.model },
     version: config.version,
   });
 }

@@ -6,7 +6,7 @@
  */
 import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Command, Moon, Play, Save, Square, Sun } from 'lucide-react';
+import { Command, Moon, Play, Save, Sparkles, Square, Sun } from 'lucide-react';
 import { Logo } from './Logo';
 import { NotebookTabs } from './NotebookTabs';
 import { ContextSelector } from './ContextSelector';
@@ -29,6 +29,9 @@ import {
 } from '../../notebook';
 import { useExecutionStore } from '../../execution';
 import { isCellRunning } from '../../execution';
+import { useConfig } from '../../hooks/useConfig';
+import { useMe } from '../../hooks/useMe';
+import { hasPermission } from '../../permissions';
 
 /**
  * TopBar: logo · notebook tabs (open/close/new/rename) ·
@@ -61,6 +64,13 @@ export function TopBar({
   const toggleTheme = useUiStore((s) => s.toggleTheme);
   const togglePalette = useUiStore((s) => s.togglePalette);
   const requestSave = useUiStore((s) => s.requestSave);
+  const aiPanelOpen = useUiStore((s) => s.aiPanelOpen);
+  const toggleAiPanel = useUiStore((s) => s.toggleAiPanel);
+
+  // AI アシスタントの利用可否（server 設定で有効、かつ ai.use 権限を持つ場合のみ表示）。
+  const { data: appConfig } = useConfig();
+  const { data: me } = useMe();
+  const aiAvailable = (appConfig?.ai.enabled ?? false) && hasPermission(me, 'ai.use');
 
   // 開いているノートブックのタブ一覧とアクティブなノートブックID。
   const tabs = useNotebookTabs();
@@ -176,6 +186,15 @@ export function TopBar({
 
           <div className="h-5 w-px bg-border-subtle" aria-hidden />
 
+          {/* AI アシスタントパネルのトグルボタン（有効かつ権限がある場合のみ表示）。 */}
+          {aiAvailable && (
+            <IconButton
+              icon={Sparkles}
+              label={aiPanelOpen ? 'Close AI assistant' : 'AI assistant'}
+              active={aiPanelOpen}
+              onClick={toggleAiPanel}
+            />
+          )}
           {/* コマンドパレットの起動ボタン。 */}
           <IconButton icon={Command} label="Command palette  (Ctrl K)" onClick={togglePalette} />
           {/* ライト/ダークテーマの切り替えボタン。切り替え時にトースト通知も出す。 */}

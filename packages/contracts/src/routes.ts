@@ -128,6 +128,10 @@ export const apiRoutes = {
   workflowRunDownloadXlsx: (runId: string) => `/api/workflow-runs/${enc(runId)}/download.xlsx`,
   workflowRunExport: (runId: string) => `/api/workflow-runs/${enc(runId)}/export`,
 
+  // AI assistant
+  // AI アシスタント（SQL 説明 / エラー修正 / 下書き / 書き換え）の SSE ストリーム。
+  aiAssist: () => '/api/ai/assist',
+
   // GitHub integration
   githubStatus: () => '/api/github/status',
   githubConnect: () => '/api/github/connect',

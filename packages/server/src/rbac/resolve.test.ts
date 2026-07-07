@@ -157,7 +157,7 @@ defaultRole: email-role
   it('builtInUnrestrictedRole matches legacy behavior', () => {
     const role = builtInUnrestrictedRole();
     expect(role.name).toBe('unrestricted');
-    expect([...role.permissions]).toEqual<Permission[]>(['query.write']);
+    expect([...role.permissions].sort()).toEqual<Permission[]>(['ai.use', 'query.write']);
   });
 
   it('carries datasources allowlist from resolved role definition', () => {

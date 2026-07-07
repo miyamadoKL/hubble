@@ -24,7 +24,7 @@ describe('auth — none mode (default)', () => {
       user: ctx.services.config.trino.user,
       authMode: 'none',
       role: 'unrestricted',
-      permissions: ['query.write'],
+      permissions: ['ai.use', 'query.write'],
       datasources: [
         {
           id: 'trino-default',
@@ -238,7 +238,7 @@ describe('auth — proxy mode', () => {
       email: 'alice@corp.com',
       authMode: 'proxy',
       role: 'unrestricted',
-      permissions: ['query.write'],
+      permissions: ['ai.use', 'query.write'],
       datasources: [
         {
           id: 'trino-default',

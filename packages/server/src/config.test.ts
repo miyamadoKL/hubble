@@ -187,3 +187,40 @@ describe('loadServerConfig integer bounds', () => {
     ).toThrow(/expected 32 bytes/);
   });
 });
+
+describe('resolveAiConfig via loadServerConfig', () => {
+  it('defaults AI_PROVIDER to off', () => {
+    expect(loadServerConfig({}).ai).toEqual({ provider: 'off' });
+  });
+
+  it('throws when gemini-api is enabled without GEMINI_API_KEY', () => {
+    expect(() => loadServerConfig({ AI_PROVIDER: 'gemini-api' })).toThrow(/GEMINI_API_KEY/);
+  });
+
+  it('reads API key via AI_API_KEY_ENV', () => {
+    expect(
+      loadServerConfig({
+        AI_PROVIDER: 'github-models',
+        AI_API_KEY_ENV: 'CUSTOM_AI_TOKEN',
+        CUSTOM_AI_TOKEN: 'token-value',
+      }).ai,
+    ).toEqual({
+      provider: 'github-models',
+      model: 'openai/gpt-4o-mini',
+      apiKey: 'token-value',
+      timeoutMs: 60_000,
+    });
+  });
+
+  it('uses provider-specific default models', () => {
+    expect(
+      loadServerConfig({
+        AI_PROVIDER: 'gemini-api',
+        GEMINI_API_KEY: 'key',
+      }).ai,
+    ).toMatchObject({
+      provider: 'gemini-api',
+      model: 'gemini-2.5-flash',
+    });
+  });
+});

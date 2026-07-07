@@ -44,6 +44,8 @@ import { GithubConnectionRepository, DocumentGitLinkRepository } from './github/
 import { GithubSyncService } from './github/syncService';
 import { GithubGovernanceService } from './github/governance';
 import { GithubSyncScheduler } from './github/syncScheduler';
+import { createAiProvider, type AiProvider } from './ai/provider';
+import { AiService } from './ai/service';
 
 export interface Services {
   config: ServerConfig;
@@ -75,6 +77,8 @@ export interface Services {
   github?: GithubSyncService;
   githubSyncScheduler?: GithubSyncScheduler;
   githubGovernance: GithubGovernanceService;
+  /** AI アシスタント。provider が off のときは undefined。 */
+  ai?: AiService;
   /** GitHub OAuth state 生成用の now 注入 (テスト用)。 */
   githubNow?: () => number;
   reloadDatasources: () => Promise<void>;
@@ -105,6 +109,8 @@ export interface BuildServicesOptions {
   notificationSender?: FailureNotificationSender & AlertNotificationSender;
   githubClient?: import('./github/client').GithubClient;
   githubSyncSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
+  /** テスト注入用の AI provider。 */
+  aiProvider?: AiProvider;
 }
 
 export async function buildServices(
@@ -137,6 +143,15 @@ export async function buildServices(
   await backfillOwners(db, config.trino.user);
 
   const audit = new AuditLogger(new AuditRepository(db), options.auditLogError);
+  const aiProvider = options.aiProvider ?? createAiProvider(config.ai, options.fetchImpl);
+  const ai =
+    aiProvider === undefined
+      ? undefined
+      : new AiService({
+          provider: aiProvider,
+          audit,
+          timeoutMs: config.ai.provider === 'off' ? 60_000 : config.ai.timeoutMs,
+        });
   const resultStore = options.resultStore ?? createResultStore(config.resultStore);
   const notifications =
     options.notificationSender ??
@@ -389,6 +404,7 @@ export async function buildServices(
     github,
     githubSyncScheduler,
     githubGovernance,
+    ai,
     githubNow,
     reloadDatasources,
     reloadRbac,

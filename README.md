@@ -330,6 +330,10 @@ MySQL/PostgreSQL の `roleCredentials` は RBAC role 単位の credential 切り
 | `NOTIFY_SMTP_USER`                | —                    | SMTP 認証ユーザー                                                                                                                            |
 | `NOTIFY_SMTP_PASSWORD_ENV`        | —                    | SMTP パスワードを読む環境変数名                                                                                                              |
 | `NOTIFY_SMTP_FROM`                | —                    | SMTP の From アドレス                                                                                                                        |
+| `AI_PROVIDER`                     | `off`                | AI アシスタント provider（`off` / `gemini-api` / `github-models`）                                                                           |
+| `AI_MODEL`                        | provider ごとに既定  | 使用モデル名（`gemini-api` 既定 `gemini-2.5-flash`、`github-models` 既定 `openai/gpt-4o-mini`）                                              |
+| `AI_API_KEY_ENV`                  | provider ごとに既定  | API key/token を読む環境変数名（`gemini-api` 既定 `GEMINI_API_KEY`、`github-models` 既定 `GITHUB_MODELS_TOKEN`）                             |
+| `AI_TIMEOUT_MS`                   | `60000`              | AI provider 呼び出しのタイムアウト（ミリ秒）                                                                                                 |
 | `AUTH_SSO_HEADER_GROUPS`          | `x-forwarded-groups` | SSO グループ membership ヘッダー名（`rbac.yaml` の `group` 割り当てに使用）                                                                  |
 
 ## ドキュメント

@@ -11,6 +11,7 @@ import type { AuthVariables, RemoteAddressFn } from '../auth/middleware';
 import type { FakeScenario } from './fakeTrino';
 import { FakeTrino } from './fakeTrino';
 import type { ResultStore } from '../resultStore';
+import type { AiProvider } from '../ai/provider';
 
 /**
  * `datasources.yaml` が必須化されたことに伴うテストヘルパー。
@@ -114,6 +115,8 @@ export async function createTestContext(
     fetchImpl?: typeof fetch;
     /** Inject a fake GitHub API client into GithubSyncService. */
     githubClient?: import('../github/client').GithubClient;
+    /** テスト注入用の AI provider。 */
+    aiProvider?: AiProvider;
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
@@ -153,6 +156,7 @@ export async function createTestContext(
       ...options.configOverrides?.scheduler,
     },
     github: { ...baseConfig.github, ...options.configOverrides?.github },
+    ai: options.configOverrides?.ai ?? baseConfig.ai,
   };
 
   const db = await openMemoryDatabase();
@@ -172,6 +176,7 @@ export async function createTestContext(
     resultStore: options.resultStore,
     resultStoreLogWarn: options.resultStoreLogWarn,
     resultCleanupSetTimer: () => ({ clear: () => {} }),
+    aiProvider: options.aiProvider,
   });
   // 日本語: enabled=false でもクラッシュ復旧 (abortOrphans) は必ず走るため、
   // tick ループを使わないテストでも start() は呼んでおく必要がある。

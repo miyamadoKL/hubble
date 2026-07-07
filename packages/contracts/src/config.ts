@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { authModeSchema } from './auth';
+import { aiPublicConfigSchema } from './ai';
 
 /**
  * App config exposed via `GET /api/config`.
@@ -68,6 +69,8 @@ export const appConfigSchema = z.object({
   authMode: authModeSchema,
   /** Query Guard settings (Query Guard feature). */
   guard: guardConfigSchema,
+  /** AI アシスタントの公開設定（provider 種別と有効フラグ。機密は含まない）。 */
+  ai: aiPublicConfigSchema,
   // フロントエンドに表示するアプリバージョン文字列。
   version: z.string().min(1),
 });
