@@ -62,6 +62,10 @@ export const apiRoutes = {
   queryEvents: (id: string) => `/api/queries/${enc(id)}/events`,
   // 単一クエリの結果行ページ取得。
   queryRows: (id: string) => `/api/queries/${enc(id)}/rows`,
+  // 単一クエリの結果に対する server-side filter / sort / search。
+  queryRowsSearch: (id: string) => `/api/queries/${enc(id)}/rows/search`,
+  // 単一クエリの結果の列プロファイル（null 数、distinct、min/max、top values）。
+  queryProfile: (id: string) => `/api/queries/${enc(id)}/profile`,
   // 単一クエリの結果を CSV としてダウンロード。
   queryDownloadCsv: (id: string) => `/api/queries/${enc(id)}/download.csv`,
   // 単一クエリの結果を xlsx としてダウンロード。

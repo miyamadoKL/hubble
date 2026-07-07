@@ -105,6 +105,53 @@ export async function readPersistedRowsPage(
   return { columns, rows, totalRows };
 }
 
+/** 保存済み結果のストリーミング読み出しカーソル。 */
+export interface PersistedResultCursor {
+  /** 列メタデータ（先頭の columns 行。欠落時は空配列）。 */
+  columns: QueryColumn[];
+  /** レコード行を 1 行ずつ yield する非同期イテレーター。 */
+  rows: AsyncGenerator<unknown[]>;
+}
+
+/**
+ * gzip JSONL から列情報と行ストリームを取り出す。
+ *
+ * `readPersistedRowsPage` と違い全行を配列へ materialize せず、行を 1 行ずつ
+ * 消費できるカーソルを返す。永続化結果は QUERY_MAX_ROWS で有界ではないため、
+ * 全行走査が必要な処理（server-side 探索など）はこちらを使う。
+ * writer は常に columns 行を先頭へ書くが、欠落したファイルにも耐えるよう
+ * 先頭行がレコードだった場合は columns を空配列とし、その行を行ストリームに含める。
+ *
+ * @param stream - ResultStore から取得した gzip JSONL の Readable。
+ * @returns 列メタデータと行の非同期イテレーター。
+ */
+export async function openPersistedResult(stream: Readable): Promise<PersistedResultCursor> {
+  const lines = readResultLines(stream);
+  const first = await lines.next();
+
+  // 先頭行から列情報を決める。バッファするのは最大 1 行なのでメモリは有界。
+  let columns: QueryColumn[] = [];
+  let firstRow: unknown[] | undefined;
+  if (!first.done) {
+    if (first.value.kind === 'columns') {
+      columns = first.value.columns;
+    } else {
+      firstRow = first.value.row;
+    }
+  }
+
+  async function* rows(): AsyncGenerator<unknown[]> {
+    if (firstRow) yield firstRow;
+    if (first.done) return;
+    for await (const line of lines) {
+      // 途中の columns 行は（通常は存在しないが）読み飛ばす。
+      if (line.kind === 'record') yield line.row;
+    }
+  }
+
+  return { columns, rows: rows() };
+}
+
 /** gzip JSONL の先頭メタ行から列情報を読み取る。 */
 export async function readPersistedResultMetadata(
   stream: Readable,
