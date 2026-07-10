@@ -21,6 +21,9 @@ describe('SheetsExporter', () => {
   it('chunks values and shares the spreadsheet with the principal email', async () => {
     const appendValues = vi.fn<SheetsApiClient['appendValues']>(async () => undefined);
     const shareWithWriter = vi.fn<SheetsApiClient['shareWithWriter']>(async () => undefined);
+    const deleteSpreadsheet = vi.fn<NonNullable<SheetsApiClient['deleteSpreadsheet']>>(
+      async () => undefined,
+    );
     const client: SheetsApiClient = {
       createSpreadsheet: async () => ({
         spreadsheetId: 'sheet_1',
@@ -30,6 +33,7 @@ describe('SheetsExporter', () => {
       renameFirstSheet: async () => undefined,
       addSheet: async () => undefined,
       shareWithWriter,
+      deleteSpreadsheet,
     };
     const exporter = new SheetsExporter(
       { credentialsFile: '/secure/key.json' },
@@ -47,6 +51,7 @@ describe('SheetsExporter', () => {
     const firstValues = appendValues.mock.calls[0]?.[1] as unknown[][] | undefined;
     expect(firstValues?.[0]).toEqual(['id', 'name']);
     expect(shareWithWriter).toHaveBeenCalledWith('sheet_1', 'alice@example.com');
+    expect(deleteSpreadsheet).not.toHaveBeenCalled();
   });
 
   it('exports multiple sheets and enforces workbook cell limits', async () => {
@@ -54,6 +59,9 @@ describe('SheetsExporter', () => {
     const renameFirstSheet = vi.fn<SheetsApiClient['renameFirstSheet']>(async () => undefined);
     const addSheet = vi.fn<SheetsApiClient['addSheet']>(async () => undefined);
     const shareWithWriter = vi.fn<SheetsApiClient['shareWithWriter']>(async () => undefined);
+    const deleteSpreadsheet = vi.fn<NonNullable<SheetsApiClient['deleteSpreadsheet']>>(
+      async () => undefined,
+    );
     const client: SheetsApiClient = {
       createSpreadsheet: async () => ({
         spreadsheetId: 'sheet_multi',
@@ -63,6 +71,7 @@ describe('SheetsExporter', () => {
       renameFirstSheet,
       addSheet,
       shareWithWriter,
+      deleteSpreadsheet,
     };
     const exporter = new SheetsExporter(
       { credentialsFile: '/secure/key.json' },
@@ -87,6 +96,7 @@ describe('SheetsExporter', () => {
     expect(appendValues.mock.calls[0]?.[2]).toBe("'Step One'!A1");
     expect(appendValues.mock.calls[1]?.[2]).toBe("'Step Two'!A1");
     expect(shareWithWriter).toHaveBeenCalledTimes(1);
+    expect(deleteSpreadsheet).not.toHaveBeenCalled();
 
     const huge = (async function* (): AsyncGenerator<QueryResultEvent> {
       yield {
@@ -104,6 +114,110 @@ describe('SheetsExporter', () => {
         sheets: [{ name: 'Huge', events: huge }],
       }),
     ).rejects.toMatchObject({ status: 413, detail: { code: 'RESULT_TOO_LARGE' } });
+    expect(deleteSpreadsheet).toHaveBeenCalledWith('sheet_multi');
+  });
+
+  it('deletes the created spreadsheet when appending fails and rethrows the original error', async () => {
+    const original = new Error('append failed');
+    const deleteSpreadsheet = vi.fn<NonNullable<SheetsApiClient['deleteSpreadsheet']>>(
+      async () => undefined,
+    );
+    const client: SheetsApiClient = {
+      createSpreadsheet: async () => ({
+        spreadsheetId: 'sheet_append_failure',
+        url: 'https://docs.google.com/spreadsheets/d/sheet_append_failure',
+      }),
+      appendValues: async () => {
+        throw original;
+      },
+      renameFirstSheet: async () => undefined,
+      addSheet: async () => undefined,
+      shareWithWriter: async () => undefined,
+      deleteSpreadsheet,
+    };
+    const exporter = new SheetsExporter(
+      { credentialsFile: '/secure/key.json' },
+      async () => client,
+    );
+
+    await expect(
+      exporter.export({
+        title: 'Append failure',
+        email: 'alice@example.com',
+        events: events(1),
+      }),
+    ).rejects.toBe(original);
+    expect(deleteSpreadsheet).toHaveBeenCalledOnce();
+    expect(deleteSpreadsheet).toHaveBeenCalledWith('sheet_append_failure');
+  });
+
+  it('preserves a sharing error when orphan deletion also fails', async () => {
+    const original = new Error('sharing failed');
+    const deleteSpreadsheet = vi.fn<NonNullable<SheetsApiClient['deleteSpreadsheet']>>(async () => {
+      throw new Error('deletion failed');
+    });
+    const client: SheetsApiClient = {
+      createSpreadsheet: async () => ({
+        spreadsheetId: 'sheet_share_failure',
+        url: 'https://docs.google.com/spreadsheets/d/sheet_share_failure',
+      }),
+      appendValues: async () => undefined,
+      renameFirstSheet: async () => undefined,
+      addSheet: async () => undefined,
+      shareWithWriter: async () => {
+        throw original;
+      },
+      deleteSpreadsheet,
+    };
+    const exporter = new SheetsExporter(
+      { credentialsFile: '/secure/key.json' },
+      async () => client,
+    );
+
+    await expect(
+      exporter.export({
+        title: 'Share failure',
+        email: 'alice@example.com',
+        events: events(1),
+      }),
+    ).rejects.toBe(original);
+    expect(deleteSpreadsheet).toHaveBeenCalledWith('sheet_share_failure');
+  });
+
+  it('deletes the created spreadsheet when a multi-sheet operation fails', async () => {
+    const original = new Error('add sheet failed');
+    const deleteSpreadsheet = vi.fn<NonNullable<SheetsApiClient['deleteSpreadsheet']>>(
+      async () => undefined,
+    );
+    const client: SheetsApiClient = {
+      createSpreadsheet: async () => ({
+        spreadsheetId: 'sheet_multi_failure',
+        url: 'https://docs.google.com/spreadsheets/d/sheet_multi_failure',
+      }),
+      appendValues: async () => undefined,
+      renameFirstSheet: async () => undefined,
+      addSheet: async () => {
+        throw original;
+      },
+      shareWithWriter: async () => undefined,
+      deleteSpreadsheet,
+    };
+    const exporter = new SheetsExporter(
+      { credentialsFile: '/secure/key.json' },
+      async () => client,
+    );
+
+    await expect(
+      exporter.exportMultiSheet({
+        title: 'Multi failure',
+        email: 'alice@example.com',
+        sheets: [
+          { name: 'First', events: events(1) },
+          { name: 'Second', events: events(1) },
+        ],
+      }),
+    ).rejects.toBe(original);
+    expect(deleteSpreadsheet).toHaveBeenCalledWith('sheet_multi_failure');
   });
 
   it('imports googleapis without connecting to Google APIs', async () => {
