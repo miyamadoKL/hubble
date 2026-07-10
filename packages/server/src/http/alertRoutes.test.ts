@@ -1,7 +1,7 @@
 /**
  * alertRoutes.ts の統合テスト。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { alertEvalResponseSchema, alertSchema, type Alert } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
@@ -14,6 +14,18 @@ const QUERY_OK: FakeScenario = {
 const VALIDATE_OK: FakeScenario = {
   match: 'EXPLAIN (TYPE VALIDATE)',
   pages: [{ columns: [{ name: 'result', type: 'boolean' }], data: [[true]] }],
+};
+
+const QUERY_TRUNCATED: FakeScenario = {
+  match: 'SELECT alert_many',
+  pages: [
+    {
+      columns: [{ name: 'count', type: 'bigint' }],
+      data: Array.from({ length: 10_000 }, (_, index) => [index]),
+      state: 'RUNNING',
+    },
+    { data: [[10_000]], state: 'FINISHED' },
+  ],
 };
 
 function jsonHeaders(): Record<string, string> {
@@ -88,6 +100,180 @@ describe('alert routes', () => {
 
     const delRes = await ctx.app.request(`/api/alerts/${created.id}`, { method: 'DELETE' });
     expect(delRes.status).toBe(200);
+
+    await ctx.services.shutdown();
+  });
+
+  it('cancels and does not notify when the evaluation result is truncated', async () => {
+    const ctx = await createTestContext({ scenarios: [VALIDATE_OK, QUERY_TRUNCATED] });
+    const sendNotification = vi.spyOn(ctx.services.notifications, 'sendAlertTriggered');
+
+    const sqRes = await ctx.app.request('/api/saved-queries', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: 'large metric', statement: 'SELECT alert_many' }),
+    });
+    const sq = (await sqRes.json()) as { id: string };
+    const createRes = await ctx.app.request('/api/alerts', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        name: 'large spike',
+        savedQueryId: sq.id,
+        columnName: 'count',
+        op: '>',
+        value: '100',
+        selector: 'max',
+        cron: '0 * * * *',
+        notifications: { channels: ['slack'] },
+      }),
+    });
+    const created = alertSchema.parse(await createRes.json()) as Alert;
+
+    const evalRes = await ctx.app.request(`/api/alerts/${created.id}/eval`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+    });
+    expect(evalRes.status).toBe(200);
+    expect(alertEvalResponseSchema.parse(await evalRes.json())).toMatchObject({
+      conditionMet: false,
+      observedValue: null,
+      notified: false,
+      errorType: 'RESULT_TRUNCATED',
+    });
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(ctx.fake.requests.some((request) => request.method === 'DELETE')).toBe(true);
+
+    await ctx.services.shutdown();
+  });
+
+  it('enqueues one pending delivery per channel while anchoring state at evaluation time', async () => {
+    const ctx = await createTestContext({
+      scenarios: [VALIDATE_OK, QUERY_OK],
+      configOverrides: {
+        alertDelivery: { intervalMs: 60_000, maxAttempts: 5, backoffMs: 10_000 },
+      },
+    });
+    const sendAlertTriggered = vi.spyOn(ctx.services.notifications, 'sendAlertTriggered');
+    const sendChannel = vi.spyOn(ctx.services.notifications, 'sendChannel');
+    const sqRes = await ctx.app.request('/api/saved-queries', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: 'metric outbox', statement: 'SELECT alert_val' }),
+    });
+    const sq = (await sqRes.json()) as { id: string };
+    const createRes = await ctx.app.request('/api/alerts', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        name: 'outbox spike',
+        savedQueryId: sq.id,
+        columnName: 'count',
+        op: '>',
+        value: '100',
+        selector: 'first',
+        rearm: 0,
+        cron: '0 * * * *',
+        notifications: {
+          channels: ['slack', 'email', 'webhook'],
+          emailTo: ['ops@example.com'],
+          webhookUrl: 'https://example.com/alert',
+        },
+      }),
+    });
+    const created = alertSchema.parse(await createRes.json()) as Alert;
+
+    const firstEval = await ctx.app.request(`/api/alerts/${created.id}/eval`, { method: 'POST' });
+    expect(alertEvalResponseSchema.parse(await firstEval.json())).toMatchObject({
+      state: 'triggered',
+      notified: true,
+    });
+    const anchored = alertSchema.parse(
+      await (await ctx.app.request(`/api/alerts/${created.id}`)).json(),
+    );
+    const jobs = await ctx.services.alertDeliveries.listForTest();
+    expect(jobs.map((job) => job.channel).sort()).toEqual(['email', 'slack', 'webhook']);
+    expect(jobs.every((job) => job.status === 'pending' && job.attempts === 0)).toBe(true);
+    expect(jobs[0]?.payload).toMatchObject({
+      alert: { id: created.id, name: 'outbox spike' },
+      outcome: { state: 'triggered', notified: true },
+      savedQueryName: 'metric outbox',
+      datasourceId: 'trino-default',
+    });
+    expect(anchored.state).toBe('triggered');
+    expect(anchored.lastTriggeredAt).not.toBeNull();
+    expect(sendAlertTriggered).not.toHaveBeenCalled();
+    expect(sendChannel).not.toHaveBeenCalled();
+
+    const secondEval = await ctx.app.request(`/api/alerts/${created.id}/eval`, { method: 'POST' });
+    expect(alertEvalResponseSchema.parse(await secondEval.json()).notified).toBe(false);
+    expect(await ctx.services.alertDeliveries.listForTest()).toHaveLength(3);
+    const afterSecond = alertSchema.parse(
+      await (await ctx.app.request(`/api/alerts/${created.id}`)).json(),
+    );
+    expect(afterSecond.lastTriggeredAt).toBe(anchored.lastTriggeredAt);
+
+    await ctx.services.shutdown();
+  });
+
+  it('rolls back the alert transition when delivery enqueue fails and retries next evaluation', async () => {
+    const ctx = await createTestContext({
+      scenarios: [VALIDATE_OK, QUERY_OK],
+      configOverrides: {
+        alertDelivery: { intervalMs: 60_000, maxAttempts: 5, backoffMs: 10_000 },
+      },
+    });
+    const sqRes = await ctx.app.request('/api/saved-queries', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: 'transaction metric', statement: 'SELECT alert_val' }),
+    });
+    const sq = (await sqRes.json()) as { id: string };
+    const createRes = await ctx.app.request('/api/alerts', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        name: 'transaction spike',
+        savedQueryId: sq.id,
+        columnName: 'count',
+        op: '>',
+        value: '100',
+        selector: 'first',
+        cron: '0 * * * *',
+        notifications: { channels: ['slack', 'email'], emailTo: ['ops@example.com'] },
+      }),
+    });
+    const created = alertSchema.parse(await createRes.json()) as Alert;
+    await ctx.db.exec(`CREATE TRIGGER fail_alert_delivery
+      BEFORE INSERT ON alert_deliveries
+      BEGIN
+        SELECT RAISE(FAIL, 'injected delivery failure');
+      END`);
+
+    const failedEval = await ctx.app.request(`/api/alerts/${created.id}/eval`, { method: 'POST' });
+    expect(alertEvalResponseSchema.parse(await failedEval.json())).toMatchObject({
+      notified: false,
+      errorType: 'DELIVERY_ENQUEUE_FAILED',
+    });
+    const afterFailure = alertSchema.parse(
+      await (await ctx.app.request(`/api/alerts/${created.id}`)).json(),
+    );
+    expect(afterFailure.state).not.toBe('triggered');
+    expect(afterFailure.lastTriggeredAt).toBeNull();
+    expect(await ctx.services.alertDeliveries.listForTest()).toHaveLength(0);
+
+    await ctx.db.exec('DROP TRIGGER fail_alert_delivery');
+    const retriedEval = await ctx.app.request(`/api/alerts/${created.id}/eval`, { method: 'POST' });
+    expect(alertEvalResponseSchema.parse(await retriedEval.json())).toMatchObject({
+      state: 'triggered',
+      notified: true,
+    });
+    expect(await ctx.services.alertDeliveries.listForTest()).toHaveLength(2);
+    const afterRetry = alertSchema.parse(
+      await (await ctx.app.request(`/api/alerts/${created.id}`)).json(),
+    );
+    expect(afterRetry.state).toBe('triggered');
+    expect(afterRetry.lastTriggeredAt).not.toBeNull();
 
     await ctx.services.shutdown();
   });

@@ -21,6 +21,7 @@ import { DocumentShareRepository } from './store/documentShares';
 import { HistoryRepository } from './store/history';
 import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
 import { AlertRepository } from './store/alerts';
+import { AlertDeliveryRepository } from './store/alertDeliveries';
 import { WorkflowRepository, WorkflowRunRepository } from './store/workflows';
 import { Scheduler } from './schedule/scheduler';
 import { AlertEvaluator } from './alert/evaluator';
@@ -44,7 +45,12 @@ import { AuditLogger, AuditRepository } from './audit';
 import { createResultStore, type ResultStore } from './resultStore';
 import { ResultExpiryService } from './resultStore/cleanup';
 import { NotificationService } from './notification/service';
-import type { FailureNotificationSender, AlertNotificationSender } from './notification/service';
+import type {
+  FailureNotificationSender,
+  AlertNotificationSender,
+  AlertChannelNotificationSender,
+} from './notification/service';
+import { AlertDeliveryWorker } from './alert/deliveryWorker';
 import { GithubApiClient } from './github/client';
 import { GithubConnectionRepository, DocumentGitLinkRepository } from './github/store';
 import { GithubSyncService } from './github/syncService';
@@ -74,13 +80,17 @@ export interface Services {
   scheduler: Scheduler;
   alerts: AlertRepository;
   alertEvaluator: AlertEvaluator;
+  alertDeliveries: AlertDeliveryRepository;
+  alertDeliveryWorker: AlertDeliveryWorker;
   workflows: WorkflowRepository;
   workflowRuns: WorkflowRunRepository;
   workflowRunner: WorkflowRunner;
   audit: AuditLogger;
   resultStore: ResultStore;
   resultExpiry: ResultExpiryService;
-  notifications: FailureNotificationSender & AlertNotificationSender;
+  notifications: FailureNotificationSender &
+    AlertNotificationSender &
+    AlertChannelNotificationSender;
   github?: GithubSyncService;
   githubSyncScheduler?: GithubSyncScheduler;
   githubGovernance: GithubGovernanceService;
@@ -105,6 +115,7 @@ export interface BuildServicesOptions {
   schedulerSleep?: (ms: number) => Promise<void>;
   schedulerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   alertEvaluatorSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
+  alertDeliverySetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   workflowRunnerSleep?: (ms: number) => Promise<void>;
   workflowRunnerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   mysqlPoolFactory?: MysqlPoolFactory;
@@ -116,7 +127,9 @@ export interface BuildServicesOptions {
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   notificationLogWarn?: (message: string, detail?: unknown) => void;
-  notificationSender?: FailureNotificationSender & AlertNotificationSender;
+  notificationSender?: FailureNotificationSender &
+    AlertNotificationSender &
+    AlertChannelNotificationSender;
   githubClient?: import('./github/client').GithubClient;
   githubSyncSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   /** テスト注入用の AI provider。 */
@@ -232,6 +245,7 @@ export async function buildServices(
   const schedules = new ScheduleRepository(db);
   const scheduleRuns = new ScheduleRunRepository(db, config.scheduler.runsRetention);
   const alerts = new AlertRepository(db);
+  const alertDeliveries = new AlertDeliveryRepository(db);
   const workflows = new WorkflowRepository(db);
   const workflowRuns = new WorkflowRunRepository(db, config.scheduler.runsRetention);
   const documentGitLinks = new DocumentGitLinkRepository(db);
@@ -265,6 +279,7 @@ export async function buildServices(
     setTimer: options.schedulerSetTimer,
   });
   const alertEvaluator = new AlertEvaluator({
+    db,
     alerts,
     savedQueries,
     engines,
@@ -273,7 +288,6 @@ export async function buildServices(
     getRbac: () => rbacState.current,
     guardConfig: config.guard,
     audit,
-    notifications,
     config: {
       enabled: config.scheduler.enabled,
       tickSeconds: config.scheduler.tickSeconds,
@@ -283,6 +297,15 @@ export async function buildServices(
     now: options.now,
     setTimer: options.alertEvaluatorSetTimer ?? options.schedulerSetTimer,
   });
+  const alertDeliveryWorker = new AlertDeliveryWorker({
+    deliveries: alertDeliveries,
+    notifications,
+    config: config.alertDelivery,
+    now: options.now,
+    setTimer: options.alertDeliverySetTimer,
+    logWarn: options.notificationLogWarn,
+  });
+  alertDeliveryWorker.start();
   const workflowRunner = new WorkflowRunner({
     workflows,
     runs: workflowRuns,
@@ -464,6 +487,8 @@ export async function buildServices(
     scheduler,
     alerts,
     alertEvaluator,
+    alertDeliveries,
+    alertDeliveryWorker,
     workflows,
     workflowRuns,
     workflowRunner,
@@ -485,6 +510,7 @@ export async function buildServices(
       await githubSyncScheduler?.stop();
       await workflowRunner.stop();
       await alertEvaluator.stop();
+      await alertDeliveryWorker.stop();
       await scheduler.stop();
       await registry.shutdown();
       await db.close();

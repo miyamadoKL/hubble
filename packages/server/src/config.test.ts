@@ -95,6 +95,7 @@ describe('loadServerConfig integer bounds', () => {
       webhookAllowedCidrs: [],
       webhookAllowHttp: false,
       webhookTimeoutMs: 10_000,
+      channelTimeoutMs: 10_000,
       smtp: {
         host: 'smtp.example.com',
         port: 465,
@@ -103,6 +104,22 @@ describe('loadServerConfig integer bounds', () => {
         from: 'hubble@example.com',
       },
     });
+    expect(config.alertDelivery).toEqual({
+      intervalMs: 5_000,
+      maxAttempts: 5,
+      backoffMs: 10_000,
+    });
+  });
+
+  it('loads alert delivery retry and channel timeout settings', () => {
+    const config = loadServerConfig({
+      ALERT_DELIVERY_INTERVAL_MS: '2500',
+      ALERT_DELIVERY_MAX_ATTEMPTS: '3',
+      ALERT_DELIVERY_BACKOFF_MS: '7000',
+      NOTIFY_CHANNEL_TIMEOUT_MS: '9000',
+    });
+    expect(config.alertDelivery).toEqual({ intervalMs: 2_500, maxAttempts: 3, backoffMs: 7_000 });
+    expect(config.notification.channelTimeoutMs).toBe(9_000);
   });
 
   it('defaults GitHub integration to disabled', () => {

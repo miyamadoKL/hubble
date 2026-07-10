@@ -223,6 +223,8 @@ export interface ServerConfig {
     webhookAllowHttp: boolean;
     /** webhook 送信のタイムアウト。 */
     webhookTimeoutMs: number;
+    /** 単一通知チャネルの送信タイムアウト。 */
+    channelTimeoutMs: number;
     /** SMTP 送信設定。 */
     smtp: {
       host?: string;
@@ -231,6 +233,15 @@ export interface ServerConfig {
       password?: string;
       from?: string;
     };
+  };
+  /** Alert通知outbox workerの設定。 */
+  alertDelivery: {
+    /** dueジョブを確認する周期。 */
+    intervalMs: number;
+    /** deadへ移すまでの最大試行回数。 */
+    maxAttempts: number;
+    /** 指数backoffの基準時間。 */
+    backoffMs: number;
   };
   /** GitHub 連携設定。 */
   github: GithubConfig;
@@ -602,6 +613,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       webhookAllowedCidrs: parseCidrList(envStr(env, 'NOTIFY_WEBHOOK_ALLOWED_CIDRS', '')),
       webhookAllowHttp: envBool(env, 'NOTIFY_WEBHOOK_ALLOW_HTTP', false),
       webhookTimeoutMs: envPositiveInt(env, 'NOTIFY_WEBHOOK_TIMEOUT_MS', 10_000),
+      channelTimeoutMs: envPositiveInt(env, 'NOTIFY_CHANNEL_TIMEOUT_MS', 10_000),
       smtp: {
         host: envOptional(env, 'NOTIFY_SMTP_HOST'),
         port: envPositiveInt(env, 'NOTIFY_SMTP_PORT', 587),
@@ -609,6 +621,11 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
         password: smtpPasswordEnv ? envOptional(env, smtpPasswordEnv) : undefined,
         from: envOptional(env, 'NOTIFY_SMTP_FROM'),
       },
+    },
+    alertDelivery: {
+      intervalMs: envPositiveInt(env, 'ALERT_DELIVERY_INTERVAL_MS', 5_000),
+      maxAttempts: envPositiveInt(env, 'ALERT_DELIVERY_MAX_ATTEMPTS', 5),
+      backoffMs: envPositiveInt(env, 'ALERT_DELIVERY_BACKOFF_MS', 10_000),
     },
     github: resolveGithubConfig(env),
     ai: resolveAiConfig(env),

@@ -16,6 +16,7 @@ function notificationConfig(
     webhookAllowedCidrs: [],
     webhookAllowHttp: false,
     webhookTimeoutMs: 10_000,
+    channelTimeoutMs: 10_000,
     smtp: { port: 587 },
     ...overrides,
   };
@@ -235,5 +236,48 @@ describe('NotificationService', () => {
     expect(typeof nodemailer.createTransport).toBe('function');
     const transport = nodemailer.createTransport({ streamTransport: true });
     expect(typeof transport.sendMail).toBe('function');
+  });
+
+  it('rejects a single email channel when the Hubble deadline expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const sendMail = vi.fn(() => new Promise<never>(() => {}));
+      const service = new NotificationService(
+        notificationConfig({
+          channelTimeoutMs: 25,
+          smtp: {
+            host: 'smtp.example.com',
+            port: 587,
+            from: 'hubble@example.com',
+          },
+        }),
+        { mailSender: { sendMail } },
+      );
+      const emailAlert: AlertRecord = {
+        ...alert('https://example.com/unused'),
+        notifications: { channels: ['email'], emailTo: ['ops@example.com'] },
+      };
+      const pending = service.sendChannel('email', {
+        alert: emailAlert,
+        outcome: {
+          state: 'triggered',
+          previousState: 'ok',
+          conditionMet: true,
+          observedValue: '101',
+          notified: true,
+          errorType: null,
+          errorMessage: null,
+        },
+        savedQueryName: 'row count',
+        datasourceId: 'trino-default',
+        evaluatedAt: '2026-01-01T00:00:00.000Z',
+      });
+      const rejected = expect(pending).rejects.toThrow('Email send timed out');
+
+      await vi.advanceTimersByTimeAsync(25);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

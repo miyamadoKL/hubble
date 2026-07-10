@@ -16,12 +16,13 @@ import { resolveRoleForPrincipal } from '../rbac/resolve';
 import type { LoadedRbac } from '../rbac/types';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import type { ServerConfig } from '../config';
-import type { AlertRecord, AlertRepository } from '../store/alerts';
+import { AlertRepository, type AlertRecord } from '../store/alerts';
 import type { SavedQueryRepository } from '../store/savedQueries';
 import { nextRunAfter } from '../schedule/cron';
 import { classifyFailure } from '../schedule/retry';
 import type { AuditJson, AuditLogger } from '../audit';
-import type { AlertNotificationSender } from '../notification/service';
+import { AlertDeliveryRepository } from '../store/alertDeliveries';
+import type { SqlDatabase } from '../db/sqlDatabase';
 import { columnIndex, fetchStatementRows } from './execute';
 import { compareThreshold, nextAlertState, selectObservedValue, shouldNotify } from './state';
 
@@ -33,6 +34,7 @@ export interface AlertEvaluatorConfig {
 }
 
 export interface AlertEvaluatorDeps {
+  db: SqlDatabase;
   alerts: AlertRepository;
   savedQueries: SavedQueryRepository;
   engines: Map<string, QueryEngine>;
@@ -41,7 +43,6 @@ export interface AlertEvaluatorDeps {
   getRbac: () => LoadedRbac;
   guardConfig: ServerConfig['guard'];
   audit?: AuditLogger;
-  notifications?: AlertNotificationSender;
   config: AlertEvaluatorConfig;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => { clear: () => void };
@@ -329,6 +330,15 @@ export class AlertEvaluator {
           user: alert.owner,
         };
         const fetched = await fetchStatementRows(client, savedQuery.statement, ctx);
+        if (fetched.truncated) {
+          return this.persistOutcome(alert, previousState, {
+            conditionMet: false,
+            observedValue: null,
+            notified: false,
+            errorType: 'RESULT_TRUNCATED',
+            errorMessage: 'Query result exceeded the alert evaluation row limit',
+          });
+        }
         const idx = columnIndex(fetched.columns, alert.columnName);
         if (idx < 0) {
           return this.persistOutcome(alert, previousState, {
@@ -357,18 +367,23 @@ export class AlertEvaluator {
           muted: alert.muted,
         });
 
-        const outcome = await this.persistOutcome(alert, previousState, {
+        const outcomeInput = {
           conditionMet,
           observedValue: observedStr,
           newState,
           notified: notify,
           errorType: null,
           errorMessage: null,
-        });
-
-        if (notify) {
-          void this.sendNotification(alert, outcome, savedQuery.name, datasourceId);
-        }
+        };
+        const outcome = notify
+          ? await this.persistOutcomeWithNotifications(
+              alert,
+              previousState,
+              outcomeInput,
+              savedQuery.name,
+              datasourceId,
+            )
+          : await this.persistOutcome(alert, previousState, outcomeInput);
 
         await this.recordAudit(alert, outcome, datasourceId);
         return outcome;
@@ -409,6 +424,7 @@ export class AlertEvaluator {
       errorType: string | null;
       errorMessage: string | null;
     },
+    alerts = this.deps.alerts,
   ): Promise<AlertEvalOutcome> {
     const newState = input.newState ?? nextAlertState(previousState, input.conditionMet);
     const nowIso = new Date(this.now()).toISOString();
@@ -419,7 +435,7 @@ export class AlertEvaluator {
           : alert.lastTriggeredAt
         : alert.lastTriggeredAt;
 
-    await this.deps.alerts.update(alert.owner, alert.id, {
+    await alerts.update(alert.owner, alert.id, {
       state: newState,
       lastTriggeredAt,
     });
@@ -435,23 +451,51 @@ export class AlertEvaluator {
     };
   }
 
-  private async sendNotification(
+  private async persistOutcomeWithNotifications(
     alert: AlertRecord,
-    outcome: AlertEvalOutcome,
+    previousState: AlertState,
+    input: {
+      conditionMet: boolean;
+      observedValue: string | null;
+      newState: AlertState;
+      notified: boolean;
+      errorType: null;
+      errorMessage: null;
+    },
     savedQueryName: string,
     datasourceId: string,
-  ): Promise<void> {
-    if (!this.deps.notifications) return;
+  ): Promise<AlertEvalOutcome> {
     try {
-      await this.deps.notifications.sendAlertTriggered({
-        alert,
-        outcome,
-        savedQueryName,
-        datasourceId,
-        evaluatedAt: new Date(this.now()).toISOString(),
+      return await this.deps.db.transaction(async (tx) => {
+        const alerts = new AlertRepository(tx);
+        const deliveries = new AlertDeliveryRepository(tx);
+        const outcome = await this.persistOutcome(alert, previousState, input, alerts);
+        const evaluatedAt = new Date(this.now()).toISOString();
+        const payload = { alert, outcome, savedQueryName, datasourceId, evaluatedAt };
+        for (const channel of alert.notifications.channels) {
+          await deliveries.insert(
+            {
+              alertId: alert.id,
+              owner: alert.owner,
+              channel,
+              payload,
+              nextAttemptAt: evaluatedAt,
+            },
+            evaluatedAt,
+          );
+        }
+        return outcome;
       });
     } catch (err) {
-      console.warn(`alert evaluator: notification failed for alert ${alert.id}`, err);
+      console.warn(`alert evaluator: delivery enqueue failed for alert ${alert.id}`, err);
+      const message = err instanceof Error ? err.message : String(err);
+      return this.persistOutcome(alert, previousState, {
+        conditionMet: false,
+        observedValue: null,
+        notified: false,
+        errorType: errorTypeOf(err) ?? 'DELIVERY_ENQUEUE_FAILED',
+        errorMessage: message,
+      });
     }
   }
 
