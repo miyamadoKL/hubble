@@ -31,6 +31,7 @@ export async function fetchStatementRows(
     for (const row of page.data) {
       rows.push(row);
       if (rows.length >= maxRows) {
+        await cancelRemainingPage(client, page.nextUri, ctx);
         return { columns, rows, truncated: true };
       }
     }
@@ -51,12 +52,27 @@ export async function fetchStatementRows(
       for (const row of page.data) {
         rows.push(row);
         if (rows.length >= maxRows) {
+          await cancelRemainingPage(client, page.nextUri, ctx);
           return { columns, rows, truncated: true };
         }
       }
     }
   }
   return { columns, rows, truncated: false };
+}
+
+/** 打ち切り後も残るクエリを可能な範囲で停止する。 */
+async function cancelRemainingPage(
+  client: StatementClient,
+  nextUri: string | undefined,
+  ctx: TrinoRequestContext,
+): Promise<void> {
+  if (nextUri === undefined) return;
+  try {
+    await client.cancel(nextUri, ctx);
+  } catch {
+    // cancel失敗は結果の打ち切り判定へ影響させない。
+  }
 }
 
 /** カラム名からインデックスを解決する。見つからなければ -1。 */

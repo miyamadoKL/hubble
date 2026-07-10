@@ -329,6 +329,15 @@ export class AlertEvaluator {
           user: alert.owner,
         };
         const fetched = await fetchStatementRows(client, savedQuery.statement, ctx);
+        if (fetched.truncated) {
+          return this.persistOutcome(alert, previousState, {
+            conditionMet: false,
+            observedValue: null,
+            notified: false,
+            errorType: 'RESULT_TRUNCATED',
+            errorMessage: 'Query result exceeded the alert evaluation row limit',
+          });
+        }
         const idx = columnIndex(fetched.columns, alert.columnName);
         if (idx < 0) {
           return this.persistOutcome(alert, previousState, {
