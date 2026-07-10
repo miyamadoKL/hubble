@@ -98,9 +98,73 @@ function cellText(value: unknown): string {
 
 type SortDir = 'asc' | 'desc';
 /** 現在のソート対象カラムのインデックスと昇順/降順の状態。未ソート時は null。 */
-interface SortState {
+export interface SortState {
   colIndex: number;
   dir: SortDir;
+}
+
+/** filterまたはsortが有効な場合だけ、表示順のsource indexを構築する。 */
+export function buildClientViewIndices(
+  rows: ReadonlyArray<ResultRow>,
+  columns: ReadonlyArray<QueryColumn>,
+  filter: string,
+  sort: SortState | null,
+): number[] | null {
+  const needle = filter.trim().toLowerCase();
+  if (!needle && !sort) return null;
+  let indices = Array.from({ length: rows.length }, (_, index) => index);
+  if (needle) {
+    indices = indices.filter((index) =>
+      rows[index]!.some((cell) => cellText(cell).includes(needle)),
+    );
+  }
+  if (sort) {
+    const numeric = isNumericType(columns[sort.colIndex]?.type ?? '');
+    const factor = sort.dir === 'asc' ? 1 : -1;
+    indices.sort((left, right) => {
+      const cmp = compareValues(rows[left]![sort.colIndex], rows[right]![sort.colIndex], numeric);
+      return cmp !== 0 ? cmp * factor : left - right;
+    });
+  }
+  return indices;
+}
+
+/** 仮想行1件だけを表示用の行とsource indexへ変換する。 */
+export function materializeClientRow(
+  rows: ReadonlyArray<ResultRow>,
+  viewIndices: ReadonlyArray<number> | null,
+  viewIndex: number,
+): { row: ResultRow; sourceIndex: number } {
+  const sourceIndex = viewIndices?.[viewIndex] ?? viewIndex;
+  return { row: rows[sourceIndex]!, sourceIndex };
+}
+
+/** 先頭サンプルが確定した後は、行versionが進んでも列幅計測を再開しない。 */
+export function columnWidthChangeKey(
+  rows: ReadonlyArray<ResultRow>,
+  rowsVersion: number | undefined,
+): ReadonlyArray<ResultRow> | number {
+  if (rowsVersion === undefined) return rows;
+  return rows.length < WIDTH_SAMPLE_ROWS ? rowsVersion : WIDTH_SAMPLE_ROWS;
+}
+
+/** ヘッダーと先頭サンプルから、表示列の固定幅を計算する。 */
+export function calculateColumnWidths(
+  rows: ReadonlyArray<ResultRow>,
+  visibleColumns: ReadonlyArray<{ col: QueryColumn; index: number }>,
+): number[] {
+  const sampleCount = Math.min(rows.length, WIDTH_SAMPLE_ROWS);
+  return visibleColumns.map(({ col, index }) => {
+    const headerPx =
+      col.name.length * HEADER_NAME_CH_PX + col.type.length * HEADER_TYPE_CH_PX + HEADER_EXTRA_PX;
+    let maxChars = 0;
+    for (let rowIndex = 0; rowIndex < sampleCount; rowIndex++) {
+      const len = renderValue(rows[rowIndex]![index], col.type).text.length;
+      if (len > maxChars) maxChars = len;
+    }
+    const cellPx = maxChars * CELL_CH_PX + CELL_PADDING_PX;
+    return Math.round(Math.min(MAX_COL_PX, Math.max(MIN_COL_PX, headerPx, cellPx)));
+  });
 }
 
 /**
@@ -124,6 +188,8 @@ interface ResultGridProps {
   columns: QueryColumn[];
   /** 現在読み込み済みの結果行。ストリーミングで随時追加されうる。 */
   rows: ReadonlyArray<ResultRow>;
+  /** in-placeの行更新を検知する単調増加version。 */
+  rowsVersion?: number;
   /**
    * 対象クエリ id。指定すると列プロファイル表示が有効になり、
    * さらに全行が未ロードの完了済み結果では filter / sort がサーバー側で実行される。
@@ -147,6 +213,7 @@ interface ResultGridProps {
 export function ResultGrid({
   columns,
   rows,
+  rowsVersion,
   queryId,
   totalRows,
   complete,
@@ -192,42 +259,12 @@ export function ResultGrid({
   // (sourceIndex、行番号列の表示に使う) 付きで保持し、フィルタ文字列があれば
   // いずれかのセルに部分一致する行だけへ絞り込み、さらにソート指定があれば
   // 安定ソート（同順位のときは元の並び順を保つ）で並べ替える。
-  const view = useMemo(() => {
-    // server-side モードが有効なら、サーバーが絞り込み/並べ替え済みの行を
-    // そのまま使う。行番号はフィルタ適用後の順序（1 始まり）になる。
-    if (serverActive) {
-      return serverView.rows.map((row, i) => ({ row, sourceIndex: i }));
-    }
-    // 検索語を trim + 小文字化しておき、cellText（小文字化済み）と比較できるようにする。
-    const needle = filter.trim().toLowerCase();
-    // 全行を { 行データ, 元のインデックス } の形に変換した初期状態。
-    let result: { row: ResultRow; sourceIndex: number }[] = rows.map((row, i) => ({
-      row,
-      sourceIndex: i,
-    }));
-    if (needle) {
-      // フィルタ: いずれかのセルのテキストに検索語が含まれる行のみ残す。
-      result = result.filter(({ row }) => row.some((cell) => cellText(cell).includes(needle)));
-    }
-    if (sort) {
-      // ソート対象カラムが数値型かどうかで比較方法を切り替える。
-      const numeric = isNumericType(columns[sort.colIndex]?.type ?? '');
-      const factor = sort.dir === 'asc' ? 1 : -1;
-      result = result
-        // 配列インデックス i を保持しておき、比較結果が同値のときのタイブレークに使う（安定ソート）。
-        .map((entry, i) => ({ entry, i }))
-        .sort((x, y) => {
-          const cmp = compareValues(
-            x.entry.row[sort.colIndex],
-            y.entry.row[sort.colIndex],
-            numeric,
-          );
-          return cmp !== 0 ? cmp * factor : x.i - y.i; // stable
-        })
-        .map(({ entry }) => entry);
-    }
-    return result;
-  }, [rows, filter, sort, columns, serverActive, serverView.rows]);
+  const rowChangeKey = rowsVersion ?? rows;
+  const viewIndices = useMemo(() => {
+    void rowChangeKey;
+    return serverActive ? null : buildClientViewIndices(rows, columns, filter, sort);
+  }, [rows, columns, filter, sort, serverActive, rowChangeKey]);
+  const viewLength = serverActive ? serverView.rows.length : (viewIndices?.length ?? rows.length);
 
   // TanStack Virtual returns fresh function identities each render; the React
   // Compiler rule flags it as un-memoizable. That is expected and harmless here
@@ -236,7 +273,7 @@ export function ResultGrid({
   // 仮想化の本体。表示対象の行数（view.length）、スクロール要素の取得方法、
   // 行の見積もり高さ、オーバースキャン数を渡して初期化する。
   const rowVirtualizer = useVirtualizer({
-    count: view.length,
+    count: viewLength,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: OVERSCAN,
@@ -271,22 +308,11 @@ export function ResultGrid({
   // コンテンツ依存の幅を使うとコンテナごとに解決結果が異なり、ヘッダーと値の列位置が
   // ずれてしまう。そこで、ヘッダー文字列と読み込み済み行（先頭 WIDTH_SAMPLE_ROWS 件）の
   // 表示テキスト長から列ごとの固定幅（px）を見積もり、全コンテナで同一のテンプレートを使う。
+  const widthChangeKey = columnWidthChangeKey(rows, rowsVersion);
   const columnWidths = useMemo(() => {
-    const sample = rows.slice(0, WIDTH_SAMPLE_ROWS);
-    return visibleColumns.map(({ col, index }) => {
-      // ヘッダー: カラム名 + 型ラベル + アイコンや gap などの余白。
-      const headerPx =
-        col.name.length * HEADER_NAME_CH_PX + col.type.length * HEADER_TYPE_CH_PX + HEADER_EXTRA_PX;
-      // 本文: サンプル行中で最長の表示テキスト（フォーマット適用後）の文字数。
-      let maxChars = 0;
-      for (const row of sample) {
-        const len = renderValue(row[index], col.type).text.length;
-        if (len > maxChars) maxChars = len;
-      }
-      const cellPx = maxChars * CELL_CH_PX + CELL_PADDING_PX;
-      return Math.round(Math.min(MAX_COL_PX, Math.max(MIN_COL_PX, headerPx, cellPx)));
-    });
-  }, [visibleColumns, rows]);
+    void widthChangeKey;
+    return calculateColumnWidths(rows, visibleColumns);
+  }, [visibleColumns, rows, widthChangeKey]);
   // すべて固定幅（px）のトラックにすることで、どの grid コンテナでも
   // テンプレートの解決結果が同一になり、列位置のずれと余計な横スクロールを防ぐ。
   // (1fr や max-content は intrinsic 幅の算出がコンテナごとのコンテンツに
@@ -383,7 +409,7 @@ export function ResultGrid({
                 (serverView.totalMatched > serverView.rows.length
                   ? `first ${formatInt(serverView.rows.length)} of ${formatInt(serverView.totalMatched)} matched (server)`
                   : `${formatInt(serverView.totalMatched)} matched (server)`))
-            : `${filter ? `${formatInt(view.length)} / ` : ''}${formatInt(rows.length)} loaded`}
+            : `${filter ? `${formatInt(viewLength)} / ` : ''}${formatInt(rows.length)} loaded`}
         </span>
       </div>
 
@@ -438,7 +464,9 @@ export function ResultGrid({
           <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
             {virtualRows.map((vRow) => {
               // 表示すべき行データ（フィルタとソート適用済みの view から、仮想化インデックスで取得）。
-              const entry = view[vRow.index]!;
+              const entry = serverActive
+                ? { row: serverView.rows[vRow.index]!, sourceIndex: vRow.index }
+                : materializeClientRow(rows, viewIndices, vRow.index);
               return (
                 <div
                   key={vRow.key}

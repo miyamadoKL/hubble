@@ -189,6 +189,7 @@ export function ResultPane({
             <ResultGrid
               columns={cell.columns}
               rows={cell.rows}
+              rowsVersion={cell.rowsVersion}
               queryId={cell.queryId || undefined}
               totalRows={cell.rowCount}
               complete={!running && cell.state === 'finished'}
@@ -217,7 +218,12 @@ export function ResultPane({
             </div>
           }
         >
-          <ChartPanel cellId={cellId} columns={cell.columns} rows={cell.rows} />
+          <ChartPanel
+            cellId={cellId}
+            columns={cell.columns}
+            rows={cell.rows}
+            rowsVersion={cell.rowsVersion}
+          />
         </Suspense>
       )}
 

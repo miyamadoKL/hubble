@@ -37,12 +37,14 @@ import { Spinner } from '../common/Spinner';
 export function ChartView({
   columns,
   rows,
+  rowsVersion,
   config,
   height = 320,
   fill = false,
 }: {
   columns: QueryColumn[];
   rows: ReadonlyArray<ResultRow>;
+  rowsVersion?: number;
   config: ChartConfig;
   height?: number;
   fill?: boolean;
@@ -103,7 +105,7 @@ export function ChartView({
       // 描画すべきデータ/設定がない場合はキャンバスをクリアする。
       chart.clear();
     }
-  }, [columns, rows, config, theme, ready]);
+  }, [columns, rows, rowsVersion, config, theme, ready]);
 
   return (
     <div
