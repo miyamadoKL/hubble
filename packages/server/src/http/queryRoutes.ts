@@ -28,6 +28,10 @@ import {
   type QueryRowsPage,
   type QueryExportRequest,
   type QueryExportResponse,
+  resultSearchRequestSchema,
+  type ResultSearchPage,
+  type ResultProfile,
+  type ResultSearchRequest,
 } from '@hubble/contracts';
 import type { Services } from '../services';
 import type { ExportConfig } from '../config';
@@ -56,6 +60,7 @@ import {
   readPersistedResultMetadata,
   streamPersistedResultEvents,
   readPersistedRowsPage,
+  openPersistedResult,
   streamPersistedCsv,
 } from '../resultStore/jsonl';
 import { streamQueryResultEvents, type QueryResultEventSource } from '../query/resultEvents';
@@ -64,6 +69,11 @@ import { buildExportObjectKey, S3ExportUploader } from '../query/exportS3';
 import { SheetsExporter } from '../query/exportSheets';
 import type { AuditAction } from '../audit';
 import type { QueryResultEvent } from '../query/resultEvents';
+import {
+  profileRowsStream,
+  searchRowsStream,
+  RESULT_SEARCH_MAX_WINDOW,
+} from '../query/exploration';
 
 // SSE 接続が生きていることをクライアント側の中間プロキシ等に伝えるための keepalive 送信間隔。
 const KEEPALIVE_INTERVAL_MS = 15_000;
@@ -271,6 +281,26 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return ref;
   };
 
+  /** filter/sort の columnIndex が列数の範囲内か検証する。 */
+  const assertResultSearchColumnIndices = (
+    columns: readonly { name: string; type: string }[],
+    request: ResultSearchRequest,
+  ): void => {
+    const columnCount = columns.length;
+    const invalidIndices: number[] = [];
+    for (const filter of request.filters ?? []) {
+      if (filter.columnIndex >= columnCount) invalidIndices.push(filter.columnIndex);
+    }
+    if (request.sort && request.sort.columnIndex >= columnCount) {
+      invalidIndices.push(request.sort.columnIndex);
+    }
+    if (invalidIndices.length === 0) return;
+    throw AppError.badRequest(
+      `columnIndex out of range: ${[...new Set(invalidIndices)].join(', ')} (column count: ${columnCount})`,
+      'VALIDATION_ERROR',
+    );
+  };
+
   const resolveExportEvents = async (
     c: { req: { param: (k: string) => string }; var: AuthVariables },
     exec: ReturnType<typeof services.registry.get> | undefined,
@@ -410,6 +440,77 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       complete: exec.isTerminal,
     };
     return c.json(page);
+  });
+
+  // POST /api/queries/:id/rows/search — filter / sort / search over buffered or persisted rows.
+  // メモリバッファまたは永続化結果の行をストリーミング評価して server-side 探索を行う。
+  // 永続化結果は QUERY_MAX_ROWS で有界ではないため、全行を配列へ materialize しない。
+  app.post('/:id/rows/search', async (c) => {
+    const body = await parseJsonBody(c, resultSearchRequestSchema);
+    // 保持行数の上限は offset + limit に比例するため、窓の上限を検証する
+    //（詳細は exploration.ts の RESULT_SEARCH_MAX_WINDOW のコメント参照）。
+    if (body.offset + body.limit > RESULT_SEARCH_MAX_WINDOW) {
+      throw AppError.badRequest(
+        `offset + limit must not exceed ${RESULT_SEARCH_MAX_WINDOW}`,
+        'VALIDATION_ERROR',
+      );
+    }
+    const exec = maybeOwnedExec(c.req.param('id'), c);
+    if (!exec) {
+      const ref = await requirePersistedResult(c);
+      const cursor = await openPersistedResult(
+        await services.resultStore.getStream(ref.resultObjectKey),
+      );
+      assertResultSearchColumnIndices(cursor.columns, body);
+      const searched = await searchRowsStream(cursor.columns, cursor.rows, body);
+      const page: ResultSearchPage = {
+        offset: body.offset,
+        rows: searched.rows,
+        totalMatched: searched.totalMatched,
+        totalRows: searched.totalRows,
+        complete: true,
+      };
+      return c.json(page);
+    }
+    const columns = exec.snapshot().columns ?? [];
+    assertResultSearchColumnIndices(columns, body);
+    // メモリバッファは QUERY_MAX_ROWS で有界なので、そのまま同期 Iterable として渡す。
+    const searched = await searchRowsStream(columns, exec.getRows(0, exec.bufferedCount), body);
+    const page: ResultSearchPage = {
+      offset: body.offset,
+      rows: searched.rows,
+      totalMatched: searched.totalMatched,
+      totalRows: exec.bufferedCount,
+      complete: exec.isTerminal,
+    };
+    return c.json(page);
+  });
+
+  // GET /api/queries/:id/profile — column profiles over buffered or persisted rows.
+  // メモリバッファまたは永続化結果の行をストリーミング走査して列プロファイルを計算する。
+  app.get('/:id/profile', async (c) => {
+    const exec = maybeOwnedExec(c.req.param('id'), c);
+    if (!exec) {
+      const ref = await requirePersistedResult(c);
+      const cursor = await openPersistedResult(
+        await services.resultStore.getStream(ref.resultObjectKey),
+      );
+      const profiled = await profileRowsStream(cursor.columns, cursor.rows);
+      const profile: ResultProfile = {
+        rowCount: profiled.rowCount,
+        complete: true,
+        columns: profiled.profiles,
+      };
+      return c.json(profile);
+    }
+    const columns = exec.snapshot().columns ?? [];
+    const profiled = await profileRowsStream(columns, exec.getRows(0, exec.bufferedCount));
+    const profile: ResultProfile = {
+      rowCount: exec.bufferedCount,
+      complete: exec.isTerminal,
+      columns: profiled.profiles,
+    };
+    return c.json(profile);
   });
 
   // DELETE /api/queries/:id — cancel.

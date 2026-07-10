@@ -18,6 +18,9 @@ import {
   createQueryResponseSchema,
   queryExportRequestSchema,
   queryExportResponseSchema,
+  resultSearchRequestSchema,
+  resultSearchPageSchema,
+  resultProfileSchema,
   estimateRequestSchema,
   estimateResultSchema,
   guardConfigSchema,
@@ -334,6 +337,58 @@ describe('query', () => {
 
   it('parses a CreateQueryResponse', () => {
     expect(createQueryResponseSchema.parse({ queryId: 'q1' })).toEqual({ queryId: 'q1' });
+  });
+
+  it('parses a ResultSearchRequest and applies defaults', () => {
+    const parsed = resultSearchRequestSchema.parse({
+      search: 'tokyo',
+      filters: [
+        { columnIndex: 1, op: 'gte', value: '100' },
+        { columnIndex: 2, op: 'isNull' },
+      ],
+      sort: { columnIndex: 0, dir: 'desc' },
+    });
+    expect(parsed.offset).toBe(0);
+    expect(parsed.limit).toBe(100);
+  });
+
+  it('rejects a filter condition missing a required value', () => {
+    expect(
+      resultSearchRequestSchema.safeParse({
+        filters: [{ columnIndex: 0, op: 'eq' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('parses a ResultSearchPage', () => {
+    const value = {
+      offset: 0,
+      rows: [['a', 1]],
+      totalMatched: 1,
+      totalRows: 10,
+      complete: true,
+    };
+    expect(resultSearchPageSchema.parse(value)).toEqual(value);
+  });
+
+  it('parses a ResultProfile', () => {
+    const value = {
+      rowCount: 100,
+      complete: true,
+      columns: [
+        {
+          name: 'city',
+          type: 'varchar',
+          nullCount: 3,
+          distinctCount: 12,
+          distinctOverflow: false,
+          min: 'akita',
+          max: 'yokohama',
+          topValues: [{ value: 'tokyo', count: 40 }],
+        },
+      ],
+    };
+    expect(resultProfileSchema.parse(value)).toEqual(value);
   });
 
   it('parses query export requests and responses', () => {

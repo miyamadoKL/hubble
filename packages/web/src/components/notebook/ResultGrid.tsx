@@ -12,11 +12,13 @@
 import { useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { QueryColumn } from '@hubble/contracts';
-import { ArrowDown, ArrowUp, Columns3, Search, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Columns3, Search, Sigma, X } from 'lucide-react';
 import { IconButton } from '../common/IconButton';
 import { cn } from '../../utils/cn';
 import { formatDecimal, formatInt } from '../../utils/format';
 import type { ResultRow } from '../../execution';
+import { ColumnProfilePanel } from './ColumnProfilePanel';
+import { useServerResultView } from './useServerResultView';
 
 /**
  * High-density virtualized result grid: fixed header, row-number
@@ -122,6 +124,15 @@ interface ResultGridProps {
   columns: QueryColumn[];
   /** 現在読み込み済みの結果行。ストリーミングで随時追加されうる。 */
   rows: ReadonlyArray<ResultRow>;
+  /**
+   * 対象クエリ id。指定すると列プロファイル表示が有効になり、
+   * さらに全行が未ロードの完了済み結果では filter / sort がサーバー側で実行される。
+   */
+  queryId?: string;
+  /** サーバーが保持する総行数（rows.length を上回りうる）。 */
+  totalRows?: number;
+  /** クエリが終了しており、以降行が増えないことを示す。 */
+  complete?: boolean;
   /** ルート要素に付与する追加の Tailwind クラス。 */
   className?: string;
 }
@@ -133,19 +144,41 @@ interface ResultGridProps {
  * 行の実描画は @tanstack/react-virtual に委譲し、スクロール中も
  * 画面内の行だけを DOM 上に生成することでパフォーマンスを確保している。
  */
-export function ResultGrid({ columns, rows, className }: ResultGridProps) {
+export function ResultGrid({
+  columns,
+  rows,
+  queryId,
+  totalRows,
+  complete,
+  className,
+}: ResultGridProps) {
   // 仮想化スクロールコンテナへの参照。useVirtualizer にスクロール要素として渡す。
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 非表示にした列のインデックス集合。
   const [hidden, setHidden] = useState<ReadonlySet<number>>(() => new Set());
   // 列の表示/非表示を切り替えるドロップダウンメニューの開閉状態。
   const [colMenuOpen, setColMenuOpen] = useState(false);
+  // 列プロファイルパネルの開閉状態。
+  const [profileOpen, setProfileOpen] = useState(false);
   // 行フィルタの検索文字列。
   const [filter, setFilter] = useState('');
   // フィルタ入力欄自体の表示/非表示状態（アイコンクリックでトグル）。
   const [showFilter, setShowFilter] = useState(false);
   // 現在のソート状態（対象カラムと方向）。null は未ソート。
   const [sort, setSort] = useState<SortState | null>(null);
+
+  // server-side モード: クライアントに全行が載っていない完了済み結果
+  // （履歴から開いた永続化結果など）では、filter / sort をサーバー側で実行する。
+  // ストリーミング中（complete でない）は従来どおりクライアント側で処理する。
+  const serverCapable =
+    queryId !== undefined && complete === true && (totalRows ?? rows.length) > rows.length;
+  const serverActive = serverCapable && (filter.trim() !== '' || sort !== null);
+  const serverView = useServerResultView(
+    queryId,
+    serverActive,
+    filter,
+    sort !== null ? { columnIndex: sort.colIndex, dir: sort.dir } : null,
+  );
 
   // hidden に含まれない列だけを、元のカラムインデックスとともに抽出する。
   // ヘッダー、各行のセル描画、グリッドテンプレート計算のすべてがこの配列を使う。
@@ -160,6 +193,11 @@ export function ResultGrid({ columns, rows, className }: ResultGridProps) {
   // いずれかのセルに部分一致する行だけへ絞り込み、さらにソート指定があれば
   // 安定ソート（同順位のときは元の並び順を保つ）で並べ替える。
   const view = useMemo(() => {
+    // server-side モードが有効なら、サーバーが絞り込み/並べ替え済みの行を
+    // そのまま使う。行番号はフィルタ適用後の順序（1 始まり）になる。
+    if (serverActive) {
+      return serverView.rows.map((row, i) => ({ row, sourceIndex: i }));
+    }
     // 検索語を trim + 小文字化しておき、cellText（小文字化済み）と比較できるようにする。
     const needle = filter.trim().toLowerCase();
     // 全行を { 行データ, 元のインデックス } の形に変換した初期状態。
@@ -189,7 +227,7 @@ export function ResultGrid({ columns, rows, className }: ResultGridProps) {
         .map(({ entry }) => entry);
     }
     return result;
-  }, [rows, filter, sort, columns]);
+  }, [rows, filter, sort, columns, serverActive, serverView.rows]);
 
   // TanStack Virtual returns fresh function identities each render; the React
   // Compiler rule flags it as un-memoizable. That is expected and harmless here
@@ -282,6 +320,21 @@ export function ResultGrid({ columns, rows, className }: ResultGridProps) {
             />
           )}
         </div>
+        {/* 列プロファイルパネルを開くトグルボタン（queryId があるときのみ表示）。 */}
+        {queryId !== undefined && (
+          <div className="relative">
+            <IconButton
+              icon={Sigma}
+              label="Column stats"
+              size="sm"
+              active={profileOpen}
+              onClick={() => setProfileOpen((o) => !o)}
+            />
+            {profileOpen && (
+              <ColumnProfilePanel queryId={queryId} onClose={() => setProfileOpen(false)} />
+            )}
+          </div>
+        )}
         {/* フィルタ入力欄の表示/非表示を切り替えるトグルボタン。入力中や検索語がある場合はアクティブ表示。 */}
         <IconButton
           icon={Search}
@@ -297,7 +350,8 @@ export function ResultGrid({ columns, rows, className }: ResultGridProps) {
               autoFocus
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter loaded rows…"
+              // server-side モードでは未ロード分も含む全行が対象になる。
+              placeholder={serverCapable ? 'Filter all rows (server)…' : 'Filter loaded rows…'}
               aria-label="Filter rows"
               className={cn(
                 'h-6 w-full rounded-sm border border-border-base bg-surface-raised px-2 pr-6',
@@ -318,10 +372,18 @@ export function ResultGrid({ columns, rows, className }: ResultGridProps) {
             )}
           </div>
         )}
-        {/* 右端に読み込み済み行数（フィルタ適用時は絞り込み後件数も）を表示する。 */}
+        {/* 右端に行数を表示する。server-side モードでは全行に対する
+            マッチ件数（1 ページに収まらないときは先頭 N 件表示であることを明示）、
+            それ以外は読み込み済み行数（フィルタ適用時は絞り込み後件数も）。 */}
         <span className="ml-auto font-mono text-2xs text-ink-subtle tabular-nums">
-          {filter ? `${formatInt(view.length)} / ` : ''}
-          {formatInt(rows.length)} loaded
+          {serverActive
+            ? serverView.loading
+              ? 'searching…'
+              : (serverView.error ??
+                (serverView.totalMatched > serverView.rows.length
+                  ? `first ${formatInt(serverView.rows.length)} of ${formatInt(serverView.totalMatched)} matched (server)`
+                  : `${formatInt(serverView.totalMatched)} matched (server)`))
+            : `${filter ? `${formatInt(view.length)} / ` : ''}${formatInt(rows.length)} loaded`}
         </span>
       </div>
 

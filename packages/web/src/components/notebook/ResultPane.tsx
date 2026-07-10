@@ -181,8 +181,15 @@ export function ResultPane({
           </div>
         ) : (
           <>
-            {/* 実際の結果テーブル本体。 */}
-            <ResultGrid columns={cell.columns} rows={cell.rows} />
+            {/* 実際の結果テーブル本体。queryId と行数情報を渡すことで、
+                列プロファイルと server-side filter / sort が有効になる。 */}
+            <ResultGrid
+              columns={cell.columns}
+              rows={cell.rows}
+              queryId={cell.queryId || undefined}
+              totalRows={cell.rowCount}
+              complete={!running && cell.state === 'finished'}
+            />
             <div className="flex items-center justify-between border-t border-border-base bg-surface-base px-3 py-1.5">
               <span className="font-mono text-2xs text-ink-subtle">
                 {formatInt(cell.rowCount)} rows · {cell.columns.length} columns

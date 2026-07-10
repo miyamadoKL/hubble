@@ -17,12 +17,18 @@ import {
   queryRowsPageSchema,
   queryExportRequestSchema,
   queryExportResponseSchema,
+  resultSearchRequestSchema,
+  resultSearchPageSchema,
+  resultProfileSchema,
   type CreateQueryRequest,
   type CreateQueryResponse,
   type QuerySnapshot,
   type QueryRowsPage,
   type QueryExportRequest,
   type QueryExportResponse,
+  type ResultSearchRequestInput,
+  type ResultSearchPage,
+  type ResultProfile,
 } from '@hubble/contracts';
 import { apiFetch, apiRoutes } from '../api/client';
 
@@ -63,6 +69,38 @@ export function fetchQueryRows(
   return apiFetch(queryRowsPageSchema, apiRoutes.queryRows(queryId), {
     query: { offset, limit },
   });
+}
+
+/**
+ * `POST /api/queries/:id/rows/search`: server-side filter / sort / search。
+ * クライアントに全行が載っていない結果（履歴から開いた永続化結果など）を
+ * サーバー側で絞り込み/並べ替えして 1 ページ分取得する。
+ *
+ * @param queryId - 対象クエリ id。
+ * @param request - 検索条件（search、filters、sort、offset、limit）。
+ * @returns フィルタ適用後のページと件数情報。
+ */
+export function searchQueryRows(
+  queryId: string,
+  request: ResultSearchRequestInput,
+): Promise<ResultSearchPage> {
+  // 送信前に zod で検証し、default（offset/limit）も適用する。
+  const body = resultSearchRequestSchema.parse(request);
+  return apiFetch(resultSearchPageSchema, apiRoutes.queryRowsSearch(queryId), {
+    method: 'POST',
+    body,
+  });
+}
+
+/**
+ * `GET /api/queries/:id/profile`: 列プロファイル取得。
+ * null 数、distinct 概算、min/max、頻出値をサーバー側で集計して返す。
+ *
+ * @param queryId - 対象クエリ id。
+ * @returns 列ごとのプロファイル。
+ */
+export function fetchQueryProfile(queryId: string): Promise<ResultProfile> {
+  return apiFetch(resultProfileSchema, apiRoutes.queryProfile(queryId));
 }
 
 /**
