@@ -161,10 +161,14 @@ export function notebookRoutes(services: Services): App {
     const id = c.req.param('id');
     const body = await parseJsonBody(c, updateNotebookRequestSchema);
     const accessor = toShareAccessor(c.var.principal);
-    const updated = throwUpdateResult(
-      await services.notebooks.update(accessor, id, body),
-      `Notebook ${id} not found`,
-    );
+    const result = await services.notebooks.update(accessor, id, body);
+    if (result === 'conflict') {
+      throw new AppError(409, {
+        code: 'NOTEBOOK_REVISION_CONFLICT',
+        message: 'Notebook was updated by another editor',
+      });
+    }
+    const updated = throwUpdateResult(result, `Notebook ${id} not found`);
     return c.json(updated);
   });
 

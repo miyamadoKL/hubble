@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { notebookSchema, type Notebook } from '@hubble/contracts';
+import { ApiClientError } from '../api/client';
 import {
   useNotebookStore,
   blankNotebook,
@@ -28,6 +29,7 @@ function makeNotebook(over: Partial<Notebook> = {}): Notebook {
     createdAt: now,
     updatedAt: now,
     ...over,
+    revision: over.revision ?? 1,
   };
 }
 
@@ -212,7 +214,69 @@ describe('autosave debounce (fake timers)', () => {
 
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0]?.[1].cells[0]?.source).toBe('SELECT 3');
+    expect(update.mock.calls[0]?.[1].revision).toBe(1);
     expect(useNotebookStore.getState().open['nb-1']?.dirty).toBe(false);
+  });
+
+  test('an edit made during autosave survives the older response', async () => {
+    vi.useFakeTimers();
+    let resolveUpdate!: (notebook: Notebook) => void;
+    const update = vi.fn(
+      (_id: string, _nb: Notebook) =>
+        new Promise<Notebook>((resolve) => {
+          void _id;
+          void _nb;
+          resolveUpdate = resolve;
+        }),
+    );
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT 2');
+
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    expect(update).toHaveBeenCalledTimes(1);
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT 3');
+    resolveUpdate(
+      makeNotebook({
+        revision: 2,
+        cells: [{ id: 'c1', kind: 'sql', source: 'SELECT 2' }],
+      }),
+    );
+    await Promise.resolve();
+
+    const current = useNotebookStore.getState().open['nb-1']!;
+    expect(current.notebook.cells[0]?.source).toBe('SELECT 3');
+    expect(current.notebook.revision).toBe(2);
+    expect(current.dirty).toBe(true);
+    expect(current.saving).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update.mock.calls[1]?.[1].revision).toBe(2);
+  });
+
+  test('a revision conflict preserves local edits and stops autosave', async () => {
+    vi.useFakeTimers();
+    const update = vi.fn(async () => {
+      throw new ApiClientError(409, {
+        code: 'NOTEBOOK_REVISION_CONFLICT',
+        message: 'conflict',
+      });
+    });
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT local');
+
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    const conflicted = useNotebookStore.getState().open['nb-1']!;
+    expect(conflicted.notebook.cells[0]?.source).toBe('SELECT local');
+    expect(conflicted.conflict).toBe(true);
+    expect(conflicted.dirty).toBe(true);
+    expect(conflicted.saving).toBe(false);
+
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT still-local');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS * 2);
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
   test('a draft notebook is NOT autosaved (kept in localStorage instead)', async () => {

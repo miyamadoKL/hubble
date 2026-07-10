@@ -307,6 +307,7 @@ describe('auth — owner scoping', () => {
       method: 'PUT',
       headers: { 'content-type': 'application/json', ...bob },
       body: JSON.stringify({
+        revision: 1,
         name: 'Hijacked',
         description: '',
         cells: [],

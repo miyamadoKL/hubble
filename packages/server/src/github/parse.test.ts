@@ -61,6 +61,7 @@ describe('parseSavedQueryContent', () => {
 describe('parseNotebookContent', () => {
   it('round-trips notebook canonical content with new cell ids', () => {
     const original: Notebook = {
+      revision: 1,
       id: 'nb_abc',
       name: 'NB',
       description: 'desc',

@@ -53,6 +53,7 @@ import { uid } from '../utils/id';
 import { detectVariables, reconcileVariables } from './variables';
 import { readRecentContexts } from './recentContexts';
 import { canPersistNotebookToServer } from '../utils/documentShare';
+import { ApiClientError } from '../api/client';
 
 // ---- Persistence injection --------------------------------------------------
 
@@ -109,6 +110,10 @@ export interface OpenNotebook {
   // 保存 API（POST/PUT）が実行中かどうか（保存ボタンのスピナー等に使う）。
   /** A save (POST/PUT) is in flight. */
   saving: boolean;
+  /** 競合解消まで自動保存を停止する。 */
+  conflict: boolean;
+  /** 保存開始後のローカル編集を識別する世代。 */
+  editGeneration: number;
 }
 
 // ストアが公開する state と action の全体。
@@ -180,7 +185,7 @@ interface NotebookStoreState {
   // Persistence
   // 保存完了後の後処理: dirty/saving をリセットし、POST で id が変わった場合は
   // タブの key を新しい id に付け替える。
-  markSaved: (id: string, persisted: Notebook) => void;
+  markSaved: (id: string, persisted: Notebook, savedGeneration: number) => void;
   // saving フラグだけを更新する（保存開始/失敗時のマーキングに使う）。
   setSaving: (id: string, saving: boolean) => void;
 }
@@ -205,6 +210,7 @@ export function blankNotebook(context: NotebookContext = {}): Notebook {
     context,
     createdAt: now,
     updatedAt: now,
+    revision: 0,
   };
 }
 
@@ -382,7 +388,12 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     // touch: false が明示されない限り updatedAt を更新する（ユーザーの
     // 実質的な編集とみなす）。
     if (opts.touch !== false) next = { ...next, updatedAt: new Date().toISOString() };
-    set((s) => ({ open: { ...s.open, [id]: { ...entry, notebook: next, dirty: true } } }));
+    set((s) => ({
+      open: {
+        ...s.open,
+        [id]: { ...entry, notebook: next, dirty: true, editGeneration: entry.editGeneration + 1 },
+      },
+    }));
     afterChange(id);
   };
 
@@ -394,6 +405,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       // draft はサーバーに保存先がないので localStorage への書き出しだけ行う。
       writeDraft(entry.notebook);
     } else if (
+      !entry.conflict &&
       canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })
     ) {
       // 保存済み notebook はデバウンスして PUT する（view 共有はスキップ）。
@@ -416,7 +428,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
   /** Persist immediately via PUT (saved notebooks only). */
   const saveNow = async (id: string): Promise<void> => {
     const entry = get().open[id];
-    if (!entry || entry.draft || !persistence) return;
+    if (!entry || entry.draft || entry.conflict || !persistence) return;
     if (!canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })) {
       return;
     }
@@ -424,13 +436,19 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     set((s) => ({ open: { ...s.open, [id]: { ...entry, saving: true } } }));
     try {
       const saved = await persistence.update(id, entry.notebook);
-      get().markSaved(id, saved);
-    } catch {
+      get().markSaved(id, saved, entry.editGeneration);
+    } catch (err) {
       // Keep dirty; a later edit reschedules. Surface via toast at the call site.
       // 失敗しても dirty のままにしておくことで、次の編集で再スケジュール
       // される（＝リトライの仕組みを別途持たず、自然に再試行される）。
       const cur = get().open[id];
-      if (cur) set((s) => ({ open: { ...s.open, [id]: { ...cur, saving: false } } }));
+      if (cur) {
+        const conflict = err instanceof ApiClientError && err.status === 409;
+        if (conflict) clearAutosave(id);
+        set((s) => ({
+          open: { ...s.open, [id]: { ...cur, saving: false, conflict: cur.conflict || conflict } },
+        }));
+      }
     }
   };
 
@@ -449,7 +467,14 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
           ...s.open,
           [notebook.id]: existing
             ? { ...existing }
-            : { notebook, dirty: false, draft, saving: false },
+            : {
+                notebook,
+                dirty: false,
+                draft,
+                saving: false,
+                conflict: false,
+                editGeneration: 0,
+              },
         };
         const openIds = s.openIds.includes(notebook.id) ? s.openIds : [...s.openIds, notebook.id];
         return {
@@ -471,7 +496,14 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       set((s) => ({
         open: {
           ...s.open,
-          [notebook.id]: { notebook, dirty: false, draft: false, saving: false },
+          [notebook.id]: {
+            notebook,
+            dirty: false,
+            draft: false,
+            saving: false,
+            conflict: false,
+            editGeneration: 0,
+          },
         },
       }));
     },
@@ -600,7 +632,17 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       // コンテンツではないため updatedAt や変数再計算の対象にはしない。
       // ただし dirty にはするので、次回の保存には一緒に乗る。）
       const next = { ...entry.notebook, cells };
-      set((s) => ({ open: { ...s.open, [ownerId]: { ...entry, notebook: next, dirty: true } } }));
+      set((s) => ({
+        open: {
+          ...s.open,
+          [ownerId]: {
+            ...entry,
+            notebook: next,
+            dirty: true,
+            editGeneration: entry.editGeneration + 1,
+          },
+        },
+      }));
       afterChange(ownerId);
     },
 
@@ -635,16 +677,26 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
         variables,
         updatedAt: new Date().toISOString(),
       };
-      set((s) => ({ open: { ...s.open, [id]: { ...entry, notebook: next, dirty: true } } }));
+      set((s) => ({
+        open: {
+          ...s.open,
+          [id]: {
+            ...entry,
+            notebook: next,
+            dirty: true,
+            editGeneration: entry.editGeneration + 1,
+          },
+        },
+      }));
       afterChange(id);
     },
 
-    markSaved: (id, persisted) => {
-      // 保存が完了したので、保留中のオートセーブ timer はもう不要。
-      clearAutosave(id);
+    markSaved: (id, persisted, savedGeneration) => {
       const entry = get().open[id];
       if (!entry) return;
       const wasDraft = entry.draft;
+      const editedDuringSave = entry.editGeneration !== savedGeneration;
+      if (!editedDuringSave) clearAutosave(id);
       // The server may have assigned a new id (POST). Re-key under it.
       // draft の初回保存（POST）ではサーバーが新しい id を発行するため、
       // open/openIds/activeId すべてでキーを古い id → 新しい id に付け替える。
@@ -652,7 +704,22 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       set((s) => {
         const open = { ...s.open };
         delete open[id];
-        open[newKey] = { notebook: persisted, dirty: false, draft: false, saving: false };
+        open[newKey] = editedDuringSave
+          ? {
+              ...entry,
+              notebook: { ...entry.notebook, id: newKey, revision: persisted.revision },
+              dirty: true,
+              draft: false,
+              saving: false,
+            }
+          : {
+              notebook: persisted,
+              dirty: false,
+              draft: false,
+              saving: false,
+              conflict: false,
+              editGeneration: savedGeneration,
+            };
         const openIds = s.openIds.map((x) => (x === id ? newKey : x));
         const activeId = s.activeId === id ? newKey : s.activeId;
         return { open, openIds, activeId };
@@ -660,6 +727,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       // draft から昇格したので、もう localStorage の下書きは不要。
       if (wasDraft) removeDraft(id);
       writeWorkspace(get());
+      if (editedDuringSave) scheduleAutosave(newKey);
     },
 
     setSaving: (id, saving) => {
@@ -694,7 +762,7 @@ export async function persistNewNotebook(id: string, name: string): Promise<Note
   const body = { ...entry.notebook, name: name.trim() || 'Untitled notebook' };
   try {
     const saved = await persistence.create(body);
-    store.markSaved(id, saved);
+    store.markSaved(id, saved, entry.editGeneration);
     return saved;
   } catch {
     store.setSaving(id, false);
@@ -714,7 +782,7 @@ export async function persistSavedNotebook(id: string): Promise<Notebook | null>
   if (!persistence) return null;
   const store = useNotebookStore.getState();
   const entry = store.open[id];
-  if (!entry || entry.draft) return null;
+  if (!entry || entry.draft || entry.conflict) return null;
   if (!canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })) {
     return null;
   }
@@ -723,10 +791,18 @@ export async function persistSavedNotebook(id: string): Promise<Notebook | null>
   store.setSaving(id, true);
   try {
     const saved = await persistence.update(id, entry.notebook);
-    store.markSaved(id, saved);
+    store.markSaved(id, saved, entry.editGeneration);
     return saved;
-  } catch {
-    store.setSaving(id, false);
+  } catch (err) {
+    const cur = useNotebookStore.getState().open[id];
+    if (cur && err instanceof ApiClientError && err.status === 409) {
+      clearAutosave(id);
+      useNotebookStore.setState((s) => ({
+        open: { ...s.open, [id]: { ...cur, saving: false, conflict: true } },
+      }));
+    } else {
+      store.setSaving(id, false);
+    }
     return null;
   }
 }

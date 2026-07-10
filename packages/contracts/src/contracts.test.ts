@@ -604,6 +604,7 @@ describe('notebook', () => {
     context: { catalog: 'tpch', schema: 'tiny' },
     createdAt: ISO,
     updatedAt: ISO,
+    revision: 1,
   };
 
   it('parses a Variable', () => {
