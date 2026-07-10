@@ -2,8 +2,7 @@
  * gzip JSONL 形式のクエリ結果ストリームを読み書きするヘルパー。
  */
 import { createGunzip, createGzip } from 'node:zlib';
-import { PassThrough, Readable } from 'node:stream';
-import { once } from 'node:events';
+import { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import type { QueryColumn } from '@hubble/contracts';
 import { csvRecord } from '../query/csv';
@@ -28,60 +27,105 @@ export interface PersistedResultMetadata {
 
 /** 実行中の結果を gzip JSONL へ流し込む writer。 */
 export class ResultJsonlCapture {
-  private readonly input = new PassThrough();
+  private readonly input = createGzip();
   private readonly upload: Promise<void>;
-  private readonly writes: Promise<void>[] = [];
+  private writeTail: Promise<void> = Promise.resolve();
   private closed = false;
   private sawColumns = false;
+  private failure?: unknown;
 
   constructor(
     private readonly store: ResultStore,
     readonly key: string,
   ) {
-    const gzip = createGzip();
-    this.upload = this.store.put(this.key, this.input.pipe(gzip));
+    this.upload = Promise.resolve()
+      .then(() => this.store.put(this.key, this.input))
+      .catch((err: unknown) => {
+        this.markFailed(err);
+      });
   }
 
   /** 列メタデータ行を書き込む。 */
   writeColumns(columns: QueryColumn[]): void {
-    if (this.sawColumns) return;
+    if (this.sawColumns || this.closed || this.failure !== undefined) return;
     this.sawColumns = true;
-    this.enqueue({ kind: 'columns', columns });
+    this.enqueue([{ kind: 'columns', columns }]);
   }
 
   /** レコード行を書き込む。 */
-  writeRows(rows: unknown[][]): void {
-    for (const row of rows) {
-      this.enqueue({ kind: 'record', row });
-    }
+  writeRows(rows: unknown[][]): Promise<void> {
+    return this.enqueue(rows.map((row) => ({ kind: 'record', row })));
   }
 
   /** 正常終了として writer を閉じ、アップロード完了を待つ。 */
   async finish(): Promise<void> {
     if (!this.sawColumns) this.writeColumns([]);
-    await Promise.all(this.writes);
+    await this.writeTail;
     this.closed = true;
-    this.input.end();
+    if (this.failure === undefined) {
+      this.input.end();
+    } else {
+      this.input.destroy();
+    }
     await this.upload;
+    if (this.failure !== undefined) throw this.failure;
   }
 
   /** 異常終了時にアップロードを破棄する。 */
   async abort(): Promise<void> {
     this.closed = true;
     this.input.destroy();
-    await this.upload.catch(() => {});
+    await this.writeTail;
+    await this.upload;
   }
 
-  private enqueue(line: ResultJsonlLine): void {
-    if (this.closed) return;
-    const payload = `${JSON.stringify(line)}\n`;
-    const pending = this.write(payload);
-    this.writes.push(pending);
+  private enqueue(lines: ResultJsonlLine[]): Promise<void> {
+    if (this.closed || this.failure !== undefined || lines.length === 0) {
+      return Promise.resolve();
+    }
+    this.writeTail = this.writeTail
+      .then(async () => {
+        for (const line of lines) {
+          if (this.closed || this.failure !== undefined) return;
+          await this.write(`${JSON.stringify(line)}\n`);
+        }
+      })
+      .catch((err: unknown) => {
+        this.markFailed(err);
+      });
+    return this.writeTail;
   }
 
   private async write(payload: string): Promise<void> {
     if (this.input.write(payload)) return;
-    await once(this.input, 'drain');
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => {
+        this.input.off('drain', onDrain);
+        this.input.off('error', onError);
+        this.input.off('close', onClose);
+      };
+      const onDrain = (): void => {
+        cleanup();
+        resolve();
+      };
+      const onError = (err: Error): void => {
+        cleanup();
+        reject(err);
+      };
+      const onClose = (): void => {
+        cleanup();
+        reject(this.failure ?? new Error('Result capture closed before drain'));
+      };
+      this.input.once('drain', onDrain);
+      this.input.once('error', onError);
+      this.input.once('close', onClose);
+    });
+  }
+
+  private markFailed(err: unknown): void {
+    if (this.failure !== undefined) return;
+    this.failure = err;
+    this.input.destroy();
   }
 }
 
