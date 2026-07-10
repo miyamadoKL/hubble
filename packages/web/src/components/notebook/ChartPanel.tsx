@@ -34,10 +34,12 @@ export function ChartPanel({
   cellId,
   columns,
   rows,
+  rowsVersion,
 }: {
   cellId: string;
   columns: QueryColumn[];
   rows: ReadonlyArray<ResultRow>;
+  rowsVersion?: number;
 }) {
   // このセルに保存済みのチャート設定を購読する（未設定なら undefined）。
   // 設定はノートブックセルの `chart` フィールドとして保持され、
@@ -92,7 +94,7 @@ export function ChartPanel({
   return (
     <div>
       <ChartControls cols={cols} config={config} onChange={(next) => setConfig(cellId, next)} />
-      <ChartView columns={columns} rows={rows} config={config} />
+      <ChartView columns={columns} rows={rows} rowsVersion={rowsVersion} config={config} />
     </div>
   );
 }

@@ -5,10 +5,14 @@
  * （AppShell）を組み合わせるだけの薄いラッパーであり、
  * ルーティングや複雑なレイアウトロジックは各コンポーネント側に委譲している。
  */
-// アプリのメインレイアウト（サイドバー、エディタ、結果表示などを含む画面全体の骨組み）。
-import { AppShell } from './components/layout/AppShell';
+import { lazy, Suspense } from 'react';
 // 認証状態に応じて子要素の表示/非表示を切り替えるゲートコンポーネント。
 import { AuthGate } from './components/auth/AuthGate';
+
+// notebook機能に残るANTLR利用も初期HTMLのimport graphから分離する。
+const AppShell = lazy(() =>
+  import('./components/layout/AppShell').then((module) => ({ default: module.AppShell })),
+);
 
 /**
  * Hubble SQL Workbench — application root. `AuthGate` wraps
@@ -27,7 +31,15 @@ export default function App() {
     // 認証要求画面がレンダリングされる。
     <AuthGate>
       {/* サイドバー、エディタ、結果パネルなどアプリ本体のレイアウト */}
-      <AppShell />
+      <Suspense
+        fallback={
+          <div className="flex min-h-screen items-center justify-center bg-surface-base text-sm text-ink-muted">
+            Loading workspace…
+          </div>
+        }
+      >
+        <AppShell />
+      </Suspense>
     </AuthGate>
   );
 }

@@ -117,12 +117,18 @@ describe('executionStore.runUnit', () => {
     const src = lastSource();
 
     emit(src, { type: 'rows', offset: 0, rows: [[1], [2]] });
+    const first = useExecutionStore.getState().cells['cell-b']!;
+    const rowsReference = first.rows;
+    expect(first.rowsVersion).toBe(1);
     emit(src, { type: 'rows', offset: 2, rows: [[3]] });
     // A replay chunk re-sending offset 0 must not duplicate.
-    emit(src, { type: 'rows', offset: 0, rows: [[1], [2]] });
+    emit(src, { type: 'rows', offset: 0, rows: [[10], [2]] });
     emit(src, { type: 'done', state: 'finished', rowCount: 3, truncated: false });
 
-    expect(useExecutionStore.getState().cells['cell-b']!.rows).toEqual([[1], [2], [3]]);
+    const cell = useExecutionStore.getState().cells['cell-b']!;
+    expect(cell.rows).toBe(rowsReference);
+    expect(cell.rowsVersion).toBe(3);
+    expect(cell.rows).toEqual([[10], [2], [3]]);
   });
 
   test('captures an error event with its detail', async () => {

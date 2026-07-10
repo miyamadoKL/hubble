@@ -6,13 +6,16 @@
  * 実行エラーはパネル単位のエラー表示に閉じ、ダッシュボード全体は壊さない
  * (Redash の RestrictedWidget と同じ発想)。
  */
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import type { QueryColumn, QueryWidget } from '@hubble/contracts';
 import { Spinner } from '../common/Spinner';
-import { ChartView } from '../notebook/ChartView';
 import { describeColumns, reconcileConfig, toLabel, toNumber } from '../../chart';
 import type { ResultRow } from '../../execution';
+
+const ChartView = lazy(() =>
+  import('../notebook/ChartView').then((module) => ({ default: module.ChartView })),
+);
 
 /** widget テーブル表示の最大行数 (パネルサイズに収まる範囲での上限)。 */
 const TABLE_MAX_ROWS = 100;
@@ -154,7 +157,15 @@ export function QueryWidgetBody({
     }
     return (
       <div className="h-full min-h-0 p-1">
-        <ChartView columns={columns} rows={rows} config={chartConfig} fill />
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center gap-2 text-xs text-ink-muted">
+              <Spinner size={14} /> Loading chart…
+            </div>
+          }
+        >
+          <ChartView columns={columns} rows={rows} config={chartConfig} fill />
+        </Suspense>
       </div>
     );
   }

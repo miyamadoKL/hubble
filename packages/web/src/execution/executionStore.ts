@@ -63,6 +63,8 @@ export interface CellExecution {
   columns: QueryColumn[];
   /** クライアント側に取り込み済みの結果行。 */
   rows: ResultRow[];
+  /** rowsをin-place更新した回数。参照が同じでもconsumerへ変更を通知する。 */
+  rowsVersion: number;
   /**
    * Total rows the server reports buffered (may exceed `rows.length` mid-stream).
    * サーバーが保持中の総行数（ストリーム途中は `rows.length` を上回りうる）。
@@ -308,11 +310,16 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
                 // Append from the chunk's offset; tolerate replay overlap.
                 // チャンクの offset 位置から行を書き込む。再接続時のリプレイで
                 // 同じ offset が再送されても、上書きするだけなので重複しない。
-                const rows = prev.rows.slice();
+                const rows = prev.rows;
                 for (let i = 0; i < event.rows.length; i++) {
                   rows[event.offset + i] = event.rows[i]!;
                 }
-                return { ...prev, rows, rowCount: Math.max(prev.rowCount, rows.length) };
+                return {
+                  ...prev,
+                  rows,
+                  rowsVersion: prev.rowsVersion + 1,
+                  rowCount: Math.max(prev.rowCount, rows.length),
+                };
               });
               break;
             case 'stats':
@@ -385,6 +392,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
       state: 'queued',
       columns: [],
       rows: [],
+      rowsVersion: 0,
       rowCount: 0,
       truncated: false,
       csvReexecAllowed: false,
@@ -523,6 +531,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
         stats: snapshot.stats,
         columns: snapshot.columns ?? [],
         rows,
+        rowsVersion: 0,
         rowCount: snapshot.rowCount,
         error: snapshot.error,
         truncated: snapshot.truncated,

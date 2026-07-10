@@ -3,7 +3,7 @@
 // Explain（実行計画）/ Details（実行メタ情報）の4タブ構成で、エラー発生時は
 // 上部にエラーバナーも表示する。表示内容は execution ストアの CellExecution
 // レコードによって完全に駆動される。
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   BarChart3,
   Check,
@@ -20,7 +20,6 @@ import { IconButton } from '../common/IconButton';
 import { Button } from '../common/Button';
 import { EmptyState } from '../common/EmptyState';
 import { ResultGrid } from './ResultGrid';
-import { ChartPanel } from './ChartPanel';
 import { ErrorPanel } from './ErrorPanel';
 import { formatBytes, formatDuration, formatInt } from '../../utils/format';
 import { cn } from '../../utils/cn';
@@ -34,6 +33,10 @@ import {
   isCellRunning,
   type CellExecution,
 } from '../../execution';
+
+const ChartPanel = lazy(() =>
+  import('./ChartPanel').then((module) => ({ default: module.ChartPanel })),
+);
 
 /**
  * Live result pane with per-cell tabs (Grid / Chart / Explain /
@@ -186,6 +189,7 @@ export function ResultPane({
             <ResultGrid
               columns={cell.columns}
               rows={cell.rows}
+              rowsVersion={cell.rowsVersion}
               queryId={cell.queryId || undefined}
               totalRows={cell.rowCount}
               complete={!running && cell.state === 'finished'}
@@ -206,7 +210,22 @@ export function ResultPane({
         ))}
 
       {/* Chartタブ: 現在の結果列と行をグラフ描画パネルに渡す。 */}
-      {tab === 'chart' && <ChartPanel cellId={cellId} columns={cell.columns} rows={cell.rows} />}
+      {tab === 'chart' && (
+        <Suspense
+          fallback={
+            <div className="flex h-80 items-center justify-center text-xs text-ink-muted">
+              Loading chart…
+            </div>
+          }
+        >
+          <ChartPanel
+            cellId={cellId}
+            columns={cell.columns}
+            rows={cell.rows}
+            rowsVersion={cell.rowsVersion}
+          />
+        </Suspense>
+      )}
 
       {/* Explainタブ: EXPLAIN実行結果のプレーンテキストを表示する（下記 ExplainView 参照）。 */}
       {tab === 'explain' && (

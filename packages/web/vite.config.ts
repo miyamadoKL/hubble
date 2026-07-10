@@ -32,7 +32,9 @@ export default defineConfig({
           // ANTLR ランタイム（antlr4ng / antlr4-c3）を専用チャンクに分離。
           if (id.includes('antlr4ng') || id.includes('antlr4-c3')) return 'antlr';
           // チャート描画ライブラリ（ECharts / zrender）を専用チャンクに分離。
-          if (id.includes('echarts') || id.includes('zrender')) return 'echarts';
+          if (id.includes('/node_modules/echarts/') || id.includes('/node_modules/zrender/')) {
+            return 'echarts';
+          }
           // 上記のいずれにも該当しない場合は Vite の既定のチャンク分割に任せる。
           return undefined;
         },
