@@ -77,6 +77,7 @@ export interface SubmitParams {
 export class QueryRegistry {
   // queryId をキーに実行中/終了済みの QueryExecution を保持するマップ。
   private readonly executions = new Map<string, QueryExecution>();
+  private readonly engineLeaseReleases = new Map<string, () => void>();
   private readonly engines: Map<string, QueryEngine>;
   private defaultDatasourceId: string;
   private readonly defaultMaxRows: number;
@@ -128,28 +129,37 @@ export class QueryRegistry {
     const queryId = newId('q_');
     const execSource = params.executionSource ?? 'user';
     const resultObserver = params.makeResultObserver?.(queryId);
-    const client = engine.executionClient({
-      source: execSource,
-      user: params.ctx.user,
-      roleName: params.roleName,
-      sessionReadOnly: params.sessionReadOnly,
-    });
+    const releaseLease = engine.lease?.() ?? (() => {});
+    this.engineLeaseReleases.set(queryId, releaseLease);
+    let exec: QueryExecution;
+    try {
+      const client = engine.executionClient({
+        source: execSource,
+        user: params.ctx.user,
+        roleName: params.roleName,
+        sessionReadOnly: params.sessionReadOnly,
+      });
 
-    const exec = new QueryExecution({
-      queryId,
-      statement: params.statement,
-      ctx: params.ctx,
-      datasourceId,
-      maxRows: params.maxRows ?? this.defaultMaxRows,
-      overflowMode: params.overflowMode ?? this.defaultOverflowMode,
-      client,
-      engine,
-      now: this.now,
-      resultObserver,
-      onSettled: (e) => {
-        this.onSettled?.(e);
-      },
-    });
+      exec = new QueryExecution({
+        queryId,
+        statement: params.statement,
+        ctx: params.ctx,
+        datasourceId,
+        maxRows: params.maxRows ?? this.defaultMaxRows,
+        overflowMode: params.overflowMode ?? this.defaultOverflowMode,
+        client,
+        engine,
+        now: this.now,
+        resultObserver,
+        onSettled: (e) => {
+          this.releaseEngineLease(queryId);
+          this.onSettled?.(e);
+        },
+      });
+    } catch (err) {
+      this.releaseEngineLease(queryId);
+      throw err;
+    }
     this.executions.set(queryId, exec);
     // Schedule the run respecting the concurrency semaphore.
     // 同時実行数の制約を守りながら実行をスケジューリングする
@@ -169,7 +179,16 @@ export class QueryRegistry {
       await exec.run();
     } finally {
       this.releaseSlot();
+      // observer 例外で onSettled が呼ばれない場合も lease を回収する。
+      this.releaseEngineLease(exec.queryId);
     }
+  }
+
+  private releaseEngineLease(queryId: string): void {
+    const release = this.engineLeaseReleases.get(queryId);
+    if (!release) return;
+    this.engineLeaseReleases.delete(queryId);
+    release();
   }
 
   // 実行スロットを獲得する。空きがあれば同期的にカウントを増やして即解決、

@@ -240,141 +240,151 @@ export class AlertEvaluator {
       });
     }
 
-    const effective = effectiveGuardLimits(this.deps.guardConfig, alertRole);
-
+    const releaseLease = engine.lease?.() ?? (() => {});
     try {
-      const ioExplain = engine.ioExplainExecution?.({
-        statement: savedQuery.statement,
-        catalog: savedQuery.catalog ?? undefined,
-        schema: savedQuery.schema ?? undefined,
-        principal: alert.owner,
-      });
-      await assertQueryWriteAllowed({
-        statement: savedQuery.statement,
-        role: alertRole,
-        ioExplainClient: ioExplain?.client,
-        ioExplainCtx: ioExplain?.ctx,
-        ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return this.persistOutcome(alert, previousState, {
-        conditionMet: false,
-        observedValue: null,
-        notified: false,
-        errorType: errorTypeOf(err),
-        errorMessage: message,
-      });
-    }
+      const effective = effectiveGuardLimits(this.deps.guardConfig, alertRole);
 
-    const validation = await engine.validate({
-      statement: savedQuery.statement,
-      catalog: savedQuery.catalog,
-      schema: savedQuery.schema,
-      principal: alert.owner,
-      roleName: alertRole.name,
-    });
-    if (!validation.ok && validation.kind === 'user_error') {
-      return this.persistOutcome(alert, previousState, {
-        conditionMet: false,
-        observedValue: null,
-        notified: false,
-        errorType: 'USER_ERROR',
-        errorMessage: validation.message,
-      });
-    }
-    if (!validation.ok) {
-      return this.persistOutcome(alert, previousState, {
-        conditionMet: false,
-        observedValue: null,
-        notified: false,
-        errorType: 'TRINO_UNAVAILABLE',
-        errorMessage: validation.message,
-      });
-    }
-
-    if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
-      const estimate = await this.deps.estimate.estimate({
-        statement: savedQuery.statement,
-        catalog: savedQuery.catalog ?? undefined,
-        schema: savedQuery.schema ?? undefined,
-        principal: alert.owner,
-        datasourceId,
-        roleName: alertRole.name,
-        guard: effective,
-      });
-      if (estimate.verdict.decision === 'block') {
+      try {
+        const ioExplain = engine.ioExplainExecution?.({
+          statement: savedQuery.statement,
+          catalog: savedQuery.catalog ?? undefined,
+          schema: savedQuery.schema ?? undefined,
+          principal: alert.owner,
+        });
+        await assertQueryWriteAllowed({
+          statement: savedQuery.statement,
+          role: alertRole,
+          ioExplainClient: ioExplain?.client,
+          ioExplainCtx: ioExplain?.ctx,
+          ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         return this.persistOutcome(alert, previousState, {
           conditionMet: false,
           observedValue: null,
           notified: false,
-          errorType: 'QUERY_BLOCKED',
-          errorMessage: estimate.verdict.reasons.join('; ') || 'Blocked by Query Guard',
+          errorType: errorTypeOf(err),
+          errorMessage: message,
         });
       }
-    }
 
-    try {
-      const client = engine.executionClient({
-        source: 'alert',
-        user: alert.owner,
+      const validation = await engine.validate({
+        statement: savedQuery.statement,
+        catalog: savedQuery.catalog,
+        schema: savedQuery.schema,
+        principal: alert.owner,
         roleName: alertRole.name,
-        sessionReadOnly: !hasQueryWrite(alertRole),
       });
-      const ctx: TrinoRequestContext = {
-        catalog: savedQuery.catalog ?? undefined,
-        schema: savedQuery.schema ?? undefined,
-        user: alert.owner,
-      };
-      const fetched = await fetchStatementRows(client, savedQuery.statement, ctx);
-      const idx = columnIndex(fetched.columns, alert.columnName);
-      if (idx < 0) {
+      if (!validation.ok && validation.kind === 'user_error') {
         return this.persistOutcome(alert, previousState, {
           conditionMet: false,
           observedValue: null,
           notified: false,
-          errorType: 'COLUMN_NOT_FOUND',
-          errorMessage: `Column '${alert.columnName}' not found in query result`,
+          errorType: 'USER_ERROR',
+          errorMessage: validation.message,
         });
       }
-      const observed = selectObservedValue(fetched.rows, idx, alert.selector);
-      const observedStr = stringifyObserved(observed);
-      const conditionMet = compareThreshold({
-        observed,
-        op: alert.op,
-        threshold: alert.value,
-      });
-      const newState = nextAlertState(previousState, conditionMet);
-      const nowMs = this.now();
-      const notify = shouldNotify({
-        previousState,
-        newState,
-        rearm: alert.rearm,
-        lastTriggeredAt: alert.lastTriggeredAt,
-        nowMs,
-        muted: alert.muted,
-      });
-
-      const outcome = await this.persistOutcome(alert, previousState, {
-        conditionMet,
-        observedValue: observedStr,
-        newState,
-        notified: notify,
-        errorType: null,
-        errorMessage: null,
-      });
-
-      if (notify) {
-        void this.sendNotification(alert, outcome, savedQuery.name, datasourceId);
+      if (!validation.ok) {
+        return this.persistOutcome(alert, previousState, {
+          conditionMet: false,
+          observedValue: null,
+          notified: false,
+          errorType: 'TRINO_UNAVAILABLE',
+          errorMessage: validation.message,
+        });
       }
 
-      await this.recordAudit(alert, outcome, datasourceId);
-      return outcome;
-    } catch (err) {
-      const failureClass = classifyFailure(err);
-      const message = err instanceof Error ? err.message : String(err);
-      const errorType = errorTypeOf(err);
-      if (failureClass === 'deterministic') {
+      if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
+        const estimate = await this.deps.estimate.estimate({
+          statement: savedQuery.statement,
+          catalog: savedQuery.catalog ?? undefined,
+          schema: savedQuery.schema ?? undefined,
+          principal: alert.owner,
+          datasourceId,
+          roleName: alertRole.name,
+          guard: effective,
+        });
+        if (estimate.verdict.decision === 'block') {
+          return this.persistOutcome(alert, previousState, {
+            conditionMet: false,
+            observedValue: null,
+            notified: false,
+            errorType: 'QUERY_BLOCKED',
+            errorMessage: estimate.verdict.reasons.join('; ') || 'Blocked by Query Guard',
+          });
+        }
+      }
+
+      try {
+        const client = engine.executionClient({
+          source: 'alert',
+          user: alert.owner,
+          roleName: alertRole.name,
+          sessionReadOnly: !hasQueryWrite(alertRole),
+        });
+        const ctx: TrinoRequestContext = {
+          catalog: savedQuery.catalog ?? undefined,
+          schema: savedQuery.schema ?? undefined,
+          user: alert.owner,
+        };
+        const fetched = await fetchStatementRows(client, savedQuery.statement, ctx);
+        const idx = columnIndex(fetched.columns, alert.columnName);
+        if (idx < 0) {
+          return this.persistOutcome(alert, previousState, {
+            conditionMet: false,
+            observedValue: null,
+            notified: false,
+            errorType: 'COLUMN_NOT_FOUND',
+            errorMessage: `Column '${alert.columnName}' not found in query result`,
+          });
+        }
+        const observed = selectObservedValue(fetched.rows, idx, alert.selector);
+        const observedStr = stringifyObserved(observed);
+        const conditionMet = compareThreshold({
+          observed,
+          op: alert.op,
+          threshold: alert.value,
+        });
+        const newState = nextAlertState(previousState, conditionMet);
+        const nowMs = this.now();
+        const notify = shouldNotify({
+          previousState,
+          newState,
+          rearm: alert.rearm,
+          lastTriggeredAt: alert.lastTriggeredAt,
+          nowMs,
+          muted: alert.muted,
+        });
+
+        const outcome = await this.persistOutcome(alert, previousState, {
+          conditionMet,
+          observedValue: observedStr,
+          newState,
+          notified: notify,
+          errorType: null,
+          errorMessage: null,
+        });
+
+        if (notify) {
+          void this.sendNotification(alert, outcome, savedQuery.name, datasourceId);
+        }
+
+        await this.recordAudit(alert, outcome, datasourceId);
+        return outcome;
+      } catch (err) {
+        const failureClass = classifyFailure(err);
+        const message = err instanceof Error ? err.message : String(err);
+        const errorType = errorTypeOf(err);
+        if (failureClass === 'deterministic') {
+          return this.persistOutcome(alert, previousState, {
+            conditionMet: false,
+            observedValue: null,
+            notified: false,
+            errorType,
+            errorMessage: message,
+          });
+        }
         return this.persistOutcome(alert, previousState, {
           conditionMet: false,
           observedValue: null,
@@ -383,13 +393,8 @@ export class AlertEvaluator {
           errorMessage: message,
         });
       }
-      return this.persistOutcome(alert, previousState, {
-        conditionMet: false,
-        observedValue: null,
-        notified: false,
-        errorType,
-        errorMessage: message,
-      });
+    } finally {
+      releaseLease();
     }
   }
 

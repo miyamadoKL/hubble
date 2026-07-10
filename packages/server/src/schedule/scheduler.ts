@@ -476,146 +476,33 @@ export class Scheduler {
         rowCount: null,
       };
     }
-    const effective = effectiveGuardLimits(this.deps.guardConfig, scheduleRole);
+    const releaseLease = engine.lease?.() ?? (() => {});
+    try {
+      const effective = effectiveGuardLimits(this.deps.guardConfig, scheduleRole);
 
-    // 日本語: 無限ループに見えるが、各分岐は必ず return するか (確定的失敗/成功/blocked)、
-    // maybeRetry() が undefined を返した場合のみ waitBeforeRetry() を挟んで continue する。
-    // つまりループを抜けるのは「確定」か「リトライ上限到達で確定」のいずれかのみ。
-    for (;;) {
-      attempt += 1;
+      // 日本語: 無限ループに見えるが、各分岐は必ず return するか (確定的失敗/成功/blocked)、
+      // maybeRetry() が undefined を返した場合のみ waitBeforeRetry() を挟んで continue する。
+      // つまりループを抜けるのは「確定」か「リトライ上限到達で確定」のいずれかのみ。
+      for (;;) {
+        attempt += 1;
 
-      try {
-        const ioExplain = engine.ioExplainExecution?.({
-          statement: schedule.statement,
-          catalog: schedule.catalog ?? undefined,
-          schema: schedule.schema ?? undefined,
-          principal: schedule.owner,
-        });
-        await assertQueryWriteAllowed({
-          statement: schedule.statement,
-          role: scheduleRole,
-          ioExplainClient: ioExplain?.client,
-          ioExplainCtx: ioExplain?.ctx,
-          ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
-        });
-      } catch (err) {
-        const errorType = errorTypeOf(err);
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-          status: 'failed',
-          attempt,
-          trinoQueryId: null,
-          errorType,
-          errorMessage: message,
-          rowCount: null,
-        };
-      }
-
-      // 1. Pre-flight validation (EXPLAIN VALIDATE). USER_ERROR is deterministic.
-      // 日本語: 実行直前にもう一度 EXPLAIN (TYPE VALIDATE) で検証する。作成/更新時にも
-      // 検証しているが、依存テーブルの変化などで実行時点では失敗しうるための再チェック。
-      const validation = await engine.validate({
-        statement: schedule.statement,
-        catalog: schedule.catalog,
-        schema: schedule.schema,
-        principal: schedule.owner,
-        roleName: scheduleRole.name,
-      });
-      if (!validation.ok && validation.kind === 'user_error') {
-        // 日本語: SQL 自体が不正 (構文/意味エラー)。何度再試行しても同じ結果になるため
-        // リトライせず即座に failed で確定する。
-        return {
-          status: 'failed',
-          attempt,
-          trinoQueryId: null,
-          errorType: 'USER_ERROR',
-          errorMessage: locationMessage(validation),
-          rowCount: null,
-        };
-      }
-      // `unavailable` validation (Trino unreachable) is a transient fault: fall
-      // through to the catch via a thrown transport-style execution below — but
-      // we can short-circuit and treat it as a transient failure directly.
-      // 日本語: Trino に接続できない等、検証そのものが行えなかった場合は一時的な障害と
-      // みなし、maybeRetry() でリトライ可否を判定してから待って再試行する。
-      if (!validation.ok) {
-        const transientOutcome = this.maybeRetry(
-          attempt,
-          policy,
-          'TRINO_UNAVAILABLE',
-          validation.message,
-        );
-        if (transientOutcome) return transientOutcome;
-        await this.waitBeforeRetry(policy, attempt);
-        continue;
-      }
-
-      // 2. Query Guard (enforce mode only): a block is deterministic.
-      // 日本語: enforce モードでのみ、EXPLAIN (TYPE IO) ベースのスキャン量見積りを行い、
-      // 閾値超過ならブロックする。ブロックはポリシー判断でありリトライしても結果は
-      // 変わらないため、blocked ステータスで即座に確定する。
-      if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
-        const estimate = await this.deps.estimate.estimate({
-          statement: schedule.statement,
-          catalog: schedule.catalog ?? undefined,
-          schema: schedule.schema ?? undefined,
-          principal: schedule.owner,
-          datasourceId: schedule.datasourceId,
-          roleName: scheduleRole.name,
-          guard: effective,
-        });
-        if (estimate.verdict.decision === 'block') {
-          return {
-            status: 'blocked',
-            attempt,
-            trinoQueryId: null,
-            errorType: 'QUERY_BLOCKED',
-            errorMessage: estimate.verdict.reasons.join('; ') || 'Blocked by Query Guard',
-            rowCount: null,
-            guard: {
-              status: estimate.status,
-              decision: estimate.verdict.decision,
-              reasons: estimate.verdict.reasons,
-              scanRows: estimate.scanRows,
-              scanBytes: estimate.scanBytes,
-              estimatedSeconds: estimate.estimatedSeconds,
-              elapsedMs: estimate.elapsedMs,
-            },
-          };
-        }
-      }
-
-      // 3. Execute.
-      // 日本語: 検証とガードを通過したので実際に Trino へ投げ、完走 (全ページ追走) させる。
-      // drainStatement は結果行をバッファせず行数だけ数える (execute.ts 参照)。
-      try {
-        const client = engine.executionClient({
-          source: 'scheduled',
-          user: schedule.owner,
-          roleName: scheduleRole.name,
-          sessionReadOnly: !hasQueryWrite(scheduleRole),
-        });
-        const ctx: TrinoRequestContext = {
-          catalog: schedule.catalog ?? undefined,
-          schema: schedule.schema ?? undefined,
-          user: schedule.owner,
-        };
-        const result = await drainStatement(client, schedule.statement, ctx);
-        return {
-          status: 'success',
-          attempt,
-          trinoQueryId: result.trinoQueryId,
-          errorType: null,
-          errorMessage: null,
-          rowCount: result.rowCount,
-        };
-      } catch (err) {
-        // 日本語: retry.ts の classifyFailure で「再試行しても無駄 (deterministic)」か
-        // 「一時的な障害 (transient)」かを判定する。
-        const failureClass = classifyFailure(err);
-        const errorType = errorTypeOf(err);
-        const message = err instanceof Error ? err.message : String(err);
-        if (failureClass === 'deterministic') {
+        try {
+          const ioExplain = engine.ioExplainExecution?.({
+            statement: schedule.statement,
+            catalog: schedule.catalog ?? undefined,
+            schema: schedule.schema ?? undefined,
+            principal: schedule.owner,
+          });
+          await assertQueryWriteAllowed({
+            statement: schedule.statement,
+            role: scheduleRole,
+            ioExplainClient: ioExplain?.client,
+            ioExplainCtx: ioExplain?.ctx,
+            ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
+          });
+        } catch (err) {
+          const errorType = errorTypeOf(err);
+          const message = err instanceof Error ? err.message : String(err);
           return {
             status: 'failed',
             attempt,
@@ -625,12 +512,130 @@ export class Scheduler {
             rowCount: null,
           };
         }
-        // transient: リトライ上限に達していなければ待って continue、達していれば
-        // maybeRetry() が failed の RunOutcome を返すのでそれを確定させる。
-        const transientOutcome = this.maybeRetry(attempt, policy, errorType, message);
-        if (transientOutcome) return transientOutcome;
-        await this.waitBeforeRetry(policy, attempt);
+
+        // 1. Pre-flight validation (EXPLAIN VALIDATE). USER_ERROR is deterministic.
+        // 日本語: 実行直前にもう一度 EXPLAIN (TYPE VALIDATE) で検証する。作成/更新時にも
+        // 検証しているが、依存テーブルの変化などで実行時点では失敗しうるための再チェック。
+        const validation = await engine.validate({
+          statement: schedule.statement,
+          catalog: schedule.catalog,
+          schema: schedule.schema,
+          principal: schedule.owner,
+          roleName: scheduleRole.name,
+        });
+        if (!validation.ok && validation.kind === 'user_error') {
+          // 日本語: SQL 自体が不正 (構文/意味エラー)。何度再試行しても同じ結果になるため
+          // リトライせず即座に failed で確定する。
+          return {
+            status: 'failed',
+            attempt,
+            trinoQueryId: null,
+            errorType: 'USER_ERROR',
+            errorMessage: locationMessage(validation),
+            rowCount: null,
+          };
+        }
+        // `unavailable` validation (Trino unreachable) is a transient fault: fall
+        // through to the catch via a thrown transport-style execution below — but
+        // we can short-circuit and treat it as a transient failure directly.
+        // 日本語: Trino に接続できない等、検証そのものが行えなかった場合は一時的な障害と
+        // みなし、maybeRetry() でリトライ可否を判定してから待って再試行する。
+        if (!validation.ok) {
+          const transientOutcome = this.maybeRetry(
+            attempt,
+            policy,
+            'TRINO_UNAVAILABLE',
+            validation.message,
+          );
+          if (transientOutcome) return transientOutcome;
+          await this.waitBeforeRetry(policy, attempt);
+          continue;
+        }
+
+        // 2. Query Guard (enforce mode only): a block is deterministic.
+        // 日本語: enforce モードでのみ、EXPLAIN (TYPE IO) ベースのスキャン量見積りを行い、
+        // 閾値超過ならブロックする。ブロックはポリシー判断でありリトライしても結果は
+        // 変わらないため、blocked ステータスで即座に確定する。
+        if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
+          const estimate = await this.deps.estimate.estimate({
+            statement: schedule.statement,
+            catalog: schedule.catalog ?? undefined,
+            schema: schedule.schema ?? undefined,
+            principal: schedule.owner,
+            datasourceId: schedule.datasourceId,
+            roleName: scheduleRole.name,
+            guard: effective,
+          });
+          if (estimate.verdict.decision === 'block') {
+            return {
+              status: 'blocked',
+              attempt,
+              trinoQueryId: null,
+              errorType: 'QUERY_BLOCKED',
+              errorMessage: estimate.verdict.reasons.join('; ') || 'Blocked by Query Guard',
+              rowCount: null,
+              guard: {
+                status: estimate.status,
+                decision: estimate.verdict.decision,
+                reasons: estimate.verdict.reasons,
+                scanRows: estimate.scanRows,
+                scanBytes: estimate.scanBytes,
+                estimatedSeconds: estimate.estimatedSeconds,
+                elapsedMs: estimate.elapsedMs,
+              },
+            };
+          }
+        }
+
+        // 3. Execute.
+        // 日本語: 検証とガードを通過したので実際に Trino へ投げ、完走 (全ページ追走) させる。
+        // drainStatement は結果行をバッファせず行数だけ数える (execute.ts 参照)。
+        try {
+          const client = engine.executionClient({
+            source: 'scheduled',
+            user: schedule.owner,
+            roleName: scheduleRole.name,
+            sessionReadOnly: !hasQueryWrite(scheduleRole),
+          });
+          const ctx: TrinoRequestContext = {
+            catalog: schedule.catalog ?? undefined,
+            schema: schedule.schema ?? undefined,
+            user: schedule.owner,
+          };
+          const result = await drainStatement(client, schedule.statement, ctx);
+          return {
+            status: 'success',
+            attempt,
+            trinoQueryId: result.trinoQueryId,
+            errorType: null,
+            errorMessage: null,
+            rowCount: result.rowCount,
+          };
+        } catch (err) {
+          // 日本語: retry.ts の classifyFailure で「再試行しても無駄 (deterministic)」か
+          // 「一時的な障害 (transient)」かを判定する。
+          const failureClass = classifyFailure(err);
+          const errorType = errorTypeOf(err);
+          const message = err instanceof Error ? err.message : String(err);
+          if (failureClass === 'deterministic') {
+            return {
+              status: 'failed',
+              attempt,
+              trinoQueryId: null,
+              errorType,
+              errorMessage: message,
+              rowCount: null,
+            };
+          }
+          // transient: リトライ上限に達していなければ待って continue、達していれば
+          // maybeRetry() が failed の RunOutcome を返すのでそれを確定させる。
+          const transientOutcome = this.maybeRetry(attempt, policy, errorType, message);
+          if (transientOutcome) return transientOutcome;
+          await this.waitBeforeRetry(policy, attempt);
+        }
       }
+    } finally {
+      releaseLease();
     }
   }
 
