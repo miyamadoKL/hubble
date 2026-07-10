@@ -352,6 +352,7 @@ export async function buildServices(
     });
     const githubConnections = new GithubConnectionRepository(db);
     github = new GithubSyncService({
+      db,
       config: config.github,
       client: options.githubClient ?? githubClient,
       connections: githubConnections,

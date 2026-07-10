@@ -148,6 +148,20 @@ describe('github canonical', () => {
     );
   });
 
+  it.each([
+    ['name with LF', { name: 'bad\nname' }],
+    ['name with CR', { name: 'bad\rname' }],
+    ['description with LF', { description: 'bad\ndescription' }],
+    ['description with CR', { description: 'bad\rdescription' }],
+  ])('rejects saved query metadata containing a newline: %s', (_label, patch) => {
+    expect(() => savedQueryToContent({ ...savedQuery, ...patch })).toThrowError(
+      expect.objectContaining({
+        status: 400,
+        detail: expect.objectContaining({ code: 'GITHUB_INVALID_METADATA' }),
+      }),
+    );
+  });
+
   it('omits volatile saved query fields from canonical content', () => {
     const changed = {
       ...savedQuery,
