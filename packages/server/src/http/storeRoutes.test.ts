@@ -44,6 +44,7 @@ describe('notebook CRUD', () => {
     );
     expect(created.id).toMatch(/^nb_/);
     expect(created.cells).toEqual([]);
+    expect(created.revision).toBe(1);
 
     const list = await json(
       await ctx.app.request('/api/notebooks'),
@@ -59,6 +60,7 @@ describe('notebook CRUD', () => {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
+          revision: created.revision,
           name: 'Renamed',
           description: 'updated',
           cells: [{ id: 'c1', kind: 'sql', source: 'SELECT 1' }],
@@ -71,6 +73,27 @@ describe('notebook CRUD', () => {
     expect(updated.name).toBe('Renamed');
     expect(updated.cells).toHaveLength(1);
     expect(updated.context.catalog).toBe('tpch');
+    expect(updated.revision).toBe(2);
+
+    const stale = await ctx.app.request(`/api/notebooks/${created.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        revision: created.revision,
+        name: 'Stale overwrite',
+        description: 'stale',
+        cells: [],
+        variables: [],
+        context: {},
+      }),
+    });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()) as unknown).toMatchObject({
+      error: { code: 'NOTEBOOK_REVISION_CONFLICT' },
+    });
+    expect(
+      await json(await ctx.app.request(`/api/notebooks/${created.id}`), notebookSchema),
+    ).toMatchObject({ name: 'Renamed', revision: 2 });
 
     const search = await json(
       await ctx.app.request('/api/notebooks?query=Renam'),
@@ -87,6 +110,19 @@ describe('notebook CRUD', () => {
     expect(del.status).toBe(200);
     const after = await ctx.app.request(`/api/notebooks/${created.id}`);
     expect(after.status).toBe(404);
+    const updateMissing = await ctx.app.request(`/api/notebooks/${created.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        revision: updated.revision,
+        name: 'Missing',
+        description: '',
+        cells: [],
+        variables: [],
+        context: {},
+      }),
+    });
+    expect(updateMissing.status).toBe(404);
   });
 
   it('rejects invalid create bodies with a 400 envelope', async () => {
@@ -405,6 +441,20 @@ describe('document sharing', () => {
     );
     expect(bobList).toHaveLength(1);
     expect(bobList[0]).toMatchObject({ owner: 'alice', myPermission: 'view' });
+
+    const bobUpdate = await ctx.app.request(`/api/notebooks/${created.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...bob },
+      body: JSON.stringify({
+        revision: created.revision,
+        name: 'Denied',
+        description: '',
+        cells: [],
+        variables: [],
+        context: {},
+      }),
+    });
+    expect(bobUpdate.status).toBe(403);
 
     const ownerShares = await json(
       await ctx.app.request(`/api/notebooks/${created.id}/shares`, { headers: alice }),

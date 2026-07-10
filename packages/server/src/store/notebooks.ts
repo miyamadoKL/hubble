@@ -19,6 +19,8 @@ import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 import { DocumentShareRepository, type ShareAccessor, type StoreForbidden } from './documentShares';
 
+export type StoreConflict = 'conflict';
+
 /**
  * `notebooks` テーブルの行を SQL ドライバがそのまま返す形。`data` 列には
  * 契約型 `Notebook` 全体（セル、変数、コンテキストを含む）が JSON 文字列と
@@ -32,6 +34,7 @@ interface NotebookRow {
   owner: string;
   created_at: string;
   updated_at: string;
+  revision: number;
 }
 
 type NotebookListRow = Pick<
@@ -114,10 +117,11 @@ export class NotebookRepository {
       context: req.context ?? {},
       createdAt: nowIso,
       updatedAt: nowIso,
+      revision: 1,
     });
     await this.db.run(
-      `INSERT INTO notebooks (id, name, description, data, owner, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notebooks (id, name, description, data, owner, created_at, updated_at, revision)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         notebook.id,
         notebook.name,
@@ -127,6 +131,7 @@ export class NotebookRepository {
         owner,
         notebook.createdAt,
         notebook.updatedAt,
+        notebook.revision,
       ],
     );
     return notebook;
@@ -140,7 +145,7 @@ export class NotebookRepository {
     accessor: ShareAccessor,
     id: string,
     req: UpdateNotebookRequest,
-  ): Promise<Notebook | undefined | StoreForbidden> {
+  ): Promise<Notebook | undefined | StoreForbidden | StoreConflict> {
     const owned = await this.getOwnedRow(id, accessor.user);
     if (owned) {
       return this.applyUpdate(owned, req, accessor.user, 'owner');
@@ -237,7 +242,7 @@ export class NotebookRepository {
     req: UpdateNotebookRequest,
     owner: string,
     myPermission: MyPermission,
-  ): Promise<Notebook> {
+  ): Promise<Notebook | undefined | StoreConflict> {
     // 既存値の上に req の値をマージし、スキーマで再バリデーションする。
     const updated: Notebook = notebookSchema.parse({
       ...this.rowToNotebook(existing),
@@ -247,10 +252,13 @@ export class NotebookRepository {
       variables: req.variables,
       context: req.context,
       updatedAt: new Date().toISOString(),
+      revision: req.revision + 1,
     });
-    await this.db.run(
-      `UPDATE notebooks SET name = ?, description = ?, data = ?, updated_at = ?
-       WHERE id = ? AND owner = ?`,
+    const rows = await this.db.query<NotebookRow>(
+      `UPDATE notebooks SET name = ?, description = ?, data = ?, updated_at = ?,
+       revision = revision + 1
+       WHERE id = ? AND owner = ? AND revision = ?
+       RETURNING *`,
       [
         updated.name,
         updated.description,
@@ -258,16 +266,22 @@ export class NotebookRepository {
         updated.updatedAt,
         existing.id,
         owner,
+        req.revision,
       ],
     );
-    return withAccessMeta(updated, owner, myPermission);
+    const row = rows[0];
+    if (row) return withAccessMeta(this.rowToNotebook(row), owner, myPermission);
+    return (await this.getRowById(existing.id)) ? 'conflict' : undefined;
   }
 
   private rowToNotebook(row: NotebookRow): Notebook {
     // `data` is the source of truth; parse + validate against the contract.
     // `data` 列（JSON 文字列）が正であり、name/description 列は検索用の複製に
     // すぎないため無視する。パース結果を契約スキーマで検証してから返す。
-    return notebookSchema.parse(JSON.parse(row.data));
+    return notebookSchema.parse({
+      ...(JSON.parse(row.data) as Record<string, unknown>),
+      revision: Number(row.revision),
+    });
   }
 }
 

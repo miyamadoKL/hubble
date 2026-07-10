@@ -654,7 +654,12 @@ export class GithubSyncService {
     id: string,
     parsed: ParsedNotebookContent,
   ): Promise<void> {
+    const existing = await this.deps.notebooks.get(accessor, id);
+    if (!existing) {
+      throw AppError.notFound('Notebook not found');
+    }
     const result = await this.deps.notebooks.update(accessor, id, {
+      revision: existing.revision,
       name: parsed.name,
       description: parsed.description,
       cells: parsed.cells,
@@ -663,6 +668,12 @@ export class GithubSyncService {
     });
     if (result === 'forbidden') {
       throw AppError.forbidden('Only the document owner can update this notebook');
+    }
+    if (result === 'conflict') {
+      throw new AppError(409, {
+        code: 'NOTEBOOK_REVISION_CONFLICT',
+        message: 'Notebook was updated while applying GitHub content',
+      });
     }
     if (!result) {
       throw AppError.notFound('Notebook not found');

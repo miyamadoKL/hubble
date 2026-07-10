@@ -55,6 +55,7 @@ for (const backend of dbBackends) {
         const created = await repo.create('alice', { name: 'Sales', description: 'q3 sales' });
         expect(created.id).toMatch(/^nb_/);
         expect(created.cells).toEqual([]);
+        expect(created.revision).toBe(1);
 
         expect(await repo.list(accessor('bob'))).toEqual([]);
         expect(await repo.get(accessor('bob'), created.id)).toBeUndefined();
@@ -69,6 +70,7 @@ for (const backend of dbBackends) {
         expect(got?.myPermission).toBe('owner');
 
         const updated = await repo.update(accessor('alice'), created.id, {
+          revision: created.revision,
           name: 'Renamed',
           description: 'updated',
           cells: [{ id: 'c1', kind: 'sql', source: 'SELECT 1' }],
@@ -76,11 +78,27 @@ for (const backend of dbBackends) {
           context: { catalog: 'tpch' },
         });
         expect(updated).not.toBe('forbidden');
-        if (updated === 'forbidden' || updated === undefined) {
+        if (updated === 'forbidden' || updated === 'conflict' || updated === undefined) {
           throw new Error('expected notebook update');
         }
         expect(updated.name).toBe('Renamed');
         expect(updated.cells).toHaveLength(1);
+        expect(updated.revision).toBe(2);
+
+        expect(
+          await repo.update(accessor('alice'), created.id, {
+            revision: created.revision,
+            name: 'Stale overwrite',
+            description: 'stale',
+            cells: [],
+            variables: [],
+            context: {},
+          }),
+        ).toBe('conflict');
+        expect(await repo.get(accessor('alice'), created.id)).toMatchObject({
+          name: 'Renamed',
+          revision: 2,
+        });
 
         expect(await repo.list(accessor('alice'), 'Renam')).toHaveLength(1);
         expect(await repo.list(accessor('alice'), 'zzz')).toHaveLength(0);
@@ -107,6 +125,7 @@ for (const backend of dbBackends) {
         });
         expect(
           await repo.update(accessor('bob'), created.id, {
+            revision: created.revision,
             name: 'Nope',
             description: 'd',
             cells: [],
@@ -123,6 +142,7 @@ for (const backend of dbBackends) {
           'alice',
         );
         const updated = await repo.update(accessor('bob'), created.id, {
+          revision: created.revision,
           name: 'Bob edit',
           description: 'd',
           cells: [{ id: 'c1', kind: 'sql', source: 'SELECT 1' }],

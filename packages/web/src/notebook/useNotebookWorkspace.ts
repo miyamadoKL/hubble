@@ -86,6 +86,7 @@ function ensurePersistence(queryClient: QueryClient): void {
     update: async (id, nb) => {
       // 保存済み notebook の更新（PUT 相当。オートセーブ/明示保存の両方から使われる）。
       const saved = await updateNotebook(id, {
+        revision: nb.revision,
         name: nb.name,
         description: nb.description,
         cells: nb.cells,

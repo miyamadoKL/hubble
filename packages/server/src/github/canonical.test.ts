@@ -29,6 +29,7 @@ const savedQuery: SavedQuery = {
 };
 
 const notebook: Notebook = {
+  revision: 1,
   id: 'nb_1',
   name: 'Analysis',
   description: 'Notebook desc',

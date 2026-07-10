@@ -140,6 +140,8 @@ export const notebookSchema = z.object({
   createdAt: isoTimestamp,
   // 最終更新日時。
   updatedAt: isoTimestamp,
+  // 全置換更新の競合検出に使う単調増加revision。
+  revision: z.number().int().nonnegative(),
   /** 所有者 user id。共有経由で取得した場合に設定される。 */
   owner: z.string().optional(),
   /** 呼び出し元の effective permission (owner / edit / view)。 */
@@ -187,6 +189,7 @@ export type CreateNotebookRequest = z.infer<typeof createNotebookRequestSchema>;
  * （PATCH ではなく PUT なので、すべてのフィールドを毎回渡す必要がある）。
  */
 export const updateNotebookRequestSchema = z.object({
+  revision: z.number().int().nonnegative(),
   name: z.string().min(1),
   description: z.string(),
   cells: z.array(cellSchema),

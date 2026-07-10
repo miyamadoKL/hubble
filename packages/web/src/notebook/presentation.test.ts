@@ -12,6 +12,7 @@ function nb(cells: Notebook['cells']): Notebook {
     context: {},
     createdAt: '2026-06-12T00:00:00.000Z',
     updatedAt: '2026-06-12T00:00:00.000Z',
+    revision: 1,
   };
 }
 
