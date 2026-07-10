@@ -1,6 +1,6 @@
 /**
- * スケジュール失敗通知を外部チャネルへ送るサービス層。
- * スケジューラーから確定失敗だけを受け取り、Slack と email の送信処理、監査ログ記録、失敗時の warn ログをここに閉じ込める。
+ * スケジュール失敗通知とAlert発火通知を外部チャネルへ送るサービス層。
+ * 各チャネルの送信処理、監査ログ記録、失敗時のwarnログをここに閉じ込める。
  */
 import nodemailer from 'nodemailer';
 import type { ScheduleNotificationChannel, AlertNotificationChannel } from '@hubble/contracts';
@@ -49,9 +49,17 @@ export interface AlertTriggeredNotificationInput {
   evaluatedAt: string;
 }
 
-/** Alert 評価器から見た発火通知送信の抽象。 */
+/** 既存呼び出しから見たAlert発火通知送信の抽象。 */
 export interface AlertNotificationSender {
   sendAlertTriggered(input: AlertTriggeredNotificationInput): Promise<void>;
+}
+
+/** Alert outbox workerから見た単一チャネル配送の抽象。 */
+export interface AlertChannelNotificationSender {
+  sendChannel(
+    channel: AlertNotificationChannel,
+    input: AlertTriggeredNotificationInput,
+  ): Promise<void>;
 }
 
 /** 通知サービスの外部依存。テストでは fetch、メール送信、監査ログを差し替える。 */
@@ -75,7 +83,9 @@ const MAX_REASON_LENGTH = 500;
 /**
  * スケジュール失敗時の外部通知を送るサービス。
  */
-export class NotificationService implements FailureNotificationSender, AlertNotificationSender {
+export class NotificationService
+  implements FailureNotificationSender, AlertNotificationSender, AlertChannelNotificationSender
+{
   private readonly fetchImpl: SafeFetch;
   private readonly logWarn: (message: string, detail?: unknown) => void;
   private mailSender?: MailSender;
@@ -106,8 +116,41 @@ export class NotificationService implements FailureNotificationSender, AlertNoti
 
   async sendAlertTriggered(input: AlertTriggeredNotificationInput): Promise<void> {
     for (const channel of input.alert.notifications.channels) {
-      await this.sendAlertChannel(channel, input);
+      try {
+        await this.sendChannel(channel, input);
+      } catch (err) {
+        this.logWarn(`alert notification send skipped or failed: channel=${channel}`, err);
+      }
     }
+  }
+
+  /** 単一Alertチャネルを配送し、失敗時はworkerが再試行できるよう例外を返す。 */
+  async sendChannel(
+    channel: AlertNotificationChannel,
+    input: AlertTriggeredNotificationInput,
+  ): Promise<void> {
+    const text = this.renderAlertText(input);
+    try {
+      if (channel === 'slack') {
+        await this.sendSlack(this.config.slackWebhookUrl, text);
+      } else if (channel === 'email') {
+        await this.sendEmail(
+          input.alert.notifications.emailTo ?? [],
+          `[Hubble] Alert triggered: ${input.alert.name}`,
+          text,
+        );
+      } else {
+        await this.sendWebhook(input.alert.notifications.webhookUrl!, text, input);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.recordAlertAuditBestEffort(input, channel, false, {
+        outcome: message === 'NOT_CONFIGURED' ? 'skipped' : 'failed',
+        error: message,
+      });
+      throw err;
+    }
+    await this.recordAlertAuditBestEffort(input, channel, true, { outcome: 'sent' });
   }
 
   private async sendScheduleChannel(
@@ -135,34 +178,6 @@ export class NotificationService implements FailureNotificationSender, AlertNoti
     }
   }
 
-  private async sendAlertChannel(
-    channel: AlertNotificationChannel,
-    input: AlertTriggeredNotificationInput,
-  ): Promise<void> {
-    const text = this.renderAlertText(input);
-    try {
-      if (channel === 'slack') {
-        await this.sendSlack(this.config.slackWebhookUrl, text);
-      } else if (channel === 'email') {
-        await this.sendEmail(
-          input.alert.notifications.emailTo ?? [],
-          `[Hubble] Alert triggered: ${input.alert.name}`,
-          text,
-        );
-      } else {
-        await this.sendWebhook(input.alert.notifications.webhookUrl!, text, input);
-      }
-      await this.recordAlertAudit(input, channel, true, { outcome: 'sent' });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logWarn(`alert notification send skipped or failed: channel=${channel}`, err);
-      await this.recordAlertAudit(input, channel, false, {
-        outcome: message === 'NOT_CONFIGURED' ? 'skipped' : 'failed',
-        error: message,
-      });
-    }
-  }
-
   private async sendSlack(webhookUrl: string | undefined, text: string): Promise<void> {
     if (!webhookUrl) throw new Error('NOT_CONFIGURED');
     const res = await this.fetchImpl(webhookUrl, {
@@ -180,7 +195,11 @@ export class NotificationService implements FailureNotificationSender, AlertNoti
     if (!host || !from) throw new Error('NOT_CONFIGURED');
     if (to.length === 0) throw new Error('NOT_CONFIGURED');
     const sender = this.mailSender ?? this.createMailSender(host, port, user, password);
-    await sender.sendMail({ from, to, subject, text });
+    await withTimeout(
+      sender.sendMail({ from, to, subject, text }),
+      this.config.channelTimeoutMs,
+      'Email send timed out',
+    );
   }
 
   private async sendWebhook(
@@ -294,6 +313,33 @@ export class NotificationService implements FailureNotificationSender, AlertNoti
         ...extra,
       },
     });
+  }
+
+  private async recordAlertAuditBestEffort(
+    input: AlertTriggeredNotificationInput,
+    channel: AlertNotificationChannel,
+    success: boolean,
+    extra: Record<string, AuditJson>,
+  ): Promise<void> {
+    try {
+      await this.recordAlertAudit(input, channel, success, extra);
+    } catch (err) {
+      // 監査失敗による再配送は重複通知になるため、配送結果は覆さない。
+      this.logWarn(`alert notification audit failed: channel=${channel}`, err);
+    }
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    handle = setTimeout(() => reject(new Error(message)), timeoutMs);
+    handle.unref?.();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (handle !== undefined) clearTimeout(handle);
   }
 }
 
