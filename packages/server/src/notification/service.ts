@@ -9,6 +9,7 @@ import type { ScheduleRecord } from '../store/schedules';
 import type { AlertRecord } from '../store/alerts';
 import type { AlertEvalResponse } from '@hubble/contracts';
 import type { AuditJson, AuditLogger } from '../audit';
+import { createSafeFetch, type SafeFetch, type SafeFetchOptions } from './safeFetch';
 
 interface MailSender {
   sendMail(message: {
@@ -57,6 +58,10 @@ export interface AlertNotificationSender {
 export interface NotificationServiceDeps {
   /** Slack webhook 呼び出しに使う fetch 実装。 */
   fetchImpl?: typeof fetch;
+  /** webhook の事前 DNS 解決を差し替えるテスト用関数。 */
+  webhookLookup?: SafeFetchOptions['lookup'];
+  /** webhook の接続時 DNS 解決を差し替えるテスト用関数。 */
+  webhookConnectionLookup?: SafeFetchOptions['connectionLookup'];
   /** email 送信に使う transport。未指定時は nodemailer から作る。 */
   mailSender?: MailSender;
   /** 通知送信結果を記録する監査ログ。 */
@@ -71,7 +76,7 @@ const MAX_REASON_LENGTH = 500;
  * スケジュール失敗時の外部通知を送るサービス。
  */
 export class NotificationService implements FailureNotificationSender, AlertNotificationSender {
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: SafeFetch;
   private readonly logWarn: (message: string, detail?: unknown) => void;
   private mailSender?: MailSender;
 
@@ -79,7 +84,14 @@ export class NotificationService implements FailureNotificationSender, AlertNoti
     private readonly config: ServerConfig['notification'],
     private readonly deps: NotificationServiceDeps = {},
   ) {
-    this.fetchImpl = deps.fetchImpl ?? fetch;
+    this.fetchImpl = createSafeFetch({
+      fetchImpl: deps.fetchImpl,
+      allowedCidrs: config.webhookAllowedCidrs,
+      allowHttp: config.webhookAllowHttp,
+      timeoutMs: config.webhookTimeoutMs,
+      lookup: deps.webhookLookup,
+      connectionLookup: deps.webhookConnectionLookup,
+    });
     this.logWarn = deps.logWarn ?? ((message, detail) => console.warn(message, detail));
     this.mailSender = deps.mailSender;
   }
