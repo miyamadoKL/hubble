@@ -54,6 +54,64 @@ function scanQuoted(sql: string, start: number, quote: string): number {
   return sql.length;
 }
 
+function isWordCharacter(ch: string): boolean {
+  return /^[A-Za-z0-9_]$/.test(ch);
+}
+
+/** コメントとクォートを除外し、括弧深度 0 の裸単語を返す。 */
+function topLevelBareWords(statement: string): string[] {
+  const words: string[] = [];
+  let depth = 0;
+  let i = 0;
+  while (i < statement.length) {
+    const ch = statement[i]!;
+    if (isWhitespace(ch)) {
+      i += 1;
+      continue;
+    }
+    if (ch === '-' && statement[i + 1] === '-') {
+      i += 2;
+      while (i < statement.length && statement[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && statement[i + 1] === '*') {
+      i += 2;
+      while (i < statement.length - 1 && !(statement[i] === '*' && statement[i + 1] === '/')) {
+        i += 1;
+      }
+      i += 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      i = scanQuoted(statement, i, ch);
+      continue;
+    }
+    if (ch === '(') {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (ch === ')') {
+      depth = Math.max(0, depth - 1);
+      i += 1;
+      continue;
+    }
+    if (isWordCharacter(ch)) {
+      const start = i;
+      i += 1;
+      while (i < statement.length && isWordCharacter(statement[i]!)) i += 1;
+      if (depth === 0) words.push(statement.slice(start, i).toUpperCase());
+      continue;
+    }
+    i += 1;
+  }
+  return words;
+}
+
+function hasAdjacentWords(words: readonly string[], first: string, second: string): boolean {
+  return words.some((word, index) => word === first && words[index + 1] === second);
+}
+
 /** 位置 start 以降が空白とコメントだけかどうか。 */
 function isOnlyTrailingTrivia(sql: string, start: number): boolean {
   let i = start;
@@ -159,7 +217,12 @@ export function classifyStatementWrite(statement: string): StatementWriteClassif
   const first = tokens[0]!;
   if (WRITE_PREFIX_KEYWORDS.has(first)) return 'deny';
 
-  if (first === 'SET' && tokens[1] === 'SESSION') return 'allow';
+  if (first === 'SET') {
+    const words = topLevelBareWords(statement);
+    // checkout 時にも read only を再適用するが、分類段階で READ WRITE への変更を拒否する。
+    if (hasAdjacentWords(words, 'READ', 'WRITE')) return 'deny';
+    if (tokens[1] === 'SESSION') return 'allow';
+  }
 
   if (first === 'EXPLAIN') {
     const parsed = parseExplainStatement(statement);
@@ -168,6 +231,8 @@ export function classifyStatementWrite(statement: string): StatementWriteClassif
     }
     return 'allow';
   }
+
+  if (first === 'SELECT' && topLevelBareWords(statement).includes('INTO')) return 'deny';
 
   if (READ_FAST_KEYWORDS.has(first)) return 'allow';
 
