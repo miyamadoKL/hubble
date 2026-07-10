@@ -6,6 +6,7 @@
 import { parse as parseYaml } from 'yaml';
 import {
   alertNotificationsSchema,
+  alertNotificationChannelSchema,
   alertOpSchema,
   alertSelectorSchema,
   chartConfigSchema,
@@ -107,6 +108,28 @@ const workflowContentSchema = z.object({
   stages: workflowDefinitionSchema,
 });
 
+// Git正規形は秘密値を保持しないため、webhookチャネルでもURLの省略を許可する。
+const gitAlertNotificationsSchema = z
+  .object({
+    channels: z
+      .array(alertNotificationChannelSchema)
+      .default([])
+      .refine((channels) => new Set(channels).size === channels.length, {
+        message: 'Duplicate notification channels are not allowed',
+      }),
+    emailTo: z.array(z.string().email()).max(10).optional(),
+    webhookUrl: z.string().url().optional(),
+  })
+  .superRefine((notifications, ctx) => {
+    if (notifications.channels.includes('email') && (notifications.emailTo?.length ?? 0) === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['emailTo'],
+        message: 'emailTo is required when email notifications are enabled',
+      });
+    }
+  });
+
 const alertContentSchema = z.object({
   name: z.string().min(1),
   savedQueryId: z.string().min(1),
@@ -117,7 +140,7 @@ const alertContentSchema = z.object({
   rearm: z.number().int().nonnegative(),
   muted: z.boolean(),
   cron: cronExpression,
-  notifications: alertNotificationsSchema,
+  notifications: gitAlertNotificationsSchema,
 });
 
 const dashboardQueryWidgetContentSchema = z.object({

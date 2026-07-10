@@ -9,7 +9,13 @@ import { DocumentShareRepository } from '../store/documentShares';
 import { WorkflowRepository } from '../store/workflows';
 import { AlertRepository } from '../store/alerts';
 import { dbBackends } from '../test/dbBackends';
-import { savedQueryToContent, contentHash, documentPath, documentToContent } from './canonical';
+import {
+  alertToContent,
+  savedQueryToContent,
+  contentHash,
+  documentPath,
+  documentToContent,
+} from './canonical';
 import { GithubPullRequestExistsError, type GithubClient } from './client';
 import { DocumentGitLinkRepository, GithubConnectionRepository } from './store';
 import { GithubSyncService } from './syncService';
@@ -138,7 +144,18 @@ function buildService(
     encryptionKey: KEY,
     now,
   });
-  return { service, savedQueries, notebooks, dashboards, workflows, links, shares, audit, config };
+  return {
+    service,
+    savedQueries,
+    notebooks,
+    dashboards,
+    workflows,
+    alerts,
+    links,
+    shares,
+    audit,
+    config,
+  };
 }
 
 const principalAlice = {
@@ -431,6 +448,53 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
     const updated = await workflows.get('alice', workflow.id);
     expect(updated?.stages[0]?.steps[0]?.statement).toBe('SELECT 2');
     expect(updated?.enabled).toBe(false);
+    await db.close();
+  });
+
+  it('pullDocument preserves an alert webhook URL while applying public notification fields', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, alerts, links } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const saved = await savedQueries.create('alice', { name: 'Metric', statement: 'SELECT 1' });
+    const alert = await alerts.create('alice', {
+      name: 'Spike',
+      savedQueryId: saved.id,
+      columnName: 'count',
+      op: '>',
+      value: '100',
+      cron: '0 * * * *',
+      notifications: {
+        channels: ['webhook'],
+        webhookUrl: 'https://secret.example/existing',
+      },
+    });
+    const remoteContent = alertToContent({
+      ...alert,
+      notifications: {
+        channels: ['webhook', 'email'],
+        emailTo: ['new-ops@example.com'],
+        webhookUrl: 'https://secret.example/remote',
+      },
+    });
+    expect(remoteContent).not.toContain('webhookUrl');
+    expect(remoteContent).not.toContain('https://secret.example/remote');
+    await links.upsert('alert', alert.id, {
+      path: documentPath('alert', alert.id),
+      approvedHash: contentHash(alertToContent(alert)),
+    });
+    client.files.set(`${DEFAULT_BRANCH}:alerts/${alert.id}.yaml`, {
+      contentText: remoteContent,
+      sha: 'alert-sha',
+    });
+
+    await service.pullDocument(principalAlice, 'alert', alert.id);
+
+    expect((await alerts.getById(alert.id))?.notifications).toEqual({
+      channels: ['webhook', 'email'],
+      emailTo: ['new-ops@example.com'],
+      webhookUrl: 'https://secret.example/existing',
+    });
     await db.close();
   });
 

@@ -106,6 +106,10 @@ export function dashboardToContent(d: Dashboard): string {
  * @param a - Alert レコード。
  */
 export function alertToContent(a: AlertRecord): string {
+  const notifications = {
+    channels: a.notifications.channels,
+    ...(a.notifications.emailTo !== undefined ? { emailTo: a.notifications.emailTo } : {}),
+  };
   const payload = {
     id: a.id,
     name: a.name,
@@ -117,7 +121,7 @@ export function alertToContent(a: AlertRecord): string {
     rearm: a.rearm,
     muted: a.muted,
     cron: a.cron,
-    notifications: a.notifications,
+    notifications,
   };
   return `${stringifyYaml(payload)}\n`;
 }

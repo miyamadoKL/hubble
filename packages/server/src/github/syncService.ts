@@ -629,7 +629,12 @@ export class GithubSyncService {
           rearm: parsed.rearm,
           muted: parsed.muted,
           cron: parsed.cron,
-          notifications: parsed.notifications,
+          notifications: {
+            ...parsed.notifications,
+            ...(existing.notifications.webhookUrl !== undefined
+              ? { webhookUrl: existing.notifications.webhookUrl }
+              : {}),
+          },
         });
         break;
       }

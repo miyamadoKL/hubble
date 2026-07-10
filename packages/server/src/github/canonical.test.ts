@@ -88,7 +88,11 @@ const alert: AlertRecord = {
   cron: '0 * * * *',
   state: 'triggered',
   lastTriggeredAt: '2026-01-01T00:00:00.000Z',
-  notifications: { channels: ['slack'] },
+  notifications: {
+    channels: ['webhook', 'email'],
+    emailTo: ['ops@example.com'],
+    webhookUrl: 'https://secret.example/hook',
+  },
   principalSnapshot: { user: 'alice' },
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-02T00:00:00.000Z',
@@ -186,6 +190,10 @@ describe('github canonical', () => {
     const content = alertToContent(alert);
     expect(content).toContain('savedQueryId: sq_1');
     expect(content).toContain('op: ">"');
+    expect(content).toContain('webhook');
+    expect(content).toContain('ops@example.com');
+    expect(content).not.toContain('webhookUrl');
+    expect(content).not.toContain('https://secret.example/hook');
     expect(content).not.toContain('state');
     expect(content).not.toContain('lastTriggeredAt');
     expect(content).not.toContain('owner');
