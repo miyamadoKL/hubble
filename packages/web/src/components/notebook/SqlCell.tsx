@@ -4,10 +4,9 @@
 // 実行エラーマーカー、実行対象ユニット（選択範囲/カーソル位置/セル全体）の
 // 解決までを一手に担う。Query Guardによるライブ見積り（コスト事前チェック）、
 // EXPLAIN実行、実行結果表示（StatsStrip/ResultPane）などもこのファイルで統括する。
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type * as monaco from 'monaco-editor';
 import type { CellResultMeta } from '@hubble/contracts';
-import { SqlEditor } from '../../editor/SqlEditor';
 import { CellToolbar } from './CellToolbar';
 import { StatsStrip } from './StatsStrip';
 import { EstimateStrip } from './EstimateStrip';
@@ -46,6 +45,10 @@ import {
 import { createQuery, fetchQueryRows } from '../../execution/api';
 import { subscribeQueryEvents } from '../../execution/sse';
 import { setActiveEditor, clearActiveEditor } from '../../editor/activeEditor';
+
+const SqlEditor = lazy(() =>
+  import('../../editor/SqlEditor').then((module) => ({ default: module.SqlEditor })),
+);
 
 /**
  * A live SQL cell: the Monaco editor wired to the execution store.
@@ -566,14 +569,22 @@ export function SqlCell({
         <>
           {/* Monaco SQLエディタ本体。 */}
           <div className="bg-surface-raised">
-            <SqlEditor
-              value={source}
-              onChange={handleChange}
-              onExecute={handleExecute}
-              onReady={handleReady}
-              trinoLanguage={trinoLanguage}
-              ariaLabel={`SQL cell ${name ?? ''}`}
-            />
+            <Suspense
+              fallback={
+                <div className="flex h-24 items-center justify-center text-xs text-ink-muted">
+                  Loading editor…
+                </div>
+              }
+            >
+              <SqlEditor
+                value={source}
+                onChange={handleChange}
+                onExecute={handleExecute}
+                onReady={handleReady}
+                trinoLanguage={trinoLanguage}
+                ariaLabel={`SQL cell ${name ?? ''}`}
+              />
+            </Suspense>
           </div>
           {!costEstimateEnabled && (
             <Tooltip label="This data source does not support scan estimates">
