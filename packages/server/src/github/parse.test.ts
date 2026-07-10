@@ -200,7 +200,11 @@ describe('parseAlertContent', () => {
       cron: '0 * * * *',
       state: 'unknown',
       lastTriggeredAt: null,
-      notifications: { channels: ['webhook'], webhookUrl: 'https://example.com/hook' },
+      notifications: {
+        channels: ['webhook', 'email'],
+        emailTo: ['ops@example.com'],
+        webhookUrl: 'https://example.com/hook',
+      },
       principalSnapshot: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
@@ -213,7 +217,10 @@ describe('parseAlertContent', () => {
     expect(parsed.value).toBe(original.value);
     expect(parsed.selector).toBe(original.selector);
     expect(parsed.rearm).toBe(original.rearm);
-    expect(parsed.notifications).toEqual(original.notifications);
+    expect(parsed.notifications).toEqual({
+      channels: ['webhook', 'email'],
+      emailTo: ['ops@example.com'],
+    });
   });
 });
 
