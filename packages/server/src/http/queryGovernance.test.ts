@@ -100,6 +100,9 @@ describe('query governance persistence', () => {
     const saved = await ctx.services.savedQueries.create('admin', {
       name: 'Q',
       statement: 'SELECT approved',
+      datasourceId: ctx.services.defaultDatasourceId,
+      catalog: 'sales',
+      schema: 'reporting',
     });
     const savedDoc = (await ctx.services.savedQueries.get(accessor, saved.id))!;
     const links = new DocumentGitLinkRepository(ctx.db);
@@ -107,14 +110,67 @@ describe('query governance persistence', () => {
       path: `saved-queries/${saved.id}.sql`,
       approvedHash: contentHash(savedQueryToContent(savedDoc)),
     });
-    expect(await ctx.services.githubGovernance.isStatementApproved('SELECT approved')).toBe(true);
-    const queryId = await submit(ctx, { statement: 'SELECT approved' });
+    expect(
+      await ctx.services.githubGovernance.isStatementApproved({
+        datasourceId: ctx.services.defaultDatasourceId,
+        catalog: 'sales',
+        schema: 'reporting',
+        statement: 'SELECT approved',
+        defaultDatasourceId: ctx.services.defaultDatasourceId,
+      }),
+    ).toBe(true);
+    const queryId = await submit(ctx, {
+      statement: 'SELECT approved',
+      datasourceId: ctx.services.defaultDatasourceId,
+      catalog: 'sales',
+      schema: 'reporting',
+    });
     await waitForTerminal(ctx.services, queryId);
     await vi.waitFor(() => {
       expect(store.objects.size).toBeGreaterThan(0);
     });
     const auditRows = await ctx.services.audit.listForTest();
     expect(auditRows.some((row) => row.action === 'query.result.persist')).toBe(true);
+  });
+
+  it('does not persist an approved statement under a different catalog or schema', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({
+      scenarios: [APPROVED_SCENARIO],
+      resultStore: store,
+      configOverrides: githubConfigOverrides(),
+    });
+    const accessor = { user: 'admin', groups: [] as string[], role: 'admin' };
+    const saved = await ctx.services.savedQueries.create('admin', {
+      name: 'Scoped Q',
+      statement: 'SELECT approved',
+      datasourceId: ctx.services.defaultDatasourceId,
+      catalog: 'sales',
+      schema: 'reporting',
+    });
+    const savedDoc = (await ctx.services.savedQueries.get(accessor, saved.id))!;
+    const links = new DocumentGitLinkRepository(ctx.db);
+    await links.upsert('saved_query', saved.id, {
+      path: `saved-queries/${saved.id}.sql`,
+      approvedHash: contentHash(savedQueryToContent(savedDoc)),
+    });
+
+    const catalogMismatch = await submit(ctx, {
+      statement: 'SELECT approved',
+      datasourceId: ctx.services.defaultDatasourceId,
+      catalog: 'finance',
+      schema: 'reporting',
+    });
+    await waitForTerminal(ctx.services, catalogMismatch);
+    const schemaMismatch = await submit(ctx, {
+      statement: 'SELECT approved',
+      datasourceId: ctx.services.defaultDatasourceId,
+      catalog: 'sales',
+      schema: 'private',
+    });
+    await waitForTerminal(ctx.services, schemaMismatch);
+
+    expect(store.objects.size).toBe(0);
   });
 });
 

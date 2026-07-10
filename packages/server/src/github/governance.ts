@@ -16,9 +16,24 @@ import type { WorkflowRecord, WorkflowRepository } from '../store/workflows';
 
 const APPROVED_STATEMENTS_TTL_MS = 60_000;
 
-/** ステートメント文字列の承認判定用 SHA-256 (hex)。末尾空白は trimEnd する。 */
-export function statementHash(statement: string): string {
-  return createHash('sha256').update(statement.trimEnd(), 'utf8').digest('hex');
+/** ステートメント承認を実行先contextへ束縛する入力。 */
+export interface StatementApprovalContext {
+  datasourceId?: string;
+  catalog?: string;
+  schema?: string;
+  statement: string;
+  defaultDatasourceId: string;
+}
+
+/** 正規化した実行contextとステートメントから承認判定用SHA-256を作る。 */
+export function statementApprovalKey(context: StatementApprovalContext): string {
+  const normalized = [
+    context.datasourceId ?? context.defaultDatasourceId,
+    context.catalog ?? '',
+    context.schema ?? '',
+    context.statement.trimEnd(),
+  ];
+  return createHash('sha256').update(JSON.stringify(normalized), 'utf8').digest('hex');
 }
 
 export interface GithubGovernanceServiceDeps {
@@ -40,6 +55,8 @@ export class GithubGovernanceService {
   private approvedStatementsBuiltAt = 0;
   private approvedStatementsPromise: Promise<void> | undefined;
   private lastSuccessfulApprovedStatements: Set<string> | undefined;
+  private approvedStatementsDefaultDatasourceId: string | undefined;
+  private lastSuccessfulDefaultDatasourceId: string | undefined;
 
   constructor(private readonly deps: GithubGovernanceServiceDeps) {
     this.now = deps.now ?? (() => Date.now());
@@ -66,10 +83,10 @@ export class GithubGovernanceService {
    * そのためドキュメントの編集や承認状態の変化がこの判定へ反映されるまで
    * 最大 60 秒の遅延がある (submit 経路に追加コストを載せないための設計判断)。
    */
-  async isStatementApproved(statement: string): Promise<boolean> {
+  async isStatementApproved(context: StatementApprovalContext): Promise<boolean> {
     if (!this.enabled) return true;
-    await this.ensureApprovedStatements();
-    return this.approvedStatements.has(statementHash(statement));
+    await this.ensureApprovedStatements(context.defaultDatasourceId);
+    return this.approvedStatements.has(statementApprovalKey(context));
   }
 
   /**
@@ -77,9 +94,10 @@ export class GithubGovernanceService {
    * TTL 内はキャッシュをそのまま使い (DB アクセスなし)、TTL 切れ時のみ再構築する。
    * 構築中の並行呼び出しは同じ Promise を共有する (サンダリングハード防止)。
    */
-  private async ensureApprovedStatements(): Promise<void> {
+  private async ensureApprovedStatements(defaultDatasourceId: string): Promise<void> {
     const nowMs = this.now();
     if (
+      this.approvedStatementsDefaultDatasourceId === defaultDatasourceId &&
       this.approvedStatementsBuiltAt > 0 &&
       nowMs - this.approvedStatementsBuiltAt < APPROVED_STATEMENTS_TTL_MS
     ) {
@@ -87,41 +105,55 @@ export class GithubGovernanceService {
     }
     if (this.approvedStatementsPromise) {
       await this.approvedStatementsPromise;
+      if (this.approvedStatementsDefaultDatasourceId !== defaultDatasourceId) {
+        await this.ensureApprovedStatements(defaultDatasourceId);
+      }
       return;
     }
-    this.approvedStatementsPromise = this.buildApprovedStatements(nowMs).finally(() => {
+    this.approvedStatementsPromise = this.buildApprovedStatements(
+      nowMs,
+      defaultDatasourceId,
+    ).finally(() => {
       this.approvedStatementsPromise = undefined;
     });
     await this.approvedStatementsPromise;
   }
 
-  private async buildApprovedStatements(nowMs: number): Promise<void> {
+  private async buildApprovedStatements(nowMs: number, defaultDatasourceId: string): Promise<void> {
     try {
       const links = await this.deps.links.listApproved();
       const next = new Set<string>();
       for (const link of links) {
-        const statements = await this.statementsForApprovedLink(link);
-        for (const statement of statements) {
-          next.add(statementHash(statement));
+        const contexts = await this.statementsForApprovedLink(link, defaultDatasourceId);
+        for (const context of contexts) {
+          next.add(statementApprovalKey(context));
         }
       }
       this.approvedStatements = next;
       this.approvedStatementsBuiltAt = nowMs;
+      this.approvedStatementsDefaultDatasourceId = defaultDatasourceId;
       this.lastSuccessfulApprovedStatements = new Set(next);
+      this.lastSuccessfulDefaultDatasourceId = defaultDatasourceId;
     } catch (err) {
       console.warn(
         'failed to build approved statement cache; using previous cache if available',
         err,
       );
-      // フェイルクローズにしない: 前回成功時のキャッシュがあればそれを使い、なければ空集合。
-      this.approvedStatements = this.lastSuccessfulApprovedStatements
-        ? new Set(this.lastSuccessfulApprovedStatements)
-        : new Set();
+      // 同じ既定datasourceの前回cacheだけを再利用し、異なる既定値の承認は流用しない。
+      this.approvedStatements =
+        this.lastSuccessfulApprovedStatements &&
+        this.lastSuccessfulDefaultDatasourceId === defaultDatasourceId
+          ? new Set(this.lastSuccessfulApprovedStatements)
+          : new Set();
       this.approvedStatementsBuiltAt = nowMs;
+      this.approvedStatementsDefaultDatasourceId = defaultDatasourceId;
     }
   }
 
-  private async statementsForApprovedLink(link: DocumentGitLinkRecord): Promise<string[]> {
+  private async statementsForApprovedLink(
+    link: DocumentGitLinkRecord,
+    defaultDatasourceId: string,
+  ): Promise<StatementApprovalContext[]> {
     const doc = await this.loadDocument(link.documentType, link.documentId);
     if (!doc) return [];
     const currentHash = contentHash(documentToContent(link.documentType, doc));
@@ -129,20 +161,41 @@ export class GithubGovernanceService {
 
     switch (link.documentType) {
       case 'saved_query':
-        return [(doc as SavedQuery).statement];
+        return [
+          {
+            datasourceId: (doc as SavedQuery).datasourceId,
+            catalog: (doc as SavedQuery).catalog,
+            schema: (doc as SavedQuery).schema,
+            statement: (doc as SavedQuery).statement,
+            defaultDatasourceId,
+          },
+        ];
       case 'notebook': {
         const notebook = doc as Notebook;
-        return notebook.cells.filter((cell) => cell.kind === 'sql').map((cell) => cell.source);
+        return notebook.cells
+          .filter((cell) => cell.kind === 'sql')
+          .map((cell) => ({
+            catalog: notebook.context.catalog,
+            schema: notebook.context.schema,
+            statement: cell.source,
+            defaultDatasourceId,
+          }));
       }
       case 'workflow': {
         const workflow = doc as WorkflowRecord;
-        const statements: string[] = [];
+        const contexts: StatementApprovalContext[] = [];
         for (const stage of workflow.stages) {
           for (const step of stage.steps) {
-            statements.push(step.statement);
+            contexts.push({
+              datasourceId: step.datasourceId ?? workflow.datasourceId,
+              catalog: step.catalog,
+              schema: step.schema,
+              statement: step.statement,
+              defaultDatasourceId,
+            });
           }
         }
-        return statements;
+        return contexts;
       }
       case 'alert':
         return [];

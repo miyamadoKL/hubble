@@ -190,7 +190,13 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const maxRows = effectiveMaxRows(body.maxRows, services.config.query.maxRows);
     let persistResult = true;
     if (services.githubGovernance.enabled) {
-      persistResult = await services.githubGovernance.isStatementApproved(body.statement);
+      persistResult = await services.githubGovernance.isStatementApproved({
+        datasourceId: queryDatasourceId,
+        catalog: ctx.catalog,
+        schema: ctx.schema,
+        statement: body.statement,
+        defaultDatasourceId: services.defaultDatasourceId,
+      });
     }
     // 実行そのものは services.queries（実行レジストリ）に委譲し、ここでは queryId だけ返す。
     const exec = services.queries.submit({
