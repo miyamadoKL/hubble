@@ -25,6 +25,7 @@ const roleCredentialSchema = z
     passwordEnv: z.string().min(1).optional(),
     passwordFile: z.string().min(1).optional(),
   })
+  .strict()
   .superRefine((value, ctx) => {
     if (value.passwordEnv !== undefined && value.passwordFile !== undefined) {
       ctx.addIssue({
@@ -52,6 +53,7 @@ const baseDatasourceSchema = z
     passwordEnv: z.string().min(1).optional(),
     passwordFile: z.string().min(1).optional(),
   })
+  .strict()
   .superRefine((value, ctx) => {
     if (value.passwordEnv !== undefined && value.passwordFile !== undefined) {
       ctx.addIssue({
@@ -70,13 +72,15 @@ const baseDatasourceSchema = z
  * `hubble` / `hubble-metadata` / `hubble-scheduled`)。resource group を
  * ソース種別ごとに分けたい場合に上書きする。
  */
-export const trinoDatasourceSchema = baseDatasourceSchema.safeExtend({
-  type: z.literal('trino'),
-  baseUrl: z.url(),
-  source: z.string().min(1).optional(),
-  metadataSource: z.string().min(1).optional(),
-  scheduledSource: z.string().min(1).optional(),
-});
+export const trinoDatasourceSchema = baseDatasourceSchema
+  .safeExtend({
+    type: z.literal('trino'),
+    baseUrl: z.url(),
+    source: z.string().min(1).optional(),
+    metadataSource: z.string().min(1).optional(),
+    scheduledSource: z.string().min(1).optional(),
+  })
+  .strict();
 
 /** tlsCaFile は tls: true が必須であることを検証する。 */
 function refineTlsCaFile(value: { tls?: boolean; tlsCaFile?: string }, ctx: z.RefinementCtx): void {
@@ -102,6 +106,7 @@ export const mysqlDatasourceSchema = baseDatasourceSchema
     maxConnections: z.number().int().positive().optional(),
     roleCredentials: z.record(roleNameSchema, roleCredentialSchema).optional(),
   })
+  .strict()
   .superRefine(refineTlsCaFile);
 
 /** PostgreSQL データソースの YAML エントリ。 */
@@ -117,6 +122,7 @@ export const postgresqlDatasourceSchema = baseDatasourceSchema
     maxConnections: z.number().int().positive().optional(),
     roleCredentials: z.record(roleNameSchema, roleCredentialSchema).optional(),
   })
+  .strict()
   .superRefine(refineTlsCaFile);
 
 /** 種別で分岐するデータソース 1 件分のスキーマ。 */
@@ -127,9 +133,11 @@ export const datasourceEntrySchema = z.discriminatedUnion('type', [
 ]);
 
 /** datasources.yaml のルート構造。 */
-export const datasourcesFileSchema = z.object({
-  datasources: z.array(datasourceEntrySchema).min(1),
-});
+export const datasourcesFileSchema = z
+  .object({
+    datasources: z.array(datasourceEntrySchema).min(1),
+  })
+  .strict();
 
 export type DatasourceEntry = z.infer<typeof datasourceEntrySchema>;
 export type DatasourcesFile = z.infer<typeof datasourcesFileSchema>;

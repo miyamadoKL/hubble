@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { loadRbac } from '../rbac/loader';
 import type { LoadedRbac } from '../rbac/types';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
+import { LeasedEngine } from '../engine/leasedEngine';
+import type { QueryEngine } from '../engine/types';
 import { Scheduler, type SchedulerConfig } from './scheduler';
 import { AuditLogger, AuditRepository } from '../audit';
 import type { FailureNotificationInput, FailureNotificationSender } from '../notification/service';
@@ -55,6 +57,7 @@ function ioPlan(rows: number): string {
 interface Harness {
   db: SqlDatabase;
   fake: FakeTrino;
+  engines: Map<string, QueryEngine>;
   schedules: ScheduleRepository;
   runs: ScheduleRunRepository;
   scheduler: Scheduler;
@@ -131,6 +134,7 @@ async function makeHarness(
   return {
     db,
     fake,
+    engines,
     schedules,
     runs,
     scheduler,
@@ -193,6 +197,44 @@ describe('Scheduler run matrix', () => {
       rowCount: 1,
     });
     expect(h.notifications).toHaveLength(0);
+  });
+
+  it('keeps the engine open while a background run holds its lease', async () => {
+    h = await makeHarness([
+      VALIDATE_OK,
+      {
+        match: 'SELECT_LEASED',
+        trinoId: 'qleased',
+        pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+      },
+    ]);
+    const inner = h.engines.get(DEFAULT_DATASOURCE_ID)!;
+    const closeInner = vi.spyOn(inner, 'close');
+    const leased = new LeasedEngine(inner);
+    h.engines.set(DEFAULT_DATASOURCE_ID, leased);
+    let releaseAdvance!: () => void;
+    h.fake.holdAdvance = new Promise<void>((resolve) => {
+      releaseAdvance = resolve;
+    });
+    const schedule = await h.schedules.create('alice', {
+      name: 'leased',
+      statement: 'SELECT_LEASED',
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+
+    await h.scheduler.runManual(schedule);
+    await vi.waitFor(() => expect(h.fake.activeCount).toBe(1));
+    const closing = leased.close();
+    await Promise.resolve();
+    expect(closeInner).not.toHaveBeenCalled();
+
+    releaseAdvance();
+    await h.scheduler.whenIdle();
+    await closing;
+    expect(closeInner).toHaveBeenCalledOnce();
+    const runs = await h.runs.list(schedule.id, 10);
+    expect(runs[0]?.status).toBe('success');
   });
 
   it('does not notify when a run succeeds even if failure notifications are enabled', async () => {

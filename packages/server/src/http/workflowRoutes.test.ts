@@ -52,6 +52,39 @@ class MemoryResultStore implements ResultStore {
 
 const sampleStages = [{ steps: [{ id: 'st_ok', name: 'Ok', statement: 'SELECT_OK' }] }];
 
+function writeWorkflowRbacFixtures(dir: string): void {
+  writeFileSync(
+    join(dir, 'datasources.yaml'),
+    `datasources:
+  - id: trino-allowed
+    type: trino
+    username: trino
+    baseUrl: http://trino.test
+  - id: trino-denied
+    type: trino
+    username: trino
+    baseUrl: http://trino.test
+`,
+    'utf8',
+  );
+  writeFileSync(
+    join(dir, 'rbac.yaml'),
+    `roles:
+  analyst:
+    permissions: [query.write]
+    datasources: [trino-allowed]
+defaultRole: analyst
+`,
+    'utf8',
+  );
+}
+
+function validationRequestCount(ctx: Awaited<ReturnType<typeof createTestContext>>): number {
+  return ctx.fake.requests.filter(
+    (request) => request.method === 'POST' && request.body?.includes('EXPLAIN (TYPE VALIDATE)'),
+  ).length;
+}
+
 const twoStepStages = [
   {
     steps: [
@@ -97,6 +130,87 @@ async function createTwoStepRun(
 }
 
 describe('workflow routes', () => {
+  it('rejects a denied step datasource before validating any step on create', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-workflow-create-rbac-'));
+    writeWorkflowRbacFixtures(dir);
+    const ctx = await createTestContext({ scenarios: [VALIDATE_OK], cwd: dir });
+    try {
+      const res = await ctx.app.request('/api/workflows', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          name: 'denied-create',
+          datasourceId: 'trino-allowed',
+          stages: [
+            {
+              steps: [
+                { id: 'st_allowed', name: 'Allowed', statement: 'SELECT 1' },
+                {
+                  id: 'st_denied',
+                  name: 'Denied',
+                  statement: 'SELECT 2',
+                  datasourceId: 'trino-denied',
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      expect(res.status).toBe(404);
+      expect(validationRequestCount(ctx)).toBe(0);
+    } finally {
+      await ctx.services.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a denied step datasource before validating any step on update', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-workflow-update-rbac-'));
+    writeWorkflowRbacFixtures(dir);
+    const ctx = await createTestContext({ scenarios: [VALIDATE_OK], cwd: dir });
+    try {
+      const createRes = await ctx.app.request('/api/workflows', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          name: 'allowed-update',
+          datasourceId: 'trino-allowed',
+          stages: sampleStages,
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const workflow = workflowSchema.parse(await createRes.json()) as Workflow;
+      ctx.fake.requests.length = 0;
+
+      const res = await ctx.app.request(`/api/workflows/${workflow.id}`, {
+        method: 'PATCH',
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          stages: [
+            {
+              steps: [
+                { id: 'st_allowed', name: 'Allowed', statement: 'SELECT 1' },
+                {
+                  id: 'st_denied',
+                  name: 'Denied',
+                  statement: 'SELECT 2',
+                  datasourceId: 'trino-denied',
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      expect(res.status).toBe(404);
+      expect(validationRequestCount(ctx)).toBe(0);
+    } finally {
+      await ctx.services.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects creation with step validation details on USER_ERROR', async () => {
     const ctx = await createTestContext({
       scenarios: [

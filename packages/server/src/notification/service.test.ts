@@ -3,7 +3,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { defaultRetryPolicy } from '@hubble/contracts';
 import { AuditLogger, type AuditEventInput } from '../audit';
 import type { ScheduleRecord } from '../store/schedules';
+import type { AlertRecord } from '../store/alerts';
+import type { ServerConfig } from '../config';
 import { NotificationService } from './service';
+
+const PUBLIC_LOOKUP = async () => [{ address: '93.184.216.34', family: 4 }];
+
+function notificationConfig(
+  overrides: Partial<ServerConfig['notification']> = {},
+): ServerConfig['notification'] {
+  return {
+    webhookAllowedCidrs: [],
+    webhookAllowHttp: false,
+    webhookTimeoutMs: 10_000,
+    smtp: { port: 587 },
+    ...overrides,
+  };
+}
 
 function schedule(overrides: Partial<ScheduleRecord> = {}): ScheduleRecord {
   return {
@@ -48,16 +64,37 @@ function auditRecorder() {
   return { audit, records };
 }
 
+function alert(webhookUrl: string): AlertRecord {
+  return {
+    id: 'alt_1',
+    owner: 'alice',
+    name: 'high rows',
+    savedQueryId: 'qry_1',
+    columnName: 'row_count',
+    op: '>',
+    value: '100',
+    selector: 'first',
+    rearm: 0,
+    muted: false,
+    cron: '* * * * *',
+    state: 'triggered',
+    lastTriggeredAt: null,
+    notifications: { channels: ['webhook'], webhookUrl },
+    principalSnapshot: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
 describe('NotificationService', () => {
   it('sends Slack via fetch and records a success audit row', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => ({ ok: true, status: 200 }) as Response);
     const { audit, records } = auditRecorder();
     const service = new NotificationService(
-      {
+      notificationConfig({
         slackWebhookUrl: 'https://hooks.slack.test/services/T',
-        smtp: { port: 587 },
-      },
-      { fetchImpl, audit },
+      }),
+      { fetchImpl, audit, webhookLookup: PUBLIC_LOOKUP },
     );
 
     await service.sendFailure(input());
@@ -90,11 +127,10 @@ describe('NotificationService', () => {
   it('truncates the failure reason by code point', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => ({ ok: true, status: 200 }) as Response);
     const service = new NotificationService(
-      {
+      notificationConfig({
         slackWebhookUrl: 'https://hooks.slack.test/services/T',
-        smtp: { port: 587 },
-      },
-      { fetchImpl },
+      }),
+      { fetchImpl, webhookLookup: PUBLIC_LOOKUP },
     );
 
     await service.sendFailure({ ...input(), errorMessage: '😀'.repeat(501) });
@@ -110,7 +146,7 @@ describe('NotificationService', () => {
     const sendMail = vi.fn(async () => ({}));
     const fetchImpl = vi.fn<typeof fetch>(async () => ({ ok: true, status: 200 }) as Response);
     const service = new NotificationService(
-      {
+      notificationConfig({
         slackWebhookUrl: 'https://hooks.slack.test/services/T',
         smtp: {
           host: 'smtp.example.com',
@@ -119,7 +155,7 @@ describe('NotificationService', () => {
           password: 'secret',
           from: 'hubble@example.com',
         },
-      },
+      }),
       { fetchImpl, mailSender: { sendMail } },
     );
 
@@ -146,7 +182,7 @@ describe('NotificationService', () => {
   it('warns, skips, and audits failure when a requested channel is not configured', async () => {
     const logWarn = vi.fn();
     const { audit, records } = auditRecorder();
-    const service = new NotificationService({ smtp: { port: 587 } }, { audit, logWarn });
+    const service = new NotificationService(notificationConfig(), { audit, logWarn });
 
     await service.sendFailure(input());
 
@@ -158,6 +194,39 @@ describe('NotificationService', () => {
         success: false,
         outcome: 'skipped',
         error: 'NOT_CONFIGURED',
+      },
+    });
+  });
+
+  it('rejects a private alert webhook before POST and records a failed audit row', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const { audit, records } = auditRecorder();
+    const service = new NotificationService(notificationConfig(), { fetchImpl, audit });
+
+    await service.sendAlertTriggered({
+      alert: alert('https://127.0.0.1/hook'),
+      outcome: {
+        state: 'triggered',
+        previousState: 'ok',
+        conditionMet: true,
+        observedValue: '101',
+        notified: true,
+        errorType: null,
+        errorMessage: null,
+      },
+      savedQueryName: 'row count',
+      datasourceId: 'trino-default',
+      evaluatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(records[0]).toMatchObject({
+      action: 'notification.send',
+      detail: {
+        channel: 'webhook',
+        success: false,
+        outcome: 'failed',
+        error: 'Webhook destination is not allowed',
       },
     });
   });

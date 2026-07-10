@@ -19,6 +19,7 @@ import {
   type GuardOnUnknown,
 } from '@hubble/contracts';
 import type { ResolvedDatasource } from './datasource/types';
+import { parseCidrList, type ParsedCidr } from './auth/cidr';
 import { isValidCron } from './schedule/cron';
 
 /** How a proxy-supplied principal is derived from SSO headers. */
@@ -216,6 +217,12 @@ export interface ServerConfig {
   notification: {
     /** Slack incoming webhook URL。 */
     slackWebhookUrl?: string;
+    /** 予約レンジへの webhook 送信を上書き許可する CIDR。 */
+    webhookAllowedCidrs: ParsedCidr[];
+    /** webhook URL で http scheme を許可するか。 */
+    webhookAllowHttp: boolean;
+    /** webhook 送信のタイムアウト。 */
+    webhookTimeoutMs: number;
     /** SMTP 送信設定。 */
     smtp: {
       host?: string;
@@ -575,6 +582,9 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
     },
     notification: {
       slackWebhookUrl: envOptional(env, 'NOTIFY_SLACK_WEBHOOK_URL'),
+      webhookAllowedCidrs: parseCidrList(envStr(env, 'NOTIFY_WEBHOOK_ALLOWED_CIDRS', '')),
+      webhookAllowHttp: envBool(env, 'NOTIFY_WEBHOOK_ALLOW_HTTP', false),
+      webhookTimeoutMs: envPositiveInt(env, 'NOTIFY_WEBHOOK_TIMEOUT_MS', 10_000),
       smtp: {
         host: envOptional(env, 'NOTIFY_SMTP_HOST'),
         port: envPositiveInt(env, 'NOTIFY_SMTP_PORT', 587),

@@ -92,6 +92,9 @@ describe('loadServerConfig integer bounds', () => {
     });
     expect(config.notification).toEqual({
       slackWebhookUrl: 'https://hooks.slack.test/services/T',
+      webhookAllowedCidrs: [],
+      webhookAllowHttp: false,
+      webhookTimeoutMs: 10_000,
       smtp: {
         host: 'smtp.example.com',
         port: 465,

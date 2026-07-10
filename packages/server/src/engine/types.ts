@@ -102,6 +102,9 @@ export interface QueryEngine {
   readonly kind: DatasourceKind;
   readonly capabilities: DatasourceCapabilities;
 
+  /** 実行中の利用を保持し、完了時に呼ぶ冪等な解放関数を返す。 */
+  lease?(): () => void;
+
   /**
    * ストリーミング実行用のステートメントクライアントを返す。
    * @param opts - 実行種別と impersonation ユーザー。

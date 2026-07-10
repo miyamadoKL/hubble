@@ -8,6 +8,7 @@ import type { MysqlPoolFactory } from './mysql/pool';
 import { createPostgresqlEngine } from './postgresql/engine';
 import type { PgPoolFactory } from './postgresql/pool';
 import { createTrinoEngine } from './trino';
+import { LeasedEngine } from './leasedEngine';
 import type { QueryEngine } from './types';
 
 export interface BuildEnginesOptions {
@@ -36,22 +37,27 @@ export function createEngineForDatasource(
   ds: ResolvedDatasource,
   options: BuildEnginesOptions,
 ): QueryEngine {
+  let engine: QueryEngine;
   switch (ds.type) {
     case 'trino':
-      return createTrinoEngine({
+      engine = createTrinoEngine({
         datasource: ds,
         trinoConfig: options.trinoConfig,
         fetchImpl: options.fetchImpl,
         sleepImpl: options.sleepImpl,
         now: options.now,
       });
+      break;
     case 'mysql':
-      return createMysqlEngine({ datasource: ds, poolFactory: options.mysqlPoolFactory });
+      engine = createMysqlEngine({ datasource: ds, poolFactory: options.mysqlPoolFactory });
+      break;
     case 'postgresql':
-      return createPostgresqlEngine({ datasource: ds, poolFactory: options.pgPoolFactory });
+      engine = createPostgresqlEngine({ datasource: ds, poolFactory: options.pgPoolFactory });
+      break;
     default: {
       const _exhaustive: never = ds;
       throw new Error(`Unsupported datasource type: ${(_exhaustive as ResolvedDatasource).type}`);
     }
   }
+  return new LeasedEngine(engine);
 }

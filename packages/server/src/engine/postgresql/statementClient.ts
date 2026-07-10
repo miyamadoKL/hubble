@@ -71,11 +71,20 @@ export function createPgStatementClient(
 ): StatementClient {
   const executions = new Map<string, PgExecution>();
 
-  const restoreAndRelease = async (exec: PgExecution): Promise<void> => {
-    if (exec.sessionReadOnlyApplied) {
-      await applyPgSessionReadOnly(exec.client, options.datasourceReadOnly);
+  const restoreAndReleaseClient = async (
+    client: PoolClient,
+    sessionReadOnlyApplied: boolean,
+  ): Promise<void> => {
+    if (sessionReadOnlyApplied) {
+      try {
+        await applyPgSessionReadOnly(client, options.datasourceReadOnly);
+      } catch (err) {
+        const reason = err instanceof Error ? err : new Error(String(err));
+        client.release(reason);
+        throw err;
+      }
     }
-    exec.client.release();
+    client.release();
   };
 
   const releaseExecution = async (exec: PgExecution): Promise<void> => {
@@ -87,7 +96,7 @@ export function createPgStatementClient(
     } catch {
       // ベストエフォート。
     }
-    await restoreAndRelease(exec);
+    await restoreAndReleaseClient(exec.client, exec.sessionReadOnlyApplied);
   };
 
   /** キャンセル等で portal が残る接続はプールへ返さず破棄する。 */
@@ -117,14 +126,20 @@ export function createPgStatementClient(
 
   const acquire = async (): Promise<{ client: PoolClient; sessionReadOnlyApplied: boolean }> => {
     const client = await pool.connect();
-    let sessionReadOnlyApplied = false;
-    if (options.datasourceReadOnly) {
-      await applyPgSessionReadOnly(client, true);
-    } else if (options.sessionReadOnly) {
-      await applyPgSessionReadOnly(client, true);
-      sessionReadOnlyApplied = true;
+    try {
+      let sessionReadOnlyApplied = false;
+      if (options.datasourceReadOnly) {
+        await applyPgSessionReadOnly(client, true);
+      } else if (options.sessionReadOnly) {
+        await applyPgSessionReadOnly(client, true);
+        sessionReadOnlyApplied = true;
+      }
+      return { client, sessionReadOnlyApplied };
+    } catch (err) {
+      const reason = err instanceof Error ? err : new Error(String(err));
+      client.release(reason);
+      throw err;
     }
-    return { client, sessionReadOnlyApplied };
   };
 
   return {

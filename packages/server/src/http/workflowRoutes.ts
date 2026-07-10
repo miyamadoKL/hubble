@@ -144,13 +144,42 @@ async function validateStepsWritable(
   for (const stage of stages) {
     for (const step of stage.steps) {
       const stepDs = step.datasourceId ?? workflowDatasourceId;
-      if (stepDs !== workflowDatasourceId) {
-        requireDatasourceAccess(principal.role, stepDs);
-      }
       const { engine } = resolveEngine(services.engines, stepDs, services.defaultDatasourceId);
       await assertStepWritable(services, principal, step, engine);
     }
   }
+}
+
+/** 全 step の datasource 認可を同期的に検査する。 */
+function assertAllStepDatasourcesAllowed(
+  principal: Principal,
+  stages: WorkflowRecord['stages'],
+  workflowDatasourceId: string,
+): void {
+  for (const stage of stages) {
+    for (const step of stage.steps) {
+      requireDatasourceAccess(principal.role, step.datasourceId ?? workflowDatasourceId);
+    }
+  }
+}
+
+/** workflow の認可、構文検証、書き込み分類を決められた順序で実行する。 */
+async function validateWorkflowSteps(
+  services: Services,
+  principal: Principal,
+  stages: WorkflowRecord['stages'],
+  workflowDatasourceId: string,
+): Promise<void> {
+  assertAllStepDatasourcesAllowed(principal, stages, workflowDatasourceId);
+  await validateAllSteps(
+    services,
+    principal.user,
+    principal.role.name,
+    services.defaultDatasourceId,
+    stages,
+    workflowDatasourceId,
+  );
+  await validateStepsWritable(services, principal, stages, workflowDatasourceId);
 }
 
 export function workflowRoutes(services: Services): App {
@@ -173,15 +202,7 @@ export function workflowRoutes(services: Services): App {
       body.datasourceId,
       services.defaultDatasourceId,
     );
-    await validateAllSteps(
-      services,
-      owner,
-      c.var.principal.role.name,
-      services.defaultDatasourceId,
-      body.stages,
-      datasourceId,
-    );
-    await validateStepsWritable(services, c.var.principal, body.stages, datasourceId);
+    await validateWorkflowSteps(services, c.var.principal, body.stages, datasourceId);
     const record = await services.workflows.create(owner, {
       name: body.name,
       description: body.description,
@@ -218,15 +239,7 @@ export function workflowRoutes(services: Services): App {
       if (targetDatasourceId !== existing.datasourceId) {
         requireDatasourceAccess(c.var.principal.role, targetDatasourceId);
       }
-      await validateAllSteps(
-        services,
-        owner,
-        c.var.principal.role.name,
-        services.defaultDatasourceId,
-        targetStages,
-        targetDatasourceId,
-      );
-      await validateStepsWritable(services, c.var.principal, targetStages, targetDatasourceId);
+      await validateWorkflowSteps(services, c.var.principal, targetStages, targetDatasourceId);
     }
     const updated = await services.workflows.update(owner, id, {
       ...body,

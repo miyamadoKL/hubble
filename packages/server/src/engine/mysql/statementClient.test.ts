@@ -18,6 +18,8 @@ interface FakePoolOptions {
   threadId?: number;
   /** SET SESSION 発行を記録する配列。 */
   sqlLog?: string[];
+  sessionSetupError?: unknown;
+  sessionRestoreError?: unknown;
 }
 
 function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; actions: string[] } {
@@ -50,7 +52,15 @@ function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; actions: s
         actions.push('destroy');
       },
       query: async (sql: string) => {
-        if (sql.startsWith('SET SESSION')) opts.sqlLog?.push(sql);
+        if (sql.startsWith('SET SESSION')) {
+          opts.sqlLog?.push(sql);
+          if (sql.endsWith('READ ONLY') && opts.sessionSetupError) {
+            throw opts.sessionSetupError;
+          }
+          if (sql.endsWith('READ WRITE') && opts.sessionRestoreError) {
+            throw opts.sessionRestoreError;
+          }
+        }
         if (sql.startsWith('KILL QUERY')) actions.push('kill');
       },
     }),
@@ -60,7 +70,7 @@ function makeFakePool(opts: FakePoolOptions = {}): { pool: MysqlPool; actions: s
 
 describe('createMysqlStatementClient', () => {
   it('returns the first batch with columns and FINISHED when rows fit one page', async () => {
-    const { pool } = makeFakePool({ rows: [[1], [2]] });
+    const { pool, actions } = makeFakePool({ rows: [[1], [2]] });
     const client = createMysqlStatementClient(pool, {
       datasourceReadOnly: false,
       sessionReadOnly: false,
@@ -70,6 +80,8 @@ describe('createMysqlStatementClient', () => {
     expect(page.data).toEqual([[1], [2]]);
     expect(page.nextUri).toBeUndefined();
     expect(page.stats?.state).toBe('FINISHED');
+    expect(actions.filter((action) => action === 'release')).toHaveLength(1);
+    expect(actions).not.toContain('destroy');
   });
 
   it('splits large result sets across advance pages', async () => {
@@ -202,6 +214,37 @@ describe('createMysqlStatementClient', () => {
       'SET SESSION TRANSACTION READ ONLY',
       'SET SESSION TRANSACTION READ WRITE',
     ]);
+  });
+
+  it('destroys the connection when session read only setup fails', async () => {
+    const { pool, actions } = makeFakePool({
+      sessionSetupError: new Error('setup failed'),
+    });
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: true,
+    });
+
+    await expect(
+      client.start('SELECT 1', { source: 'test' }, emptySessionMutations()),
+    ).rejects.toBeDefined();
+    expect(actions).toEqual(['destroy']);
+  });
+
+  it('destroys the connection when session read only restoration fails', async () => {
+    const { pool, actions } = makeFakePool({
+      rows: [[1]],
+      sessionRestoreError: new Error('restore failed'),
+    });
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: true,
+    });
+
+    await expect(
+      client.start('SELECT 1', { source: 'test' }, emptySessionMutations()),
+    ).rejects.toBeDefined();
+    expect(actions).toEqual(['destroy']);
   });
 
   it('waitBackoff resolves immediately', async () => {

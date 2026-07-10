@@ -45,6 +45,33 @@ describe('classifyStatementWrite', () => {
   it('classifies EXPLAIN with INCLUDE ANALYZE option via inner statement', () => {
     expect(classifyStatementWrite('EXPLAIN (INCLUDE ANALYZE) DELETE FROM t')).toBe('deny');
   });
+
+  it.each([
+    "SELECT * FROM t INTO OUTFILE '/tmp/result.csv'",
+    "SELECT * FROM t INTO DUMPFILE '/tmp/result.bin'",
+    'SELECT * INTO new_table FROM source_table',
+    'SELECT value INTO @result FROM t',
+    'SET SESSION TRANSACTION READ WRITE',
+    'SET TRANSACTION READ WRITE',
+  ])('denies a dialect statement with a write side effect: %s', (statement) => {
+    expect(classifyStatementWrite(statement)).toBe('deny');
+  });
+
+  it.each([
+    'SELECT into_col FROM t',
+    "SELECT 'x INTO y' FROM t",
+    'SELECT a -- INTO\n FROM t',
+    'SELECT a /* INTO */ FROM t',
+    'SELECT "into" FROM t',
+    'SELECT `into` FROM t',
+    'SELECT a FROM t WHERE b IN (1, 2)',
+    'SELECT a FROM (SELECT b FROM other) x',
+    'SET SESSION TRANSACTION READ ONLY',
+    "SET SESSION time_zone = 'READ WRITE'",
+    'SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE',
+  ])('allows a statement without a top-level bare write phrase: %s', (statement) => {
+    expect(classifyStatementWrite(statement)).toBe('allow');
+  });
 });
 
 describe('assertQueryWriteAllowed', () => {

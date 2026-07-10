@@ -422,134 +422,139 @@ export class WorkflowRunner {
       };
     }
 
-    for (;;) {
-      attempt += 1;
+    const releaseLease = engine.lease?.() ?? (() => {});
+    try {
+      for (;;) {
+        attempt += 1;
 
-      try {
-        const ioExplain = engine.ioExplainExecution?.({
-          statement: step.statement,
-          catalog: step.catalog ?? undefined,
-          schema: step.schema ?? undefined,
-          principal: workflow.owner,
-        });
-        await assertQueryWriteAllowed({
-          statement: step.statement,
-          role: workflowRole,
-          ioExplainClient: ioExplain?.client,
-          ioExplainCtx: ioExplain?.ctx,
-          ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
-        });
-      } catch (err) {
-        return {
-          status: 'failed',
-          attempt,
-          rowCount: null,
-          errorType: errorTypeOf(err),
-          errorMessage: err instanceof Error ? err.message : String(err),
-        };
-      }
-
-      const validation = await engine.validate({
-        statement: step.statement,
-        catalog: step.catalog ?? null,
-        schema: step.schema ?? null,
-        principal: workflow.owner,
-        roleName: workflowRole.name,
-      });
-      if (!validation.ok && validation.kind === 'user_error') {
-        return {
-          status: 'failed',
-          attempt,
-          rowCount: null,
-          errorType: 'USER_ERROR',
-          errorMessage: locationMessage(validation),
-        };
-      }
-      if (!validation.ok) {
-        const transient = this.maybeRetryStep(
-          attempt,
-          policy,
-          'TRINO_UNAVAILABLE',
-          validation.message,
-        );
-        if (transient) return transient;
-        await this.waitBeforeRetry(policy, attempt);
-        continue;
-      }
-
-      if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
-        const estimate = await this.deps.estimate.estimate({
-          statement: step.statement,
-          catalog: step.catalog ?? undefined,
-          schema: step.schema ?? undefined,
-          principal: workflow.owner,
-          datasourceId,
-          roleName: workflowRole.name,
-          guard: effective,
-        });
-        if (estimate.verdict.decision === 'block') {
+        try {
+          const ioExplain = engine.ioExplainExecution?.({
+            statement: step.statement,
+            catalog: step.catalog ?? undefined,
+            schema: step.schema ?? undefined,
+            principal: workflow.owner,
+          });
+          await assertQueryWriteAllowed({
+            statement: step.statement,
+            role: workflowRole,
+            ioExplainClient: ioExplain?.client,
+            ioExplainCtx: ioExplain?.ctx,
+            ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
+          });
+        } catch (err) {
           return {
-            status: 'blocked',
+            status: 'failed',
             attempt,
             rowCount: null,
-            errorType: 'QUERY_BLOCKED',
-            errorMessage: estimate.verdict.reasons.join('; ') || 'Blocked by Query Guard',
+            errorType: errorTypeOf(err),
+            errorMessage: err instanceof Error ? err.message : String(err),
           };
         }
-      }
 
-      const capture = persistStepResults ? this.createResultCapture(runId, stepRunId) : undefined;
-      try {
-        const client = engine.executionClient({
-          source: 'scheduled',
-          user: workflow.owner,
+        const validation = await engine.validate({
+          statement: step.statement,
+          catalog: step.catalog ?? null,
+          schema: step.schema ?? null,
+          principal: workflow.owner,
           roleName: workflowRole.name,
-          sessionReadOnly: !hasQueryWrite(workflowRole),
         });
-        const ctx: TrinoRequestContext = {
-          catalog: step.catalog ?? undefined,
-          schema: step.schema ?? undefined,
-          user: workflow.owner,
-        };
-        const result = await drainStatementWithCapture(client, step.statement, ctx, capture);
-        if (capture) {
-          await capture.finish();
-          const expiresAt = this.resultExpiresAt();
+        if (!validation.ok && validation.kind === 'user_error') {
+          return {
+            status: 'failed',
+            attempt,
+            rowCount: null,
+            errorType: 'USER_ERROR',
+            errorMessage: locationMessage(validation),
+          };
+        }
+        if (!validation.ok) {
+          const transient = this.maybeRetryStep(
+            attempt,
+            policy,
+            'TRINO_UNAVAILABLE',
+            validation.message,
+          );
+          if (transient) return transient;
+          await this.waitBeforeRetry(policy, attempt);
+          continue;
+        }
+
+        if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
+          const estimate = await this.deps.estimate.estimate({
+            statement: step.statement,
+            catalog: step.catalog ?? undefined,
+            schema: step.schema ?? undefined,
+            principal: workflow.owner,
+            datasourceId,
+            roleName: workflowRole.name,
+            guard: effective,
+          });
+          if (estimate.verdict.decision === 'block') {
+            return {
+              status: 'blocked',
+              attempt,
+              rowCount: null,
+              errorType: 'QUERY_BLOCKED',
+              errorMessage: estimate.verdict.reasons.join('; ') || 'Blocked by Query Guard',
+            };
+          }
+        }
+
+        const capture = persistStepResults ? this.createResultCapture(runId, stepRunId) : undefined;
+        try {
+          const client = engine.executionClient({
+            source: 'scheduled',
+            user: workflow.owner,
+            roleName: workflowRole.name,
+            sessionReadOnly: !hasQueryWrite(workflowRole),
+          });
+          const ctx: TrinoRequestContext = {
+            catalog: step.catalog ?? undefined,
+            schema: step.schema ?? undefined,
+            user: workflow.owner,
+          };
+          const result = await drainStatementWithCapture(client, step.statement, ctx, capture);
+          if (capture) {
+            await capture.finish();
+            const expiresAt = this.resultExpiresAt();
+            return {
+              status: 'success',
+              attempt,
+              rowCount: result.rowCount,
+              errorType: null,
+              errorMessage: null,
+              resultObjectKey: capture.key,
+              resultExpiresAt: expiresAt,
+            };
+          }
           return {
             status: 'success',
             attempt,
             rowCount: result.rowCount,
             errorType: null,
             errorMessage: null,
-            resultObjectKey: capture.key,
-            resultExpiresAt: expiresAt,
           };
+        } catch (err) {
+          if (capture) await capture.abort();
+          const failureClass = classifyFailure(err);
+          const errorType = errorTypeOf(err);
+          const message = err instanceof Error ? err.message : String(err);
+          if (failureClass === 'deterministic') {
+            return {
+              status: 'failed',
+              attempt,
+              rowCount: null,
+              errorType,
+              errorMessage: message,
+            };
+          }
+          const transient = this.maybeRetryStep(attempt, policy, errorType, message);
+          if (transient) return transient;
+          await this.waitBeforeRetry(policy, attempt);
         }
-        return {
-          status: 'success',
-          attempt,
-          rowCount: result.rowCount,
-          errorType: null,
-          errorMessage: null,
-        };
-      } catch (err) {
-        if (capture) await capture.abort();
-        const failureClass = classifyFailure(err);
-        const errorType = errorTypeOf(err);
-        const message = err instanceof Error ? err.message : String(err);
-        if (failureClass === 'deterministic') {
-          return {
-            status: 'failed',
-            attempt,
-            rowCount: null,
-            errorType,
-            errorMessage: message,
-          };
-        }
-        const transient = this.maybeRetryStep(attempt, policy, errorType, message);
-        if (transient) return transient;
-        await this.waitBeforeRetry(policy, attempt);
       }
+    } finally {
+      releaseLease();
     }
   }
 

@@ -42,6 +42,123 @@ defaultRole: member
 `;
 }
 
+function roleRbacYaml(role: string): string {
+  return `roles:
+  ${role}:
+    permissions: []
+defaultRole: ${role}
+`;
+}
+
+function writeTrinoDatasource(dir: string, id: string): void {
+  writeFileSync(
+    join(dir, 'datasources.yaml'),
+    `datasources:
+  - id: ${id}
+    type: trino
+    username: trino
+    baseUrl: http://trino.test
+`,
+    'utf8',
+  );
+}
+
+describe('services.reloadConfig', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'hubble-config-reload-'));
+    writeTrinoDatasource(tempDir, 'trino-old');
+    writeFileSync(join(tempDir, 'rbac.yaml'), roleRbacYaml('member'), 'utf8');
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('commits rbac and datasource candidates together when both are valid', async () => {
+    const ctx = await createTestContext({ cwd: tempDir });
+    writeTrinoDatasource(tempDir, 'trino-new');
+    writeFileSync(join(tempDir, 'rbac.yaml'), roleRbacYaml('operator'), 'utf8');
+
+    await Promise.all([ctx.services.reloadConfig(), ctx.services.reloadConfig()]);
+
+    expect(ctx.services.rbac.defaultRole).toBe('operator');
+    expect(ctx.services.datasources.map((datasource) => datasource.id)).toEqual(['trino-new']);
+    expect(ctx.services.defaultDatasourceId).toBe('trino-new');
+    await ctx.services.shutdown();
+  });
+
+  it('keeps both current generations when the rbac candidate is invalid', async () => {
+    const errors: unknown[] = [];
+    const ctx = await createTestContext({
+      cwd: tempDir,
+      reloadLogError: (_message, error) => errors.push(error),
+    });
+    const oldEngine = ctx.services.engines.get('trino-old');
+    writeTrinoDatasource(tempDir, 'trino-new');
+    writeFileSync(join(tempDir, 'rbac.yaml'), 'roles: [{bad', 'utf8');
+
+    await Promise.all([ctx.services.reloadConfig(), ctx.services.reloadConfig()]);
+
+    expect(ctx.services.rbac.defaultRole).toBe('member');
+    expect(ctx.services.datasources.map((datasource) => datasource.id)).toEqual(['trino-old']);
+    expect(ctx.services.engines.get('trino-old')).toBe(oldEngine);
+    expect(ctx.services.engines.has('trino-new')).toBe(false);
+    expect(errors).toHaveLength(1);
+    await ctx.services.shutdown();
+  });
+
+  it('keeps both current generations when the datasource candidate is invalid', async () => {
+    const errors: unknown[] = [];
+    const ctx = await createTestContext({
+      cwd: tempDir,
+      reloadLogError: (_message, error) => errors.push(error),
+    });
+    const oldEngine = ctx.services.engines.get('trino-old');
+    writeFileSync(join(tempDir, 'rbac.yaml'), roleRbacYaml('operator'), 'utf8');
+    writeFileSync(join(tempDir, 'datasources.yaml'), 'datasources: [{bad', 'utf8');
+
+    await ctx.services.reloadConfig();
+
+    expect(ctx.services.rbac.defaultRole).toBe('member');
+    expect(ctx.services.datasources.map((datasource) => datasource.id)).toEqual(['trino-old']);
+    expect(ctx.services.engines.get('trino-old')).toBe(oldEngine);
+    expect(errors).toHaveLength(1);
+    await ctx.services.shutdown();
+  });
+
+  it('updates only rbac without regenerating an unchanged engine', async () => {
+    const ctx = await createTestContext({ cwd: tempDir });
+    const oldEngine = ctx.services.engines.get('trino-old')!;
+    const close = vi.spyOn(oldEngine, 'close');
+    writeFileSync(join(tempDir, 'rbac.yaml'), roleRbacYaml('operator'), 'utf8');
+
+    await ctx.services.reloadConfig();
+
+    expect(ctx.services.rbac.defaultRole).toBe('operator');
+    expect(ctx.services.engines.get('trino-old')).toBe(oldEngine);
+    expect(close).not.toHaveBeenCalled();
+    await ctx.services.shutdown();
+  });
+
+  it('keeps the adopted rbac when the default file disappears', async () => {
+    const errors: unknown[] = [];
+    const ctx = await createTestContext({
+      cwd: tempDir,
+      reloadLogError: (_message, error) => errors.push(error),
+    });
+    rmSync(join(tempDir, 'rbac.yaml'));
+
+    await ctx.services.reloadConfig();
+
+    expect(ctx.services.rbac.defaultRole).toBe('member');
+    expect(ctx.services.datasources.map((datasource) => datasource.id)).toEqual(['trino-old']);
+    expect(errors).toHaveLength(1);
+    await ctx.services.shutdown();
+  });
+});
+
 describe('services.reloadRbac', () => {
   let tempDir: string;
 
@@ -169,6 +286,32 @@ defaultRole: operator
     await ctx.services.reloadRbac();
     res = await ctx.app.request('/api/me');
     expect(meResponseSchema.parse(await res.json()).role).toBe('member');
+  });
+
+  it('keeps the adopted default config when rbac.yaml is removed', async () => {
+    const rbacPath = join(tempDir, 'rbac.yaml');
+    writeFileSync(rbacPath, memberRbacYaml(10_000), 'utf8');
+    const errors: unknown[] = [];
+    const ctx = await createTestContext({
+      cwd: tempDir,
+      reloadLogError: (_message, error) => errors.push(error),
+    });
+
+    rmSync(rbacPath);
+    await ctx.services.reloadRbac();
+
+    const res = await ctx.app.request('/api/me');
+    expect(meResponseSchema.parse(await res.json()).role).toBe('member');
+    expect(errors).toHaveLength(1);
+  });
+
+  it('keeps the built-in config when rbac.yaml remains absent on reload', async () => {
+    const ctx = await createTestContext({ cwd: tempDir });
+
+    await ctx.services.reloadRbac();
+
+    const res = await ctx.app.request('/api/me');
+    expect(meResponseSchema.parse(await res.json()).role).toBe('unrestricted');
   });
 
   it('uses new guard limits after reload (cache key includes guard values)', async () => {
