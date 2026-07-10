@@ -103,3 +103,13 @@ export function applyDatasourceReloadSync(
     void closeEngineWithTimeout(engine, ENGINE_CLOSE_TIMEOUT_MS, logWarn);
   }
 }
+
+/** commit されなかった候補エンジンを閉じる。 */
+export function closeCandidateEngines(
+  plan: DatasourceReloadPlan,
+  logWarn: (message: string) => void = console.warn,
+): void {
+  for (const engine of plan.enginesToSet.values()) {
+    void closeEngineWithTimeout(engine, ENGINE_CLOSE_TIMEOUT_MS, logWarn);
+  }
+}

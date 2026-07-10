@@ -46,8 +46,8 @@ const services = await defaultServices();
 const datasourcesPath = resolveDatasourcesPath(process.env, process.cwd());
 const rbacPath = resolveRbacPath(process.env, process.cwd());
 const watchedFiles = [
-  { path: rbacPath, reload: () => services.reloadRbac() },
-  { path: datasourcesPath, reload: () => services.reloadDatasources() },
+  { path: rbacPath, reload: () => services.reloadConfig() },
+  { path: datasourcesPath, reload: () => services.reloadConfig() },
 ];
 const intervalSeconds = parseReloadIntervalSeconds(process.env);
 const fileReload = startFileReload(watchedFiles, { intervalSeconds });

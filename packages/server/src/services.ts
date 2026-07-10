@@ -30,7 +30,12 @@ import { loadDatasources } from './datasource/loader';
 import { loadRbac, resolveRbacPath } from './rbac/loader';
 import type { LoadedRbac } from './rbac/types';
 import type { ResolvedDatasource } from './datasource/types';
-import { applyDatasourceReloadSync, planDatasourceReload } from './datasource/reload';
+import {
+  applyDatasourceReloadSync,
+  closeCandidateEngines,
+  planDatasourceReload,
+  type DatasourceReloadPlan,
+} from './datasource/reload';
 import { buildEngines, type BuildEnginesOptions } from './engine/factory';
 import type { MysqlPoolFactory } from './engine/mysql/pool';
 import type { PgPoolFactory } from './engine/postgresql/pool';
@@ -84,6 +89,7 @@ export interface Services {
   githubNow?: () => number;
   reloadDatasources: () => Promise<void>;
   reloadRbac: () => Promise<void>;
+  reloadConfig: () => Promise<void>;
   shutdown: () => Promise<void>;
 }
 
@@ -327,8 +333,32 @@ export async function buildServices(
 
   let reloadInFlight = false;
   let rbacReloadInFlight = false;
+  let configReloadInFlight = false;
   const reloadLogError = options.reloadLogError ?? ((m, e) => console.error(m, e));
   const reloadLogWarn = options.reloadLogWarn ?? console.warn;
+  const applyDatasourcePlan = (plan: DatasourceReloadPlan): void => {
+    applyDatasourceReloadSync(
+      {
+        engines,
+        datasources,
+        setDefaultDatasourceId: (id) => {
+          runtime.defaultDatasourceId = id;
+          metadata.setDefaultDatasourceId(id);
+          registry.setDefaultDatasourceId(id);
+          estimate.setDefaultDatasourceId(id);
+          scheduler.setDefaultDatasourceId(id);
+          alertEvaluator.setDefaultDatasourceId(id);
+          workflowRunner.setDefaultDatasourceId(id);
+        },
+        invalidateDatasource: (id) => {
+          metadata.invalidateDatasource(id);
+          estimate.invalidateDatasource(id);
+        },
+      },
+      plan,
+      reloadLogWarn,
+    );
+  };
   const reloadRbac = async (): Promise<void> => {
     if (rbacReloadInFlight) return;
     rbacReloadInFlight = true;
@@ -353,31 +383,40 @@ export async function buildServices(
     try {
       const next = loadDatasources({ env, cwd });
       const plan = planDatasourceReload(engines, datasources, next, buildEngineOptions);
-      applyDatasourceReloadSync(
-        {
-          engines,
-          datasources,
-          setDefaultDatasourceId: (id) => {
-            runtime.defaultDatasourceId = id;
-            metadata.setDefaultDatasourceId(id);
-            registry.setDefaultDatasourceId(id);
-            estimate.setDefaultDatasourceId(id);
-            scheduler.setDefaultDatasourceId(id);
-            alertEvaluator.setDefaultDatasourceId(id);
-            workflowRunner.setDefaultDatasourceId(id);
-          },
-          invalidateDatasource: (id) => {
-            metadata.invalidateDatasource(id);
-            estimate.invalidateDatasource(id);
-          },
-        },
-        plan,
-        reloadLogWarn,
-      );
+      applyDatasourcePlan(plan);
     } catch (err) {
       reloadLogError('datasource reload failed; keeping current config', err);
     } finally {
       reloadInFlight = false;
+    }
+  };
+  const reloadConfig = async (): Promise<void> => {
+    if (configReloadInFlight) return;
+    configReloadInFlight = true;
+    let plan: DatasourceReloadPlan | undefined;
+    try {
+      // 同じ watcher turn の二つ目の呼び出しが in-flight を観測できるよう一度譲る。
+      await Promise.resolve();
+      const defaultFileExists = existsSync(rbacPath);
+      const rbacNext = loadRbac({
+        env,
+        cwd,
+        allowMissingDefault: !rbacFileRequired && !defaultFileExists,
+      });
+      const requireRbacFile = rbacFileRequired || defaultFileExists || existsSync(rbacPath);
+      const datasourceNext = loadDatasources({ env, cwd });
+      plan = planDatasourceReload(engines, datasources, datasourceNext, buildEngineOptions);
+
+      // 候補生成後は await を挟まず、同一 turn で両設定を公開する。
+      applyDatasourcePlan(plan);
+      rbacState.current = rbacNext;
+      rbacFileRequired = requireRbacFile;
+      plan = undefined;
+    } catch (err) {
+      if (plan) closeCandidateEngines(plan, reloadLogWarn);
+      reloadLogError('config reload failed; keeping current config', err);
+    } finally {
+      configReloadInFlight = false;
     }
   };
 
@@ -419,6 +458,7 @@ export async function buildServices(
     githubNow,
     reloadDatasources,
     reloadRbac,
+    reloadConfig,
     shutdown: async () => {
       resultExpiry.stop();
       await githubSyncScheduler?.stop();
