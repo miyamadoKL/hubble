@@ -13,7 +13,7 @@ import {
   workflowToContent,
 } from './canonical';
 import { DocumentGitLinkRepository } from './store';
-import { GithubGovernanceService, statementHash } from './governance';
+import { GithubGovernanceService, statementApprovalKey } from './governance';
 
 const KEY = Buffer.alloc(32, 4);
 const GITHUB_ENV = {
@@ -22,6 +22,14 @@ const GITHUB_ENV = {
   GITHUB_APP_CLIENT_SECRET: 'sec',
   GITHUB_TOKEN_ENCRYPTION_KEY: KEY.toString('base64'),
 };
+const DEFAULT_DATASOURCE_ID = 'trino-default';
+
+function approvalContext(
+  statement: string,
+  context: { datasourceId?: string; catalog?: string; schema?: string } = {},
+) {
+  return { statement, defaultDatasourceId: DEFAULT_DATASOURCE_ID, ...context };
+}
 
 function governanceConfig(governance: 'off' | 'on' = 'on') {
   return { ...loadServerConfig(GITHUB_ENV).github, governance };
@@ -56,7 +64,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
     const db = await open();
     const { service, workflows } = await buildGovernance(db, { governance: 'off' });
     expect(service.enabled).toBe(false);
-    expect(await service.isStatementApproved('SELECT 999')).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT 999'))).toBe(true);
     const workflow = await workflows.create('alice', {
       name: 'WF',
       stages: workflowDefinitionSchema.parse([
@@ -106,10 +114,10 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
     });
 
     // キャッシュは初回参照時に構築されるため、全承認リンクを先に用意してから判定する。
-    expect(await service.isStatementApproved('SELECT 1')).toBe(true);
-    expect(await service.isStatementApproved('SELECT 1   ')).toBe(true);
-    expect(await service.isStatementApproved('SELECT nb')).toBe(true);
-    expect(await service.isStatementApproved('SELECT wf')).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT 1'))).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT 1   '))).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT nb'))).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT wf'))).toBe(true);
     expect(await service.isWorkflowApproved(workflow)).toBe(true);
     await db.close();
   });
@@ -130,7 +138,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
       path: `saved-queries/${saved.id}.sql`,
       approvedHash: contentHash(savedQueryToContent(savedDoc)),
     });
-    expect(await service.isStatementApproved('SELECT 1')).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT 1'))).toBe(true);
 
     await savedQueries.update(accessor, saved.id, {
       name: 'Q',
@@ -140,8 +148,8 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
     });
     // TTL 切れ後の再構築で、ローカル変更されたドキュメントのステートメントは除外される。
     now += 61_000;
-    expect(await service.isStatementApproved('SELECT 1')).toBe(false);
-    expect(await service.isStatementApproved('SELECT 2')).toBe(false);
+    expect(await service.isStatementApproved(approvalContext('SELECT 1'))).toBe(false);
+    expect(await service.isStatementApproved(approvalContext('SELECT 2'))).toBe(false);
     await db.close();
   });
 
@@ -161,7 +169,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
       path: `saved-queries/${saved.id}.sql`,
       approvedHash: contentHash(savedQueryToContent(savedDoc)),
     });
-    expect(await service.isStatementApproved('SELECT 1')).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT 1'))).toBe(true);
 
     await savedQueries.update(accessor, saved.id, {
       name: 'Q',
@@ -170,8 +178,8 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
       isFavorite: false,
     });
     // TTL 内は古いキャッシュのまま (DB アクセスなし)。編集は最大 60 秒反映されない。
-    expect(await service.isStatementApproved('SELECT 1')).toBe(true);
-    expect(await service.isStatementApproved('SELECT 2')).toBe(false);
+    expect(await service.isStatementApproved(approvalContext('SELECT 1'))).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT 2'))).toBe(false);
 
     // TTL 切れ + 更新後ドキュメントの再承認で新しいステートメントが承認済みになる。
     const updatedDoc = (await savedQueries.get(accessor, saved.id))!;
@@ -180,8 +188,8 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
       approvedHash: contentHash(savedQueryToContent(updatedDoc)),
     });
     now += 61_000;
-    expect(await service.isStatementApproved('SELECT 1')).toBe(false);
-    expect(await service.isStatementApproved('SELECT 2')).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT 1'))).toBe(false);
+    expect(await service.isStatementApproved(approvalContext('SELECT 2'))).toBe(true);
     await db.close();
   });
 
@@ -201,17 +209,114 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
       path: `saved-queries/${saved.id}.sql`,
       approvedHash: contentHash(savedQueryToContent(savedDoc)),
     });
-    expect(await service.isStatementApproved('SELECT cached')).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT cached'))).toBe(true);
 
     now += 61_000;
     vi.spyOn(links, 'listApproved').mockRejectedValueOnce(new Error('db down'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(await service.isStatementApproved('SELECT cached')).toBe(true);
+    expect(await service.isStatementApproved(approvalContext('SELECT cached'))).toBe(true);
     expect(warn).toHaveBeenCalled();
     await db.close();
   });
 
-  it('exports statementHash with trimEnd semantics', () => {
-    expect(statementHash('SELECT 1\n  ')).toBe(statementHash('SELECT 1\n'));
+  it('binds approved saved queries to datasource, catalog, and schema', async () => {
+    const db = await open();
+    const { service, savedQueries, links } = await buildGovernance(db);
+    const accessor = { user: 'alice', groups: [] as string[], role: 'admin' };
+    const saved = await savedQueries.create('alice', {
+      name: 'Scoped query',
+      statement: 'SELECT scoped',
+      datasourceId: 'trino-primary',
+      catalog: 'sales',
+      schema: 'reporting',
+    });
+    const savedDoc = (await savedQueries.get(accessor, saved.id))!;
+    await links.upsert('saved_query', saved.id, {
+      path: `saved-queries/${saved.id}.sql`,
+      approvedHash: contentHash(savedQueryToContent(savedDoc)),
+    });
+
+    expect(
+      await service.isStatementApproved(
+        approvalContext('SELECT scoped', {
+          datasourceId: 'trino-primary',
+          catalog: 'sales',
+          schema: 'reporting',
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await service.isStatementApproved(
+        approvalContext('SELECT scoped', {
+          datasourceId: 'trino-secondary',
+          catalog: 'sales',
+          schema: 'reporting',
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      await service.isStatementApproved(
+        approvalContext('SELECT scoped', {
+          datasourceId: 'trino-primary',
+          catalog: 'finance',
+          schema: 'reporting',
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      await service.isStatementApproved(
+        approvalContext('SELECT scoped', {
+          datasourceId: 'trino-primary',
+          catalog: 'sales',
+          schema: 'private',
+        }),
+      ),
+    ).toBe(false);
+    await db.close();
+  });
+
+  it('resolves omitted datasource context with the current default on both sides', async () => {
+    const db = await open();
+    const { service, savedQueries, links } = await buildGovernance(db);
+    const accessor = { user: 'alice', groups: [] as string[], role: 'admin' };
+    const saved = await savedQueries.create('alice', {
+      name: 'Default query',
+      statement: 'SELECT default_context',
+    });
+    const savedDoc = (await savedQueries.get(accessor, saved.id))!;
+    await links.upsert('saved_query', saved.id, {
+      path: `saved-queries/${saved.id}.sql`,
+      approvedHash: contentHash(savedQueryToContent(savedDoc)),
+    });
+
+    expect(
+      await service.isStatementApproved({
+        statement: 'SELECT default_context',
+        defaultDatasourceId: 'trino-before-reload',
+      }),
+    ).toBe(true);
+    expect(
+      await service.isStatementApproved({
+        statement: 'SELECT default_context',
+        defaultDatasourceId: 'trino-after-reload',
+      }),
+    ).toBe(true);
+    expect(
+      await service.isStatementApproved({
+        datasourceId: 'trino-before-reload',
+        statement: 'SELECT default_context',
+        defaultDatasourceId: 'trino-after-reload',
+      }),
+    ).toBe(false);
+    await db.close();
+  });
+
+  it('normalizes trailing statement whitespace without collapsing execution context', () => {
+    expect(statementApprovalKey(approvalContext('SELECT 1\n  '))).toBe(
+      statementApprovalKey(approvalContext('SELECT 1\n')),
+    );
+    expect(statementApprovalKey(approvalContext('SELECT 1', { catalog: 'catalog-a' }))).not.toBe(
+      statementApprovalKey(approvalContext('SELECT 1', { catalog: 'catalog-b' })),
+    );
   });
 });

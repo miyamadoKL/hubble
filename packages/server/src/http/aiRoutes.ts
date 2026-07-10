@@ -62,34 +62,60 @@ export function aiRoutes(services: Services): Hono<{ Variables: AuthVariables }>
       throw AppError.notFound(`Datasource ${datasourceId} not found`);
     }
     const dialect = dialectForDatasource(datasource.type);
-
-    return streamSSE(c, async (sseStream) => {
-      const abort = new AbortController();
-      const keepAlive = setInterval(() => {
-        void sseStream.write(SSE_KEEPALIVE);
-      }, KEEPALIVE_INTERVAL_MS);
-
-      sseStream.onAbort(() => {
-        clearInterval(keepAlive);
-        abort.abort();
+    const rateLimit = services.aiRateLimiter;
+    if (rateLimit === undefined) {
+      throw AppError.internal('AI rate limiter is not configured');
+    }
+    const acquired = rateLimit.tryAcquire(c.var.principal.user);
+    if (!acquired.ok) {
+      c.header('Retry-After', String(acquired.retryAfterSeconds));
+      throw new AppError(429, {
+        code: 'AI_RATE_LIMITED',
+        message: 'AI assistant rate limit exceeded',
       });
+    }
 
-      try {
-        for await (const event of ai.assist(request, {
-          actor: c.var.principal.user,
-          datasourceId,
-          dialect,
-          signal: abort.signal,
-        })) {
-          await sseStream.write(encodeAiSseEvent(event));
-          if (event.type === 'done' || event.type === 'error') {
-            break;
+    let released = false;
+    const releaseOnce = (): void => {
+      if (released) return;
+      released = true;
+      acquired.release();
+    };
+
+    try {
+      return streamSSE(c, async (sseStream) => {
+        const abort = new AbortController();
+        const keepAlive = setInterval(() => {
+          void sseStream.write(SSE_KEEPALIVE);
+        }, KEEPALIVE_INTERVAL_MS);
+
+        sseStream.onAbort(() => {
+          clearInterval(keepAlive);
+          abort.abort();
+          releaseOnce();
+        });
+
+        try {
+          for await (const event of ai.assist(request, {
+            actor: c.var.principal.user,
+            datasourceId,
+            dialect,
+            signal: abort.signal,
+          })) {
+            await sseStream.write(encodeAiSseEvent(event));
+            if (event.type === 'done' || event.type === 'error') {
+              break;
+            }
           }
+        } finally {
+          clearInterval(keepAlive);
+          releaseOnce();
         }
-      } finally {
-        clearInterval(keepAlive);
-      }
-    });
+      });
+    } catch (err) {
+      releaseOnce();
+      throw err;
+    }
   });
 
   return app;

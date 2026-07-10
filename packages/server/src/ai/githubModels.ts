@@ -13,6 +13,7 @@ const DEFAULT_BASE_URL = 'https://models.github.ai/inference/chat/completions';
 export interface GithubModelsProviderOptions {
   model: string;
   apiKey: string;
+  maxOutputTokens: number;
   fetchImpl?: typeof fetch;
   baseUrl?: string;
 }
@@ -22,12 +23,14 @@ export class GithubModelsProvider implements AiProvider {
   readonly kind = 'github-models' as const;
   readonly model: string;
   private readonly apiKey: string;
+  private readonly maxOutputTokens: number;
   private readonly fetchImpl: typeof fetch;
   private readonly baseUrl: string;
 
   constructor(options: GithubModelsProviderOptions) {
     this.model = options.model;
     this.apiKey = options.apiKey;
+    this.maxOutputTokens = options.maxOutputTokens;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   }
@@ -42,6 +45,7 @@ export class GithubModelsProvider implements AiProvider {
       body: JSON.stringify({
         model: this.model,
         stream: true,
+        max_tokens: this.maxOutputTokens,
         messages: [
           { role: 'system', content: prompt.system },
           { role: 'user', content: prompt.user },

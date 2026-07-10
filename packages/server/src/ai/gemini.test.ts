@@ -19,12 +19,16 @@ describe('GeminiProvider', () => {
     const provider = new GeminiProvider({
       model: 'gemini-2.5-flash',
       apiKey: 'test-key',
+      maxOutputTokens: 321,
       baseUrl: 'https://gemini.test',
       fetchImpl: (async (input, init) => {
         expect(String(input)).toBe(
           'https://gemini.test/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
         );
         expect(init?.headers).toMatchObject({ 'x-goog-api-key': 'test-key' });
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          generationConfig: { maxOutputTokens: 321 },
+        });
         return sseResponse([
           'data: {"candidates":[{"content":{"parts":[{"text":"Hello "}]}}]}\n\n',
           'data: {"candidates":[{"content":{"parts":[{"text":"world"}]}}]}\n\n',
@@ -46,6 +50,7 @@ describe('GeminiProvider', () => {
     const provider = new GeminiProvider({
       model: 'gemini-2.5-flash',
       apiKey: 'test-key',
+      maxOutputTokens: 321,
       baseUrl: 'https://gemini.test',
       fetchImpl: (async () => sseResponse(['upstream failure'], 503)) as typeof fetch,
     });

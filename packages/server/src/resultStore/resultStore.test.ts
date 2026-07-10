@@ -1,13 +1,14 @@
+import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { QueryRowsPage, QuerySnapshot } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 import type { DeleteExpiredResult, ExpiredResultObject, ResultStore } from './store';
-import { readPersistedRowsPage } from './jsonl';
+import { readPersistedRowsPage, ResultJsonlCapture } from './jsonl';
 import { S3ResultStore, buildS3ClientConfig } from './s3';
 import type { HistoryResultRef } from '../store/history';
 
@@ -104,6 +105,46 @@ afterEach(() => {
 });
 
 describe('ResultStore persistence', () => {
+  it('waits for downstream drain without retaining one promise per row', async () => {
+    let releaseUpload!: () => void;
+    const uploadGate = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    const objects = new Map<string, Buffer>();
+    const store: ResultStore = {
+      enabled: true,
+      async put(key, body) {
+        await uploadGate;
+        const chunks: Buffer[] = [];
+        for await (const chunk of body) chunks.push(Buffer.from(chunk as Buffer));
+        objects.set(key, Buffer.concat(chunks));
+      },
+      async getStream(key) {
+        return Readable.from(objects.get(key) ?? Buffer.alloc(0));
+      },
+      async delete() {},
+      async deleteExpired() {
+        return { deleted: [], failed: [] };
+      },
+    };
+    const capture = new ResultJsonlCapture(store, 'blocked.jsonl.gz');
+    capture.writeColumns(COLUMNS);
+    const largeValue = randomBytes(2 * 1024 * 1024).toString('base64');
+    let resolved = false;
+    const writing = capture.writeRows([[1, largeValue]]).then(() => {
+      resolved = true;
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(resolved).toBe(false);
+    expect(Object.hasOwn(capture, 'writes')).toBe(false);
+
+    releaseUpload();
+    await writing;
+    await capture.finish();
+    expect(objects.has('blocked.jsonl.gz')).toBe(true);
+  });
+
   it('streams all rows to fake ResultStore and records the history object key', async () => {
     const store = new MemoryResultStore();
     const ctx = await createTestContext({
@@ -256,6 +297,40 @@ defaultRole: allowed
     await ctx.services.resultExpiry.runOnce();
 
     expect(store.deleted).toContain(ref.resultObjectKey);
+    expect(await ctx.services.history.getResultRef('admin', queryId)).toBeUndefined();
+  });
+
+  it('keeps the query finished and omits the result reference when persistence fails', async () => {
+    const persistenceError = new Error('result upload failed');
+    const store: ResultStore = {
+      enabled: true,
+      async put(_key, body) {
+        for await (const chunk of body) {
+          void chunk;
+          throw persistenceError;
+        }
+        throw persistenceError;
+      },
+      async getStream() {
+        throw new Error('not stored');
+      },
+      async delete() {},
+      async deleteExpired() {
+        return { deleted: [], failed: [] };
+      },
+    };
+    const logWarn = vi.fn();
+    const ctx = await createTestContext({
+      scenarios: [manyRows(3)],
+      resultStore: store,
+      resultStoreLogWarn: logWarn,
+    });
+
+    const queryId = await submitPersistQuery(ctx);
+    const exec = ctx.services.registry.get(queryId)!;
+    expect(exec.state).toBe('finished');
+    await vi.waitFor(() => expect(logWarn).toHaveBeenCalled());
+    expect(logWarn.mock.calls[0]?.[1]).toBe(persistenceError);
     expect(await ctx.services.history.getResultRef('admin', queryId)).toBeUndefined();
   });
 });

@@ -20,10 +20,15 @@ export interface SheetsApiClient {
   renameFirstSheet(spreadsheetId: string, title: string): Promise<void>;
   addSheet(spreadsheetId: string, title: string): Promise<void>;
   shareWithWriter(spreadsheetId: string, email: string): Promise<void>;
+  /** 作成後に失敗した spreadsheet を削除する。 */
+  deleteSpreadsheet(spreadsheetId: string): Promise<void>;
 }
 
+type SheetsClientFactoryResult = Omit<SheetsApiClient, 'deleteSpreadsheet'> &
+  Partial<Pick<SheetsApiClient, 'deleteSpreadsheet'>>;
+
 /** Sheets client factory の差し替えポイント。 */
-export type SheetsClientFactory = (credentialsFile: string) => Promise<SheetsApiClient>;
+export type SheetsClientFactory = (credentialsFile: string) => Promise<SheetsClientFactoryResult>;
 
 /** googleapis を dynamic import し、サービスアカウント client を作る。 */
 export const defaultSheetsClientFactory: SheetsClientFactory = async (credentialsFile) => {
@@ -104,8 +109,23 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
         },
       });
     },
+    async deleteSpreadsheet(spreadsheetId) {
+      await drive.files.delete({ fileId: spreadsheetId });
+    },
   };
 };
+
+/** 後段の失敗時に作成済み spreadsheet を可能な範囲で削除する。 */
+async function deleteCreatedSpreadsheet(
+  client: SheetsClientFactoryResult,
+  spreadsheetId: string,
+): Promise<void> {
+  try {
+    await client.deleteSpreadsheet?.(spreadsheetId);
+  } catch {
+    // 削除失敗で本処理のエラーを上書きしない。
+  }
+}
 
 /** Sheets export service。 */
 export class SheetsExporter {
@@ -132,38 +152,43 @@ export class SheetsExporter {
 
     const client = await this.clientFactory(credentialsFile);
     const created = await client.createSpreadsheet(input.title);
-    let columns: QueryColumn[] = [];
-    let rows = 0;
-    let chunk: unknown[][] = [];
+    try {
+      let columns: QueryColumn[] = [];
+      let rows = 0;
+      let chunk: unknown[][] = [];
 
-    const flush = async (): Promise<void> => {
-      if (chunk.length === 0) return;
-      await client.appendValues(created.spreadsheetId, chunk);
-      chunk = [];
-    };
+      const flush = async (): Promise<void> => {
+        if (chunk.length === 0) return;
+        await client.appendValues(created.spreadsheetId, chunk);
+        chunk = [];
+      };
 
-    for await (const event of input.events) {
-      if (event.type === 'columns') {
-        columns = event.columns;
-        chunk.push(event.columns.map((column) => column.name));
-        continue;
+      for await (const event of input.events) {
+        if (event.type === 'columns') {
+          columns = event.columns;
+          chunk.push(event.columns.map((column) => column.name));
+          continue;
+        }
+
+        rows += 1;
+        const cellCount = (rows + 1) * Math.max(columns.length, event.row.length);
+        if (cellCount > SHEETS_SAFE_CELL_LIMIT) {
+          throw new AppError(413, {
+            code: 'RESULT_TOO_LARGE',
+            message:
+              'Google Sheets export is limited to 8,000,000 cells in Hubble. Use S3 or CSV for larger results.',
+          });
+        }
+        chunk.push(event.row.map(toSheetsCellValue));
+        if (chunk.length >= SHEETS_APPEND_ROWS) await flush();
       }
-
-      rows += 1;
-      const cellCount = (rows + 1) * Math.max(columns.length, event.row.length);
-      if (cellCount > SHEETS_SAFE_CELL_LIMIT) {
-        throw new AppError(413, {
-          code: 'RESULT_TOO_LARGE',
-          message:
-            'Google Sheets export is limited to 8,000,000 cells in Hubble. Use S3 or CSV for larger results.',
-        });
-      }
-      chunk.push(event.row.map(toSheetsCellValue));
-      if (chunk.length >= SHEETS_APPEND_ROWS) await flush();
+      await flush();
+      await client.shareWithWriter(created.spreadsheetId, input.email);
+      return created;
+    } catch (err) {
+      await deleteCreatedSpreadsheet(client, created.spreadsheetId);
+      throw err;
     }
-    await flush();
-    await client.shareWithWriter(created.spreadsheetId, input.email);
-    return created;
   }
 
   /** 行イベントを複数シートの新規 spreadsheet へ書き込み、writer 共有する。 */
@@ -187,50 +212,55 @@ export class SheetsExporter {
 
     const client = await this.clientFactory(credentialsFile);
     const created = await client.createSpreadsheet(input.title);
-    let totalCells = 0;
+    try {
+      let totalCells = 0;
 
-    for (let index = 0; index < input.sheets.length; index += 1) {
-      const sheet = input.sheets[index]!;
-      if (index === 0) {
-        await client.renameFirstSheet(created.spreadsheetId, sheet.name);
-      } else {
-        await client.addSheet(created.spreadsheetId, sheet.name);
-      }
-
-      let columns: QueryColumn[] = [];
-      let chunk: unknown[][] = [];
-      const range = `'${sheet.name.replace(/'/g, "''")}'!A1`;
-
-      const flush = async (): Promise<void> => {
-        if (chunk.length === 0) return;
-        await client.appendValues(created.spreadsheetId, chunk, range);
-        chunk = [];
-      };
-
-      for await (const event of sheet.events) {
-        if (event.type === 'columns') {
-          columns = event.columns;
-          totalCells += event.columns.length;
-          chunk.push(event.columns.map((column) => column.name));
-          continue;
+      for (let index = 0; index < input.sheets.length; index += 1) {
+        const sheet = input.sheets[index]!;
+        if (index === 0) {
+          await client.renameFirstSheet(created.spreadsheetId, sheet.name);
+        } else {
+          await client.addSheet(created.spreadsheetId, sheet.name);
         }
 
-        totalCells += Math.max(columns.length, event.row.length);
-        if (totalCells > SHEETS_SAFE_CELL_LIMIT) {
-          throw new AppError(413, {
-            code: 'RESULT_TOO_LARGE',
-            message:
-              'Google Sheets export is limited to 8,000,000 cells in Hubble. Use S3 or CSV for larger results.',
-          });
+        let columns: QueryColumn[] = [];
+        let chunk: unknown[][] = [];
+        const range = `'${sheet.name.replace(/'/g, "''")}'!A1`;
+
+        const flush = async (): Promise<void> => {
+          if (chunk.length === 0) return;
+          await client.appendValues(created.spreadsheetId, chunk, range);
+          chunk = [];
+        };
+
+        for await (const event of sheet.events) {
+          if (event.type === 'columns') {
+            columns = event.columns;
+            totalCells += event.columns.length;
+            chunk.push(event.columns.map((column) => column.name));
+            continue;
+          }
+
+          totalCells += Math.max(columns.length, event.row.length);
+          if (totalCells > SHEETS_SAFE_CELL_LIMIT) {
+            throw new AppError(413, {
+              code: 'RESULT_TOO_LARGE',
+              message:
+                'Google Sheets export is limited to 8,000,000 cells in Hubble. Use S3 or CSV for larger results.',
+            });
+          }
+          chunk.push(event.row.map(toSheetsCellValue));
+          if (chunk.length >= SHEETS_APPEND_ROWS) await flush();
         }
-        chunk.push(event.row.map(toSheetsCellValue));
-        if (chunk.length >= SHEETS_APPEND_ROWS) await flush();
+        await flush();
       }
-      await flush();
+
+      await client.shareWithWriter(created.spreadsheetId, input.email);
+      return created;
+    } catch (err) {
+      await deleteCreatedSpreadsheet(client, created.spreadsheetId);
+      throw err;
     }
-
-    await client.shareWithWriter(created.spreadsheetId, input.email);
-    return created;
   }
 }
 

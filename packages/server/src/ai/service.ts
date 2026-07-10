@@ -18,6 +18,7 @@ export interface AiServiceOptions {
   provider: AiProvider;
   audit: AuditLogger;
   timeoutMs: number;
+  maxResponseBytes: number;
 }
 
 /** AI アシスト要求を処理し、SSE イベント列を生成するサービス。 */
@@ -25,10 +26,12 @@ export class AiService {
   private readonly provider: AiProvider;
   private readonly audit: AuditLogger;
   private readonly timeoutMs: number;
+  private readonly maxResponseBytes: number;
   constructor(options: AiServiceOptions) {
     this.provider = options.provider;
     this.audit = options.audit;
     this.timeoutMs = options.timeoutMs;
+    this.maxResponseBytes = options.maxResponseBytes;
   }
 
   /**
@@ -49,10 +52,13 @@ export class AiService {
   ): AsyncIterable<AiAssistEvent> {
     const prompt = buildPrompt(request, opts.dialect);
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
-    const signal =
-      opts.signal === undefined ? timeoutSignal : AbortSignal.any([opts.signal, timeoutSignal]);
+    const responseLimitAbort = new AbortController();
+    const signals = [timeoutSignal, responseLimitAbort.signal];
+    if (opts.signal !== undefined) signals.push(opts.signal);
+    const signal = AbortSignal.any(signals);
 
     let fullText = '';
+    let responseBytes = 0;
     let ok = false;
     let sqlHash: string | undefined;
 
@@ -62,6 +68,15 @@ export class AiService {
 
     try {
       for await (const chunk of this.provider.stream(prompt, signal)) {
+        const chunkBytes = Buffer.byteLength(chunk, 'utf8');
+        if (responseBytes + chunkBytes > this.maxResponseBytes) {
+          responseLimitAbort.abort();
+          throw new AppError(502, {
+            code: 'AI_RESPONSE_TOO_LARGE',
+            message: 'AI provider response exceeded the configured size limit',
+          });
+        }
+        responseBytes += chunkBytes;
         fullText += chunk;
         yield { type: 'delta', text: chunk };
       }

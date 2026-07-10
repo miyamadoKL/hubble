@@ -38,12 +38,14 @@ export function createAiProvider(
     return new GeminiProvider({
       model: config.model,
       apiKey: config.apiKey,
+      maxOutputTokens: config.maxOutputTokens,
       fetchImpl,
     });
   }
   return new GithubModelsProvider({
     model: config.model,
     apiKey: config.apiKey,
+    maxOutputTokens: config.maxOutputTokens,
     fetchImpl,
   });
 }

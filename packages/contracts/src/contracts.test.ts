@@ -40,6 +40,7 @@ import {
   retryPolicySchema,
   scheduleNotificationsSchema,
   cronExpression,
+  aiAssistRequestSchema,
   apiRoutes,
 } from './index';
 
@@ -168,6 +169,46 @@ describe('auth', () => {
 
   it('rejects an empty user', () => {
     expect(meResponseSchema.safeParse({ user: '', authMode: 'none' }).success).toBe(false);
+  });
+});
+
+describe('AI assistant input limits', () => {
+  it('rejects table and context identifiers longer than 256 characters', () => {
+    const long = 'x'.repeat(257);
+    const validTable = {
+      catalog: 'catalog',
+      schema: 'schema',
+      table: 'table',
+      columns: [{ name: 'column', type: 'varchar' }],
+    };
+    const cases = [
+      { ...validTable, catalog: long },
+      { ...validTable, schema: long },
+      { ...validTable, table: long },
+      { ...validTable, columns: [{ name: long, type: 'varchar' }] },
+      { ...validTable, columns: [{ name: 'column', type: long }] },
+    ];
+
+    for (const table of cases) {
+      expect(
+        aiAssistRequestSchema.safeParse({ task: 'draft', instruction: 'query', tables: [table] })
+          .success,
+      ).toBe(false);
+    }
+    expect(
+      aiAssistRequestSchema.safeParse({
+        task: 'draft',
+        instruction: 'query',
+        context: { catalog: long },
+      }).success,
+    ).toBe(false);
+    expect(
+      aiAssistRequestSchema.safeParse({
+        task: 'draft',
+        instruction: 'query',
+        context: { schema: long },
+      }).success,
+    ).toBe(false);
   });
 });
 

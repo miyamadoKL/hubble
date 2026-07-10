@@ -212,6 +212,28 @@ describe('resolveAiConfig via loadServerConfig', () => {
       model: 'openai/gpt-4o-mini',
       apiKey: 'token-value',
       timeoutMs: 60_000,
+      maxConcurrency: 4,
+      perPrincipalPerMinute: 20,
+      maxResponseBytes: 262_144,
+      maxOutputTokens: 2_048,
+    });
+  });
+
+  it('reads AI resource limit overrides', () => {
+    expect(
+      loadServerConfig({
+        AI_PROVIDER: 'gemini-api',
+        GEMINI_API_KEY: 'key',
+        AI_MAX_CONCURRENCY: '2',
+        AI_RATE_LIMIT_PER_MINUTE: '7',
+        AI_MAX_RESPONSE_BYTES: '4096',
+        AI_MAX_OUTPUT_TOKENS: '512',
+      }).ai,
+    ).toMatchObject({
+      maxConcurrency: 2,
+      perPrincipalPerMinute: 7,
+      maxResponseBytes: 4_096,
+      maxOutputTokens: 512,
     });
   });
 

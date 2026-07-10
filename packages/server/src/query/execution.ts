@@ -41,7 +41,7 @@ export interface QueryResultObserver {
   /** 列定義が確定したときに呼ばれる。 */
   onColumns?: (columns: QueryColumn[]) => void;
   /** Trino から受け取った全行を、truncate 前の状態で受け取る。 */
-  onRows?: (rows: unknown[][]) => void;
+  onRows?: (rows: unknown[][]) => void | Promise<void>;
   /** 実行が終端状態に達したときに呼ばれる。 */
   onSettled?: (exec: QueryExecution) => void;
 }
@@ -274,20 +274,20 @@ export class QueryExecution {
   // 受け入れる行数を決める。残容量を超えるページを受け取った場合は
   // truncated フラグを立てる。実際にバッファへ追加した分だけ 'rows' イベントを
   // 発火する（切り詰められた分はイベントに含めない）。
-  private appendRows(data: unknown[][]): void {
+  private appendRows(data: unknown[][]): void | Promise<void> {
     if (data.length === 0) return;
-    this.resultObserver?.onRows?.(data);
     this.producedRows += data.length;
     const remaining = this.maxRows - this.rows.length;
     if (remaining <= 0) {
       this.truncated = true;
-      return;
+      return this.resultObserver?.onRows?.(data);
     }
     const accepted = data.length <= remaining ? data : data.slice(0, remaining);
     const offset = this.rows.length;
     for (const row of accepted) this.rows.push(row);
     if (accepted.length < data.length) this.truncated = true;
     this.emit({ type: 'rows', offset, rows: accepted });
+    return this.resultObserver?.onRows?.(data);
   }
 
   // 最新の統計情報（stats）を更新し、'stats' イベントを発火する。
@@ -334,7 +334,7 @@ export class QueryExecution {
       this.trinoQueryId = page.id;
       if (page.infoUri) this.infoUri = page.infoUri;
       this.setState('running');
-      this.applyPage(page);
+      await this.applyPage(page);
 
       // Backoff discipline (Trino client protocol): when a page carries data,
       // fetch the next page with zero delay and reset the counter. Only escalate
@@ -380,7 +380,7 @@ export class QueryExecution {
         }
         // 次ページを取得（GET nextUri 相当）し、結果をバッファへ適用する。
         page = await this.client.advance(page.nextUri, this.ctx, this.mutations, signal);
-        this.applyPage(page);
+        await this.applyPage(page);
       }
       // nextUri が無くなった = Trino 側でクエリが完了した、という合図。
       this.currentNextUri = undefined;
@@ -403,10 +403,15 @@ export class QueryExecution {
 
   // Trino から受け取った 1 ページ分の内容（columns/data/stats）を、
   // 存在するフィールドだけ状態へ反映する。
-  private applyPage(page: Awaited<ReturnType<StatementClient['start']>>): void {
+  private async applyPage(page: Awaited<ReturnType<StatementClient['start']>>): Promise<void> {
     if (page.columns) this.setColumns(toQueryColumns(page.columns));
-    if (page.data) this.appendRows(page.data);
+    const rowsWritten = page.data ? this.appendRows(page.data) : undefined;
     if (page.stats) this.setStats(toQueryStats(page.stats));
+    try {
+      await rowsWritten;
+    } catch {
+      // 結果永続化はbest-effortのため、observer失敗をクエリ状態へ伝播させない。
+    }
   }
 
   // 終端状態への遷移を一度だけ行う共通処理。finishedAt の記録、エラーの設定、

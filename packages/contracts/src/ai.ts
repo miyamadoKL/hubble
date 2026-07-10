@@ -37,17 +37,17 @@ export type AiTask = z.infer<typeof aiTaskSchema>;
  */
 export const aiTableContextSchema = z.object({
   // カタログ名（MySQL / PostgreSQL などカタログ概念がない場合は省略）。
-  catalog: z.string().optional(),
+  catalog: z.string().max(256).optional(),
   // スキーマ名。
-  schema: z.string().min(1),
+  schema: z.string().min(1).max(256),
   // テーブル名。
-  table: z.string().min(1),
+  table: z.string().min(1).max(256),
   // 列の一覧（名前と型のみ）。
   columns: z
     .array(
       z.object({
-        name: z.string().min(1),
-        type: z.string().min(1),
+        name: z.string().min(1).max(256),
+        type: z.string().min(1).max(256),
       }),
     )
     .max(500),
@@ -79,8 +79,8 @@ export const aiAssistRequestSchema = z
     // 現在の catalog.schema コンテキスト（任意。FQN 補完のヒントに使う）。
     context: z
       .object({
-        catalog: z.string().optional(),
-        schema: z.string().optional(),
+        catalog: z.string().max(256).optional(),
+        schema: z.string().max(256).optional(),
       })
       .optional(),
   })
