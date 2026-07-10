@@ -7,6 +7,7 @@
  * PostgreSQL リポジトリ、スケジューラーをすべて生成し、依存関係を配線したうえで
  * ひとつの `Services` オブジェクトとして返す。
  */
+import { existsSync } from 'node:fs';
 import type { SqlDatabase } from './db/sqlDatabase';
 import type { ServerConfig } from './config';
 import { MetadataService } from './metadata/service';
@@ -26,7 +27,7 @@ import { AlertEvaluator } from './alert/evaluator';
 import { WorkflowRunner } from './workflow/runner';
 import { backfillOwners } from './db/backfill';
 import { loadDatasources } from './datasource/loader';
-import { loadRbac } from './rbac/loader';
+import { loadRbac, resolveRbacPath } from './rbac/loader';
 import type { LoadedRbac } from './rbac/types';
 import type { ResolvedDatasource } from './datasource/types';
 import { applyDatasourceReloadSync, planDatasourceReload } from './datasource/reload';
@@ -121,6 +122,9 @@ export async function buildServices(
   const env = options.env ?? process.env;
   const cwd = options.cwd;
   const rbacState = { current: loadRbac({ env, cwd }) };
+  const rbacPath = resolveRbacPath(env, cwd ?? process.cwd());
+  const hasExplicitRbacPath = env.RBAC_PATH !== undefined && env.RBAC_PATH !== '';
+  let rbacFileRequired = hasExplicitRbacPath || existsSync(rbacPath);
   const datasources = loadDatasources({ env, cwd });
   const buildEngineOptions: BuildEnginesOptions = {
     trinoConfig: config.trino,
@@ -329,7 +333,14 @@ export async function buildServices(
     if (rbacReloadInFlight) return;
     rbacReloadInFlight = true;
     try {
-      rbacState.current = loadRbac({ env, cwd });
+      const defaultFileExists = existsSync(rbacPath);
+      const next = loadRbac({
+        env,
+        cwd,
+        allowMissingDefault: !rbacFileRequired && !defaultFileExists,
+      });
+      rbacState.current = next;
+      if (defaultFileExists || existsSync(rbacPath)) rbacFileRequired = true;
     } catch (err) {
       reloadLogError('rbac reload failed; keeping current config', err);
     } finally {

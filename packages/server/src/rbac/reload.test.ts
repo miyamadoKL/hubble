@@ -171,6 +171,32 @@ defaultRole: operator
     expect(meResponseSchema.parse(await res.json()).role).toBe('member');
   });
 
+  it('keeps the adopted default config when rbac.yaml is removed', async () => {
+    const rbacPath = join(tempDir, 'rbac.yaml');
+    writeFileSync(rbacPath, memberRbacYaml(10_000), 'utf8');
+    const errors: unknown[] = [];
+    const ctx = await createTestContext({
+      cwd: tempDir,
+      reloadLogError: (_message, error) => errors.push(error),
+    });
+
+    rmSync(rbacPath);
+    await ctx.services.reloadRbac();
+
+    const res = await ctx.app.request('/api/me');
+    expect(meResponseSchema.parse(await res.json()).role).toBe('member');
+    expect(errors).toHaveLength(1);
+  });
+
+  it('keeps the built-in config when rbac.yaml remains absent on reload', async () => {
+    const ctx = await createTestContext({ cwd: tempDir });
+
+    await ctx.services.reloadRbac();
+
+    const res = await ctx.app.request('/api/me');
+    expect(meResponseSchema.parse(await res.json()).role).toBe('unrestricted');
+  });
+
   it('uses new guard limits after reload (cache key includes guard values)', async () => {
     const rbacPath = join(tempDir, 'rbac.yaml');
     writeFileSync(rbacPath, memberRbacYaml(1_000_000), 'utf8');

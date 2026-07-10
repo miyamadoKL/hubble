@@ -21,6 +21,8 @@ export interface LoadRbacOptions {
   env?: Env;
   /** 作業ディレクトリ（既定は `process.cwd()`）。 */
   cwd?: string;
+  /** 既定の rbac.yaml が無い場合に組み込み設定を許可するか。 */
+  allowMissingDefault?: boolean;
 }
 
 function formatIssuePath(path: PropertyKey[]): string {
@@ -141,6 +143,10 @@ export function loadRbac(options: LoadRbacOptions = {}): LoadedRbac {
   const defaultPath = resolve(cwd, 'rbac.yaml');
   if (existsSync(defaultPath)) {
     return loadFromFile(defaultPath);
+  }
+
+  if (options.allowMissingDefault === false) {
+    throw new Error(`rbac file '${defaultPath}' cannot be read: file does not exist`);
   }
 
   return builtInFallback();

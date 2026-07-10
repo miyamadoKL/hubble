@@ -58,11 +58,19 @@ export function createMysqlStatementClient(
 ): StatementClient {
   const executions = new Map<string, MysqlExecution>();
 
-  const restoreAndRelease = async (exec: MysqlExecution): Promise<void> => {
-    if (exec.sessionReadOnlyApplied) {
-      await applyMysqlSessionReadOnly(exec.conn, options.datasourceReadOnly);
+  const restoreAndReleaseConnection = async (
+    conn: PoolConnection,
+    sessionReadOnlyApplied: boolean,
+  ): Promise<void> => {
+    if (sessionReadOnlyApplied) {
+      try {
+        await applyMysqlSessionReadOnly(conn, options.datasourceReadOnly);
+      } catch (err) {
+        conn.destroy();
+        throw err;
+      }
     }
-    exec.conn.release();
+    conn.release();
   };
 
   const releaseExecution = async (exec: MysqlExecution): Promise<void> => {
@@ -70,7 +78,7 @@ export function createMysqlStatementClient(
     exec.released = true;
     executions.delete(exec.queryId);
     exec.reader.dispose();
-    await restoreAndRelease(exec);
+    await restoreAndReleaseConnection(exec.conn, exec.sessionReadOnlyApplied);
   };
 
   /** キャンセル等で進行中クエリが残る接続はプールへ返さず破棄する。 */
@@ -84,12 +92,17 @@ export function createMysqlStatementClient(
 
   const checkout = async (): Promise<{ conn: PoolConnection; sessionReadOnlyApplied: boolean }> => {
     const conn = await pool.getConnection();
-    let sessionReadOnlyApplied = false;
-    if (options.sessionReadOnly && !options.datasourceReadOnly) {
-      await applyMysqlSessionReadOnly(conn, true);
-      sessionReadOnlyApplied = true;
+    try {
+      let sessionReadOnlyApplied = false;
+      if (options.sessionReadOnly && !options.datasourceReadOnly) {
+        await applyMysqlSessionReadOnly(conn, true);
+        sessionReadOnlyApplied = true;
+      }
+      return { conn, sessionReadOnlyApplied };
+    } catch (err) {
+      conn.destroy();
+      throw err;
     }
-    return { conn, sessionReadOnlyApplied };
   };
 
   return {
@@ -139,14 +152,12 @@ export function createMysqlStatementClient(
         conn = undefined;
 
         const nextUri = done ? undefined : queryId;
+        if (done) await releaseExecution(exec);
         return buildPage(queryId, columns, rows, nextUri, exec.rowCount);
       } catch (err) {
         reader?.dispose();
         if (conn) {
-          if (sessionReadOnlyApplied) {
-            await applyMysqlSessionReadOnly(conn, options.datasourceReadOnly).catch(() => {});
-          }
-          conn.release();
+          await restoreAndReleaseConnection(conn, sessionReadOnlyApplied).catch(() => {});
         }
         throwMysqlDriverError(err);
       }

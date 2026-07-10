@@ -82,35 +82,39 @@ export function parseIpv6(ip: string): bigint | undefined {
   // 空文字列（先頭/末尾が `::` の場合）は空配列に、それ以外は ':' 区切りでグループ配列にする。
   const expand = (segment: string): string[] => (segment === '' ? [] : segment.split(':'));
 
+  const expandEmbeddedIpv4 = (groups: string[]): string[] | undefined => {
+    const dottedIndexes = groups.flatMap((group, index) => (group.includes('.') ? [index] : []));
+    if (dottedIndexes.length === 0) return groups;
+    if (dottedIndexes.length !== 1 || dottedIndexes[0] !== groups.length - 1) return undefined;
+    const v4 = parseIpv4(groups[groups.length - 1]!);
+    if (v4 === undefined) return undefined;
+    return [...groups.slice(0, -1), (v4 >> 16n).toString(16), (v4 & 0xffffn).toString(16)];
+  };
+
   let groups: string[];
   if (doubleColon.length === 2) {
     // `::` の前後をそれぞれ展開し、省略された分だけ '0' グループで埋めて合計8グループにする。
     const head = expand(doubleColon[0]!);
     const tail = expand(doubleColon[1]!);
-    const fill = 8 - (head.length + tail.length);
-    if (fill < 0) return undefined; // 前後だけで8グループを超える場合は不正
-    groups = [...head, ...Array<string>(fill).fill('0'), ...tail];
+    const expandedHead = expandEmbeddedIpv4(head);
+    const expandedTail = expandEmbeddedIpv4(tail);
+    if (!expandedHead || !expandedTail || head.some((group) => group.includes('.'))) {
+      return undefined;
+    }
+    const fill = 8 - (expandedHead.length + expandedTail.length);
+    if (fill < 1) return undefined; // `::` は1グループ以上を省略する必要がある
+    groups = [...expandedHead, ...Array<string>(fill).fill('0'), ...expandedTail];
   } else {
     // `::` を含まない完全展開形式。そのままコロンで分割する。
-    groups = ip.split(':');
+    const expanded = expandEmbeddedIpv4(ip.split(':'));
+    if (!expanded) return undefined;
+    groups = expanded;
   }
   if (groups.length !== 8) return undefined; // IPv6 は必ず8グループ
 
   let value = 0n;
   for (let i = 0; i < groups.length; i++) {
     const group = groups[i]!;
-    // A trailing IPv4 may occupy the final two 16-bit groups.
-    // 最終グループがドットを含む場合、末尾の IPv4 埋め込み表記（例: ::ffff:127.0.0.1）とみなす。
-    if (i === 7 && group.includes('.')) {
-      const v4 = parseIpv4(group);
-      if (v4 === undefined) return undefined;
-      // The IPv4 fills groups 6 and 7; back out the placeholder we just added.
-      // 32bit の IPv4 値を上位16bitと下位16bitに分割し、それぞれを16bitグループとして詰める
-      // （末尾の2グループ分＝32bitを埋め込み IPv4 で置き換える）。
-      value = (value << 16n) | (v4 >> 16n);
-      value = (value << 16n) | (v4 & 0xffffn);
-      return value & ((1n << V6_BITS) - 1n); // 128bit に収まるようマスクして返す
-    }
     if (!/^[0-9a-fA-F]{1,4}$/.test(group)) return undefined; // 16進数1〜4桁以外は不正
     // 16bit グループを左シフトしながら詰め込み、128bit の値を組み立てる。
     value = (value << 16n) | BigInt(Number.parseInt(group, 16));
@@ -137,9 +141,9 @@ export function parseAddress(raw: string): { version: 4 | 6; value: bigint } | u
   if (ip === '') return undefined;
   // Strip a zone id (`fe80::1%eth0`) and brackets (`[::1]`).
   // リンクローカルアドレスのゾーンID（%以降）と、URL 表記でよく使われる角括弧を取り除く。
+  if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1);
   const pct = ip.indexOf('%');
   if (pct >= 0) ip = ip.slice(0, pct);
-  if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1);
 
   if (!ip.includes(':')) {
     const v4 = parseIpv4(ip);

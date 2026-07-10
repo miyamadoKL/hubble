@@ -556,4 +556,54 @@ describe('loadDatasources', () => {
       }),
     ).toThrow(/roleCredentials/);
   });
+
+  it('rejects misspelled datasource fields instead of dropping them', () => {
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: mysql-a
+    type: mysql
+    username: u
+    host: localhost
+    database: app
+    roleCredentails:
+      analyst:
+        username: analyst
+        passwordEnv: ANALYST_PASSWORD
+`,
+    );
+
+    expect(() =>
+      loadDatasources({
+        env: { DATASOURCES_PATH: 'datasources.yaml', ANALYST_PASSWORD: 'secret' },
+        cwd: tempDir,
+      }),
+    ).toThrow(/roleCredentails/);
+  });
+
+  it('rejects unknown fields in role credential values and the root object', () => {
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: pg-a
+    type: postgresql
+    username: u
+    host: localhost
+    database: app
+    roleCredentials:
+      analyst:
+        username: analyst
+        passwordEnv: ANALYST_PASSWORD
+        usernmae: typo
+unknownRoot: true
+`,
+    );
+
+    expect(() =>
+      loadDatasources({
+        env: { DATASOURCES_PATH: 'datasources.yaml', ANALYST_PASSWORD: 'secret' },
+        cwd: tempDir,
+      }),
+    ).toThrow(/usernmae|unknownRoot/);
+  });
 });

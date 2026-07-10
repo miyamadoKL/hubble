@@ -27,6 +27,8 @@ interface FakePgPoolOptions {
   readError?: unknown;
   /** SET default_transaction_read_only 発行を記録する配列。 */
   sqlLog?: string[];
+  sessionSetupError?: unknown;
+  sessionRestoreError?: unknown;
 }
 
 function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; actions: string[] } {
@@ -39,7 +41,16 @@ function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; actions: 
     connect: async () => ({
       query: (arg: unknown) => {
         if (typeof arg === 'string') {
-          if (arg.startsWith('SET default_transaction_read_only')) opts.sqlLog?.push(arg);
+          if (arg.startsWith('SET default_transaction_read_only')) {
+            opts.sqlLog?.push(arg);
+            if (arg.endsWith('on') && opts.sessionSetupError) {
+              return Promise.reject(opts.sessionSetupError);
+            }
+            if (arg.endsWith('off') && opts.sessionRestoreError) {
+              return Promise.reject(opts.sessionRestoreError);
+            }
+            return Promise.resolve({ rows: [] });
+          }
           if (opts.pidQueryError) return Promise.reject(opts.pidQueryError);
           return Promise.resolve({ rows: [{ pid: 99 }] });
         }
@@ -68,7 +79,7 @@ function makeFakePgPool(opts: FakePgPoolOptions = {}): { pool: PgPool; actions: 
 
 describe('createPgStatementClient', () => {
   it('returns the first batch with columns and FINISHED when rows fit one page', async () => {
-    const { pool } = makeFakePgPool();
+    const { pool, actions } = makeFakePgPool();
     const client = createPgStatementClient(pool, {
       datasourceReadOnly: false,
       sessionReadOnly: false,
@@ -78,6 +89,8 @@ describe('createPgStatementClient', () => {
     expect(page.data).toEqual([[1], [2], [3]]);
     expect(page.nextUri).toBeUndefined();
     expect(page.stats?.state).toBe('FINISHED');
+    expect(actions.filter((action) => action === 'release')).toHaveLength(1);
+    expect(actions).not.toContain('destroy');
   });
 
   it('splits large result sets across advance pages', async () => {
@@ -238,6 +251,36 @@ describe('createPgStatementClient', () => {
       'SET default_transaction_read_only = off',
     ]);
     expect(actions).toContain('destroy');
+  });
+
+  it('destroys the connection when session read only setup fails', async () => {
+    const { pool, actions } = makeFakePgPool({
+      sessionSetupError: new Error('setup failed'),
+    });
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: true,
+    });
+
+    await expect(
+      client.start('SELECT 1', { source: 'test' }, emptySessionMutations()),
+    ).rejects.toBeDefined();
+    expect(actions).toEqual(['destroy']);
+  });
+
+  it('destroys the connection when session read only restoration fails', async () => {
+    const { pool, actions } = makeFakePgPool({
+      sessionRestoreError: new Error('restore failed'),
+    });
+    const client = createPgStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: true,
+    });
+
+    await expect(
+      client.start('SELECT 1', { source: 'test' }, emptySessionMutations()),
+    ).rejects.toBeDefined();
+    expect(actions).toEqual(['destroy']);
   });
 
   it('waitBackoff resolves immediately', async () => {

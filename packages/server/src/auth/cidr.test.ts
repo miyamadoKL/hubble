@@ -32,6 +32,12 @@ describe('parseAddress', () => {
   it('strips brackets and zone ids', () => {
     expect(parseAddress('[::1]')).toEqual({ version: 6, value: 1n });
     expect(parseAddress('fe80::1%eth0')?.version).toBe(6);
+    expect(parseAddress('[fe80::1%eth0]')).toEqual(parseAddress('fe80::1'));
+  });
+
+  it('accounts for an embedded IPv4 as two groups', () => {
+    expect(parseAddress('2001:db8::192.0.2.1')).toEqual(parseAddress('2001:db8:0:0:0:0:c000:201'));
+    expect(parseAddress('2001:db8:0:0:0:0:192.0.2.1')).toEqual(parseAddress('2001:db8::c000:201'));
   });
 
   it('rejects malformed input', () => {
@@ -40,6 +46,11 @@ describe('parseAddress', () => {
     expect(parseAddress('1.2.3')).toBeUndefined();
     expect(parseAddress('xyz')).toBeUndefined();
     expect(parseAddress(':::1')).toBeUndefined();
+    expect(parseAddress('1::2::3')).toBeUndefined();
+    expect(parseAddress('1:2:3:4:5:6:7')).toBeUndefined();
+    expect(parseAddress('1:2:3:4:5:6:7:8:9')).toBeUndefined();
+    expect(parseAddress('1:2:3:4:5:6:7:192.0.2.1')).toBeUndefined();
+    expect(parseAddress('1:2:3:4:5:6:7:8::')).toBeUndefined();
   });
 });
 
@@ -81,6 +92,13 @@ describe('cidrContains', () => {
   it('matches inside an IPv6 network', () => {
     expect(cidrContains(v6Net, '2001:db8::1234')).toBe(true);
     expect(cidrContains(v6Net, '2001:db9::1')).toBe(false);
+  });
+
+  it('matches an embedded IPv4 against the correct IPv6 prefix', () => {
+    const expected = parseCidr('2001:db8::/32')!;
+    const shifted = parseCidr('db8::/16')!;
+    expect(cidrContains(expected, '2001:db8::192.0.2.1')).toBe(true);
+    expect(cidrContains(shifted, '2001:db8::192.0.2.1')).toBe(false);
   });
 
   it('matches an IPv4-mapped IPv6 peer against an IPv4 range', () => {
