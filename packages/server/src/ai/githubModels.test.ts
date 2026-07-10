@@ -18,10 +18,12 @@ describe('GithubModelsProvider', () => {
     const provider = new GithubModelsProvider({
       model: 'openai/gpt-4o-mini',
       apiKey: 'test-token',
+      maxOutputTokens: 654,
       baseUrl: 'https://models.test/chat/completions',
       fetchImpl: (async (input, init) => {
         expect(String(input)).toBe('https://models.test/chat/completions');
         expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' });
+        expect(JSON.parse(String(init?.body))).toMatchObject({ max_tokens: 654 });
         return sseResponse([
           'data: {"choices":[{"delta":{"content":"SELECT "}}]}\n\n',
           'data: {"choices":[{"delta":{"content":"1"}}]}\n\n',
@@ -44,6 +46,7 @@ describe('GithubModelsProvider', () => {
     const provider = new GithubModelsProvider({
       model: 'openai/gpt-4o-mini',
       apiKey: 'test-token',
+      maxOutputTokens: 654,
       baseUrl: 'https://models.test/chat/completions',
       fetchImpl: (async () => sseResponse(['upstream failure'], 502)) as typeof fetch,
     });

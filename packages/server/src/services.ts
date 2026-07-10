@@ -52,6 +52,7 @@ import { GithubGovernanceService } from './github/governance';
 import { GithubSyncScheduler } from './github/syncScheduler';
 import { createAiProvider, type AiProvider } from './ai/provider';
 import { AiService } from './ai/service';
+import { AiRateLimiter } from './ai/rateLimiter';
 
 export interface Services {
   config: ServerConfig;
@@ -85,6 +86,8 @@ export interface Services {
   githubGovernance: GithubGovernanceService;
   /** AI アシスタント。provider が off のときは undefined。 */
   ai?: AiService;
+  /** AI アシスタントのプロセス共有利用枠。provider が off のときは undefined。 */
+  aiRateLimiter?: AiRateLimiter;
   /** GitHub OAuth state 生成用の now 注入 (テスト用)。 */
   githubNow?: () => number;
   reloadDatasources: () => Promise<void>;
@@ -154,6 +157,14 @@ export async function buildServices(
 
   const audit = new AuditLogger(new AuditRepository(db), options.auditLogError);
   const aiProvider = options.aiProvider ?? createAiProvider(config.ai, options.fetchImpl);
+  const aiLimits =
+    config.ai.provider === 'off'
+      ? {
+          maxConcurrency: 4,
+          perPrincipalPerMinute: 20,
+          maxResponseBytes: 262_144,
+        }
+      : config.ai;
   const ai =
     aiProvider === undefined
       ? undefined
@@ -161,6 +172,15 @@ export async function buildServices(
           provider: aiProvider,
           audit,
           timeoutMs: config.ai.provider === 'off' ? 60_000 : config.ai.timeoutMs,
+          maxResponseBytes: aiLimits.maxResponseBytes,
+        });
+  const aiRateLimiter =
+    aiProvider === undefined
+      ? undefined
+      : new AiRateLimiter({
+          maxConcurrency: aiLimits.maxConcurrency,
+          perPrincipalPerMinute: aiLimits.perPrincipalPerMinute,
+          now: options.now,
         });
   const resultStore = options.resultStore ?? createResultStore(config.resultStore);
   const notifications =
@@ -455,6 +475,7 @@ export async function buildServices(
     githubSyncScheduler,
     githubGovernance,
     ai,
+    aiRateLimiter,
     githubNow,
     reloadDatasources,
     reloadRbac,

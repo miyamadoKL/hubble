@@ -248,6 +248,10 @@ export type AiConfig =
       model: string;
       apiKey: string;
       timeoutMs: number;
+      maxConcurrency: number;
+      perPrincipalPerMinute: number;
+      maxResponseBytes: number;
+      maxOutputTokens: number;
     };
 
 /** GitHub 連携のガバナンスモード。強制は後続タスクで実装する。 */
@@ -491,7 +495,20 @@ export function resolveAiConfig(env: Env): AiConfig {
     throw new Error(`${apiKeyEnv} is required when AI_PROVIDER=${provider}`);
   }
   const timeoutMs = envPositiveInt(env, 'AI_TIMEOUT_MS', 60_000);
-  return { provider, model, apiKey, timeoutMs };
+  const maxConcurrency = envPositiveInt(env, 'AI_MAX_CONCURRENCY', 4);
+  const perPrincipalPerMinute = envPositiveInt(env, 'AI_RATE_LIMIT_PER_MINUTE', 20);
+  const maxResponseBytes = envPositiveInt(env, 'AI_MAX_RESPONSE_BYTES', 262_144);
+  const maxOutputTokens = envPositiveInt(env, 'AI_MAX_OUTPUT_TOKENS', 2_048);
+  return {
+    provider,
+    model,
+    apiKey,
+    timeoutMs,
+    maxConcurrency,
+    perPrincipalPerMinute,
+    maxResponseBytes,
+    maxOutputTokens,
+  };
 }
 
 /** EXPORT_* 関連の環境変数を解決する。 */

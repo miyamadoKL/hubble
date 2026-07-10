@@ -13,6 +13,7 @@ const DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com';
 export interface GeminiProviderOptions {
   model: string;
   apiKey: string;
+  maxOutputTokens: number;
   fetchImpl?: typeof fetch;
   baseUrl?: string;
 }
@@ -22,12 +23,14 @@ export class GeminiProvider implements AiProvider {
   readonly kind = 'gemini-api' as const;
   readonly model: string;
   private readonly apiKey: string;
+  private readonly maxOutputTokens: number;
   private readonly fetchImpl: typeof fetch;
   private readonly baseUrl: string;
 
   constructor(options: GeminiProviderOptions) {
     this.model = options.model;
     this.apiKey = options.apiKey;
+    this.maxOutputTokens = options.maxOutputTokens;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
   }
@@ -45,6 +48,7 @@ export class GeminiProvider implements AiProvider {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: prompt.system }] },
         contents: [{ role: 'user', parts: [{ text: prompt.user }] }],
+        generationConfig: { maxOutputTokens: this.maxOutputTokens },
       }),
       signal,
     });
