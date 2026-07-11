@@ -29,6 +29,8 @@ export function needsCsvReexec(exec: QueryExecution): boolean {
 export const CSV_REEXEC_HEADER = 'X-Hubble-Csv-Reexec';
 export const CSV_TRUNCATED_HEADER = 'X-Hubble-Csv-Truncated';
 
+const FORMULA_LEADING_CHARACTER = /^[=+\-@\t\r\n]/;
+
 /** `X-Trino-Source` used by CSV re-execution queries (kept out of history). */
 // CSV ダウンロードのための再実行クエリに付与するソース識別子。
 // このソースを持つクエリはクエリ履歴（History）には記録されない。
@@ -39,7 +41,13 @@ export const DOWNLOAD_SOURCE = 'hubble-download';
 // CR、LF のいずれかを含む場合のみクォートし、内部のダブルクォートは
 // 2 重化してエスケープする。
 export function csvField(value: unknown): string {
-  const s = formatCell(value);
+  const formatted = formatCell(value);
+  // 数値型の符号は維持し、文字列型と構造化された値のテキスト表現だけを
+  // 表計算ソフトの数式として解釈されないようにする。
+  const shouldNeutralize =
+    (typeof value === 'string' || (typeof value === 'object' && value !== null)) &&
+    FORMULA_LEADING_CHARACTER.test(formatted);
+  const s = shouldNeutralize ? `'${formatted}` : formatted;
   if (s === '') return s;
   if (/[",\r\n]/.test(s)) {
     return '"' + s.replace(/"/g, '""') + '"';

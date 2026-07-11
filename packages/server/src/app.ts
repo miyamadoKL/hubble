@@ -44,6 +44,24 @@ export interface AppDeps {
   sheetsClientFactory?: import('./query/exportSheets').SheetsClientFactory;
 }
 
+// 画面埋め込み、MIME 推測、参照元送信、不要なブラウザー機能を全レスポンスで抑止する。
+const RESPONSE_SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  'Permissions-Policy':
+    'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+} as const;
+
+// CSRF 判定の対象外とする副作用のない HTTP メソッド。
+const CSRF_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/** unsafe な API 要求が別 origin から届いた場合に 403 を生成する。 */
+function crossSiteRequestError(): AppError {
+  return AppError.forbidden('Cross-site request rejected', 'CSRF_REJECTED');
+}
+
 /**
  * Build the `Services` graph using the configured persistence backend and the
  * default (env-derived) config, applying migrations. Convenience for
@@ -71,6 +89,37 @@ export async function defaultServices(options: BuildServicesOptions = {}): Promi
 export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   const app = new Hono<{ Variables: AuthVariables }>();
   const { services } = deps;
+
+  // API、静的ファイル、エラー応答を含む全レスポンスへ同じ防御ヘッダーを付ける。
+  app.use('*', async (c, next) => {
+    await next();
+    for (const [name, value] of Object.entries(RESPONSE_SECURITY_HEADERS)) {
+      c.header(name, value);
+    }
+  });
+
+  // unsafe method は Fetch Metadata と Origin で同一 origin からの要求に限定する。
+  // 両ヘッダーを送らない古い利用者エージェントは互換性のため従来どおり許可する。
+  app.use('/api/*', async (c, next) => {
+    if (!CSRF_SAFE_METHODS.has(c.req.method.toUpperCase())) {
+      const fetchSite = c.req.header('Sec-Fetch-Site')?.toLowerCase();
+      if (fetchSite === 'cross-site') throw crossSiteRequestError();
+
+      const origin = c.req.header('Origin');
+      if (origin !== undefined) {
+        let suppliedHost: string;
+        try {
+          suppliedHost = new URL(origin).host;
+        } catch {
+          throw crossSiteRequestError();
+        }
+        // TLS 終端プロキシでは browser の Origin が https、upstream URL が http になるため、
+        // scheme ではなく port を含む host が一致することを同一サイトの条件にする。
+        if (suppliedHost !== new URL(c.req.url).host) throw crossSiteRequestError();
+      }
+    }
+    await next();
+  });
 
   // healthz is always public: it must answer before auth.
   // 日本語: ヘルスチェックは認証ミドルウェアより前に登録し、常に認証不要で応答させる
