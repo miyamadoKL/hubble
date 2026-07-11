@@ -12,7 +12,7 @@
  * - スキーマ文脈はユーザーが明示したテーブル名（FQN）を既存メタデータ API で解決して
  *   渡す。結果行データは一切送らない（Phase 1 の安全条件）。
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type * as monaco from 'monaco-editor';
 import { Loader2, Sparkles, Square, Wand2, Wrench, PenLine, BookOpen, X } from 'lucide-react';
 import type { AiAssistRequest, AiTableContext, AiTask } from '@hubble/contracts';
@@ -30,13 +30,54 @@ import { Markdown } from '../notebook/Markdown';
 import { AiDiffApply } from '../editor/AiDiffApply';
 
 /** 適用先として記憶しておく、リクエスト時点のエディターと対象範囲。 */
-interface CapturedTarget {
+export interface CapturedTarget {
   cellId: string;
   editor: monaco.editor.IStandaloneCodeEditor;
   /** 対象範囲（選択範囲、またはセル全文）。 */
   range: monaco.IRange;
   /** 対象範囲のリクエスト時点のテキスト（diff の左側に使う）。 */
   original: string;
+  /** リクエスト時点のmodel識別子。 */
+  modelUri: string;
+  /** 編集に追随する対象範囲のdecoration。 */
+  tracking: monaco.editor.IEditorDecorationsCollection;
+}
+
+type TargetSnapshot = Omit<CapturedTarget, 'tracking'>;
+
+/** AI提案をキャプチャ時点と同じ対象へ適用する。 */
+export function applyCapturedSql(target: CapturedTarget, sql: string): boolean {
+  const model = target.editor.getModel();
+  const trackedRange = target.tracking.getRange(0);
+  if (
+    !model ||
+    model.uri.toString() !== target.modelUri ||
+    !trackedRange ||
+    model.getValueInRange(trackedRange) !== target.original
+  ) {
+    return false;
+  }
+  const startOffset = model.getOffsetAt({
+    lineNumber: trackedRange.startLineNumber,
+    column: trackedRange.startColumn,
+  });
+  target.editor.executeEdits('ai-assistant-apply', [
+    { range: trackedRange, text: sql, forceMoveMarkers: true },
+  ]);
+  const end = model.getPositionAt(startOffset + sql.length);
+  target.tracking.set([
+    {
+      range: {
+        startLineNumber: trackedRange.startLineNumber,
+        startColumn: trackedRange.startColumn,
+        endLineNumber: end.lineNumber,
+        endColumn: end.column,
+      },
+      options: {},
+    },
+  ]);
+  target.editor.focus();
+  return true;
 }
 
 /** タスクボタンの表示定義。 */
@@ -97,13 +138,22 @@ export function AiPanel() {
   const [diffOpen, setDiffOpen] = useState(false);
   // リクエスト時点の適用先（エディターと対象範囲）。diff モーダルの表示にも使うため state で持つ。
   const [target, setTarget] = useState<CapturedTarget | null>(null);
+  const targetRef = useRef<CapturedTarget | null>(null);
   // 実行中リクエストの中断用。
   const abortRef = useRef<AbortController | null>(null);
   // パネル幅リサイズのドラッグ状態。
   const draggingRef = useRef(false);
 
-  /** アクティブエディターから対象 SQL と適用範囲を取り出す。 */
-  const captureTarget = (): CapturedTarget | null => {
+  useEffect(
+    () => () => {
+      targetRef.current?.tracking.clear();
+      targetRef.current = null;
+    },
+    [],
+  );
+
+  /** アクティブエディターから装飾を作らず対象を読み取る。 */
+  const inspectTarget = (): TargetSnapshot | null => {
     const reg = getActiveEditor();
     const model = reg?.editor.getModel();
     if (!reg || !model) return null;
@@ -115,33 +165,49 @@ export function AiPanel() {
         editor: reg.editor,
         range: selection,
         original: model.getValueInRange(selection),
+        modelUri: model.uri.toString(),
       };
     }
+    const range = model.getFullModelRange();
     return {
       cellId: reg.cellId,
       editor: reg.editor,
-      range: model.getFullModelRange(),
+      range,
       original: model.getValue(),
+      modelUri: model.uri.toString(),
     };
+  };
+
+  /** 検証済み対象へ編集追随用のdecorationを追加する。 */
+  const trackTarget = (snapshot: TargetSnapshot): CapturedTarget => ({
+    ...snapshot,
+    tracking: snapshot.editor.createDecorationsCollection([{ range: snapshot.range, options: {} }]),
+  });
+
+  /** 以前のdecorationを破棄して適用対象を置き換える。 */
+  const replaceTarget = (next: CapturedTarget | null): void => {
+    targetRef.current?.tracking.clear();
+    targetRef.current = next;
+    setTarget(next);
   };
 
   /** 指定タスクのリクエストを組み立てて送信する。 */
   const run = async (task: AiTask) => {
     if (streaming) return;
-    const captured = captureTarget();
+    const inspected = inspectTarget();
 
     // タスク別の入力検証。契約の superRefine と同じ条件を UI 側でも先に確認する。
     if (
       (task === 'explain' || task === 'fix' || task === 'rewrite') &&
-      !captured?.original.trim()
+      !inspected?.original.trim()
     ) {
       toast.error('AI assistant', 'Focus a SQL cell with content first.');
       return;
     }
     let errorMessage: string | undefined;
     if (task === 'fix') {
-      const cellError = captured
-        ? useExecutionStore.getState().cells[captured.cellId]?.error
+      const cellError = inspected
+        ? useExecutionStore.getState().cells[inspected.cellId]?.error
         : undefined;
       if (!cellError) {
         toast.error('AI assistant', 'The focused cell has no recent error to fix.');
@@ -155,7 +221,7 @@ export function AiPanel() {
     }
 
     // テーブル文脈の解決（明示された FQN のみ。失敗したら中断してユーザーに知らせる）。
-    let tables: AiTableContext[] | undefined;
+    let tableNames: { catalog: string; schema: string; table: string }[] | undefined;
     if (tablesInput.trim() !== '') {
       const datasourceId = shellContext.datasourceId;
       if (!datasourceId) {
@@ -163,9 +229,21 @@ export function AiPanel() {
         return;
       }
       try {
-        const names = parseTableNames(tablesInput, shellContext.catalog);
+        tableNames = parseTableNames(tablesInput, shellContext.catalog);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error('AI assistant', `Failed to resolve context tables: ${message}`);
+        return;
+      }
+    }
+
+    const captured = inspected ? trackTarget(inspected) : null;
+    let tables: AiTableContext[] | undefined;
+    if (tableNames) {
+      const datasourceId = shellContext.datasourceId!;
+      try {
         const details = await Promise.all(
-          names.map((n) => fetchTableDetail(datasourceId, n.catalog, n.schema, n.table)),
+          tableNames.map((n) => fetchTableDetail(datasourceId, n.catalog, n.schema, n.table)),
         );
         tables = details.map((d) => ({
           catalog: d.catalog,
@@ -174,6 +252,7 @@ export function AiPanel() {
           columns: d.columns.map((c) => ({ name: c.name, type: c.type })),
         }));
       } catch (err) {
+        captured?.tracking.clear();
         const message = err instanceof Error ? err.message : String(err);
         toast.error('AI assistant', `Failed to resolve context tables: ${message}`);
         return;
@@ -194,13 +273,14 @@ export function AiPanel() {
     };
 
     // 適用先はリクエスト時点のエディターと範囲で固定する（応答中のフォーカス移動に影響されない）。
-    setTarget(captured);
+    replaceTarget(captured);
     setLastTask(task);
     setText('');
     setProposedSql(null);
     setStreaming(true);
     const abort = new AbortController();
     abortRef.current = abort;
+    let proposalReceived = false;
     try {
       await streamAiAssist(
         request,
@@ -209,7 +289,10 @@ export function AiPanel() {
             if (event.type === 'delta') setText((cur) => cur + event.text);
             if (event.type === 'done') {
               setText(event.text);
-              if (event.sql) setProposedSql(event.sql);
+              if (event.sql) {
+                proposalReceived = true;
+                setProposedSql(event.sql);
+              }
             }
             if (event.type === 'error') {
               toast.error('AI assistant', event.error.message);
@@ -227,6 +310,7 @@ export function AiPanel() {
         toast.error('AI assistant', err instanceof Error ? err.message : String(err));
       }
     } finally {
+      if (!proposalReceived && targetRef.current === captured) replaceTarget(null);
       setStreaming(false);
       abortRef.current = null;
     }
@@ -235,15 +319,11 @@ export function AiPanel() {
   /** 提案 SQL をリクエスト時点の対象範囲に適用する（undo 可能な executeEdits 経由）。 */
   const applySql = (sql: string) => {
     setDiffOpen(false);
-    if (target && target.editor.getModel()) {
-      target.editor.executeEdits('ai-assistant-apply', [
-        { range: target.range, text: sql, forceMoveMarkers: true },
-      ]);
-      target.editor.focus();
+    if (target && applyCapturedSql(target, sql)) {
       toast.success('AI assistant', 'Proposed SQL applied. Undo with Ctrl/Cmd+Z.');
       return;
     }
-    toast.error('AI assistant', 'The target editor is gone. Copy the SQL manually.');
+    toast.error('AI assistant', 'The target changed while waiting. Copy the SQL manually.');
   };
 
   // 左端ドラッグでの幅リサイズ（Sidebar と同じ pointer イベント方式）。
