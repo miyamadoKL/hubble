@@ -15,12 +15,26 @@ const ORDERS: MetadataTable = {
   ],
 };
 
+const CUSTOMER: MetadataTable = {
+  catalog: 'tpch',
+  schema: 'tiny',
+  name: 'customer',
+  columns: [
+    { name: 'customer_name', type: 'varchar' },
+    { name: 'nationkey', type: 'bigint' },
+  ],
+};
+
 function mockSource(): MetadataSource {
   return {
     listCatalogs: async () => ['tpch'],
     listSchemas: async () => ['tiny'],
     listTables: async () => ['orders', 'customer'],
-    getTable: async (_c, _s, t) => (t === 'orders' ? ORDERS : undefined),
+    getTable: async (_c, _s, t) => {
+      if (t === 'orders') return ORDERS;
+      if (t === 'customer') return CUSTOMER;
+      return undefined;
+    },
   };
 }
 
@@ -30,6 +44,7 @@ async function warmedCache(): Promise<SchemaCache> {
   cache.warmCatalogs();
   cache.warmTables('tpch', 'tiny');
   await cache.resolveTable(new TableReference('tpch', 'tiny', 'orders'));
+  await cache.resolveTable(new TableReference('tpch', 'tiny', 'customer'));
   // Let the fire-and-forget warmers settle.
   await new Promise((r) => setTimeout(r, 10));
   return cache;
@@ -60,6 +75,19 @@ describe('parseStatement — markers', () => {
     const { descriptors } = parseStatement('SELECT * FROM tpch.tiny.orders', 'tpch', 'tiny');
     expect(descriptors.length).toBe(1);
     expect(descriptors[0]!.tableReference?.fullyQualified).toBe('tpch.tiny.orders');
+  });
+
+  test('JOINと入れ子の各query scopeで全relationを保持する', () => {
+    const sql = [
+      'SELECT * FROM tpch.tiny.orders o',
+      'JOIN tpch.tiny.customer c ON o.custkey = c.custkey',
+      'WHERE o.orderkey IN (SELECT orderkey FROM tpch.tiny.lineitem)',
+    ].join(' ');
+    const references = parseStatement(sql, 'tpch', 'tiny').tableReferences;
+
+    expect(references.map((reference) => reference.fullyQualified)).toEqual(
+      expect.arrayContaining(['tpch.tiny.orders', 'tpch.tiny.customer', 'tpch.tiny.lineitem']),
+    );
   });
 });
 
@@ -133,6 +161,24 @@ describe('collectCompletions', () => {
     expect(cols).toEqual(expect.arrayContaining(['orderkey', 'custkey', 'totalprice']));
     // The "all columns" expansion is offered too.
     expect(items.some((i) => i.kind === 'columnList')).toBe(true);
+  });
+
+  test('JOINした全relationのcolumnを補完候補に含める', async () => {
+    const cache = await warmedCache();
+    const sql = [
+      'SELECT  FROM tpch.tiny.orders o',
+      'JOIN tpch.tiny.customer c ON o.custkey = c.custkey',
+    ].join(' ');
+    const items = collectCompletions({
+      sql,
+      offset: 'SELECT '.length,
+      cache,
+      catalog: 'tpch',
+      schema: 'tiny',
+    });
+    const columns = items.filter((item) => item.kind === 'column').map((item) => item.label);
+
+    expect(columns).toEqual(expect.arrayContaining(['orderkey', 'customer_name', 'nationkey']));
   });
 
   test('never throws on malformed input', () => {

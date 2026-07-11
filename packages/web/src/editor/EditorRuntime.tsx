@@ -41,6 +41,12 @@ interface EditorRuntime {
 }
 
 const RuntimeContext = createContext<EditorRuntime | null>(null);
+let activeSchemaCache: SchemaCache | null = null;
+
+/** 現在のエディター用スキーマキャッシュをdatasource単位で無効化する。 */
+export function invalidateEditorSchemaCache(datasourceId: string): void {
+  activeSchemaCache?.invalidate(datasourceId);
+}
 
 export function EditorRuntimeProvider({
   context,
@@ -70,8 +76,16 @@ export function EditorRuntimeProvider({
           queryClient,
           () => useDatasourceStore.getState().selectedId ?? datasourceId,
         ),
+        () => useDatasourceStore.getState().selectedId ?? datasourceId,
       ),
   );
+
+  useEffect(() => {
+    activeSchemaCache = cache;
+    return () => {
+      if (activeSchemaCache === cache) activeSchemaCache = null;
+    };
+  }, [cache]);
 
   // Keep the latest context in a ref so the stable getter always reads fresh;
   // the ref is updated in an effect, never during render.

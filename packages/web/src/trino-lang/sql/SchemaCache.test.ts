@@ -57,6 +57,61 @@ describe('SchemaCache', () => {
     expect(cache.getTableIfCached(ref)).toBe(table);
   });
 
+  test('同名オブジェクトのキャッシュをデータソースごとに分離する', async () => {
+    let datasourceId = 'primary';
+    const getTable = vi.fn(async () => ({
+      ...ORDERS,
+      columns: [
+        datasourceId === 'primary'
+          ? { name: 'primary_column', type: 'bigint' }
+          : { name: 'secondary_column', type: 'varchar' },
+      ],
+    }));
+    const listCatalogs = vi.fn(async () =>
+      datasourceId === 'primary' ? ['primary_catalog'] : ['secondary_catalog'],
+    );
+    const cache = new SchemaCache(source({ getTable, listCatalogs }), () => datasourceId);
+    const ref = new TableReference('tpch', 'tiny', 'orders');
+
+    cache.warmCatalogs();
+    const primary = await cache.resolveTable(ref);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(cache.getCatalogList()).toEqual(['primary_catalog']);
+    expect(primary?.getColumns()[0]?.getName()).toBe('primary_column');
+
+    datasourceId = 'secondary';
+    expect(cache.getCatalogList()).toEqual([]);
+    expect(cache.getTableIfCached(ref)).toBeUndefined();
+    cache.warmCatalogs();
+    const secondary = await cache.resolveTable(ref);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(cache.getCatalogList()).toEqual(['secondary_catalog']);
+    expect(secondary?.getColumns()[0]?.getName()).toBe('secondary_column');
+
+    datasourceId = 'primary';
+    expect(cache.getTableIfCached(ref)?.getColumns()[0]?.getName()).toBe('primary_column');
+  });
+
+  test('invalidate後は進行中の旧応答をキャッシュへ戻さない', async () => {
+    let resolveCatalogs!: (catalogs: string[]) => void;
+    const cache = new SchemaCache(
+      source({
+        listCatalogs: () =>
+          new Promise<string[]>((resolve) => {
+            resolveCatalogs = resolve;
+          }),
+      }),
+      () => 'primary',
+    );
+
+    cache.warmCatalogs();
+    cache.invalidate('primary');
+    resolveCatalogs(['stale']);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(cache.getCatalogList()).toEqual([]);
+  });
+
   test('swallows source errors so completion stays alive', async () => {
     const cache = new SchemaCache(
       source({

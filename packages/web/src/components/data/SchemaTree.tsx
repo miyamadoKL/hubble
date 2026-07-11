@@ -30,6 +30,7 @@ import { Spinner } from '../common/Spinner';
 import { IconButton } from '../common/IconButton';
 import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
+import { invalidateEditorSchemaCache } from '../../editor/EditorRuntime';
 
 /**
  * Data browser tree: catalog → schema → table → column, lazy-
@@ -571,6 +572,7 @@ export function SchemaTree({
   const refresh = useMutation({
     mutationFn: () => refreshMetadata(),
     onSuccess: () => {
+      invalidateEditorSchemaCache(datasourceId);
       void queryClient.invalidateQueries({ queryKey: ['metadata', datasourceId] });
       toast.info('Metadata refreshed', 'Schema cache reloaded.');
     },
