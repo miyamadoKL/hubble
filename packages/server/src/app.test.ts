@@ -10,6 +10,23 @@ import { describe, it, expect } from 'vitest';
 import { appConfigSchema, apiRoutes } from '@hubble/contracts';
 import { createTestContext } from './test/harness';
 
+const EXPECTED_SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+  'permissions-policy':
+    'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()',
+  'cross-origin-opener-policy': 'same-origin',
+} as const;
+
+/** 共通 security header がすべて設定され、CSP は未設定であることを確認する。 */
+function expectSecurityHeaders(res: Response): void {
+  for (const [name, value] of Object.entries(EXPECTED_SECURITY_HEADERS)) {
+    expect(res.headers.get(name)).toBe(value);
+  }
+  expect(res.headers.get('content-security-policy')).toBeNull();
+}
+
 describe('GET /api/healthz', () => {
   // 認証ミドルウェアより前段で応答すること（常に 200 かつ { status: 'ok' }）を確認。
   it('returns ok', async () => {
@@ -45,4 +62,106 @@ describe('unknown /api route', () => {
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('NOT_FOUND');
   });
+});
+
+describe('response security headers', () => {
+  it.each([apiRoutes.healthz(), apiRoutes.config(), '/api/does-not-exist'])(
+    'sets low-risk headers on %s',
+    async (path) => {
+      const { app } = await createTestContext();
+      const res = await app.request(path);
+      expectSecurityHeaders(res);
+    },
+  );
+});
+
+describe('CSRF boundary', () => {
+  const endpoint = 'https://hubble.example/api/queries';
+  const invalidQueryBody = JSON.stringify({});
+
+  it('rejects an unsafe cross-site Fetch Metadata request before body parsing', async () => {
+    const { app } = await createTestContext();
+    const res = await app.request(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+        'Sec-Fetch-Site': 'cross-site',
+      },
+      body: invalidQueryBody,
+    });
+
+    expect(res.status).toBe(403);
+    expect((await res.json()) as unknown).toMatchObject({ error: { code: 'CSRF_REJECTED' } });
+    expectSecurityHeaders(res);
+  });
+
+  it('rejects an unsafe request with a mismatched Origin', async () => {
+    const { app } = await createTestContext();
+    const res = await app.request(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+        Origin: 'https://other.example',
+      },
+      body: invalidQueryBody,
+    });
+
+    expect(res.status).toBe(403);
+    expect((await res.json()) as unknown).toMatchObject({ error: { code: 'CSRF_REJECTED' } });
+  });
+
+  it.each([
+    {
+      name: 'same-origin metadata',
+      headers: {
+        'Content-Type': 'text/plain',
+        Origin: 'https://hubble.example',
+        'Sec-Fetch-Site': 'same-origin',
+      },
+    },
+    { name: 'missing metadata', headers: { 'Content-Type': 'text/plain' } },
+  ])('allows $name to reach the existing validator', async ({ headers }) => {
+    const { app } = await createTestContext();
+    const res = await app.request(endpoint, {
+      method: 'POST',
+      headers,
+      body: invalidQueryBody,
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()) as unknown).toMatchObject({
+      error: { code: 'VALIDATION_ERROR' },
+    });
+  });
+
+  it('allows an unsafe same-host request behind a TLS-terminating proxy', async () => {
+    const { app } = await createTestContext();
+    const res = await app.request('http://hubble.example/api/queries', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'https://hubble.example',
+        'Sec-Fetch-Site': 'same-origin',
+      },
+      body: invalidQueryBody,
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()) as unknown).toMatchObject({
+      error: { code: 'VALIDATION_ERROR' },
+    });
+  });
+
+  it.each(['GET', 'HEAD', 'OPTIONS'] as const)(
+    'does not reject the safe %s method with cross-site metadata',
+    async (method) => {
+      const { app } = await createTestContext();
+      const res = await app.request('https://hubble.example/api/does-not-exist', {
+        method,
+        headers: { 'Sec-Fetch-Site': 'cross-site' },
+      });
+
+      expect(res.status).not.toBe(403);
+    },
+  );
 });

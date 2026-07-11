@@ -21,6 +21,24 @@ describe('csvField (RFC 4180 quoting)', () => {
     expect(csvField(42)).toBe('42');
     expect(csvField(true)).toBe('true');
   });
+  it.each([
+    ['=1+1', "'=1+1"],
+    ['+cmd', "'+cmd"],
+    ['-1', "'-1"],
+    ['@SUM(A1)', "'@SUM(A1)"],
+    ['\tvalue', "'\tvalue"],
+    ['\rvalue', '"\'\rvalue"'],
+    ['\nvalue', '"\'\nvalue"'],
+  ])('neutralizes formula-leading string %j', (value, expected) => {
+    expect(csvField(value)).toBe(expected);
+  });
+  it('neutralizes before applying RFC 4180 quoting', () => {
+    expect(csvField('=SUM(A1,B1)')).toBe('"\'=SUM(A1,B1)"');
+  });
+  it('keeps signed numbers numeric', () => {
+    expect(csvField(-1)).toBe('-1');
+    expect(csvField(1)).toBe('1');
+  });
   it('renders null/undefined as empty', () => {
     expect(csvField(null)).toBe('');
     expect(csvField(undefined)).toBe('');
@@ -33,6 +51,21 @@ describe('csvField (RFC 4180 quoting)', () => {
   it('serializes objects/arrays as JSON', () => {
     expect(csvField({ a: 1 })).toBe('"{""a"":1}"');
     expect(csvField([1, 2])).toBe('"[1,2]"');
+    expect(csvField({ formula: '=1+1' })).toBe('"{""formula"":""=1+1""}"');
+    expect(csvField(['@SUM(A1)'])).toBe('"[""@SUM(A1)""]"');
+  });
+  it('checks fallback text produced from objects and arrays', () => {
+    const objectValue: { self?: unknown; toString: () => string } = {
+      toString: () => '=object',
+    };
+    objectValue.self = objectValue;
+
+    const arrayValue: unknown[] & { toString: () => string } = [];
+    arrayValue.push(arrayValue);
+    arrayValue.toString = () => '@array';
+
+    expect(csvField(objectValue)).toBe("'=object");
+    expect(csvField(arrayValue)).toBe("'@array");
   });
   it('builds a full record', () => {
     expect(csvRecord(['a', 'b,c', 1])).toBe('a,"b,c",1');

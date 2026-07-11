@@ -18,8 +18,14 @@ import type { ResultRow } from './executionStore';
 // オブジェクト/配列は JSON 文字列化して埋め込む。
 function cellToText(value: unknown): string {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'object') return JSON.stringify(value);
+  if (typeof value === 'string') return neutralizeSpreadsheetFormula(value);
+  if (typeof value === 'object') return neutralizeSpreadsheetFormula(JSON.stringify(value));
   return String(value);
+}
+
+// 表計算ソフトが数式として解釈する先頭文字を、文字列として扱わせる。
+function neutralizeSpreadsheetFormula(text: string): string {
+  return /^[=+\-@\t\r\n]/.test(text) ? `'${text}` : text;
 }
 
 function escapeTsv(text: string): string {
@@ -38,7 +44,7 @@ function escapeHtml(text: string): string {
  * 1 行目がヘッダー（列名）、以降が各行の値。
  */
 export function buildTsv(columns: QueryColumn[], rows: ReadonlyArray<ResultRow>): string {
-  const header = columns.map((c) => escapeTsv(c.name)).join('\t');
+  const header = columns.map((c) => escapeTsv(neutralizeSpreadsheetFormula(c.name))).join('\t');
   const body = rows
     .map((row) => columns.map((_, i) => escapeTsv(cellToText(row[i]))).join('\t'))
     .join('\n');
@@ -50,7 +56,9 @@ export function buildTsv(columns: QueryColumn[], rows: ReadonlyArray<ResultRow>)
  * スプレッドシートへの貼り付け時にセル区切りが保持されるようにするための表現。
  */
 export function buildHtml(columns: QueryColumn[], rows: ReadonlyArray<ResultRow>): string {
-  const thead = `<tr>${columns.map((c) => `<th>${escapeHtml(c.name)}</th>`).join('')}</tr>`;
+  const thead = `<tr>${columns
+    .map((c) => `<th>${escapeHtml(neutralizeSpreadsheetFormula(c.name))}</th>`)
+    .join('')}</tr>`;
   const tbody = rows
     .map(
       (row) =>
