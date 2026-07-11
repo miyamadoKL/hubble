@@ -10,6 +10,8 @@ import {
   persistSavedNotebook,
   AUTOSAVE_DEBOUNCE_MS,
   __setPersistence,
+  readDraftRestoreResult,
+  readWorkspaceSnapshot,
   type NotebookPersistence,
 } from './notebookStore';
 
@@ -359,8 +361,237 @@ describe('workspace persistence', () => {
     useNotebookStore.getState().openNotebook(makeNotebook({ id: 'a' }));
     useNotebookStore.getState().openNotebook(makeNotebook({ id: 'b' }));
     const snap = JSON.parse(localStorage.getItem('hubble-workspace')!);
+    expect(snap.version).toBe(1);
     expect(snap.openIds).toEqual(['a', 'b']);
     expect(snap.activeId).toBe('b');
+  });
+
+  test('versionなしworkspace snapshotをversion 1として復元する', () => {
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({ openIds: ['a'], activeId: 'a', draftIds: [] }),
+    );
+    expect(readWorkspaceSnapshot()).toEqual({
+      version: 1,
+      openIds: ['a'],
+      activeId: 'a',
+      draftIds: [],
+    });
+  });
+
+  test('構造が不正なworkspace snapshotを拒否する', () => {
+    const raw = JSON.stringify({ version: 1, openIds: 'a', activeId: 'a', draftIds: [] });
+    localStorage.setItem('hubble-workspace', raw);
+    expect(readWorkspaceSnapshot()).toBeNull();
+    expect(localStorage.getItem('hubble-workspace-backup')).toBe(raw);
+  });
+
+  test('workspace backupを直近の破損内容で更新する', () => {
+    const first = '{"broken":1}';
+    const second = '{"broken":2}';
+    localStorage.setItem('hubble-workspace', first);
+    expect(readWorkspaceSnapshot()).toBeNull();
+    localStorage.setItem('hubble-workspace', second);
+    expect(readWorkspaceSnapshot()).toBeNull();
+
+    expect(localStorage.getItem('hubble-workspace-backup')).toBe(second);
+  });
+
+  test('valid draftを復元し、破損draftはrawを残してworkspaceから除く', () => {
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({
+        version: 1,
+        openIds: ['good', 'bad'],
+        activeId: 'good',
+        draftIds: ['good', 'bad'],
+      }),
+    );
+    localStorage.setItem('hubble-draft:good', JSON.stringify(makeNotebook({ id: 'good' })));
+    localStorage.setItem('hubble-draft:bad', JSON.stringify({ id: 'bad', name: 'broken' }));
+
+    const result = readDraftRestoreResult();
+    expect(result).toEqual({
+      drafts: [makeNotebook({ id: 'good' })],
+      corruptIds: ['bad'],
+      snapshot: {
+        version: 1,
+        openIds: ['good'],
+        activeId: 'good',
+        draftIds: ['good'],
+      },
+    });
+    expect(localStorage.getItem('hubble-draft:bad')).toBe(
+      JSON.stringify({ id: 'bad', name: 'broken' }),
+    );
+    expect(readWorkspaceSnapshot()?.draftIds).toEqual(['good']);
+    expect(readDraftRestoreResult().corruptIds).toEqual([]);
+  });
+
+  test('rawが無いdraftを通知対象にせずworkspaceから除く', () => {
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({
+        version: 1,
+        openIds: ['missing'],
+        activeId: 'missing',
+        draftIds: ['missing'],
+      }),
+    );
+
+    const first = readDraftRestoreResult();
+    const second = readDraftRestoreResult();
+
+    expect(first.corruptIds).toEqual([]);
+    expect(first.snapshot).toMatchObject({ openIds: [], activeId: null, draftIds: [] });
+    expect(second.corruptIds).toEqual([]);
+  });
+
+  test('保存キーと内部IDが異なるdraftを破損としてrawのまま残す', () => {
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({
+        version: 1,
+        openIds: ['key-id'],
+        activeId: 'key-id',
+        draftIds: ['key-id'],
+      }),
+    );
+    const raw = JSON.stringify(makeNotebook({ id: 'internal-id' }));
+    localStorage.setItem('hubble-draft:key-id', raw);
+
+    const result = readDraftRestoreResult();
+
+    expect(result.corruptIds).toEqual(['key-id']);
+    expect(localStorage.getItem('hubble-draft:key-id')).toBe(raw);
+    expect(readWorkspaceSnapshot()?.draftIds).toEqual([]);
+  });
+
+  test('参照されないdraft rawを新しい5件だけ残す', () => {
+    const ids = Array.from({ length: 7 }, (_, index) => `orphan-${index}`);
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({ version: 1, openIds: [], activeId: null, draftIds: [] }),
+    );
+    ids.forEach((id, index) =>
+      localStorage.setItem(
+        `hubble-draft:${id}`,
+        JSON.stringify(
+          makeNotebook({ id, updatedAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString() }),
+        ),
+      ),
+    );
+
+    readDraftRestoreResult();
+
+    expect(localStorage.getItem('hubble-draft:orphan-0')).toBeNull();
+    expect(localStorage.getItem('hubble-draft:orphan-1')).toBeNull();
+    expect(ids.slice(2).every((id) => localStorage.getItem(`hubble-draft:${id}`) !== null)).toBe(
+      true,
+    );
+  });
+
+  test('workspace snapshotが無い場合は孤立判定できないため掃除しない', () => {
+    localStorage.removeItem('hubble-workspace');
+    const ids = Array.from({ length: 6 }, (_, index) => `orphan-${index}`);
+    ids.forEach((id, index) =>
+      localStorage.setItem(
+        `hubble-draft:${id}`,
+        JSON.stringify(
+          makeNotebook({ id, updatedAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString() }),
+        ),
+      ),
+    );
+
+    expect(readDraftRestoreResult().snapshot).toBeNull();
+
+    expect(ids.every((id) => localStorage.getItem(`hubble-draft:${id}`) !== null)).toBe(true);
+  });
+
+  test('破損workspaceのbackupが参照し得るdraftを掃除しない', () => {
+    const ids = Array.from({ length: 7 }, (_, index) => `draft-${index}`);
+    ids.forEach((id) => localStorage.setItem(`hubble-draft:${id}`, '{"broken":true}'));
+    const brokenWorkspace = JSON.stringify({ openIds: 'broken', activeId: null, draftIds: ids });
+    localStorage.setItem('hubble-workspace', brokenWorkspace);
+
+    expect(readDraftRestoreResult().snapshot).toBeNull();
+
+    expect(localStorage.getItem('hubble-workspace-backup')).toBe(brokenWorkspace);
+    expect(ids.every((id) => localStorage.getItem(`hubble-draft:${id}`) !== null)).toBe(true);
+
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({ version: 1, openIds: [], activeId: null, draftIds: [] }),
+    );
+    readDraftRestoreResult();
+    expect(ids.every((id) => localStorage.getItem(`hubble-draft:${id}`) !== null)).toBe(true);
+  });
+
+  test('パース不能な孤立rawを日時不明の最新データとして残す', () => {
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({ version: 1, openIds: [], activeId: null, draftIds: [] }),
+    );
+    localStorage.setItem('hubble-draft:corrupt', '{broken');
+    for (let index = 0; index < 5; index += 1) {
+      const id = `valid-${index}`;
+      localStorage.setItem(
+        `hubble-draft:${id}`,
+        JSON.stringify(
+          makeNotebook({ id, updatedAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString() }),
+        ),
+      );
+    }
+
+    readDraftRestoreResult();
+
+    expect(localStorage.getItem('hubble-draft:corrupt')).toBe('{broken');
+    expect(localStorage.getItem('hubble-draft:valid-0')).toBeNull();
+  });
+
+  test('epoch 0のupdatedAtを最古として掃除する', () => {
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({ version: 1, openIds: [], activeId: null, draftIds: [] }),
+    );
+    localStorage.setItem(
+      'hubble-draft:epoch',
+      JSON.stringify(makeNotebook({ id: 'epoch', updatedAt: '1970-01-01T00:00:00.000Z' })),
+    );
+    for (let index = 0; index < 5; index += 1) {
+      const id = `new-${index}`;
+      localStorage.setItem(
+        `hubble-draft:${id}`,
+        JSON.stringify(
+          makeNotebook({ id, updatedAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString() }),
+        ),
+      );
+    }
+
+    readDraftRestoreResult();
+
+    expect(localStorage.getItem('hubble-draft:epoch')).toBeNull();
+    expect(localStorage.getItem('hubble-draft:new-0')).not.toBeNull();
+  });
+
+  test('revisionがない旧draftをrevision 0として復元する', () => {
+    const legacy = { ...makeNotebook({ id: 'legacy' }) } as Partial<Notebook>;
+    delete legacy.revision;
+    localStorage.setItem(
+      'hubble-workspace',
+      JSON.stringify({
+        version: 1,
+        openIds: ['legacy'],
+        activeId: 'legacy',
+        draftIds: ['legacy'],
+      }),
+    );
+    localStorage.setItem('hubble-draft:legacy', JSON.stringify(legacy));
+
+    expect(readDraftRestoreResult()).toMatchObject({
+      drafts: [expect.objectContaining({ id: 'legacy', revision: 0 })],
+      corruptIds: [],
+    });
   });
 });
 

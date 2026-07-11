@@ -40,14 +40,16 @@
 
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import type {
-  Cell,
-  CellKind,
-  CellResultMeta,
-  ChartConfig,
-  Notebook,
-  NotebookContext,
-  Variable,
+import { z } from 'zod';
+import {
+  notebookSchema,
+  type Cell,
+  type CellKind,
+  type CellResultMeta,
+  type ChartConfig,
+  type Notebook,
+  type NotebookContext,
+  type Variable,
 } from '@hubble/contracts';
 import { uid } from '../utils/id';
 import { detectVariables, reconcileVariables } from './variables';
@@ -88,8 +90,10 @@ export const AUTOSAVE_DEBOUNCE_MS = 2000;
 
 // ワークスペース（開いているタブ id 一覧 + アクティブ id）を保存するキー。
 const WORKSPACE_KEY = 'hubble-workspace'; // open tab ids + active id
+const WORKSPACE_BACKUP_KEY = 'hubble-workspace-backup';
 // draft notebook 1 件ごとのスナップショットを保存するキーの接頭辞（末尾に id が付く）。
 const DRAFT_PREFIX = 'hubble-draft:'; // per-draft notebook snapshot
+const ORPHAN_DRAFT_LIMIT = 5;
 
 // ---- Open-notebook record ---------------------------------------------------
 
@@ -142,7 +146,9 @@ interface NotebookStoreState {
   // 別のタブに付け替える。
   closeNotebook: (id: string) => void;
   // 指定した id のタブをアクティブにする。
-  setActive: (id: string) => void;
+  setActive: (id: string, opts?: { userInitiated?: boolean }) => void;
+  /** タブ順を更新し、workspace snapshotへ永続化する。 */
+  setOpenOrder: (openIds: string[]) => void;
   // 空の SQL セル 1 つを持つ notebook を新規 draft として開き、その id を返す。
   createBlankNotebook: () => string;
 
@@ -251,13 +257,36 @@ export function moveItem<T>(arr: readonly T[], from: number, to: number): T[] {
 // リロード後の復元用に、ワークスペース（開いているタブ構成）と draft notebook
 // の中身を localStorage に書き出す/読み戻すための一群の関数。
 
-// localStorage に保存するワークスペースのスナップショット形。
-interface WorkspaceSnapshot {
+/** localStorageに保存するワークスペースのスナップショット形。 */
+export interface WorkspaceSnapshot {
+  version: 1;
   openIds: string[];
   activeId: string | null;
   /** Which of the open ids are drafts (so we know to load from DRAFT_PREFIX). */
   draftIds: string[];
 }
+
+// 復元待ちのIDを通常操作によるworkspace書き込みへ合流させる。
+let pendingWorkspaceRestore: {
+  snapshot: WorkspaceSnapshot;
+  unresolvedIds: Set<string>;
+} | null = null;
+let workspaceActivationGeneration = 0;
+
+const workspaceSnapshotSchema = z.object({
+  version: z.literal(1),
+  openIds: z.array(z.string()),
+  activeId: z.string().nullable(),
+  draftIds: z.array(z.string()),
+});
+
+const legacyWorkspaceSnapshotSchema = z.object({
+  openIds: z.array(z.string()),
+  activeId: z.string().nullable(),
+  draftIds: z.array(z.string()),
+});
+
+const workspaceDraftIdsSchema = z.object({ draftIds: z.array(z.string()) });
 
 // SSR やプライベートブラウジング等で localStorage が使えない環境でも例外で
 // 落ちないようにするためのガード付きアクセサ。
@@ -274,10 +303,29 @@ function safeLocalStorage(): Storage | null {
 function writeWorkspace(state: NotebookStoreState): void {
   const ls = safeLocalStorage();
   if (!ls) return;
-  const draftIds = state.openIds.filter((id) => state.open[id]?.draft);
+  const currentDraftIds = state.openIds.filter((id) => state.open[id]?.draft);
+  const openIds = pendingWorkspaceRestore
+    ? mergeUnresolvedIds(
+        state.openIds,
+        pendingWorkspaceRestore.snapshot.openIds,
+        pendingWorkspaceRestore.unresolvedIds,
+      )
+    : state.openIds;
+  const draftIds = pendingWorkspaceRestore
+    ? mergeUnresolvedIds(
+        currentDraftIds,
+        pendingWorkspaceRestore.snapshot.draftIds,
+        pendingWorkspaceRestore.unresolvedIds,
+      )
+    : currentDraftIds;
+  const pendingActiveId = pendingWorkspaceRestore?.snapshot.activeId;
   const snapshot: WorkspaceSnapshot = {
-    openIds: state.openIds,
-    activeId: state.activeId,
+    version: 1,
+    openIds,
+    activeId:
+      pendingActiveId && pendingWorkspaceRestore?.unresolvedIds.has(pendingActiveId)
+        ? pendingActiveId
+        : state.activeId,
     draftIds,
   };
   try {
@@ -285,6 +333,84 @@ function writeWorkspace(state: NotebookStoreState): void {
   } catch {
     /* quota / serialization — non-fatal */
   }
+}
+
+/** 現在順を崩さず、未解決IDを元snapshot内の近い位置へ挿入する。 */
+function mergeUnresolvedIds(
+  currentIds: readonly string[],
+  snapshotIds: readonly string[],
+  unresolvedIds: ReadonlySet<string>,
+): string[] {
+  let merged = [...currentIds];
+  for (const id of snapshotIds) {
+    if (!unresolvedIds.has(id) || merged.includes(id)) continue;
+    merged = insertIdAtSnapshotPosition(merged, id, snapshotIds);
+  }
+  return merged;
+}
+
+/** IDをsnapshot内の近い前後関係に合わせて現在順へ挿入する。 */
+export function insertIdAtSnapshotPosition(
+  currentIds: readonly string[],
+  id: string,
+  snapshotIds: readonly string[],
+): string[] {
+  const without = currentIds.filter((currentId) => currentId !== id);
+  const snapshotIndex = snapshotIds.indexOf(id);
+  let insertAt = without.length;
+  for (let index = snapshotIndex - 1; index >= 0; index -= 1) {
+    const previous = without.indexOf(snapshotIds[index]!);
+    if (previous >= 0) {
+      insertAt = previous + 1;
+      break;
+    }
+  }
+  if (insertAt === without.length) {
+    for (let index = snapshotIndex + 1; index < snapshotIds.length; index += 1) {
+      const next = without.indexOf(snapshotIds[index]!);
+      if (next >= 0) {
+        insertAt = next;
+        break;
+      }
+    }
+  }
+  without.splice(insertAt, 0, id);
+  return without;
+}
+
+/** workspace復元中に保持すべきIDを登録する。 */
+export function beginWorkspaceRestore(snapshot: WorkspaceSnapshot): void {
+  pendingWorkspaceRestore = {
+    snapshot: {
+      ...snapshot,
+      openIds: [...snapshot.openIds],
+      draftIds: [...snapshot.draftIds],
+    },
+    unresolvedIds: new Set(snapshot.openIds),
+  };
+}
+
+/** 指定IDが現在も復元待ちかを返す。 */
+export function isWorkspaceRestorePending(id: string): boolean {
+  return pendingWorkspaceRestore?.unresolvedIds.has(id) ?? false;
+}
+
+/** ユーザーがactive tabを変更した世代を返す。 */
+export function getWorkspaceActivationGeneration(): number {
+  return workspaceActivationGeneration;
+}
+
+/** 復元待ち集合から指定IDを除く。永続化は呼び出し側が行う。 */
+function removeWorkspaceRestoreId(id: string): void {
+  if (!pendingWorkspaceRestore) return;
+  pendingWorkspaceRestore.unresolvedIds.delete(id);
+  if (pendingWorkspaceRestore.unresolvedIds.size === 0) pendingWorkspaceRestore = null;
+}
+
+/** 成功または恒久欠落が確定したIDを復元待ち集合から外す。 */
+export function resolveWorkspaceRestoreId(id: string): void {
+  removeWorkspaceRestoreId(id);
+  writeWorkspace(useNotebookStore.getState());
 }
 
 // draft notebook 1 件の中身をまるごと localStorage に書き出す（編集のたびに
@@ -305,17 +431,62 @@ function removeDraft(id: string): void {
   safeLocalStorage()?.removeItem(`${DRAFT_PREFIX}${id}`);
 }
 
-// draft notebook 1 件を localStorage から読み戻す。壊れていれば null。
-function readDraft(id: string): Notebook | null {
+type DraftReadResult =
+  | { kind: 'valid'; draft: Notebook }
+  | { kind: 'corrupt' }
+  | { kind: 'missing' };
+
+// draft notebook 1件をlocalStorageから読み戻し、3状態へ分類する。
+function readDraft(id: string): DraftReadResult {
   const ls = safeLocalStorage();
-  if (!ls) return null;
+  if (!ls) return { kind: 'missing' };
   const raw = ls.getItem(`${DRAFT_PREFIX}${id}`);
-  if (!raw) return null;
+  if (!raw) return { kind: 'missing' };
   try {
-    return JSON.parse(raw) as Notebook;
+    const value: unknown = JSON.parse(raw);
+    const migrated =
+      typeof value === 'object' && value !== null && !('revision' in value)
+        ? { ...value, revision: 0 }
+        : value;
+    const parsed = notebookSchema.safeParse(migrated);
+    if (parsed.success && parsed.data.id === id) return { kind: 'valid', draft: parsed.data };
   } catch {
-    return null;
+    // JSONとして壊れている場合も破損状態として扱う。
   }
+  return { kind: 'corrupt' };
+}
+
+/** snapshotから参照されないdraft rawを新しい順に上限件数だけ残す。 */
+function cleanupOrphanDrafts(storage: Storage, referencedIds: ReadonlySet<string>): void {
+  const orphans: { key: string; timestamp: number; order: number }[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (!key?.startsWith(DRAFT_PREFIX)) continue;
+    const id = key.slice(DRAFT_PREFIX.length);
+    if (referencedIds.has(id)) continue;
+    let timestamp = Number.MAX_SAFE_INTEGER;
+    try {
+      const value: unknown = JSON.parse(storage.getItem(key) ?? 'null');
+      if (value && typeof value === 'object' && 'updatedAt' in value) {
+        const parsedTimestamp = Date.parse(String(value.updatedAt));
+        timestamp = Number.isNaN(parsedTimestamp) ? Number.MAX_SAFE_INTEGER : parsedTimestamp;
+      }
+    } catch {
+      // 破損rawは直前起動で外された可能性があるため最新として扱う。
+    }
+    orphans.push({ key, timestamp, order: index });
+  }
+  orphans
+    .sort((left, right) => left.timestamp - right.timestamp || left.order - right.order)
+    .slice(0, Math.max(0, orphans.length - ORPHAN_DRAFT_LIMIT))
+    .forEach(({ key }) => storage.removeItem(key));
+}
+
+/** draft復元結果と、破損して復元対象から外したIDを返す。 */
+export interface DraftRestoreResult {
+  drafts: Notebook[];
+  corruptIds: string[];
+  snapshot: WorkspaceSnapshot | null;
 }
 
 /**
@@ -329,9 +500,39 @@ export function readWorkspaceSnapshot(): WorkspaceSnapshot | null {
   const raw = ls.getItem(WORKSPACE_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as WorkspaceSnapshot;
+    const value: unknown = JSON.parse(raw);
+    const parsed = workspaceSnapshotSchema.safeParse(value);
+    if (parsed.success) return parsed.data;
+    const legacy = legacyWorkspaceSnapshotSchema.safeParse(value);
+    if (!legacy.success) {
+      backupWorkspaceRaw(ls, raw);
+      return null;
+    }
+    return { version: 1, ...legacy.data };
   } catch {
+    backupWorkspaceRaw(ls, raw);
     return null;
+  }
+}
+
+/** 解釈不能なworkspaceの直近内容を退避する。 */
+function backupWorkspaceRaw(storage: Storage, raw: string): void {
+  try {
+    storage.setItem(WORKSPACE_BACKUP_KEY, raw);
+  } catch {
+    // backup不能でも既存snapshotの読み取り結果はnullとして扱う。
+  }
+}
+
+/** workspace backupが参照するdraft IDを読み取る。 */
+function readBackupDraftIds(storage: Storage): string[] {
+  try {
+    const raw = storage.getItem(WORKSPACE_BACKUP_KEY);
+    if (!raw) return [];
+    const parsed = workspaceDraftIdsSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data.draftIds : [];
+  } catch {
+    return [];
   }
 }
 
@@ -341,9 +542,49 @@ export function readWorkspaceSnapshot(): WorkspaceSnapshot | null {
  */
 /** Read all restorable draft notebooks named in the workspace snapshot. */
 export function readDrafts(): Notebook[] {
-  const snapshot = readWorkspaceSnapshot();
-  if (!snapshot) return [];
-  return snapshot.draftIds.map((id) => readDraft(id)).filter((nb): nb is Notebook => nb !== null);
+  return readDraftRestoreResult().drafts;
+}
+
+/** 復元可能なdraftと、rawを元キーに残した破損draft IDを返す。 */
+export function readDraftRestoreResult(snapshot = readWorkspaceSnapshot()): DraftRestoreResult {
+  if (!snapshot) {
+    return { drafts: [], corruptIds: [], snapshot: null };
+  }
+  const storage = safeLocalStorage();
+  if (storage) {
+    const referencedIds = new Set(snapshot.draftIds);
+    for (const id of readBackupDraftIds(storage)) referencedIds.add(id);
+    cleanupOrphanDrafts(storage, referencedIds);
+  }
+  const drafts: Notebook[] = [];
+  const corruptIds: string[] = [];
+  const removedIds = new Set<string>();
+  for (const id of snapshot.draftIds) {
+    const result = readDraft(id);
+    if (result.kind === 'valid') drafts.push(result.draft);
+    else {
+      removedIds.add(id);
+      if (result.kind === 'corrupt') corruptIds.push(id);
+    }
+  }
+  const restoredSnapshot =
+    removedIds.size === 0
+      ? snapshot
+      : {
+          ...snapshot,
+          openIds: snapshot.openIds.filter((id) => !removedIds.has(id)),
+          draftIds: snapshot.draftIds.filter((id) => !removedIds.has(id)),
+          activeId:
+            snapshot.activeId && removedIds.has(snapshot.activeId) ? null : snapshot.activeId,
+        };
+  if (restoredSnapshot !== snapshot) {
+    try {
+      safeLocalStorage()?.setItem(WORKSPACE_KEY, JSON.stringify(restoredSnapshot));
+    } catch {
+      // 破損rawは元キーに残るため、workspace更新失敗だけを非致命として扱う。
+    }
+  }
+  return { drafts, corruptIds, snapshot: restoredSnapshot };
 }
 
 // ---- Autosave scheduling ----------------------------------------------------
@@ -485,6 +726,9 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
           activeId: activate ? notebook.id : (s.activeId ?? notebook.id),
         };
       });
+      if (activate) workspaceActivationGeneration += 1;
+      // 手動操作を含め、openになったIDは復元成功と同じく未解決集合から外す。
+      removeWorkspaceRestoreId(notebook.id);
       writeWorkspace(get());
     },
 
@@ -514,6 +758,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       const entry = get().open[id];
       // draft なら localStorage 上の下書きも一緒に消す（復元されないように）。
       if (entry?.draft) removeDraft(id);
+      const previousActiveId = get().activeId;
       set((s) => {
         const open = { ...s.open };
         delete open[id];
@@ -527,13 +772,24 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
         }
         return { open, openIds, activeId };
       });
+      // ユーザーが明示的に閉じたIDは復元保護の対象からも外す。
+      removeWorkspaceRestoreId(id);
+      if (get().activeId !== previousActiveId) workspaceActivationGeneration += 1;
       writeWorkspace(get());
     },
 
-    setActive: (id) => {
+    setActive: (id, opts = {}) => {
       // 開かれていない id は無視する。
       if (!get().open[id]) return;
+      if (opts.userInitiated !== false && get().activeId !== id) {
+        workspaceActivationGeneration += 1;
+      }
       set({ activeId: id });
+      writeWorkspace(get());
+    },
+
+    setOpenOrder: (openIds) => {
+      set({ openIds });
       writeWorkspace(get());
     },
 
