@@ -2,7 +2,7 @@
  * LLM provider の SSE レスポンスを逐次パースする共通ヘルパー。
  *
  * Gemini API や GitHub Models など、HTTP レスポンスボディが SSE 形式で
- * 返る provider 実装から利用する。`\n\n` 区切りでイベントを分割し、
+ * 返る provider 実装から利用する。空行区切りでイベントを分割し、
  * `data:` 行のペイロードを連結して yield する。
  */
 
@@ -16,12 +16,23 @@ export async function* parseSseDataLines(body: ReadableStream<Uint8Array>): Asyn
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let pendingCarriageReturn = false;
+
+  /** チャンク境界をまたぐ CRLF を含め、受信した改行を LF にそろえる。 */
+  const appendNormalized = (chunk: string): void => {
+    let source = pendingCarriageReturn ? `\r${chunk}` : chunk;
+    pendingCarriageReturn = source.endsWith('\r');
+    if (pendingCarriageReturn) {
+      source = source.slice(0, -1);
+    }
+    buffer += source.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  };
 
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      appendNormalized(decoder.decode(value, { stream: true }));
 
       let boundary = buffer.indexOf('\n\n');
       while (boundary >= 0) {
@@ -33,6 +44,12 @@ export async function* parseSseDataLines(body: ReadableStream<Uint8Array>): Asyn
         }
         boundary = buffer.indexOf('\n\n');
       }
+    }
+
+    appendNormalized(decoder.decode());
+    if (pendingCarriageReturn) {
+      buffer += '\n';
+      pendingCarriageReturn = false;
     }
 
     if (buffer.trim() !== '') {
