@@ -153,7 +153,11 @@ export function cancelActiveNotebook(): void {
   if (!entry) return;
   const execCells = useExecutionStore.getState().cells;
   for (const cell of entry.notebook.cells) {
-    if (isCellRunning(execCells[cell.id])) executionActions().cancel(cell.id);
+    if (isCellRunning(execCells[cell.id])) {
+      void executionActions()
+        .cancel(cell.id)
+        .catch(() => undefined);
+    }
   }
 }
 

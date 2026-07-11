@@ -46,7 +46,13 @@ import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import { disabledEstimate } from '../query/guard';
 import { effectiveMaxRows, validateSessionProperties } from './queryRequest';
 import { intParam, parseJsonBody } from './validate';
-import { buildReplayEvents, encodeSseEvent, SSE_KEEPALIVE } from '../query/sse';
+import {
+  buildReplayEvents,
+  encodeSseEvent,
+  flushPendingSseEvents,
+  SSE_KEEPALIVE,
+  type EncodedSseEvent,
+} from '../query/sse';
 import {
   CSV_REEXEC_HEADER,
   CSV_TRUNCATED_HEADER,
@@ -535,14 +541,20 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return streamSSE(c, async (sseStream) => {
       // Buffer live events that arrive during replay, then flush in order.
       // リプレイ処理中に発生したライブイベントを取りこぼさないよう、いったんバッファに退避する。
-      const pending: string[] = [];
+      const pending: EncodedSseEvent[] = [];
       let replaying = true;
-      const unsubscribe = exec.subscribe((event) => {
-        const frame = encodeSseEvent(event);
+      let streamTerminated = false;
+      let unsubscribe = () => {};
+      unsubscribe = exec.subscribe((event) => {
+        if (streamTerminated) return;
+        const encoded = encodeSseEvent(event);
+        if (encoded === undefined) return;
+        if (encoded.forcedTerminal) streamTerminated = true;
         if (replaying) {
-          pending.push(frame);
+          pending.push(encoded);
         } else {
-          void sseStream.write(frame);
+          void sseStream.write(encoded.frame);
+          if (encoded.forcedTerminal) unsubscribe();
         }
       });
 
@@ -564,18 +576,34 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       });
 
       try {
+        let replayForcedTerminal = false;
         // Replay current state snapshot.
         // 接続時点までの状態を再構築したイベント列を先に流す（新規購読者への状態同期）。
         for (const event of buildReplayEvents(exec)) {
-          await sseStream.write(encodeSseEvent(event));
+          const encoded = encodeSseEvent(event);
+          if (encoded === undefined) continue;
+          await sseStream.write(encoded.frame);
+          if (encoded.forcedTerminal) {
+            streamTerminated = true;
+            replayForcedTerminal = true;
+            break;
+          }
         }
         // Flush events that arrived during replay, then go live.
         // リプレイ中に溜まったイベントを送信してからライブモードへ切り替える。
         replaying = false;
-        for (const frame of pending) {
-          await sseStream.write(frame);
+        if (!replayForcedTerminal) {
+          const terminalAlreadyQueued = pending.some((event) => event.forcedTerminal);
+          await flushPendingSseEvents(
+            pending,
+            terminalAlreadyQueued,
+            () => streamTerminated,
+            (frame) => sseStream.write(frame),
+          );
         }
         pending.length = 0;
+
+        if (streamTerminated) return;
 
         // Wait for the query to settle (live events flow via the subscriber).
         // 以降のイベントは上の subscribe コールバックが直接 write するので、ここでは完了を待つだけ。

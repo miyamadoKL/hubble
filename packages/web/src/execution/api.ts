@@ -20,6 +20,7 @@ import {
   resultSearchRequestSchema,
   resultSearchPageSchema,
   resultProfileSchema,
+  apiErrorSchema,
   type CreateQueryRequest,
   type CreateQueryResponse,
   type QuerySnapshot,
@@ -29,8 +30,9 @@ import {
   type ResultSearchRequestInput,
   type ResultSearchPage,
   type ResultProfile,
+  type ApiErrorDetail,
 } from '@hubble/contracts';
-import { apiFetch, apiRoutes } from '../api/client';
+import { ApiClientError, apiFetch, apiRoutes } from '../api/client';
 
 /**
  * `POST /api/queries` → 202 `{ queryId }`。
@@ -109,11 +111,20 @@ export function fetchQueryProfile(queryId: string): Promise<ResultProfile> {
 /** `DELETE /api/queries/:id` — cancel (propagates to Trino). */
 export async function cancelQuery(queryId: string): Promise<void> {
   const res = await fetch(apiRoutes.query(queryId), { method: 'DELETE' });
-  // A 404 (already swept) is fine; anything else is surfaced by the caller's
-  // optimistic state, so we don't throw here.
-  // 404（既に TTL 掃除済み）は問題ない。それ以外のエラーも、呼び出し側が
-  // 楽観的更新した state ですでに反映されているため、ここでは投げない。
-  void res;
+  // 404 は既に掃除済みなので、キャンセル済みと同じ結果として扱う。
+  if (res.ok || res.status === 404) return;
+
+  let detail: ApiErrorDetail = {
+    code: 'HTTP_ERROR',
+    message: `Request failed with status ${res.status}`,
+  };
+  try {
+    const parsed = apiErrorSchema.safeParse(await res.json());
+    if (parsed.success) detail = parsed.data.error;
+  } catch {
+    // 空またはJSONではない応答には、上で作った合成エラーを使う。
+  }
+  throw new ApiClientError(res.status, detail);
 }
 
 /** Download compression formats exposed in the UI. */

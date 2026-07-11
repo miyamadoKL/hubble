@@ -62,7 +62,7 @@ export function useWidgetData(savedQueryId: string): WidgetData {
     const queryId = activeQueryIdRef.current;
     if (queryId) {
       activeQueryIdRef.current = null;
-      void cancelQuery(queryId);
+      void cancelQuery(queryId).catch(() => undefined);
     }
   }, []);
 
@@ -88,7 +88,7 @@ export function useWidgetData(savedQueryId: string): WidgetData {
       });
       // createQuery の応答待ちの間に世代が進んだ場合、作成済みクエリを孤児にしない。
       if (generation !== generationRef.current) {
-        void cancelQuery(queryId);
+        void cancelQuery(queryId).catch(() => undefined);
         return;
       }
       activeQueryIdRef.current = queryId;

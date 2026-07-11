@@ -14,14 +14,71 @@
  * 再生し、その後は `QueryExecution.subscribe()` で受け取るライブイベントを
  * 同じく `encodeSseEvent` で都度エンコードしてクライアントへ流す想定。
  */
-import type { QueryEvent } from '@hubble/contracts';
+import { queryEventSchema, type QueryEvent } from '@hubble/contracts';
 import type { QueryExecution } from './execution';
+
+/** SSEエンコード結果。契約違反の終端は合成終端へ置き換える。 */
+export interface EncodedSseEvent {
+  frame: string;
+  forcedTerminal: boolean;
+}
+
+/** 最初の合成終端を含み、それより後を除いた送信対象を返す。 */
+export function throughForcedTerminal(
+  events: readonly EncodedSseEvent[],
+): readonly EncodedSseEvent[] {
+  const terminalIndex = events.findIndex((event) => event.forcedTerminal);
+  return terminalIndex < 0 ? events : events.slice(0, terminalIndex + 1);
+}
+
+/** replay中の終端は送信し、flush中に割り込んだ終端より後は送信しない。 */
+export async function flushPendingSseEvents(
+  events: readonly EncodedSseEvent[],
+  terminalAlreadyQueued: boolean,
+  isTerminated: () => boolean,
+  write: (frame: string) => Promise<unknown>,
+): Promise<void> {
+  for (const event of throughForcedTerminal(events)) {
+    if (!terminalAlreadyQueued && isTerminated()) break;
+    await write(event.frame);
+  }
+}
 
 /** Serialize a `QueryEvent` as an SSE frame (`event:` + `data:` + blank line). */
 // `QueryEvent` を SSE のフレーム形式（`event: <type>` 行 + `data: <JSON>` 行 +
 // 空行）にシリアライズする。SSE の仕様上、イベントの区切りは空行で表される。
-export function encodeSseEvent(event: QueryEvent): string {
-  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+export function encodeSseEvent(
+  event: QueryEvent,
+  logError: (message: string, detail: unknown) => void = console.error,
+): EncodedSseEvent | undefined {
+  // rowsは高頻度のため従来どおり型を信頼し、制御イベントだけを送信境界で検証する。
+  if (event.type !== 'rows') {
+    const parsed = queryEventSchema.safeParse(event);
+    if (!parsed.success) {
+      logError(`invalid query SSE event: ${event.type}`, parsed.error);
+      if (event.type === 'done' || event.type === 'error') return internalTerminalFrames();
+      return undefined;
+    }
+  }
+  return {
+    frame: `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+    forcedTerminal: false,
+  };
+}
+
+/** 契約違反の終端を、検証済みのerrorとdoneへ置き換える。 */
+function internalTerminalFrames(): EncodedSseEvent {
+  const error: QueryEvent = {
+    type: 'error',
+    error: { code: 'INTERNAL_ERROR', message: 'Query event stream contract violation' },
+  };
+  const done: QueryEvent = { type: 'done', state: 'failed', rowCount: 0, truncated: false };
+  return {
+    frame:
+      `event: error\ndata: ${JSON.stringify(error)}\n\n` +
+      `event: done\ndata: ${JSON.stringify(done)}\n\n`,
+    forcedTerminal: true,
+  };
 }
 
 /** A keep-alive comment frame. */

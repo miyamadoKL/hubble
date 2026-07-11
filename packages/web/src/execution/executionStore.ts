@@ -31,7 +31,12 @@ import type {
   QueryStats,
 } from '@hubble/contracts';
 import { createQuery, cancelQuery, fetchQuerySnapshot, fetchQueryRows } from './api';
-import { subscribeQueryEvents, type EventSourceFactory, type SseSubscription } from './sse';
+import {
+  SseProtocolError,
+  subscribeQueryEvents,
+  type EventSourceFactory,
+  type SseSubscription,
+} from './sse';
 import { withAutoLimit } from './sql';
 import type { ExecutionUnit } from './executionUnit';
 
@@ -142,6 +147,8 @@ interface CellRuntime {
    * （バッチ実行の逐次待ち合わせ用）。
    */
   settle?: { resolve: (state: QueryState) => void };
+  /** 現在のバッチを次の文へ進めないための停止要求。 */
+  cancelRequested?: boolean;
 }
 
 // ストアが公開する state + action の型。cells が唯一の reactive state で、
@@ -167,7 +174,7 @@ interface ExecutionStoreState {
    * Cancel the cell's running query (propagates DELETE to the server).
    * セルの実行中クエリをキャンセルする（サーバーへ DELETE を伝播）。
    */
-  cancel: (cellId: string) => void;
+  cancel: (cellId: string) => Promise<void>;
   /**
    * Drop a cell's result entirely (clears the result pane).
    * セルの結果を完全に破棄する（結果ペインをクリア）。
@@ -286,6 +293,28 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
     set((s) => ({ cells: { ...s.cells, [cellId]: updater(prev) } }));
   };
 
+  /** 現世代のセルを1回だけ終端し、購読解除とbatch待機の解決をそろえて行う。 */
+  const settleTerminal = (
+    cellId: string,
+    generation: number,
+    updater: (current: CellExecution) => CellExecution,
+    options: { advanceGeneration?: boolean; closeSubscription?: boolean } = {},
+  ): boolean => {
+    const rt = runtimeFor(cellId);
+    if (rt.generation !== generation) return false;
+    const current = get().cells[cellId];
+    if (!current) return false;
+    const terminal = updater(current);
+    if (options.advanceGeneration) rt.generation += 1;
+    if (options.closeSubscription) teardown(cellId);
+    else rt.subscription = undefined;
+    set((state) => ({ cells: { ...state.cells, [cellId]: terminal } }));
+    emitCellSettled(cellId, terminal);
+    rt.settle?.resolve(terminal.state);
+    rt.settle = undefined;
+    return true;
+  };
+
   /**
    * Subscribe to a query and route events into the cell record.
    * クエリの SSE イベントを購読し、種類ごとにセルレコードへ反映するディスパッチャ。
@@ -333,26 +362,37 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
             case 'done':
               // done イベント: ストリームの終端。最終 state/rowCount/truncated を反映し、
               // 終了時刻を記録する。
-              patch(cellId, generation, (prev) => ({
+              settleTerminal(cellId, generation, (prev) => ({
                 ...prev,
                 state: event.state,
                 rowCount: Math.max(prev.rowCount, event.rowCount),
                 truncated: event.truncated,
                 csvReexecAllowed: event.csvReexecAllowed ?? false,
                 finishedAt: Date.now(),
+                error: prev.error?.code === 'CANCEL_FAILED' ? undefined : prev.error,
               }));
-              if (runtimeFor(cellId).generation === generation) {
-                // まだ現世代のままなら、確定した結果をサマリーとして送出し、
-                // バッチ実行 (runUnits) が待っている settle Promise を解決する。
-                const settled = get().cells[cellId];
-                if (settled) emitCellSettled(cellId, settled);
-                rt.settle?.resolve(event.state);
-                rt.settle = undefined;
-              }
               break;
           }
         },
-        onError: () => {
+        onError: (error) => {
+          if (error instanceof SseProtocolError) {
+            const current = get().cells[cellId];
+            // 契約違反後は進捗を復元できないため、孤児クエリを残さない方を優先して停止要求を送る。
+            // ローリングデプロイ中の短い契約差で健全なクエリを止める可能性は許容する。
+            if (current?.queryId) void cancelQuery(current.queryId).catch(() => undefined);
+            settleTerminal(
+              cellId,
+              generation,
+              (prev) => ({
+                ...prev,
+                state: 'failed',
+                finishedAt: Date.now(),
+                error: { code: 'SSE_PROTOCOL_ERROR', message: error.message },
+              }),
+              { closeSubscription: true },
+            );
+            return;
+          }
           // Transport dropped before `done`. Leave the last-known state intact;
           // a restore() can resume. We don't mark failed — the query may still
           // be running server-side.
@@ -362,6 +402,25 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
         },
       },
       eventSourceFactory,
+    );
+  };
+
+  /** 現世代が未終端の場合だけcanceledへ遷移させる。 */
+  const settleCanceled = (cellId: string, generation: number, error?: ApiErrorDetail): void => {
+    const rt = runtimeFor(cellId);
+    if (rt.generation !== generation) return;
+    const current = get().cells[cellId];
+    if (!current || TERMINAL.has(current.state)) return;
+    settleTerminal(
+      cellId,
+      generation,
+      (prev) => ({
+        ...prev,
+        state: 'canceled',
+        finishedAt: Date.now(),
+        error: error ?? (prev.error?.code === 'CANCEL_FAILED' ? undefined : prev.error),
+      }),
+      { advanceGeneration: true, closeSubscription: true },
     );
   };
 
@@ -378,6 +437,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
     // Bump the generation: any in-flight subscription for this cell is now stale.
     // 世代をインクリメントする: これでこのセルの進行中の購読は全て「古い」ものになる。
     const rt = runtimeFor(cellId);
+    rt.cancelRequested = false;
     teardown(cellId);
     const generation = ++rt.generation;
 
@@ -416,23 +476,21 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
       datasourceId: ctx.datasourceId,
     })
       .then(({ queryId }) => {
-        if (runtimeFor(cellId).generation !== generation) return; // superseded
+        if (runtimeFor(cellId).generation !== generation) {
+          // queryId確定前に取り消された実行も、作成完了後にサーバーへ停止要求を送る。
+          void cancelQuery(queryId).catch(() => undefined);
+          return;
+        }
         patch(cellId, generation, (prev) => ({ ...prev, queryId }));
         subscribe(cellId, queryId, generation);
       })
       .catch((err: unknown) => {
-        patch(cellId, generation, (prev) => ({
+        settleTerminal(cellId, generation, (prev) => ({
           ...prev,
           state: 'failed',
           finishedAt: Date.now(),
           error: toErrorDetail(err),
         }));
-        const failed = get().cells[cellId];
-        if (failed && runtimeFor(cellId).generation === generation) {
-          emitCellSettled(cellId, failed);
-        }
-        rt.settle?.resolve('failed');
-        rt.settle = undefined;
       });
 
     return settled;
@@ -460,28 +518,41 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
           index: i,
           total: units.length,
         });
+        if (runtimeFor(cellId).cancelRequested) break;
         // Hue-compatible: stop the batch at the first non-success terminal state.
         if (finalState !== 'finished') break;
       }
     },
 
-    // 実行中クエリのキャンセル。世代を先に進めてから DELETE を投げるので、
-    // その後サーバーから届く可能性のある終端イベントは古い世代として無視される
-    // （キャンセルしたのに finished で上書きされる、という事故を防ぐ）。
-    cancel: (cellId) => {
+    // DELETE が成功してから購読を閉じ、canceled を確定する。
+    // 失敗時は購読を残し、サーバー側で継続するクエリのイベントを受け取る。
+    cancel: async (cellId) => {
       const rt = runtimeFor(cellId);
       const cell = get().cells[cellId];
-      // Bump generation so the imminent server-side terminal events are ignored.
-      rt.generation++;
-      teardown(cellId);
-      rt.settle?.resolve('canceled');
-      rt.settle = undefined;
-      if (cell?.queryId) void cancelQuery(cell.queryId);
-      if (cell) {
-        const canceled: CellExecution = { ...cell, state: 'canceled', finishedAt: Date.now() };
-        set((s) => ({ cells: { ...s.cells, [cellId]: canceled } }));
-        emitCellSettled(cellId, canceled);
+      if (!cell) return;
+      if (TERMINAL.has(cell.state)) return;
+      rt.cancelRequested = true;
+      const generation = rt.generation;
+      if (!cell.queryId) {
+        // queryId確定前の応答を現世代へ反映しないよう、先に世代を進める。
+        settleCanceled(cellId, generation);
+        return;
       }
+      try {
+        await cancelQuery(cell.queryId);
+      } catch (err) {
+        if (err instanceof TypeError) {
+          settleCanceled(cellId, generation, offlineCancelError());
+          return;
+        }
+        patch(cellId, generation, (prev) =>
+          TERMINAL.has(prev.state) ? prev : { ...prev, error: toCancelErrorDetail(err) },
+        );
+        throw err;
+      }
+      // 応答待ちの間に再実行された場合は、新しい世代を変更しない。
+      if (rt.generation !== generation) return;
+      settleCanceled(cellId, generation);
     },
 
     // 結果ペインのクリア。世代を進めて購読を閉じたうえで、cells からエントリ
@@ -568,6 +639,21 @@ function toErrorDetail(err: unknown): ApiErrorDetail {
   return {
     code: 'EXECUTION_ERROR',
     message: err instanceof Error ? err.message : 'Failed to start the query',
+  };
+}
+
+/** キャンセル要求の失敗を、実行中の状態を保ったまま表示する詳細へ変換する。 */
+function toCancelErrorDetail(err: unknown): ApiErrorDetail {
+  const detail = toErrorDetail(err);
+  return { ...detail, code: 'CANCEL_FAILED' };
+}
+
+/** サーバー不達時にローカルだけで停止したことを明示する。 */
+function offlineCancelError(): ApiErrorDetail {
+  return {
+    code: 'CANCEL_OFFLINE',
+    message:
+      'Canceled locally because the server could not be reached. The server-side query may still be running.',
   };
 }
 
