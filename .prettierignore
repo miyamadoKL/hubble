@@ -11,3 +11,6 @@ packages/web/src/trino-lang/generated
 
 # ANTLR 生成物は再生成のたびに差分が出るため対象外。
 packages/web/src/trino-lang/generated/
+
+# ローカル専用の計画・レビュー文書置き場（.git/info/exclude で git 管理外）。
+/docs-local/
