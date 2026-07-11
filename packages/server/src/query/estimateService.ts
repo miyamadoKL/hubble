@@ -58,6 +58,7 @@ export interface EstimateRequestParams {
 
 // キャッシュ 1 エントリ分（見積もり結果 + 有効期限）。
 interface CacheEntry {
+  datasourceId: string;
   result: EstimateResult;
   expiresAt: number;
 }
@@ -82,6 +83,10 @@ export class EstimateService {
   // 挿入順を保持するキャッシュ（Map は挿入順を維持するため、最も古い
   // エントリから追い出す＝簡易 LRU 的な動作になる）。
   private readonly cache = new Map<string, CacheEntry>();
+  // 同じ datasource ID のエンジンが差し替わった場合も旧見積もりを再利用しないよう、
+  // エンジンオブジェクトごとに EstimateService 内の世代番号を割り当てる。
+  private readonly engineGenerations = new WeakMap<QueryEngine, number>();
+  private nextEngineGeneration = 1;
 
   constructor(
     private readonly engines: Map<string, QueryEngine>,
@@ -95,28 +100,42 @@ export class EstimateService {
   }
 
   invalidateDatasource(datasourceId: string): void {
-    const prefix = `${datasourceId} `;
-    for (const key of [...this.cache.keys()]) {
-      if (key.startsWith(prefix)) this.cache.delete(key);
+    for (const [key, entry] of this.cache) {
+      if (entry.datasourceId === datasourceId) this.cache.delete(key);
     }
   }
 
-  // principal、catalog、schema、statement、datasourceId を連結してキャッシュキーを作る。
-  // 同じユーザーでも catalog/schema やデータソースが異なれば別クエリとして扱う。
-  private cacheKey(params: EstimateRequestParams, datasourceId: string): string {
+  private engineGeneration(engine: QueryEngine): number {
+    const existing = this.engineGenerations.get(engine);
+    if (existing !== undefined) return existing;
+    const generation = this.nextEngineGeneration;
+    this.nextEngineGeneration += 1;
+    this.engineGenerations.set(engine, generation);
+    return generation;
+  }
+
+  // タプル境界を保持する JSON 配列でキャッシュキーを作り、各文字列に空白や
+  // 区切り文字が含まれても別の実行コンテキストと衝突しないようにする。
+  private cacheKey(
+    params: EstimateRequestParams,
+    datasourceId: string,
+    engine: QueryEngine,
+  ): string {
     const guard = params.guard;
     const guardKey = guard
-      ? [guard.mode, guard.maxScanBytes, guard.maxScanRows, guard.onUnknown].join(':')
-      : 'global';
-    return [
+      ? ['override', guard.mode, guard.maxScanBytes, guard.maxScanRows, guard.onUnknown]
+      : ['global'];
+    return JSON.stringify([
+      1,
       datasourceId,
-      params.roleName ?? 'global',
+      this.engineGeneration(engine),
+      params.roleName ?? null,
       guardKey,
       params.principal,
-      params.catalog ?? '',
-      params.schema ?? '',
+      params.catalog ?? null,
+      params.schema ?? null,
       params.statement,
-    ].join(' ');
+    ]);
   }
 
   private resolveLimits(params: EstimateRequestParams): GuardLimits {
@@ -146,12 +165,16 @@ export class EstimateService {
    * 往復なしに再利用できるよう公開されている。
    */
   getCached(params: EstimateRequestParams): EstimateResult | undefined {
-    const { datasourceId } = resolveEngine(
+    const { datasourceId, engine } = resolveEngine(
       this.engines,
       params.datasourceId,
       this.defaultDatasourceId,
     );
-    const key = this.cacheKey(params, datasourceId);
+    const key = this.cacheKey(params, datasourceId, engine);
+    return this.getFresh(key);
+  }
+
+  private getFresh(key: string): EstimateResult | undefined {
     const entry = this.cache.get(key);
     if (!entry) return undefined;
     if (entry.expiresAt <= this.now()) {
@@ -163,9 +186,10 @@ export class EstimateService {
   }
 
   // 見積もり結果をキャッシュへ格納する。TTL が 0 以下なら保存しない。
-  private store(key: string, result: EstimateResult): void {
+  private store(key: string, datasourceId: string, result: EstimateResult): void {
     if (this.config.cacheTtlSeconds <= 0) return;
     this.cache.set(key, {
+      datasourceId,
       result,
       expiresAt: this.now() + this.config.cacheTtlSeconds * 1000,
     });
@@ -195,8 +219,8 @@ export class EstimateService {
       );
     }
 
-    const key = this.cacheKey(params, datasourceId);
-    const cached = this.getCached(params);
+    const key = this.cacheKey(params, datasourceId, engine);
+    const cached = this.getFresh(key);
     if (cached) return cached;
 
     const limits = this.resolveLimits(params);
@@ -208,7 +232,7 @@ export class EstimateService {
       estimateTimeoutMs: this.config.estimateTimeoutMs,
       bytesPerSecond: this.config.bytesPerSecond,
     });
-    this.store(key, result);
+    this.store(key, datasourceId, result);
     return result;
   }
 }

@@ -12,6 +12,7 @@
  * 各 http/*Routes.ts をここでマウントする「配線」の役割。ビジネスロジック自体は
  * 各ルーター/サービス側にあり、このファイルはそれらを正しい順序で組み合わせるだけに留める。
  */
+import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
 import { apiRoutes, meResponseSchema, type MeResponse } from '@hubble/contracts';
 import { loadServerConfig, toAppConfig } from './config';
@@ -162,6 +163,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
     const me: MeResponse = {
       user: principal.user,
       authMode: services.config.auth.mode,
+      storageScope: createHash('sha256').update(principal.user).digest('hex'),
       role: principal.role.name,
       permissions: [...principal.role.permissions].sort(),
       datasources: toDatasourceSummaries(

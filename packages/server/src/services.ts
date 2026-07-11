@@ -369,6 +369,7 @@ export async function buildServices(
       alerts,
       audit,
       encryptionKey: config.github.tokenEncryptionKey!,
+      getRbac: () => rbacState.current,
       now: githubNow,
     });
     githubSyncScheduler = new GithubSyncScheduler({

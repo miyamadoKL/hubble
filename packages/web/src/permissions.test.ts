@@ -5,6 +5,7 @@ import { hasPermission } from './permissions';
 const operator: MeResponse = {
   user: 'op',
   authMode: 'proxy',
+  storageScope: 'a'.repeat(64),
   role: 'operator',
   permissions: ['queries.viewAll', 'query.killAny', 'query.write'],
   datasources: [],
@@ -13,6 +14,7 @@ const operator: MeResponse = {
 const member: MeResponse = {
   user: 'member',
   authMode: 'proxy',
+  storageScope: 'b'.repeat(64),
   role: 'member',
   permissions: [],
   datasources: [],

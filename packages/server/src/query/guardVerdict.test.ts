@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeVerdict, type GuardLimits } from './guardVerdict';
+import { computeVerdict, type GuardLimits, type VerdictInput } from './guardVerdict';
 
 function limits(over: Partial<GuardLimits> = {}): GuardLimits {
   return {
@@ -11,11 +11,24 @@ function limits(over: Partial<GuardLimits> = {}): GuardLimits {
   };
 }
 
+function estimated(over: Partial<VerdictInput> = {}): VerdictInput {
+  const scanBytes = over.scanBytes ?? null;
+  const scanRows = over.scanRows ?? null;
+  return {
+    status: 'estimated',
+    scanBytes,
+    scanBytesComplete: scanBytes !== null,
+    scanRows,
+    scanRowsComplete: scanRows !== null,
+    ...over,
+  };
+}
+
 describe('computeVerdict — status short-circuits', () => {
   it('always allows unsupported regardless of mode', () => {
     for (const mode of ['off', 'warn', 'enforce'] as const) {
       const v = computeVerdict(
-        { status: 'unsupported', scanBytes: null, scanRows: null },
+        estimated({ status: 'unsupported' }),
         limits({ mode, onUnknown: 'block', maxScanRows: 1 }),
       );
       expect(v.decision).toBe('allow');
@@ -25,7 +38,7 @@ describe('computeVerdict — status short-circuits', () => {
 
   it('always allows disabled', () => {
     const v = computeVerdict(
-      { status: 'disabled', scanBytes: null, scanRows: null },
+      estimated({ status: 'disabled' }),
       limits({ mode: 'enforce', onUnknown: 'block' }),
     );
     expect(v.decision).toBe('allow');
@@ -35,7 +48,7 @@ describe('computeVerdict — status short-circuits', () => {
 describe('computeVerdict — estimated, within limits', () => {
   it('allows when both estimates are under the limits', () => {
     const v = computeVerdict(
-      { status: 'estimated', scanBytes: 1000, scanRows: 10 },
+      estimated({ scanBytes: 1000, scanRows: 10 }),
       limits({ maxScanBytes: 10_000, maxScanRows: 1000 }),
     );
     expect(v.decision).toBe('allow');
@@ -44,7 +57,7 @@ describe('computeVerdict — estimated, within limits', () => {
 
   it('allows when no limits are configured (limit 0 = unlimited)', () => {
     const v = computeVerdict(
-      { status: 'estimated', scanBytes: 9e18, scanRows: 9e18 },
+      estimated({ scanBytes: 9e18, scanRows: 9e18 }),
       limits({ maxScanBytes: 0, maxScanRows: 0 }),
     );
     expect(v.decision).toBe('allow');
@@ -54,7 +67,7 @@ describe('computeVerdict — estimated, within limits', () => {
 describe('computeVerdict — estimated, exceeding limits', () => {
   it('blocks in enforce mode when scanRows exceeds the limit', () => {
     const v = computeVerdict(
-      { status: 'estimated', scanBytes: null, scanRows: 6_001_215 },
+      estimated({ scanRows: 6_001_215 }),
       limits({ mode: 'enforce', maxScanRows: 1_000_000 }),
     );
     expect(v.decision).toBe('block');
@@ -64,7 +77,7 @@ describe('computeVerdict — estimated, exceeding limits', () => {
 
   it('warns (never blocks) in warn mode when a limit is exceeded', () => {
     const v = computeVerdict(
-      { status: 'estimated', scanBytes: 2000, scanRows: null },
+      estimated({ scanBytes: 2000 }),
       limits({ mode: 'warn', maxScanBytes: 1000 }),
     );
     expect(v.decision).toBe('warn');
@@ -73,37 +86,65 @@ describe('computeVerdict — estimated, exceeding limits', () => {
 
   it('reports both byte and row violations', () => {
     const v = computeVerdict(
-      { status: 'estimated', scanBytes: 5000, scanRows: 5000 },
+      estimated({ scanBytes: 5000, scanRows: 5000 }),
       limits({ mode: 'enforce', maxScanBytes: 1000, maxScanRows: 1000 }),
     );
     expect(v.decision).toBe('block');
     expect(v.reasons).toHaveLength(2);
   });
 
-  it('judges on the known estimate when only one is available', () => {
-    // bytes known and over limit, rows unknown -> still a violation.
+  it('reports a known violation and the other incomplete dimension', () => {
+    // bytes の既知小計が上限を超え、rows は不完全なので両方の理由を報告する。
     const v = computeVerdict(
-      { status: 'estimated', scanBytes: 5000, scanRows: null },
+      estimated({ scanBytes: 5000 }),
       limits({ mode: 'enforce', maxScanBytes: 1000, maxScanRows: 1000 }),
     );
     expect(v.decision).toBe('block');
-    expect(v.reasons).toHaveLength(1);
+    expect(v.reasons).toHaveLength(2);
     expect(v.reasons[0]).toContain('bytes');
+    expect(v.reasons[1]).toContain('rows');
   });
 
-  it('allows when the only known estimate is under its limit and the other is unknown', () => {
-    // rows known & under limit, bytes unknown -> not both unknown, so no
-    // ON_UNKNOWN; judged on the known (passing) estimate -> allow.
+  it('allows an unknown dimension when onUnknown=allow', () => {
     const v = computeVerdict(
-      { status: 'estimated', scanBytes: null, scanRows: 10 },
-      limits({ mode: 'enforce', maxScanBytes: 1000, maxScanRows: 1000 }),
+      estimated({ scanRows: 10 }),
+      limits({ mode: 'enforce', maxScanBytes: 1000, maxScanRows: 1000, onUnknown: 'allow' }),
     );
     expect(v.decision).toBe('allow');
   });
 });
 
+describe('computeVerdict — partially estimated JOIN', () => {
+  const partialJoin = estimated({
+    scanBytes: 1000,
+    scanBytesComplete: false,
+    scanRows: 10,
+    scanRowsComplete: true,
+  });
+
+  it.each([
+    ['allow', 'allow'],
+    ['warn', 'warn'],
+    ['block', 'block'],
+  ] as const)('applies onUnknown=%s to an incomplete limited dimension', (onUnknown, decision) => {
+    const verdict = computeVerdict(
+      partialJoin,
+      limits({ mode: 'enforce', maxScanBytes: 10_000, maxScanRows: 100, onUnknown }),
+    );
+    expect(verdict.decision).toBe(decision);
+  });
+
+  it('ignores incompleteness for a dimension without a configured limit', () => {
+    const verdict = computeVerdict(
+      partialJoin,
+      limits({ mode: 'enforce', maxScanBytes: 0, maxScanRows: 100, onUnknown: 'block' }),
+    );
+    expect(verdict.decision).toBe('allow');
+  });
+});
+
 describe('computeVerdict — estimated, both unknown (ON_UNKNOWN)', () => {
-  const bothUnknown = { status: 'estimated', scanBytes: null, scanRows: null } as const;
+  const bothUnknown = estimated();
 
   it('allows when onUnknown=allow', () => {
     const v = computeVerdict(bothUnknown, limits({ onUnknown: 'allow', maxScanRows: 1000 }));
@@ -144,7 +185,7 @@ describe('computeVerdict — estimated, both unknown (ON_UNKNOWN)', () => {
 });
 
 describe('computeVerdict — unavailable (ON_UNKNOWN)', () => {
-  const unavailable = { status: 'unavailable', scanBytes: null, scanRows: null } as const;
+  const unavailable = estimated({ status: 'unavailable' });
 
   it('allows when onUnknown=allow', () => {
     expect(computeVerdict(unavailable, limits({ onUnknown: 'allow' })).decision).toBe('allow');

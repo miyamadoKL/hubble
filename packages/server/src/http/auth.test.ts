@@ -23,6 +23,7 @@ describe('auth — none mode (default)', () => {
     expect(me).toEqual({
       user: ctx.services.config.trino.user,
       authMode: 'none',
+      storageScope: expect.stringMatching(/^[0-9a-f]{64}$/),
       role: 'unrestricted',
       permissions: ['ai.use', 'query.write'],
       datasources: [
@@ -237,6 +238,7 @@ describe('auth — proxy mode', () => {
       user: 'alice',
       email: 'alice@corp.com',
       authMode: 'proxy',
+      storageScope: expect.stringMatching(/^[0-9a-f]{64}$/),
       role: 'unrestricted',
       permissions: ['ai.use', 'query.write'],
       datasources: [
@@ -248,6 +250,22 @@ describe('auth — proxy mode', () => {
         },
       ],
     });
+  });
+
+  it('returns a stable storage scope that differs by principal', async () => {
+    const ctx = await proxyCtx();
+    const alice = meResponseSchema.parse(
+      await (await ctx.app.request('/api/me', { headers: ssoHeaders('alice@corp.com') })).json(),
+    );
+    const bob = meResponseSchema.parse(
+      await (await ctx.app.request('/api/me', { headers: ssoHeaders('bob@corp.com') })).json(),
+    );
+    const aliceAgain = meResponseSchema.parse(
+      await (await ctx.app.request('/api/me', { headers: ssoHeaders('alice@corp.com') })).json(),
+    );
+
+    expect(alice.storageScope).toBe(aliceAgain.storageScope);
+    expect(alice.storageScope).not.toBe(bob.storageScope);
   });
 
   it('returns 401 UNAUTHENTICATED when SSO headers are missing', async () => {

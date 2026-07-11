@@ -54,6 +54,20 @@ const nationCell = ioPlanCell({
   bytes: 2734,
 });
 
+const mixedJoinCell = JSON.stringify({
+  inputTableColumnInfos: [
+    {
+      table: { catalog: 'tpch', schemaTable: { schema: 'tiny', table: 'nation' } },
+      estimate: { outputRowCount: 25, outputSizeInBytes: 2734 },
+    },
+    {
+      table: { catalog: 'system', schemaTable: { schema: 'runtime', table: 'queries' } },
+      estimate: { outputRowCount: 'NaN', outputSizeInBytes: 'NaN' },
+    },
+  ],
+  estimate: { outputRowCount: 'NaN', outputSizeInBytes: 'NaN' },
+});
+
 async function postEstimate(
   app: Awaited<ReturnType<typeof createTestContext>>['app'],
   body: Record<string, unknown>,
@@ -151,6 +165,39 @@ describe('POST /api/queries/estimate', () => {
     expect(result.scanRows).toBe(25);
     expect(result.verdict.decision).toBe('allow');
   });
+
+  it.each([
+    ['allow', 'allow'],
+    ['warn', 'warn'],
+    ['block', 'block'],
+  ] as const)(
+    'applies onUnknown=%s when a JOIN contains known and unknown tables',
+    async (onUnknown, decision) => {
+      const ctx = await createTestContext({
+        scenarios: [explainScenario('mixed_join', mixedJoinCell)],
+        configOverrides: {
+          guard: {
+            mode: 'enforce',
+            maxScanBytes: 10_000,
+            maxScanRows: 1000,
+            onUnknown,
+            estimateTimeoutMs: 3000,
+            cacheTtlSeconds: 30,
+            bytesPerSecond: 1000,
+          },
+        },
+      });
+      const { json } = await postEstimate(ctx.app, {
+        statement: 'SELECT * FROM mixed_join',
+      });
+      const result = estimateResultSchema.parse(json) as EstimateResult;
+
+      expect(result.scanRows).toBe(25);
+      expect(result.scanBytes).toBe(2734);
+      expect(result.estimatedSeconds).toBeNull();
+      expect(result.verdict.decision).toBe(decision);
+    },
+  );
 
   it('computes estimatedSeconds when BYTES_PER_SECOND is set', async () => {
     const ctx = await createTestContext({

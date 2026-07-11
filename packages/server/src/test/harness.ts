@@ -104,6 +104,8 @@ export async function createTestContext(
     remoteAddress?: RemoteAddressFn;
     /** Start the in-process scheduler tick loop (default: false, API only). */
     startScheduler?: boolean;
+    /** スケジューラーと評価器が参照する現在時刻の差し替え（テスト用）。 */
+    now?: () => number;
     /** datasources.yaml 探索の作業ディレクトリ（テスト用）。 */
     cwd?: string;
     reloadLogError?: (message: string, err: unknown) => void;
@@ -164,6 +166,7 @@ export async function createTestContext(
   const services = await buildServices(config, db, {
     env: options.env,
     cwd,
+    now: options.now,
     fetchImpl: options.fetchImpl ?? fake.fetch,
     githubClient: options.githubClient,
     // 日本語: 既定では待たずに即 resolve するので、バックオフ待ちが原因で
