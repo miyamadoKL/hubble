@@ -18,11 +18,13 @@ import type { Principal } from '../auth/principal';
 import type { GithubConfig } from '../config';
 import { AppError } from '../errors';
 import type { AuditLogger } from '../audit';
-import type { NotebookRepository } from '../store/notebooks';
-import type { DashboardRepository } from '../store/dashboards';
-import type { SavedQueryRepository } from '../store/savedQueries';
-import type { WorkflowRecord, WorkflowRepository } from '../store/workflows';
-import type { AlertRecord, AlertRepository } from '../store/alerts';
+import { NotebookRepository } from '../store/notebooks';
+import { DashboardRepository } from '../store/dashboards';
+import { SavedQueryRepository } from '../store/savedQueries';
+import { WorkflowRepository, type WorkflowRecord } from '../store/workflows';
+import { AlertRepository, type AlertRecord } from '../store/alerts';
+import { DocumentShareRepository } from '../store/documentShares';
+import type { SqlDatabase } from '../db/sqlDatabase';
 import { branchNameFor, contentHash, documentPath, documentToContent } from './canonical';
 import {
   parseAlertContent,
@@ -37,6 +39,7 @@ import { GithubPullRequestExistsError, type GithubClient } from './client';
 import {
   DocumentGitLinkRepository,
   GithubConnectionRepository,
+  type DocumentGitLinkPatch,
   type DocumentGitLinkRecord,
 } from './store';
 
@@ -54,7 +57,17 @@ interface DecryptedConnection {
   tokenExpiresAt: string | null;
 }
 
+interface PullRepositories {
+  links: DocumentGitLinkRepository;
+  savedQueries: SavedQueryRepository;
+  notebooks: NotebookRepository;
+  dashboards: DashboardRepository;
+  workflows: WorkflowRepository;
+  alerts: AlertRepository;
+}
+
 export interface GithubSyncServiceDeps {
+  db: SqlDatabase;
   config: GithubConfig;
   client: GithubClient;
   connections: GithubConnectionRepository;
@@ -408,15 +421,10 @@ export class GithubSyncService {
       });
     }
 
-    await this.applyParsedContent(type, id, actor, file.contentText);
-
-    const hash = contentHash(file.contentText);
     const nowIso = new Date(this.now()).toISOString();
-    await this.deps.links.upsert(type, id, {
+    await this.applyPulledContent(type, id, actor, file.contentText, {
       path: link.path,
-      approvedHash: hash,
       approvedCommit: file.sha,
-      lastPushedHash: hash,
       lastPushedCommit: file.sha,
       checkedAt: nowIso,
     });
@@ -486,17 +494,14 @@ export class GithubSyncService {
     }
 
     const remoteHash = contentHash(file.contentText);
-    if (remoteHash === link.approvedHash) {
+    if (file.sha === link.approvedCommit || remoteHash === link.approvedHash) {
       return 'unchanged';
     }
 
     try {
-      await this.applyParsedContent(type, id, owner, file.contentText);
-      await this.deps.links.upsert(type, id, {
+      await this.applyPulledContent(type, id, owner, file.contentText, {
         path: link.path,
-        approvedHash: remoteHash,
         approvedCommit: file.sha,
-        lastPushedHash: remoteHash,
         lastPushedCommit: file.sha,
         checkedAt: nowIso,
       });
@@ -551,19 +556,54 @@ export class GithubSyncService {
   private async loadDocumentUnscoped(
     type: DocumentGitType,
     id: string,
+    repositories: PullRepositories = this.deps,
   ): Promise<SavedQuery | Notebook | WorkflowRecord | AlertRecord | Dashboard | undefined> {
     switch (type) {
       case 'saved_query':
-        return this.deps.savedQueries.getByIdUnscoped(id);
+        return repositories.savedQueries.getByIdUnscoped(id);
       case 'notebook':
-        return this.deps.notebooks.getByIdUnscoped(id);
+        return repositories.notebooks.getByIdUnscoped(id);
       case 'workflow':
-        return this.deps.workflows.getById(id);
+        return repositories.workflows.getById(id);
       case 'alert':
-        return this.deps.alerts.getById(id);
+        return repositories.alerts.getById(id);
       case 'dashboard':
-        return this.deps.dashboards.getByIdUnscoped(id);
+        return repositories.dashboards.getByIdUnscoped(id);
     }
+  }
+
+  private repositoriesFor(db: SqlDatabase): PullRepositories {
+    const shares = new DocumentShareRepository(db);
+    return {
+      links: new DocumentGitLinkRepository(db),
+      savedQueries: new SavedQueryRepository(db, shares),
+      notebooks: new NotebookRepository(db, shares),
+      dashboards: new DashboardRepository(db, shares),
+      workflows: new WorkflowRepository(db),
+      alerts: new AlertRepository(db),
+    };
+  }
+
+  private async applyPulledContent(
+    type: DocumentGitType,
+    id: string,
+    owner: string,
+    contentText: string,
+    linkPatch: DocumentGitLinkPatch & { path: string },
+  ): Promise<string> {
+    return this.deps.db.transaction(async (tx) => {
+      const repositories = this.repositoriesFor(tx);
+      await this.applyParsedContent(type, id, owner, contentText, repositories);
+      const applied = await this.loadDocumentUnscoped(type, id, repositories);
+      if (!applied) throw AppError.notFound(`${type} ${id} not found after pull`);
+      const canonicalHash = contentHash(documentToContent(type, applied));
+      await repositories.links.upsert(type, id, {
+        ...linkPatch,
+        approvedHash: canonicalHash,
+        lastPushedHash: canonicalHash,
+      });
+      return canonicalHash;
+    });
   }
 
   private async applyParsedContent(
@@ -571,16 +611,17 @@ export class GithubSyncService {
     id: string,
     owner: string,
     contentText: string,
+    repositories: PullRepositories = this.deps,
   ): Promise<void> {
     const accessor = { user: owner, groups: [] as string[], role: 'admin' };
     switch (type) {
       case 'saved_query': {
         const parsed = parseSavedQueryContent(contentText);
-        const existing = await this.deps.savedQueries.getByIdUnscoped(id);
+        const existing = await repositories.savedQueries.getByIdUnscoped(id);
         if (!existing) {
           throw AppError.notFound('Saved query not found');
         }
-        await this.deps.savedQueries.update(accessor, id, {
+        await repositories.savedQueries.update(accessor, id, {
           name: parsed.name,
           description: parsed.description,
           statement: parsed.statement,
@@ -593,16 +634,16 @@ export class GithubSyncService {
       }
       case 'notebook': {
         const parsed = parseNotebookContent(contentText);
-        await this.applyNotebookUpdate(accessor, id, parsed);
+        await this.applyNotebookUpdate(accessor, id, parsed, repositories.notebooks);
         break;
       }
       case 'workflow': {
         const parsed = parseWorkflowContent(contentText);
-        const existing = await this.deps.workflows.getById(id);
+        const existing = await repositories.workflows.getById(id);
         if (!existing) {
           throw AppError.notFound('Workflow not found');
         }
-        await this.deps.workflows.update(owner, id, {
+        await repositories.workflows.update(owner, id, {
           name: parsed.name,
           description: parsed.description,
           stages: parsed.stages,
@@ -615,11 +656,11 @@ export class GithubSyncService {
       }
       case 'alert': {
         const parsed = parseAlertContent(contentText);
-        const existing = await this.deps.alerts.getById(id);
+        const existing = await repositories.alerts.getById(id);
         if (!existing) {
           throw AppError.notFound('Alert not found');
         }
-        await this.deps.alerts.update(owner, id, {
+        await repositories.alerts.update(owner, id, {
           name: parsed.name,
           savedQueryId: parsed.savedQueryId,
           columnName: parsed.columnName,
@@ -640,11 +681,11 @@ export class GithubSyncService {
       }
       case 'dashboard': {
         const parsed = parseDashboardContent(contentText);
-        const existing = await this.deps.dashboards.getByIdUnscoped(id);
+        const existing = await repositories.dashboards.getByIdUnscoped(id);
         if (!existing) {
           throw AppError.notFound('Dashboard not found');
         }
-        await this.deps.dashboards.update(accessor, id, {
+        await repositories.dashboards.update(accessor, id, {
           name: parsed.name,
           description: parsed.description,
           widgets: parsed.widgets,
@@ -658,12 +699,13 @@ export class GithubSyncService {
     accessor: { user: string; groups: string[]; role: string },
     id: string,
     parsed: ParsedNotebookContent,
+    notebooks = this.deps.notebooks,
   ): Promise<void> {
-    const existing = await this.deps.notebooks.get(accessor, id);
+    const existing = await notebooks.get(accessor, id);
     if (!existing) {
       throw AppError.notFound('Notebook not found');
     }
-    const result = await this.deps.notebooks.update(accessor, id, {
+    const result = await notebooks.update(accessor, id, {
       revision: existing.revision,
       name: parsed.name,
       description: parsed.description,

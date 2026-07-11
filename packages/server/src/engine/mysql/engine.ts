@@ -31,10 +31,12 @@ import { selectSqlCredential } from '../sql/roleCredentials';
 import { validateWithExplain } from '../sql/validate';
 import { createMysqlPool, type MysqlPool, type MysqlPoolFactory } from './pool';
 import { createMysqlStatementClient } from './statementClient';
+import { runToCompletion } from '../../trino/runner';
 
 export interface MysqlEngineOptions {
   datasource: ResolvedMysqlDatasource;
   poolFactory?: MysqlPoolFactory;
+  operationTimeoutMs?: number;
 }
 
 /**
@@ -84,6 +86,19 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
     kind: 'mysql',
     capabilities,
 
+    async probe(signal?: AbortSignal): Promise<void> {
+      const client = createMysqlStatementClient(poolForRole(undefined), {
+        datasourceReadOnly: datasource.readOnly,
+        sessionReadOnly: true,
+      });
+      await runToCompletion(
+        client,
+        'SELECT 1',
+        {},
+        { timeoutMs: options.operationTimeoutMs ?? 3000, signal },
+      );
+    },
+
     executionClient(opts: ExecutionClientOptions): StatementClient {
       return createMysqlStatementClient(poolForRole(opts.roleName), {
         datasourceReadOnly: datasource.readOnly,
@@ -108,7 +123,11 @@ export function createMysqlEngine(options: MysqlEngineOptions): QueryEngine {
     async validate(params: EngineValidateParams): Promise<ValidationResult> {
       return validateWithExplain(
         async (sql) => {
-          await query(sql, [], params.roleName);
+          const client = createMysqlStatementClient(poolForRole(params.roleName), {
+            datasourceReadOnly: datasource.readOnly,
+            sessionReadOnly: true,
+          });
+          await runToCompletion(client, sql, {}, { timeoutMs: options.operationTimeoutMs ?? 3000 });
         },
         params.statement,
         'mysql',

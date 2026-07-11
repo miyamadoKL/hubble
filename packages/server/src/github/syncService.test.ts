@@ -9,6 +9,7 @@ import { DocumentShareRepository } from '../store/documentShares';
 import { WorkflowRepository } from '../store/workflows';
 import { AlertRepository } from '../store/alerts';
 import { dbBackends } from '../test/dbBackends';
+import type { SqlDatabase } from '../db/sqlDatabase';
 import {
   alertToContent,
   savedQueryToContent,
@@ -113,6 +114,7 @@ function buildService(
   client: FakeGithubClient,
   now = () => Date.now(),
   configOverrides: Partial<ReturnType<typeof loadServerConfig>['github']> = {},
+  serviceDb: SqlDatabase = db,
 ) {
   const shares = new DocumentShareRepository(db);
   const savedQueries = new SavedQueryRepository(db, shares);
@@ -131,6 +133,7 @@ function buildService(
   }).github;
   const config = { ...baseConfig, ...configOverrides };
   const service = new GithubSyncService({
+    db: serviceDb,
     config,
     client,
     connections,
@@ -164,6 +167,32 @@ const principalAlice = {
   groups: [] as string[],
 } as Principal;
 const accessorAlice = { user: 'alice', groups: [] as string[], role: 'admin' };
+
+function failDocumentGitLinkWrites(db: SqlDatabase): SqlDatabase {
+  return {
+    dialect: db.dialect,
+    query: db.query.bind(db),
+    run: db.run.bind(db),
+    exec: db.exec.bind(db),
+    close: db.close.bind(db),
+    transaction: (fn) =>
+      db.transaction((tx) =>
+        fn({
+          dialect: tx.dialect,
+          query: tx.query.bind(tx),
+          run: async (sql, params) => {
+            if (/\b(?:INSERT INTO|UPDATE) document_git_links\b/.test(sql)) {
+              throw new Error('injected link write failure');
+            }
+            await tx.run(sql, params);
+          },
+          exec: tx.exec.bind(tx),
+          transaction: tx.transaction.bind(tx),
+          close: tx.close.bind(tx),
+        }),
+      ),
+  };
+}
 
 describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   it('connects and disconnects GitHub account', async () => {
@@ -327,6 +356,25 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
     await db.close();
   });
 
+  it('rejects newline metadata before writing a Git file', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const saved = await savedQueries.create('alice', {
+      name: 'Broken\nname',
+      statement: 'SELECT 1',
+    });
+
+    await expect(service.push(principalAlice, 'saved_query', saved.id)).rejects.toMatchObject({
+      status: 400,
+      detail: { code: 'GITHUB_INVALID_METADATA' },
+    });
+    expect(client.createBranchCalls).toBe(0);
+    expect(client.putCount).toBe(0);
+    await db.close();
+  });
+
   it('pullDocument overwrites local content and preserves isFavorite', async () => {
     const db = await open();
     const client = new FakeGithubClient();
@@ -343,10 +391,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
       statement: 'SELECT local',
       isFavorite: true,
     });
-    const remoteContent = savedQueryToContent({
-      ...saved,
-      statement: 'SELECT remote',
-    });
+    const remoteContent = '-- name:   Q  \r\n\r\nSELECT remote   \r\n\r\n';
     const remoteHash = contentHash(remoteContent);
     await links.upsert('saved_query', saved.id, {
       path: documentPath('saved_query', saved.id),
@@ -367,8 +412,43 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
     expect(updated?.isFavorite).toBe(true);
 
     const link = await links.get('saved_query', saved.id);
-    expect(link?.approvedHash).toBe(remoteHash);
-    expect(link?.lastPushedHash).toBe(remoteHash);
+    const canonicalHash = contentHash(documentToContent('saved_query', updated!));
+    expect(canonicalHash).not.toBe(remoteHash);
+    expect(link?.approvedHash).toBe(canonicalHash);
+    expect(link?.lastPushedHash).toBe(canonicalHash);
+    expect((await service.getStatus(principalAlice, 'saved_query', saved.id)).status).toBe(
+      'approved',
+    );
+    await db.close();
+  });
+
+  it('rolls back the document update when the link update fails', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, links } = buildService(
+      db,
+      client,
+      () => Date.now(),
+      {},
+      failDocumentGitLinkWrites(db),
+    );
+    await service.connect('alice', 'oauth-code');
+    const saved = await savedQueries.create('alice', { name: 'Q', statement: 'SELECT local' });
+    const approvedHash = contentHash(savedQueryToContent(saved));
+    await links.upsert('saved_query', saved.id, {
+      path: documentPath('saved_query', saved.id),
+      approvedHash,
+    });
+    client.files.set(`${DEFAULT_BRANCH}:saved-queries/${saved.id}.sql`, {
+      contentText: savedQueryToContent({ ...saved, statement: 'SELECT remote' }),
+      sha: 'remote-sha',
+    });
+
+    await expect(service.pullDocument(principalAlice, 'saved_query', saved.id)).rejects.toThrow(
+      'injected link write failure',
+    );
+    expect((await savedQueries.get(accessorAlice, saved.id))?.statement).toBe('SELECT local');
+    expect((await links.get('saved_query', saved.id))?.approvedHash).toBe(approvedHash);
     await db.close();
   });
 
@@ -604,7 +684,10 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
     const updated = await savedQueries.get(accessorAlice, saved.id);
     expect(updated?.statement).toBe('SELECT 9');
     const link = await links.get('saved_query', saved.id);
-    expect(link?.approvedHash).toBe(contentHash(remoteContent));
+    expect(link?.approvedHash).toBe(contentHash(documentToContent('saved_query', updated!)));
+    const second = await service.syncAll();
+    expect(second.updated).toBe(0);
+    expect(second.failed).toBe(0);
     await db.close();
   });
 

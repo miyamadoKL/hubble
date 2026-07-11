@@ -45,12 +45,17 @@ const services = await defaultServices();
 // 必ず具体的なパスを返す。
 const datasourcesPath = resolveDatasourcesPath(process.env, process.cwd());
 const rbacPath = resolveRbacPath(process.env, process.cwd());
-const watchedFiles = [
-  { path: rbacPath, reload: () => services.reloadConfig() },
-  { path: datasourcesPath, reload: () => services.reloadConfig() },
-];
+const reloadConfig = async (): Promise<void> => {
+  await services.reloadConfig();
+  fileReload.updateFiles(buildWatchedFiles());
+};
+const buildWatchedFiles = () =>
+  [...new Set([rbacPath, datasourcesPath, ...services.datasourceDependencyFiles])].map((path) => ({
+    path,
+    reload: reloadConfig,
+  }));
 const intervalSeconds = parseReloadIntervalSeconds(process.env);
-const fileReload = startFileReload(watchedFiles, { intervalSeconds });
+const fileReload = startFileReload(buildWatchedFiles(), { intervalSeconds });
 if (intervalSeconds > 0) {
   console.log(`config hot-reload enabled (poll every ${intervalSeconds}s, SIGHUP)`);
 } else {

@@ -3,6 +3,7 @@
  */
 import pg from 'pg';
 import type { ResolvedPostgresqlDatasource } from '../../datasource/types';
+import { resolveDatasourceConnectTimeoutMs } from '../../datasource/connectionOptions';
 
 const { Pool } = pg;
 
@@ -26,6 +27,7 @@ export function createPgPool(ds: ResolvedPostgresqlDatasource): PgPool {
     password: ds.password,
     database: ds.database,
     max: ds.maxConnections,
+    connectionTimeoutMillis: resolveDatasourceConnectTimeoutMs(),
     ssl,
   });
 }

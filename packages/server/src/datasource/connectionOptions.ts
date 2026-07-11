@@ -21,6 +21,22 @@ export interface ResolvedSqlConnectionOptions {
   maxConnections: number;
 }
 
+/** SQLデータソースの接続獲得期限を環境変数から解決する。 */
+export function resolveDatasourceConnectTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.DATASOURCE_CONNECT_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return 10_000;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(
+      `Invalid integer for env var DATASOURCE_CONNECT_TIMEOUT_MS: ${JSON.stringify(raw)} ` +
+        '(minimum: 1)',
+    );
+  }
+  return value;
+}
+
 /**
  * tlsCaFile を読み込む。読めなければ起動エラー（passwordFile と同じ扱い）。
  * @param datasourceId - エラーメッセージ用のデータソース id。

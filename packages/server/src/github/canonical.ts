@@ -10,6 +10,7 @@ import type { Notebook, SavedQuery, Dashboard } from '@hubble/contracts';
 import type { DocumentGitType } from '@hubble/contracts';
 import type { AlertRecord } from '../store/alerts';
 import type { WorkflowRecord } from '../store/workflows';
+import { AppError } from '../errors';
 
 /** 正規形 SQL/YAML 文字列の SHA-256 ハッシュ (hex)。 */
 export function contentHash(content: string): string {
@@ -21,6 +22,12 @@ export function contentHash(content: string): string {
  * @param q - 保存済みクエリ。
  */
 export function savedQueryToContent(q: SavedQuery): string {
+  if (/[\r\n]/.test(q.name) || /[\r\n]/.test(q.description)) {
+    throw AppError.badRequest(
+      '改行を含む名前や説明は GitHub 連携で使用できません',
+      'GITHUB_INVALID_METADATA',
+    );
+  }
   const headerLines: string[] = [`-- name: ${q.name}`];
   if (q.description) {
     headerLines.push(`-- description: ${q.description}`);

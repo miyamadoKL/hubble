@@ -59,6 +59,10 @@ export class LeasedEngine implements QueryEngine {
     };
   }
 
+  probe(...args: Parameters<QueryEngine['probe']>): ReturnType<QueryEngine['probe']> {
+    return this.inner.probe(...args);
+  }
+
   executionClient(
     ...args: Parameters<QueryEngine['executionClient']>
   ): ReturnType<QueryEngine['executionClient']> {
