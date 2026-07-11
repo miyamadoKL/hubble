@@ -47,15 +47,53 @@ function safeLocalStorage(): Storage | null {
   }
 }
 
+function safeGetItem(
+  storage: Storage,
+  key: string,
+): { ok: true; value: string | null } | { ok: false } {
+  try {
+    return { ok: true, value: storage.getItem(key) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function safeSetItem(storage: Storage, key: string, value: string): boolean {
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function safeRemoveItem(storage: Storage, key: string): void {
+  try {
+    storage.removeItem(key);
+  } catch {
+    // 移行の後処理に失敗してもアプリ起動は継続する。
+  }
+}
+
+function migrateKey(storage: Storage, oldKey: string, newKey: string): void {
+  const oldValue = safeGetItem(storage, oldKey);
+  if (!oldValue.ok || oldValue.value === null) return;
+
+  const newValue = safeGetItem(storage, newKey);
+  if (!newValue.ok) return;
+  if (newValue.value !== null) {
+    safeRemoveItem(storage, oldKey);
+    return;
+  }
+
+  if (safeSetItem(storage, newKey, oldValue.value)) safeRemoveItem(storage, oldKey);
+}
+
 /**
- * Move legacy `hue-fable-*` values to their `hubble-*` equivalents. Each key is
- * copied only when the new key is absent (never clobber a newer value) and the
- * old key is always removed afterwards. No-op when localStorage is unavailable.
- *
  * 旧 `hue-fable-*` の値を、対応する新しい `hubble-*` キーへ移動する。
  * 各キーは「新キーがまだ存在しない場合のみ」コピーされる
  * （すでに新キーに値がある場合は、より新しい値を上書きしないようにするため）。
- * 旧キーはコピーの成否にかかわらず常に削除される。
+ * 新キーへのコピーに成功した場合、または新キーが既に存在する場合だけ旧キーを削除する。
  * localStorage が利用できない環境では何もしない（no-op）。
  */
 export function migrateLegacyStorage(): void {
@@ -66,33 +104,27 @@ export function migrateLegacyStorage(): void {
 
   // 固定キー名のリネーム処理。
   for (const [oldKey, newKey] of RENAMES) {
-    // 旧キーに値が保存されていなければ、移行対象がないのでスキップする。
-    const value = ls.getItem(oldKey);
-    if (value === null) continue;
-    // 新キーがまだ存在しない場合のみ値をコピーする。
-    // 新キーにすでに値がある場合は、それを壊さないようにコピーしない。
-    if (ls.getItem(newKey) === null) ls.setItem(newKey, value);
-    // コピーの成否によらず、旧キーは削除してストレージをクリーンに保つ。
-    ls.removeItem(oldKey);
+    migrateKey(ls, oldKey, newKey);
   }
 
   // Per-draft snapshots use a dynamic suffix, so enumerate the old prefix.
   // 下書きスナップショットは動的なサフィックス（例: ノートブックID）を持つため、
   // 旧接頭辞に一致するキーを localStorage 全体を走査して列挙する。
   const oldDraftKeys: string[] = [];
-  for (let i = 0; i < ls.length; i += 1) {
-    const key = ls.key(i);
-    if (key && key.startsWith(OLD_DRAFT_PREFIX)) oldDraftKeys.push(key);
+  try {
+    for (let i = 0; i < ls.length; i += 1) {
+      const key = ls.key(i);
+      if (key && key.startsWith(OLD_DRAFT_PREFIX)) oldDraftKeys.push(key);
+    }
+  } catch {
+    // キー列挙を拒否する環境では固定キーの移行だけで終了する。
+    return;
   }
   // 列挙した旧下書きキーそれぞれについて、新しい接頭辞のキーへリネームする。
   for (const oldKey of oldDraftKeys) {
     // 旧接頭辞部分を新接頭辞に置き換えて、対応する新キー名を組み立てる。
     const newKey = NEW_DRAFT_PREFIX + oldKey.slice(OLD_DRAFT_PREFIX.length);
-    const value = ls.getItem(oldKey);
-    if (value === null) continue;
-    // 固定キーの場合と同様に、新キーが未使用の場合のみコピーする。
-    if (ls.getItem(newKey) === null) ls.setItem(newKey, value);
-    ls.removeItem(oldKey);
+    migrateKey(ls, oldKey, newKey);
   }
 }
 

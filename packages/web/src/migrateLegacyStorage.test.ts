@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { migrateLegacyStorage } from './migrateLegacyStorage';
 
 beforeEach(() => {
   localStorage.clear();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('migrateLegacyStorage', () => {
@@ -50,5 +54,46 @@ describe('migrateLegacyStorage', () => {
     expect(remaining).toEqual([]);
     expect(localStorage.getItem('hubble-draft:a')).toBe('a');
     expect(localStorage.getItem('hubble-draft:b')).toBe('b');
+  });
+
+  test('keeps the legacy value when writing the new key fails', () => {
+    localStorage.setItem('hue-fable-ui', '{"theme":"dark"}');
+    const originalSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === 'hubble-ui') throw new DOMException('quota exceeded', 'QuotaExceededError');
+      originalSetItem.call(this, key, value);
+    });
+
+    expect(() => migrateLegacyStorage()).not.toThrow();
+
+    expect(localStorage.getItem('hubble-ui')).toBeNull();
+    expect(localStorage.getItem('hue-fable-ui')).toBe('{"theme":"dark"}');
+  });
+
+  test('isolates getItem and removeItem failures', () => {
+    localStorage.setItem('hue-fable-ui', '{"theme":"dark"}');
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('access denied', 'SecurityError');
+    });
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new DOMException('access denied', 'SecurityError');
+    });
+
+    expect(() => migrateLegacyStorage()).not.toThrow();
+  });
+
+  test('does not write when checking the destination key fails', () => {
+    localStorage.setItem('hue-fable-ui', '{"theme":"dark"}');
+    const originalGetItem = Storage.prototype.getItem;
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key) {
+      if (key === 'hubble-ui') throw new DOMException('access denied', 'SecurityError');
+      return originalGetItem.call(this, key);
+    });
+
+    expect(() => migrateLegacyStorage()).not.toThrow();
+
+    expect(setItem).not.toHaveBeenCalledWith('hubble-ui', expect.any(String));
+    expect(originalGetItem.call(localStorage, 'hue-fable-ui')).toBe('{"theme":"dark"}');
   });
 });

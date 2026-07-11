@@ -22,12 +22,20 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import {
   __setPersistence,
   useNotebookStore,
-  readWorkspaceSnapshot,
-  readDrafts,
+  readDraftRestoreResult,
   blankNotebook,
+  beginWorkspaceRestore,
+  getWorkspaceActivationGeneration,
+  insertIdAtSnapshotPosition,
+  isWorkspaceRestorePending,
+  resolveWorkspaceRestoreId,
+  type WorkspaceSnapshot,
 } from './notebookStore';
 import { __setCellSettledSink } from '../execution';
 import { createNotebook, getNotebook, updateNotebook } from '../api/notebooks';
+import { ApiClientError } from '../api/client';
+import type { Notebook } from '@hubble/contracts';
+import { toast } from '../components/common/Toast';
 
 // モジュールスコープのフラグ: persistence の配線は 1 度だけ行えばよい
 // （複数回 useNotebookWorkspace が呼ばれても再配線しない）。
@@ -125,6 +133,168 @@ function ensurePersistence(queryClient: QueryClient): void {
  */
 let workspaceRestoreStarted = false;
 
+/** テストごとに起動時復元のラッチを初期化する。 */
+export function __resetWorkspaceRestoreForTest(): void {
+  workspaceRestoreStarted = false;
+}
+
+/** workspace復元処理の結果。 */
+export type WorkspaceRestoreStatus = 'restored' | 'temporarily-unavailable';
+
+/** 権限喪失の403と削除済みの404だけを永続的な欠落として扱う。 */
+function isPermanentlyUnavailable(error: unknown): boolean {
+  return error instanceof ApiClientError && (error.status === 403 || error.status === 404);
+}
+
+/** 指定したタブだけを復元し、一時障害のIDを返す。 */
+async function restoreWorkspaceTabs(
+  snapshot: { openIds: string[]; activeId: string | null; draftIds?: string[] },
+  drafts: Notebook[],
+  defaultContext: { catalog?: string; schema?: string },
+  fetchNotebook: (id: string) => Promise<Notebook>,
+  ids: string[],
+  activationGenerationAtStart: number,
+  initialAttempt = true,
+  blankWhileRetrying = false,
+): Promise<{ retryIds: string[] }> {
+  const draftById = new Map(drafts.map((draft) => [draft.id, draft]));
+  const retryIds: string[] = [];
+
+  const results = await Promise.all(
+    ids.map(async (id) => {
+      if (!isWorkspaceRestorePending(id)) return { id, kind: 'skip' } as const;
+      const draft = draftById.get(id);
+      if (draft) return { id, kind: 'draft', notebook: draft } as const;
+      try {
+        const notebook = await fetchNotebook(id);
+        return { id, kind: 'saved', notebook } as const;
+      } catch (error) {
+        if (isPermanentlyUnavailable(error)) return { id, kind: 'permanent' } as const;
+        return { id, kind: 'retry' } as const;
+      }
+    }),
+  );
+
+  // 並列取得の完了結果はsnapshot順に適用し、タブ順を決定的に保つ。
+  for (const result of results) {
+    if (result.kind === 'skip' || !isWorkspaceRestorePending(result.id)) continue;
+    if (result.kind === 'retry') {
+      retryIds.push(result.id);
+      continue;
+    }
+    if (result.kind === 'permanent') {
+      resolveWorkspaceRestoreId(result.id);
+      continue;
+    }
+    useNotebookStore.getState().openNotebook(result.notebook, {
+      draft: result.kind === 'draft',
+      activate: false,
+    });
+    if (!initialAttempt) insertRestoredTab(result.id, snapshot.openIds);
+    resolveWorkspaceRestoreId(result.id);
+  }
+
+  if (initialAttempt) {
+    const beforeOrder = useNotebookStore.getState();
+    const orderedIds = [
+      ...snapshot.openIds.filter((id) => beforeOrder.open[id] !== undefined),
+      ...beforeOrder.openIds.filter((id) => !snapshot.openIds.includes(id)),
+    ];
+    if (orderedIds.join('\0') !== beforeOrder.openIds.join('\0')) {
+      beforeOrder.setOpenOrder(orderedIds);
+    }
+  }
+  const state = useNotebookStore.getState();
+  const activeResolvedThisAttempt = results.some(
+    (result) =>
+      result.id === snapshot.activeId &&
+      (result.kind === 'draft' || result.kind === 'saved') &&
+      state.open[result.id] !== undefined,
+  );
+  if (
+    initialAttempt &&
+    state.openIds.length === 0 &&
+    (retryIds.length === 0 || blankWhileRetrying)
+  ) {
+    state.openNotebook(blankNotebook(defaultContext), { draft: true, activate: false });
+  } else if (
+    initialAttempt &&
+    state.openIds.length > 0 &&
+    getWorkspaceActivationGeneration() === activationGenerationAtStart
+  ) {
+    const active =
+      snapshot.activeId && state.open[snapshot.activeId] ? snapshot.activeId : state.openIds[0]!;
+    state.setActive(active, { userInitiated: false });
+  } else if (
+    !initialAttempt &&
+    activeResolvedThisAttempt &&
+    snapshot.activeId &&
+    getWorkspaceActivationGeneration() === activationGenerationAtStart
+  ) {
+    state.setActive(snapshot.activeId, { userInitiated: false });
+  }
+  return { retryIds };
+}
+
+/** 復元したタブだけをsnapshot上の近い位置へ挿入し、既存順序は変えない。 */
+function insertRestoredTab(id: string, snapshotIds: string[]): void {
+  const state = useNotebookStore.getState();
+  state.setOpenOrder(insertIdAtSnapshotPosition(state.openIds, id, snapshotIds));
+}
+
+/** 一時障害を通知し、snapshotを保持したまま復元を再試行する。 */
+export async function restoreWorkspaceWithRetry(
+  snapshot: WorkspaceSnapshot,
+  drafts: Notebook[],
+  defaultContext: { catalog?: string; schema?: string },
+  options: {
+    fetchNotebook?: (id: string) => Promise<Notebook>;
+    scheduleRetry: (retry: () => Promise<void>, delayMs: number) => void;
+    onUnavailable: () => void;
+    onGiveUp?: (remainingIds: string[]) => void;
+  },
+): Promise<WorkspaceRestoreStatus> {
+  beginWorkspaceRestore(snapshot);
+  const activationGenerationAtStart = getWorkspaceActivationGeneration();
+  const fetchNotebook = options.fetchNotebook ?? getNotebook;
+  const attempt = async (ids: string[], attemptNumber: number): Promise<WorkspaceRestoreStatus> => {
+    let retryIds: string[];
+    try {
+      ({ retryIds } = await restoreWorkspaceTabs(
+        snapshot,
+        drafts,
+        defaultContext,
+        fetchNotebook,
+        ids,
+        activationGenerationAtStart,
+        attemptNumber === 1,
+        true,
+      ));
+    } catch {
+      retryIds = ids;
+      if (attemptNumber === 1 && useNotebookStore.getState().openIds.length === 0) {
+        useNotebookStore
+          .getState()
+          .openNotebook(blankNotebook(defaultContext), { draft: true, activate: false });
+      }
+    }
+    if (retryIds.length === 0) {
+      return 'restored';
+    }
+    if (attemptNumber === 1) options.onUnavailable();
+    if (attemptNumber >= 5) {
+      options.onGiveUp?.(retryIds);
+      return 'temporarily-unavailable';
+    }
+    options.scheduleRetry(
+      () => attempt(retryIds, attemptNumber + 1).then(() => undefined),
+      3000 * attemptNumber,
+    );
+    return 'temporarily-unavailable';
+  };
+  return attempt(snapshot.openIds, 1);
+}
+
 /**
  * アプリ起動時にワークスペース（開いていた notebook タブ群）を復元する副作用
  * フック。API 永続化の配線、resultMeta シンクの配線、タブの再オープンを
@@ -149,56 +319,54 @@ export function useNotebookWorkspace(defaultContext: { catalog?: string; schema?
 
     // ワークスペーススナップショット（開いていたタブ id 群 + アクティブ id）と
     // draft notebook の実体を、両方とも localStorage から読み出す。
-    const snapshot = readWorkspaceSnapshot();
-    const drafts = readDrafts();
-    const draftIds = new Set(drafts.map((d) => d.id));
-
+    const { drafts, corruptIds, snapshot } = readDraftRestoreResult();
+    if (corruptIds.length > 0) {
+      const noun = corruptIds.length === 1 ? 'draft' : 'drafts';
+      const verb = corruptIds.length === 1 ? 'was' : 'were';
+      toast.error(
+        'Corrupt draft removed',
+        `${corruptIds.length} corrupt ${noun} ${verb} removed from the workspace. The raw data remains temporarily in localStorage and may be cleaned up later.`,
+      );
+    }
     async function restore(): Promise<void> {
       if (!snapshot || snapshot.openIds.length === 0) {
         // 復元すべきスナップショットが無い（初回起動）: 空の notebook を開く。
         useNotebookStore.getState().openNotebook(blankNotebook(defaultContext), {
           draft: true,
-          activate: true,
+          activate: false,
         });
         return;
       }
 
-      // Re-open in the original order. Drafts come from localStorage; the rest
-      // are fetched from the server (dropped if 404 / gone).
-      // 元の並び順でタブを再オープンする。draft は localStorage から、それ以外は
-      // サーバーから再取得する（404 等で存在しなければそのタブは諦めて飛ばす）。
-      for (const id of snapshot.openIds) {
-        if (draftIds.has(id)) {
-          const draft = drafts.find((d) => d.id === id);
-          if (draft) {
-            useNotebookStore.getState().openNotebook(draft, { draft: true, activate: false });
-          }
-        } else {
-          try {
-            const nb = await getNotebook(id);
-            useNotebookStore.getState().openNotebook(nb, { draft: false, activate: false });
-          } catch {
-            /* gone — skip */
-          }
-        }
-      }
-
-      const s = useNotebookStore.getState();
-      if (s.openIds.length === 0) {
-        // Everything was gone — fall back to a blank notebook.
-        // 復元しようとしたタブが 1 つも生き残らなかった場合、空の notebook にフォールバックする。
-        s.openNotebook(blankNotebook(defaultContext), { draft: true, activate: true });
-      } else {
-        // Re-point active to the previously-active tab if it survived.
-        // 直前のアクティブタブが生き残っていればそれを再度アクティブにし、
-        // 無ければ先頭のタブをアクティブにする。
-        const active =
-          snapshot.activeId && s.open[snapshot.activeId] ? snapshot.activeId : s.openIds[0]!;
-        s.setActive(active);
-      }
+      await restoreWorkspaceWithRetry(snapshot, drafts, defaultContext, {
+        scheduleRetry: (retry, delayMs) => {
+          const timer = setTimeout(() => {
+            void retry().catch(() => {
+              toast.error(
+                'Workspace restore paused',
+                'Retry failed unexpectedly. Reload to retry.',
+              );
+            });
+          }, delayMs);
+          timer.unref?.();
+        },
+        onUnavailable: () => {
+          toast.error('Workspace restore failed', 'Retrying without changing your saved tabs.');
+        },
+        onGiveUp: (remainingIds) => {
+          const noun = remainingIds.length === 1 ? 'tab' : 'tabs';
+          const pronoun = remainingIds.length === 1 ? 'It' : 'They';
+          toast.error(
+            'Workspace restore paused',
+            `${remainingIds.length} ${noun} could not be restored. ${pronoun} will be retried after reload.`,
+          );
+        },
+      });
     }
 
-    void restore();
+    void restore().catch(() => {
+      toast.error('Workspace restore paused', 'Restore failed unexpectedly. Reload to retry.');
+    });
     // defaultContext is read once at bootstrap; restore must not re-run on its
     // identity changing, so it is intentionally excluded.
     // defaultContext は起動時に一度だけ読めばよく、その参照が変わるたびに
