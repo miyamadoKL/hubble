@@ -35,6 +35,7 @@ import {
   applyDatasourceReloadSync,
   closeCandidateEngines,
   planDatasourceReload,
+  probeCandidateEngines,
   type DatasourceReloadPlan,
 } from './datasource/reload';
 import { buildEngines, type BuildEnginesOptions } from './engine/factory';
@@ -103,6 +104,8 @@ export interface Services {
   reloadDatasources: () => Promise<void>;
   reloadRbac: () => Promise<void>;
   reloadConfig: () => Promise<void>;
+  /** 現在公開中のデータソース世代が参照する secret file。 */
+  readonly datasourceDependencyFiles: readonly string[];
   shutdown: () => Promise<void>;
 }
 
@@ -147,9 +150,11 @@ export async function buildServices(
   const rbacPath = resolveRbacPath(env, cwd ?? process.cwd());
   const hasExplicitRbacPath = env.RBAC_PATH !== undefined && env.RBAC_PATH !== '';
   let rbacFileRequired = hasExplicitRbacPath || existsSync(rbacPath);
-  const datasources = loadDatasources({ env, cwd });
+  let datasourceDependencyFiles = new Set<string>();
+  const datasources = loadDatasources({ env, cwd, dependencyFiles: datasourceDependencyFiles });
   const buildEngineOptions: BuildEnginesOptions = {
     trinoConfig: config.trino,
+    operationTimeoutMs: config.guard.estimateTimeoutMs,
     fetchImpl: options.fetchImpl,
     sleepImpl: options.sleepImpl,
     now: options.now,
@@ -424,11 +429,17 @@ export async function buildServices(
   const reloadDatasources = async (): Promise<void> => {
     if (reloadInFlight) return;
     reloadInFlight = true;
+    let plan: DatasourceReloadPlan | undefined;
     try {
-      const next = loadDatasources({ env, cwd });
-      const plan = planDatasourceReload(engines, datasources, next, buildEngineOptions);
+      const nextDependencyFiles = new Set<string>();
+      const next = loadDatasources({ env, cwd, dependencyFiles: nextDependencyFiles });
+      plan = planDatasourceReload(engines, datasources, next, buildEngineOptions);
+      await probeCandidateEngines(plan, config.datasourceProbeTimeoutMs);
       applyDatasourcePlan(plan);
+      datasourceDependencyFiles = nextDependencyFiles;
+      plan = undefined;
     } catch (err) {
+      if (plan) closeCandidateEngines(plan, reloadLogWarn);
       reloadLogError('datasource reload failed; keeping current config', err);
     } finally {
       reloadInFlight = false;
@@ -448,13 +459,20 @@ export async function buildServices(
         allowMissingDefault: !rbacFileRequired && !defaultFileExists,
       });
       const requireRbacFile = rbacFileRequired || defaultFileExists || existsSync(rbacPath);
-      const datasourceNext = loadDatasources({ env, cwd });
+      const nextDependencyFiles = new Set<string>();
+      const datasourceNext = loadDatasources({
+        env,
+        cwd,
+        dependencyFiles: nextDependencyFiles,
+      });
       plan = planDatasourceReload(engines, datasources, datasourceNext, buildEngineOptions);
+      await probeCandidateEngines(plan, config.datasourceProbeTimeoutMs);
 
-      // 候補生成後は await を挟まず、同一 turn で両設定を公開する。
+      // 疎通確認済みの候補だけを同一 turn で両設定へ公開する。
       applyDatasourcePlan(plan);
       rbacState.current = rbacNext;
       rbacFileRequired = requireRbacFile;
+      datasourceDependencyFiles = nextDependencyFiles;
       plan = undefined;
     } catch (err) {
       if (plan) closeCandidateEngines(plan, reloadLogWarn);
@@ -506,6 +524,9 @@ export async function buildServices(
     reloadDatasources,
     reloadRbac,
     reloadConfig,
+    get datasourceDependencyFiles() {
+      return [...datasourceDependencyFiles];
+    },
     shutdown: async () => {
       resultExpiry.stop();
       await githubSyncScheduler?.stop();

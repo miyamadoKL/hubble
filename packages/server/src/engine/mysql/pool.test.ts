@@ -22,6 +22,7 @@ const DS: ResolvedMysqlDatasource = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe('createMysqlPool', () => {
@@ -34,5 +35,15 @@ describe('createMysqlPool', () => {
     const options = createPool.mock.calls[0]![0] as Record<string, unknown>;
     expect(options.multipleStatements).toBeUndefined();
     expect(options.multipleStatements).not.toBe(true);
+  });
+
+  it('設定した接続タイムアウトをpoolへ渡す', () => {
+    vi.stubEnv('DATASOURCE_CONNECT_TIMEOUT_MS', '4321');
+    const fakePool = { on: vi.fn() };
+    const createPool = vi.spyOn(mysql, 'createPool').mockReturnValue(fakePool as never);
+
+    createMysqlPool(DS);
+
+    expect(createPool.mock.calls[0]![0]).toMatchObject({ connectTimeout: 4321 });
   });
 });

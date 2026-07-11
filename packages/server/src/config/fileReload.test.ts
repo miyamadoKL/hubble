@@ -97,4 +97,21 @@ describe('startFileReload', () => {
     expect(warnings[0]).toContain('missing');
     handle.stop();
   });
+
+  it('reload 後に追加した secret file の変更を監視する', async () => {
+    const reload = vi.fn();
+    const handle = startFileReload([{ path: '/cfg/datasources.yaml', reload }], {
+      intervalSeconds: 30,
+      statImpl: (p) => (mtimes.has(p) ? { mtimeMs: mtimes.get(p)! } : null),
+    });
+    mtimes.set('/secret/password', 1000);
+    handle.updateFiles([
+      { path: '/cfg/datasources.yaml', reload },
+      { path: '/secret/password', reload },
+    ]);
+    mtimes.set('/secret/password', 2000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reload).toHaveBeenCalledTimes(1);
+    handle.stop();
+  });
 });

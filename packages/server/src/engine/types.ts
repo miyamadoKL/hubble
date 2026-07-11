@@ -105,6 +105,9 @@ export interface QueryEngine {
   /** 実行中の利用を保持し、完了時に呼ぶ冪等な解放関数を返す。 */
   lease?(): () => void;
 
+  /** 接続と資格情報を軽量なクエリで確認する。 */
+  probe(signal?: AbortSignal): Promise<void>;
+
   /**
    * ストリーミング実行用のステートメントクライアントを返す。
    * @param opts - 実行種別と impersonation ユーザー。

@@ -128,6 +128,32 @@ describe('services.reloadConfig', () => {
     await ctx.services.shutdown();
   });
 
+  it('候補 engine の probe が失敗したら両世代を維持する', async () => {
+    const errors: unknown[] = [];
+    const ctx = await createTestContext({
+      cwd: tempDir,
+      reloadLogError: (_message, error) => errors.push(error),
+    });
+    const oldEngine = ctx.services.engines.get('trino-old');
+    ctx.fake.setScenarios([
+      {
+        match: 'SELECT 1',
+        error: { message: 'credential rejected', errorType: 'EXTERNAL' },
+      },
+    ]);
+    writeTrinoDatasource(tempDir, 'trino-new');
+    writeFileSync(join(tempDir, 'rbac.yaml'), roleRbacYaml('operator'), 'utf8');
+
+    await ctx.services.reloadConfig();
+
+    expect(ctx.services.rbac.defaultRole).toBe('member');
+    expect(ctx.services.datasources.map((datasource) => datasource.id)).toEqual(['trino-old']);
+    expect(ctx.services.engines.get('trino-old')).toBe(oldEngine);
+    expect(ctx.services.engines.has('trino-new')).toBe(false);
+    expect(errors).toHaveLength(1);
+    await ctx.services.shutdown();
+  });
+
   it('updates only rbac without regenerating an unchanged engine', async () => {
     const ctx = await createTestContext({ cwd: tempDir });
     const oldEngine = ctx.services.engines.get('trino-old')!;

@@ -42,6 +42,7 @@ export interface TrinoEngineOptions {
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
   now?: () => number;
+  operationTimeoutMs?: number;
 }
 
 /** X-Trino-Source タグ一式。 */
@@ -108,6 +109,7 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
   const metadataClient = createTrinoClient(datasource, trinoConfig, tags.metadata, options);
   const scheduledClient = createTrinoClient(datasource, trinoConfig, tags.scheduled, options);
   const downloadClient = createTrinoClient(datasource, trinoConfig, tags.download, options);
+  const operationTimeoutMs = options.operationTimeoutMs ?? 3000;
   const metadata = new MetadataSource(metadataClient, tags.metadata);
   let closed = false;
 
@@ -115,6 +117,15 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
     datasourceId: datasource.id,
     kind: 'trino',
     capabilities,
+
+    async probe(signal?: AbortSignal): Promise<void> {
+      await runToCompletion(
+        metadataClient,
+        'SELECT 1',
+        { source: tags.metadata, user: trinoConfig.user },
+        { timeoutMs: operationTimeoutMs, signal },
+      );
+    },
 
     executionClient(opts: ExecutionClientOptions): StatementClient {
       const client = opts.source === 'scheduled' ? scheduledClient : userClient;
@@ -170,7 +181,9 @@ export function createTrinoEngine(options: TrinoEngineOptions): QueryEngine {
         user: params.principal,
       };
       try {
-        await runToCompletion(scheduledClient, `EXPLAIN (TYPE VALIDATE) ${params.statement}`, ctx);
+        await runToCompletion(scheduledClient, `EXPLAIN (TYPE VALIDATE) ${params.statement}`, ctx, {
+          timeoutMs: operationTimeoutMs,
+        });
         return { ok: true };
       } catch (err) {
         if (err instanceof TrinoQueryError && err.trino.errorType === 'USER_ERROR') {

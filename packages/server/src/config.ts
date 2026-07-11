@@ -124,6 +124,8 @@ export interface ServerConfig {
      * 解決した principal が実際の X-Trino-User として使われる。 */
     user: string;
   };
+  /** 候補データソースを公開する前の疎通確認期限。 */
+  datasourceProbeTimeoutMs: number;
   /** 日本語: 新規 notebook/クエリ実行のデフォルト値（`DEFAULT_CATALOG` / `DEFAULT_SCHEMA` / `DEFAULT_LIMIT`）。 */
   defaults: {
     catalog?: string;
@@ -567,6 +569,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
     trino: {
       user: envStr(env, 'TRINO_USER', 'admin'),
     },
+    datasourceProbeTimeoutMs: envPositiveInt(env, 'DATASOURCE_PROBE_TIMEOUT_MS', 5000),
     defaults: {
       catalog: envOptional(env, 'DEFAULT_CATALOG'),
       schema: envOptional(env, 'DEFAULT_SCHEMA'),

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ResolvedMysqlDatasource } from './types';
-import { applyDatasourceReloadSync, planDatasourceReload } from './reload';
+import { applyDatasourceReloadSync, planDatasourceReload, probeCandidateEngines } from './reload';
 import { createMysqlEngine } from '../engine/mysql/engine';
 import { TEST_TRINO_CONFIG } from '../test/testEngine';
 import type { QueryEngine } from '../engine/types';
@@ -35,6 +35,34 @@ describe('planDatasourceReload', () => {
     });
     expect(plan.enginesToSet.size).toBe(0);
     expect(engines.get('mysql-1')).toBe(engine);
+  });
+});
+
+describe('probeCandidateEngines', () => {
+  it('候補の一つが失敗したら失敗を返す', async () => {
+    const ok = { probe: vi.fn().mockResolvedValue(undefined) } as unknown as QueryEngine;
+    const failed = {
+      probe: vi.fn().mockRejectedValue(new Error('credential rejected')),
+    } as unknown as QueryEngine;
+    const plan = {
+      enginesToSet: new Map([
+        ['ok', ok],
+        ['failed', failed],
+      ]),
+    } as unknown as Parameters<typeof probeCandidateEngines>[0];
+
+    await expect(probeCandidateEngines(plan, 100)).rejects.toThrow('credential rejected');
+    expect(ok.probe).toHaveBeenCalledOnce();
+    expect(failed.probe).toHaveBeenCalledOnce();
+  });
+
+  it('signal を無視する候補でも期限内に失敗を返す', async () => {
+    const hanging = { probe: vi.fn(() => new Promise<void>(() => {})) } as unknown as QueryEngine;
+    const plan = {
+      enginesToSet: new Map([['hanging', hanging]]),
+    } as unknown as Parameters<typeof probeCandidateEngines>[0];
+
+    await expect(probeCandidateEngines(plan, 5)).rejects.toThrow('timed out');
   });
 });
 

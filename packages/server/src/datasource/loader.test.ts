@@ -606,4 +606,33 @@ unknownRoot: true
       }),
     ).toThrow(/usernmae|unknownRoot/);
   });
+
+  it('passwordFile と tlsCaFile を依存ファイルとして返す', () => {
+    const passwordPath = join(tempDir, 'password');
+    const caPath = join(tempDir, 'ca.pem');
+    writeFileSync(passwordPath, 'secret\n', 'utf8');
+    writeFileSync(caPath, 'certificate', 'utf8');
+    writeDatasources(
+      tempDir,
+      `datasources:
+  - id: mysql-a
+    type: mysql
+    username: u
+    passwordFile: ${passwordPath}
+    host: localhost
+    database: app
+    tls: true
+    tlsCaFile: ${caPath}
+`,
+    );
+    const dependencies = new Set<string>();
+
+    loadDatasources({
+      env: { DATASOURCES_PATH: 'datasources.yaml' },
+      cwd: tempDir,
+      dependencyFiles: dependencies,
+    });
+
+    expect(dependencies).toEqual(new Set([passwordPath, caPath]));
+  });
 });

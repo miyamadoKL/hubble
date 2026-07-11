@@ -7,6 +7,34 @@ import type { QueryEngine } from '../engine/types';
 
 export const ENGINE_CLOSE_TIMEOUT_MS = 60_000;
 
+/** 公開前の候補エンジンを共通期限内で疎通確認する。 */
+export async function probeCandidateEngines(
+  plan: DatasourceReloadPlan,
+  timeoutMs: number,
+): Promise<void> {
+  const controller = new AbortController();
+  let rejectDeadline: (reason: Error) => void = () => {};
+  const deadline = new Promise<never>((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  const timer = setTimeout(() => {
+    controller.abort();
+    rejectDeadline(new Error(`engine probe timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  timer.unref?.();
+  const probes = [...plan.enginesToSet.values()].map((engine) => engine.probe(controller.signal));
+  try {
+    await Promise.race([Promise.all(probes), deadline]);
+  } catch (err) {
+    controller.abort();
+    // 候補は公開しないため、期限を無視するドライバの終了待ちは reload を止めない。
+    void Promise.allSettled(probes);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function resolvedDatasourceEqual(a: ResolvedDatasource, b: ResolvedDatasource): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }

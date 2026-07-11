@@ -13,6 +13,7 @@ import type { QueryEngine } from './types';
 
 export interface BuildEnginesOptions {
   trinoConfig: ServerConfig['trino'];
+  operationTimeoutMs?: number;
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -46,13 +47,22 @@ export function createEngineForDatasource(
         fetchImpl: options.fetchImpl,
         sleepImpl: options.sleepImpl,
         now: options.now,
+        operationTimeoutMs: options.operationTimeoutMs ?? 3000,
       });
       break;
     case 'mysql':
-      engine = createMysqlEngine({ datasource: ds, poolFactory: options.mysqlPoolFactory });
+      engine = createMysqlEngine({
+        datasource: ds,
+        poolFactory: options.mysqlPoolFactory,
+        operationTimeoutMs: options.operationTimeoutMs ?? 3000,
+      });
       break;
     case 'postgresql':
-      engine = createPostgresqlEngine({ datasource: ds, poolFactory: options.pgPoolFactory });
+      engine = createPostgresqlEngine({
+        datasource: ds,
+        poolFactory: options.pgPoolFactory,
+        operationTimeoutMs: options.operationTimeoutMs ?? 3000,
+      });
       break;
     default: {
       const _exhaustive: never = ds;

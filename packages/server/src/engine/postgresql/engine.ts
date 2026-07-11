@@ -28,10 +28,12 @@ import { selectSqlCredential } from '../sql/roleCredentials';
 import { validateWithExplain } from '../sql/validate';
 import { createPgPool, type PgPool, type PgPoolFactory } from './pool';
 import { createPgStatementClient } from './statementClient';
+import { runToCompletion } from '../../trino/runner';
 
 export interface PostgresqlEngineOptions {
   datasource: ResolvedPostgresqlDatasource;
   poolFactory?: PgPoolFactory;
+  operationTimeoutMs?: number;
 }
 
 /**
@@ -100,6 +102,19 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
     kind: 'postgresql',
     capabilities,
 
+    async probe(signal?: AbortSignal): Promise<void> {
+      const client = createPgStatementClient(poolForRole(undefined).pool, {
+        datasourceReadOnly: datasource.readOnly,
+        sessionReadOnly: true,
+      });
+      await runToCompletion(
+        client,
+        'SELECT 1',
+        {},
+        { timeoutMs: options.operationTimeoutMs ?? 3000, signal },
+      );
+    },
+
     executionClient(opts: ExecutionClientOptions): StatementClient {
       return createPgStatementClient(poolForRole(opts.roleName).pool, {
         datasourceReadOnly: datasource.readOnly,
@@ -124,7 +139,11 @@ export function createPostgresqlEngine(options: PostgresqlEngineOptions): QueryE
     async validate(params: EngineValidateParams): Promise<ValidationResult> {
       return validateWithExplain(
         async (sql) => {
-          await query(sql, [], params.roleName);
+          const client = createPgStatementClient(poolForRole(params.roleName).pool, {
+            datasourceReadOnly: datasource.readOnly,
+            sessionReadOnly: true,
+          });
+          await runToCompletion(client, sql, {}, { timeoutMs: options.operationTimeoutMs ?? 3000 });
         },
         params.statement,
         'postgresql',

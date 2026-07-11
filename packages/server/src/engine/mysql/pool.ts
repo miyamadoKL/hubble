@@ -3,6 +3,7 @@
  */
 import mysql from 'mysql2/promise';
 import type { ResolvedMysqlDatasource } from '../../datasource/types';
+import { resolveDatasourceConnectTimeoutMs } from '../../datasource/connectionOptions';
 
 export type MysqlPool = mysql.Pool;
 export type MysqlPoolFactory = (ds: ResolvedMysqlDatasource) => MysqlPool;
@@ -24,6 +25,7 @@ export function createMysqlPool(ds: ResolvedMysqlDatasource): MysqlPool {
     password: ds.password,
     database: ds.database,
     connectionLimit: ds.maxConnections,
+    connectTimeout: resolveDatasourceConnectTimeoutMs(),
     rowsAsArray: true,
     ssl,
     waitForConnections: true,

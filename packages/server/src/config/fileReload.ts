@@ -18,6 +18,7 @@ export interface FileReloadOptions {
 export interface FileReloadHandle {
   stop: () => void;
   triggerReload: () => void;
+  updateFiles: (files: WatchedFile[]) => void;
 }
 
 const defaultStat = (path: string): { mtimeMs: number } | null => {
@@ -35,6 +36,7 @@ export function startFileReload(
   const stat = options.statImpl ?? defaultStat;
   const log = options.log ?? (() => {});
   const logError = options.logError ?? (() => {});
+  let watchedFiles = files;
   const lastMtime = new Map<string, number>();
   const missingWarned = new Set<string>();
   for (const file of files) {
@@ -48,7 +50,8 @@ export function startFileReload(
     reloading = true;
     void (async () => {
       try {
-        await Promise.all(files.map((f) => Promise.resolve(f.reload())));
+        const reloads = new Set(watchedFiles.map((f) => f.reload));
+        await Promise.all([...reloads].map((reload) => Promise.resolve(reload())));
       } catch (err) {
         logError('config reload failed', err);
       } finally {
@@ -59,7 +62,7 @@ export function startFileReload(
 
   const poll = (): void => {
     let changed = false;
-    for (const file of files) {
+    for (const file of watchedFiles) {
       const st = stat(file.path);
       const prev = lastMtime.get(file.path);
       if (!st) {
@@ -109,6 +112,21 @@ export function startFileReload(
       process.off('SIGHUP', onSighup);
     },
     triggerReload: runReload,
+    updateFiles: (nextFiles) => {
+      watchedFiles = nextFiles;
+      const nextPaths = new Set(nextFiles.map((file) => file.path));
+      for (const path of lastMtime.keys()) {
+        if (!nextPaths.has(path)) lastMtime.delete(path);
+      }
+      for (const path of missingWarned) {
+        if (!nextPaths.has(path)) missingWarned.delete(path);
+      }
+      for (const file of nextFiles) {
+        if (lastMtime.has(file.path)) continue;
+        const st = stat(file.path);
+        if (st) lastMtime.set(file.path, st.mtimeMs);
+      }
+    },
   };
 }
 

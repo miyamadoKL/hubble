@@ -7,7 +7,7 @@
  * 自動合成していた後方互換フォールバックは廃止された)。
  */
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ZodError } from 'zod';
 import { datasourcesFileSchema, type DatasourceEntry } from './schema';
@@ -27,6 +27,8 @@ export interface LoadDatasourcesOptions {
   env?: Env;
   /** 作業ディレクトリ（既定は `process.cwd()`）。 */
   cwd?: string;
+  /** 解決時に参照した secret file の絶対パスを格納する集合。 */
+  dependencyFiles?: Set<string>;
 }
 
 /**
@@ -71,7 +73,12 @@ function formatZodError(error: ZodError): string {
  * @param env - 環境変数。
  * @returns 解決済みパスワード文字列。
  */
-function resolvePassword(entry: PasswordRef, env: Env): string {
+function resolvePassword(
+  entry: PasswordRef,
+  env: Env,
+  dependencyFiles: Set<string>,
+  baseDir: string,
+): string {
   if (entry.passwordEnv !== undefined) {
     const value = env[entry.passwordEnv];
     if (value === undefined) {
@@ -81,8 +88,10 @@ function resolvePassword(entry: PasswordRef, env: Env): string {
   }
 
   if (entry.passwordFile !== undefined) {
+    const passwordPath = resolve(baseDir, entry.passwordFile);
+    dependencyFiles.add(passwordPath);
     try {
-      const raw = readFileSync(entry.passwordFile, 'utf8');
+      const raw = readFileSync(passwordPath, 'utf8');
       return raw.replace(/\r?\n$/, '');
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -105,6 +114,8 @@ function resolvePassword(entry: PasswordRef, env: Env): string {
 function resolveRoleCredentials(
   entry: Extract<DatasourceEntry, { type: 'mysql' | 'postgresql' }>,
   env: Env,
+  dependencyFiles: Set<string>,
+  baseDir: string,
 ): Record<string, ResolvedSqlRoleCredential> | undefined {
   if (entry.roleCredentials === undefined) return undefined;
   const resolved: Record<string, ResolvedSqlRoleCredential> = {};
@@ -118,6 +129,8 @@ function resolveRoleCredentials(
           passwordFile: credential.passwordFile,
         },
         env,
+        dependencyFiles,
+        baseDir,
       ),
     };
   }
@@ -130,9 +143,21 @@ function resolveRoleCredentials(
  * @param env - 環境変数。
  * @returns 解決済みデータソース。
  */
-function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
+function resolveEntry(
+  entry: DatasourceEntry,
+  env: Env,
+  dependencyFiles: Set<string>,
+  baseDir: string,
+): ResolvedDatasource {
   const displayName = entry.displayName ?? entry.id;
-  const password = resolvePassword(entry, env);
+  const password = resolvePassword(entry, env, dependencyFiles, baseDir);
+  const tlsCaFile =
+    'tlsCaFile' in entry && entry.tlsCaFile !== undefined
+      ? resolve(baseDir, entry.tlsCaFile)
+      : undefined;
+  if ('tlsCaFile' in entry && entry.tlsCaFile !== undefined) {
+    dependencyFiles.add(tlsCaFile!);
+  }
 
   switch (entry.type) {
     case 'trino':
@@ -148,8 +173,8 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
         scheduledSource: entry.scheduledSource ?? 'hubble-scheduled',
       };
     case 'mysql': {
-      const conn = resolveSqlConnectionOptions(entry.id, entry);
-      const roleCredentials = resolveRoleCredentials(entry, env);
+      const conn = resolveSqlConnectionOptions(entry.id, { ...entry, tlsCaFile });
+      const roleCredentials = resolveRoleCredentials(entry, env, dependencyFiles, baseDir);
       return {
         id: entry.id,
         type: 'mysql',
@@ -164,8 +189,8 @@ function resolveEntry(entry: DatasourceEntry, env: Env): ResolvedDatasource {
       };
     }
     case 'postgresql': {
-      const conn = resolveSqlConnectionOptions(entry.id, entry);
-      const roleCredentials = resolveRoleCredentials(entry, env);
+      const conn = resolveSqlConnectionOptions(entry.id, { ...entry, tlsCaFile });
+      const roleCredentials = resolveRoleCredentials(entry, env, dependencyFiles, baseDir);
       return {
         id: entry.id,
         type: 'postgresql',
@@ -206,7 +231,11 @@ function assertUniqueIds(entries: DatasourceEntry[]): void {
  * @param env - 環境変数。
  * @returns 解決済みデータソース一覧（YAML の記述順）。
  */
-function loadFromFile(filePath: string, env: Env): ResolvedDatasource[] {
+function loadFromFile(
+  filePath: string,
+  env: Env,
+  dependencyFiles: Set<string>,
+): ResolvedDatasource[] {
   let raw: string;
   try {
     raw = readFileSync(filePath, 'utf8');
@@ -230,7 +259,8 @@ function loadFromFile(filePath: string, env: Env): ResolvedDatasource[] {
 
   const entries = fileResult.data.datasources;
   assertUniqueIds(entries);
-  return entries.map((entry) => resolveEntry(entry, env));
+  const baseDir = dirname(filePath);
+  return entries.map((entry) => resolveEntry(entry, env, dependencyFiles, baseDir));
 }
 
 /**
@@ -275,5 +305,7 @@ export function loadDatasources(options: LoadDatasourcesOptions): ResolvedDataso
         ` (探索したパス: '${filePath}')`,
     );
   }
-  return loadFromFile(filePath, env);
+  const dependencyFiles = options.dependencyFiles ?? new Set<string>();
+  dependencyFiles.clear();
+  return loadFromFile(filePath, env, dependencyFiles);
 }

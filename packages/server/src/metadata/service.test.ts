@@ -12,6 +12,7 @@ import type { MetadataOptions, QueryEngine } from '../engine/types';
 
 /** A counting fake engine with controllable results. */
 class FakeEngine implements QueryEngine {
+  async probe(): Promise<void> {}
   readonly datasourceId = 'test-ds';
   readonly kind: DatasourceKind = 'trino';
   readonly capabilities = { costEstimate: true, catalogs: true };
