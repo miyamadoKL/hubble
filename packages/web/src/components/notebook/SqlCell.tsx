@@ -42,8 +42,8 @@ import {
   type ExecutionContext,
   type ExecutionUnit,
 } from '../../execution';
-import { createQuery, fetchQueryRows } from '../../execution/api';
-import { subscribeQueryEvents } from '../../execution/sse';
+import { cancelQuery, createQuery, fetchQueryRows } from '../../execution/api';
+import { SseProtocolError, subscribeQueryEvents } from '../../execution/sse';
 import { setActiveEditor, clearActiveEditor } from '../../editor/activeEditor';
 
 const SqlEditor = lazy(() =>
@@ -479,7 +479,11 @@ export function SqlCell({
   };
 
   // 実行中のクエリをキャンセルするハンドラー。
-  const cancel = () => executionActions().cancel(cellId);
+  const cancel = () => {
+    void executionActions()
+      .cancel(cellId)
+      .catch(() => undefined);
+  };
 
   // EXPLAIN the statement under the caret as a one-off query, streamed in.
   // カーソル位置のステートメントに対してEXPLAINを単発クエリとして実行し、
@@ -529,6 +533,12 @@ export function SqlCell({
               setExplainText(`-- ${event.error.message}`);
               setExplainRunning(false);
             }
+          },
+          onError: (error) => {
+            if (!(error instanceof SseProtocolError)) return;
+            void cancelQuery(queryId).catch(() => undefined);
+            setExplainText(`-- ${error.message}`);
+            setExplainRunning(false);
           },
         });
       })

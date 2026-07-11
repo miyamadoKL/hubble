@@ -28,7 +28,7 @@ import { apiRoutes } from '../api/client';
 /** Minimal EventSource surface we depend on (a subset of the DOM type). */
 /** このモジュールが依存する EventSource の最小限のインターフェース（DOM 型の部分集合）。 */
 export interface EventSourceLike {
-  addEventListener(type: string, listener: (event: MessageEvent) => void): void;
+  addEventListener(type: string, listener: (event: Event | MessageEvent) => void): void;
   close(): void;
   onerror: ((this: unknown, ev: Event) => unknown) | null;
 }
@@ -41,7 +41,15 @@ export interface SseHandlers {
   onEvent: (event: QueryEvent) => void;
   /** Transport-level error (connection dropped before `done`). */
   /** 通信レベルのエラー（`done` を受け取る前に接続が切れた場合）。 */
-  onError?: (error: Event) => void;
+  onError?: (error: Event | SseProtocolError) => void;
+}
+
+/** 契約済みSSEイベントのフレームが壊れていたことを表すエラー。 */
+export class SseProtocolError extends Error {
+  constructor(readonly eventName: string) {
+    super(`Invalid SSE frame for event: ${eventName}`);
+    this.name = 'SseProtocolError';
+  }
 }
 
 /** 購読ハンドル。呼び出し側は `close()` で明示的に接続を終了できる。 */
@@ -70,6 +78,9 @@ export function subscribeQueryEvents(
   // EventSource（またはそのモック）を生成して接続を開始する。
   const source = factory(apiRoutes.queryEvents(queryId));
   let closed = false;
+  let consecutiveControlProtocolErrors = 0;
+  let invalidRowsLogged = false;
+  let forwardedTransportError: Event | undefined;
 
   // 接続を閉じる。二重に呼ばれても副作用が起きないよう closed フラグで防御する。
   const close = () => {
@@ -80,31 +91,62 @@ export function subscribeQueryEvents(
 
   // 1 フレーム分のイベントを処理する共通ハンドラ。すべての名前付きイベント
   // （state/columns/rows/stats/error/done）がここに集約される。
-  const handle = (raw: MessageEvent) => {
+  const handle = (eventName: string, raw: Event | MessageEvent) => {
     if (closed) return; // 既に閉じている購読からの遅延イベントは無視する。
+    if (!('data' in raw) || typeof raw.data !== 'string') {
+      forwardedTransportError = raw;
+      handlers.onError?.(raw);
+      return;
+    }
     let payload: unknown;
     try {
-      payload = JSON.parse(raw.data as string);
+      payload = JSON.parse(raw.data);
     } catch {
-      return; // ignore malformed frames. 壊れたフレームは黙って無視する。
+      handleProtocolError(eventName);
+      return;
     }
     // contracts のスキーマで検証し、型付きの QueryEvent に絞り込む。
     const parsed = queryEventSchema.safeParse(payload);
-    if (!parsed.success) return;
+    if (!parsed.success || parsed.data.type !== eventName) {
+      handleProtocolError(eventName);
+      return;
+    }
     const event = parsed.data;
+    consecutiveControlProtocolErrors = 0;
     handlers.onEvent(event);
     // done イベントでストリームは完結するので、自動的に接続を閉じる。
     if (event.type === 'done') close();
   };
 
+  /** 単発の制御frame違反は捨て、連続違反だけを購読の異常終端へ昇格する。 */
+  const handleProtocolError = (eventName: string): void => {
+    if (eventName === 'rows') {
+      if (!invalidRowsLogged) {
+        console.error(`Invalid SSE frame for event: ${eventName}`);
+        invalidRowsLogged = true;
+      }
+      return;
+    }
+    consecutiveControlProtocolErrors += 1;
+    console.error(`Invalid SSE frame for event: ${eventName}`);
+    if (consecutiveControlProtocolErrors < 3) return;
+    close();
+    handlers.onError?.(new SseProtocolError(eventName));
+  };
+
   // サーバーが送る名前付きイベントすべてに同じハンドラを登録する。
   for (const name of queryEventNames) {
-    source.addEventListener(name, handle);
+    source.addEventListener(name, (event) => handle(name, event));
   }
 
   // 通信自体が切れた場合（done を受け取る前の切断など）のハンドラ。
   source.onerror = (event: Event) => {
     if (closed) return;
+    if ('data' in event && typeof event.data === 'string') return;
+    if (event === forwardedTransportError) {
+      forwardedTransportError = undefined;
+      return;
+    }
     handlers.onError?.(event);
   };
 

@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 // Mock the API layer so the store never hits the network. createQuery resolves
 // to a deterministic queryId; the others are inert.
 const createQuery = vi.fn();
+const cancelQuery = vi.fn();
 vi.mock('./api', () => ({
   createQuery: (...args: unknown[]) => createQuery(...args),
-  cancelQuery: vi.fn().mockResolvedValue(undefined),
+  cancelQuery: (...args: unknown[]) => cancelQuery(...args),
   fetchQuerySnapshot: vi.fn(),
   fetchQueryRows: vi.fn(),
   downloadCsvUrl: vi.fn(),
@@ -25,7 +26,9 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   MockEventSource.instances = [];
   createQuery.mockReset();
+  cancelQuery.mockReset().mockResolvedValue(undefined);
   __setEventSourceFactory((url) => new MockEventSource(url));
+  __setCellSettledSink(undefined);
   // Reset store state between tests.
   useExecutionStore.setState({ cells: {} });
 });
@@ -205,16 +208,235 @@ describe('executionStore generation guard (stale discard)', () => {
     const src = lastSource();
     emit(src, { type: 'state', state: 'running' });
 
-    store.cancel('cell-z');
+    await store.cancel('cell-z');
     expect(useExecutionStore.getState().cells['cell-z']!.state).toBe('canceled');
 
     // A late finished event from the server must NOT revert the canceled state.
     emit(src, { type: 'done', state: 'finished', rowCount: 5, truncated: false });
     expect(useExecutionStore.getState().cells['cell-z']!.state).toBe('canceled');
   });
+
+  test('cancel失敗時はrunningとSSE購読を維持し、後続イベントを反映する', async () => {
+    createQuery.mockResolvedValue({ queryId: 'qid-cancel-failed' });
+    cancelQuery.mockRejectedValue(new Error('cancel rejected'));
+    const store = useExecutionStore.getState();
+    store.runUnit('cell-cancel-failed', unit('SELECT 1'), CTX, OPTS);
+    await flush();
+    const src = lastSource();
+    emit(src, { type: 'state', state: 'running' });
+
+    await expect(store.cancel('cell-cancel-failed')).rejects.toThrow('cancel rejected');
+
+    expect(src.closed).toBe(false);
+    expect(useExecutionStore.getState().cells['cell-cancel-failed']).toMatchObject({
+      state: 'running',
+      error: { code: 'CANCEL_FAILED', message: 'cancel rejected' },
+    });
+    emit(src, { type: 'done', state: 'finished', rowCount: 1, truncated: false });
+    expect(useExecutionStore.getState().cells['cell-cancel-failed']).toMatchObject({
+      state: 'finished',
+      error: undefined,
+    });
+  });
+
+  test('cancel応答前にdoneが届いた場合はfinishedをcanceledで上書きしない', async () => {
+    createQuery.mockResolvedValue({ queryId: 'qid-finished-race' });
+    let resolveCancel!: () => void;
+    cancelQuery.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const settledSink = vi.fn();
+    __setCellSettledSink(settledSink);
+    const store = useExecutionStore.getState();
+    store.runUnit('cell-finished-race', unit('SELECT 1'), CTX, OPTS);
+    await flush();
+
+    const cancelPromise = store.cancel('cell-finished-race');
+    emit(lastSource(), { type: 'done', state: 'finished', rowCount: 1, truncated: false });
+    resolveCancel();
+    await cancelPromise;
+
+    expect(useExecutionStore.getState().cells['cell-finished-race']?.state).toBe('finished');
+    expect(settledSink).toHaveBeenCalledTimes(1);
+    __setCellSettledSink(undefined);
+  });
+
+  test('done先着後にcancelが失敗してもfinishedへCANCEL_FAILEDを残さない', async () => {
+    createQuery.mockResolvedValue({ queryId: 'qid-finished-then-reject' });
+    let rejectCancel!: (error: Error) => void;
+    cancelQuery.mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectCancel = reject;
+        }),
+    );
+    const store = useExecutionStore.getState();
+    store.runUnit('cell-finished-then-reject', unit('SELECT 1'), CTX, OPTS);
+    await flush();
+
+    const cancelPromise = store.cancel('cell-finished-then-reject');
+    emit(lastSource(), { type: 'done', state: 'finished', rowCount: 1, truncated: false });
+    rejectCancel(new Error('late cancel failure'));
+    await expect(cancelPromise).rejects.toThrow('late cancel failure');
+
+    expect(useExecutionStore.getState().cells['cell-finished-then-reject']).toMatchObject({
+      state: 'finished',
+      error: undefined,
+    });
+  });
+
+  test('cancel失敗後の再cancel成功でCANCEL_FAILEDを消す', async () => {
+    createQuery.mockResolvedValue({ queryId: 'qid-cancel-retry' });
+    cancelQuery.mockRejectedValueOnce(new Error('first failed')).mockResolvedValueOnce(undefined);
+    const store = useExecutionStore.getState();
+    store.runUnit('cell-cancel-retry', unit('SELECT 1'), CTX, OPTS);
+    await flush();
+
+    await expect(store.cancel('cell-cancel-retry')).rejects.toThrow('first failed');
+    expect(useExecutionStore.getState().cells['cell-cancel-retry']?.error?.code).toBe(
+      'CANCEL_FAILED',
+    );
+    await store.cancel('cell-cancel-retry');
+
+    expect(useExecutionStore.getState().cells['cell-cancel-retry']?.state).toBe('canceled');
+    expect(useExecutionStore.getState().cells['cell-cancel-retry']?.error).toBeUndefined();
+  });
+
+  test('queryId確定前のcancelは作成完了後にサーバーへ停止要求を送る', async () => {
+    let resolveCreate!: (value: { queryId: string }) => void;
+    createQuery.mockImplementation(
+      () =>
+        new Promise<{ queryId: string }>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const store = useExecutionStore.getState();
+    store.runUnit('cell-early-cancel', unit('SELECT expensive'), CTX, OPTS);
+
+    await store.cancel('cell-early-cancel');
+    resolveCreate({ queryId: 'qid-created-late' });
+    await flush();
+
+    expect(cancelQuery).toHaveBeenCalledWith('qid-created-late');
+    expect(useExecutionStore.getState().cells['cell-early-cancel']?.state).toBe('canceled');
+  });
+
+  test('不正SSEフレームをfailed終端として呼び出し元へ反映する', async () => {
+    createQuery.mockResolvedValue({ queryId: 'qid-protocol-error' });
+    useExecutionStore.getState().runUnit('cell-protocol-error', unit('SELECT 1'), CTX, OPTS);
+    await flush();
+
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    lastSource().emitRaw('done', '{broken-1');
+    lastSource().emitRaw('done', '{broken-2');
+    lastSource().emitRaw('done', '{broken-3');
+
+    expect(useExecutionStore.getState().cells['cell-protocol-error']).toMatchObject({
+      state: 'failed',
+      error: { code: 'SSE_PROTOCOL_ERROR' },
+    });
+    expect(cancelQuery).toHaveBeenCalledWith('qid-protocol-error');
+    log.mockRestore();
+  });
+
+  test('transport errorでは実行状態と購読を維持する', async () => {
+    createQuery.mockResolvedValue({ queryId: 'qid-transport-error' });
+    useExecutionStore.getState().runUnit('cell-transport-error', unit('SELECT 1'), CTX, OPTS);
+    await flush();
+    const source = lastSource();
+    emit(source, { type: 'state', state: 'running' });
+
+    source.fireError();
+
+    expect(source.closed).toBe(false);
+    const cell = useExecutionStore.getState().cells['cell-transport-error'];
+    expect(cell?.state).toBe('running');
+    expect(cell?.error).toBeUndefined();
+  });
+
+  test('failed済みでqueryIdが空のセルをcancelしても二重終端しない', async () => {
+    createQuery.mockRejectedValue(new Error('create failed'));
+    const settledSink = vi.fn();
+    __setCellSettledSink(settledSink);
+    useExecutionStore.getState().runUnit('cell-failed-cancel', unit('SELECT bad'), CTX, OPTS);
+    await flush();
+
+    await useExecutionStore.getState().cancel('cell-failed-cancel');
+
+    expect(useExecutionStore.getState().cells['cell-failed-cancel']?.state).toBe('failed');
+    expect(settledSink).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('executionStore.runUnits (sequential batch)', () => {
+  test('cancel要求が失敗しても後続statementを開始しない', async () => {
+    createQuery.mockResolvedValue({ queryId: 'batch-cancel-failed' });
+    cancelQuery.mockRejectedValue(new Error('cancel failed'));
+    const batch = useExecutionStore
+      .getState()
+      .runUnits('cell-batch-cancel', [unit('SELECT 1'), unit('DELETE FROM t')], CTX, OPTS);
+    await flush();
+
+    await expect(useExecutionStore.getState().cancel('cell-batch-cancel')).rejects.toThrow(
+      'cancel failed',
+    );
+    emit(lastSource(), { type: 'done', state: 'finished', rowCount: 1, truncated: false });
+    await batch;
+
+    expect(createQuery).toHaveBeenCalledTimes(1);
+  });
+
+  test('offlineでのStopはローカル終了して後続statementを開始しない', async () => {
+    createQuery.mockResolvedValue({ queryId: 'batch-cancel-offline' });
+    cancelQuery.mockRejectedValue(new TypeError('Failed to fetch'));
+    const batch = useExecutionStore
+      .getState()
+      .runUnits('cell-batch-offline', [unit('SELECT 1'), unit('DELETE FROM t')], CTX, OPTS);
+    await flush();
+
+    await useExecutionStore.getState().cancel('cell-batch-offline');
+    await batch;
+
+    expect(useExecutionStore.getState().cells['cell-batch-offline']).toMatchObject({
+      state: 'canceled',
+      error: {
+        code: 'CANCEL_OFFLINE',
+        message: expect.stringContaining('server-side query may still be running'),
+      },
+    });
+    expect(createQuery).toHaveBeenCalledTimes(1);
+  });
+
+  test('旧世代のcreate失敗は新世代batchのsettleを消費しない', async () => {
+    let rejectOld!: (error: Error) => void;
+    createQuery
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectOld = reject;
+          }),
+      )
+      .mockResolvedValueOnce({ queryId: 'new-first' })
+      .mockResolvedValueOnce({ queryId: 'new-second' });
+    useExecutionStore.getState().runUnit('cell-stale-create', unit('SELECT old'), CTX, OPTS);
+    const batch = useExecutionStore
+      .getState()
+      .runUnits('cell-stale-create', [unit('SELECT 1'), unit('SELECT 2')], CTX, OPTS);
+    await flush();
+    rejectOld(new Error('old failed'));
+    await flush();
+
+    expect(createQuery).toHaveBeenCalledTimes(2);
+    emit(lastSource(), { type: 'done', state: 'finished', rowCount: 1, truncated: false });
+    await flush();
+    expect(createQuery).toHaveBeenCalledTimes(3);
+    emit(lastSource(), { type: 'done', state: 'finished', rowCount: 1, truncated: false });
+    await batch;
+  });
+
   test('runs statements in order and stops at the first failure', async () => {
     createQuery
       .mockResolvedValueOnce({ queryId: 'b1' })
@@ -296,7 +518,7 @@ describe('executionStore cell-settled sink (resultMeta write-back)', () => {
 
     useExecutionStore.getState().runUnit('cell-cancel-sink', unit('SELECT 1'), CTX, OPTS);
     await flush();
-    useExecutionStore.getState().cancel('cell-cancel-sink');
+    await useExecutionStore.getState().cancel('cell-cancel-sink');
 
     expect(seen.some((s) => s.state === 'canceled')).toBe(true);
   });
