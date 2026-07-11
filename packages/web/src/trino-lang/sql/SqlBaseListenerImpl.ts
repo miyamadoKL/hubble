@@ -48,9 +48,9 @@ class SqlBaseListenerImpl extends SqlBaseListener {
   // exitQualifiedName / exitNamedQuery / exitAliasedRelation で対応するリレーション
   // 名に紐付けられ、その都度クリアされる。
   currentColumns: string[] = [];
-  // 直近で見つかったテーブル名（querySpecification 内で FROM 句のテーブル参照が
-  // 見つかったら設定される）。exitQuerySpecification で StatementDescriptor に使う。
-  currentTableNameContext: string = '';
+  // querySpecification ごとの参照テーブル集合。入れ子の SELECT を区別するため、
+  // パース中のスコープをスタックで保持する。
+  queryScopes: Array<{ context: QuerySpecificationContext; relations: Set<string> }> = [];
   // querySpecification（SELECT 文相当）ごとの記述子（主テーブル名 + ソース範囲）の一覧。
   statements: StatementDescriptor[] = [];
 
@@ -86,30 +86,30 @@ class SqlBaseListenerImpl extends SqlBaseListener {
       ),
     );
 
-    // このテーブルを「現在のクエリが参照しているテーブル」として記録し、
+    // このテーブルを現在のクエリスコープが参照しているテーブルとして記録し、
     // これまでに集めた列名（currentColumns）をこのテーブル名に紐付けて確定する。
     const name = ctx.getText();
-    this.currentTableNameContext = name;
+    this.queryScopes.at(-1)?.relations.add(name);
     this.tableColumns.set(name, this.currentColumns);
     this.currentColumns = [];
   };
 
-  // querySpecification（SELECT 文相当）に入るたびに、直前のクエリの状態を
-  // 引きずらないよう currentTableNameContext をリセットする。
-  override enterQuerySpecification = (_ctx: QuerySpecificationContext) => {
-    this.currentTableNameContext = '';
+  // querySpecification（SELECT 文相当）に入るたびに、そのクエリ専用の参照集合を
+  // スタックへ積む。
+  override enterQuerySpecification = (ctx: QuerySpecificationContext) => {
+    this.queryScopes.push({ context: ctx, relations: new Set<string>() });
   };
 
-  // querySpecification を抜けるとき、そのクエリが参照していたテーブル名が
-  // 判明していれば（currentTableNameContext が空でなければ）、クエリの範囲
-  // （start/stop トークン）とあわせて StatementDescriptor として記録する。
+  // querySpecification を抜けるとき、そのスコープで参照していた全テーブルを
+  // クエリの範囲（start/stop トークン）とあわせて記録する。
   // analyzer.ts の補完処理が「カーソル位置のクエリはどのテーブルを見ているか」を
   // 判定するのに使う。
   override exitQuerySpecification = (ctx: QuerySpecificationContext) => {
-    if (this.currentTableNameContext !== '' && ctx.start && ctx.stop) {
-      this.statements.push(
-        new StatementDescriptor(this.currentTableNameContext, ctx.start, ctx.stop),
-      );
+    const scope = this.queryScopes.pop();
+    if (!scope || scope.context !== ctx || !ctx.start || !ctx.stop) return;
+
+    for (const relation of scope.relations) {
+      this.statements.push(new StatementDescriptor(relation, ctx.start, ctx.stop));
     }
   };
 
