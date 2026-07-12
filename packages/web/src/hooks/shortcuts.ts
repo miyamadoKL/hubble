@@ -18,6 +18,7 @@
 export type ShortcutAction =
   | 'run' // Ctrl/Cmd+Enter — run the active cell
   | 'save' // Ctrl/Cmd+S — save the notebook
+  // Workflow または Dashboard の編集中は、その画面の保存処理へ切り替える。
   | 'format' // Ctrl/Cmd+I or Ctrl+Shift+F — format SQL
   | 'palette' // Ctrl/Cmd+K — command palette
   | 'theme' // Ctrl+Alt+T — toggle theme
@@ -65,7 +66,7 @@ export interface ShortcutSpec {
  */
 export const SHORTCUTS: ShortcutSpec[] = [
   { action: 'run', label: 'Run the active cell', keys: ['Ctrl', '↵'] },
-  { action: 'save', label: 'Save notebook', keys: ['Ctrl', 'S'] },
+  { action: 'save', label: 'Save current document', keys: ['Ctrl', 'S'] },
   { action: 'format', label: 'Format SQL', keys: ['Ctrl', 'I'] },
   { action: 'format', label: 'Format SQL (alternate)', keys: ['Ctrl', 'Shift', 'F'] },
   { action: 'palette', label: 'Command palette', keys: ['Ctrl', 'K'] },

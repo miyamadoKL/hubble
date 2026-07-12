@@ -132,6 +132,26 @@ export interface SqlCellChrome {
 const ESTIMATE_DEBOUNCE_MS = 600;
 
 /**
+ * 複数の実行単位をすべて解決し、1 件でも失敗した場合は batch 全体を中止する。
+ *
+ * @param units 解決前の実行単位。
+ * @param resolveUnit 変数置換などを適用する解決関数。
+ * @returns 全件の解決結果。1 件でも解決できなければ null。
+ */
+export function resolveAllExecutionUnits(
+  units: ExecutionUnit[],
+  resolveUnit: (unit: ExecutionUnit) => ExecutionUnit | null,
+): ExecutionUnit[] | null {
+  const resolved: ExecutionUnit[] = [];
+  for (const unit of units) {
+    const next = resolveUnit(unit);
+    if (!next) return null;
+    resolved.push(next);
+  }
+  return resolved;
+}
+
+/**
  * ライブSQLセル本体のコンポーネント。Monacoエディタのインスタンスを保持し、
  * ステートメント単位のガター描画、実行エラーマーカー、実行ユニットの解決を
  * 行い、実行結果（StatsStrip / ResultPane）や見積りストリップ（EstimateStrip）を
@@ -367,13 +387,14 @@ export function SqlCell({
     executionActions().runUnit(cellId, resolved, cfg.context, cfg.runOpts);
   };
 
-  /** Run several units sequentially after substituting each (abort drops it). */
-  /** 複数の実行ユニットを、それぞれ変数置換した上で順次実行する（置換失敗分は除外）。 */
+  /**
+   * 旧コメント「Run several units sequentially after substituting each (abort drops it).」は、
+   * 各実行ユニットを置換し、失敗したユニットだけを除外して残りを順次実行する挙動を示していた。
+   * 現在は全件を実行前に解決し、1 件でも失敗した場合はbatch全体を中止する。
+   */
   const runMany = (units: ExecutionUnit[], cfg = runConfigRef.current) => {
-    const resolved = units
-      .map((u) => cfg.resolveUnit(u))
-      .filter((u): u is ExecutionUnit => u !== null);
-    if (resolved.length === 0) return;
+    const resolved = resolveAllExecutionUnits(units, cfg.resolveUnit);
+    if (!resolved || resolved.length === 0) return;
     if (resolved.length === 1)
       executionActions().runUnit(cellId, resolved[0]!, cfg.context, cfg.runOpts);
     else void executionActions().runUnits(cellId, resolved, cfg.context, cfg.runOpts);

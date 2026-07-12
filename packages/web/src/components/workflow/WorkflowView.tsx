@@ -72,6 +72,14 @@ import {
   type WorkflowTone,
 } from './workflowFormat';
 import { cn } from '../../utils/cn';
+import {
+  useDocumentNavigationGuard,
+  useDocumentNavigationOwner,
+} from '../../hooks/useDocumentNavigationGuard';
+import {
+  continueDocumentNavigation,
+  saveActiveDocument,
+} from '../../navigation/documentNavigation';
 
 // ステップカードの左ボーダーの色 (トーン別)。
 const cardToneBorder: Record<WorkflowTone, string> = {
@@ -323,6 +331,7 @@ function WorkflowEditor({
   const remove = useDeleteWorkflow();
   const runNow = useRunWorkflowNow();
   const runQuery = useWorkflowRun(selectedRunId);
+  const navigationOwner = useDocumentNavigationOwner();
   // ガバナンス強制 (GITHUB_GOVERNANCE=on) 時の注意表示用。承認済みでない
   // ワークフローは cron 実行がブロックされ、結果も永続化されない。
   const githubStatus = useGithubStatus();
@@ -415,33 +424,38 @@ function WorkflowEditor({
   };
 
   // 保存 (新規作成または更新)。成功時はベースラインを更新して dirty を解消する。
-  const save = () => {
-    if (problem) return;
+  const save = async (): Promise<void> => {
+    if (problem || (!dirty && !isNew)) return;
     setStepError(null);
-    if (isNew) {
-      create.mutate(draftToCreateRequest(draft), {
-        onSuccess: (created) => {
-          toast.success('Workflow created', `“${created.name}” is ready to run.`);
-          // 保存済み id で開き直す (key が変わり、サーバー確定値で再マウントされる)。
-          openWorkflow(created.id);
-        },
-        onError: captureServerError,
+    try {
+      if (isNew) {
+        const created = await create.mutateAsync(draftToCreateRequest(draft));
+        toast.success('Workflow created', `“${created.name}” is ready to run.`);
+        // 保存済み id で開き直す (key が変わり、サーバー確定値で再マウントされる)。
+        continueDocumentNavigation(navigationOwner, () => openWorkflow(created.id));
+        return;
+      }
+      const updated = await update.mutateAsync({
+        id: workflowId,
+        body: draftToUpdateRequest(draft),
       });
-      return;
+      const next = draftFromWorkflow(updated);
+      setDraft(next);
+      setBaseline(next);
+      toast.success('Workflow saved', `“${updated.name}” saved.`);
+    } catch (error) {
+      captureServerError(error);
     }
-    update.mutate(
-      { id: workflowId, body: draftToUpdateRequest(draft) },
-      {
-        onSuccess: (updated) => {
-          const next = draftFromWorkflow(updated);
-          setDraft(next);
-          setBaseline(next);
-          toast.success('Workflow saved', `“${updated.name}” saved.`);
-        },
-        onError: captureServerError,
-      },
-    );
   };
+
+  useDocumentNavigationGuard(
+    {
+      label: draft.name.trim() || 'Untitled workflow',
+      dirty,
+      save,
+    },
+    navigationOwner,
+  );
 
   // 手動実行。開始した run をそのままキャンバスの表示対象にする。
   const run = () => {
@@ -521,7 +535,7 @@ function WorkflowEditor({
             variant="default"
             size="sm"
             icon={Save}
-            onClick={save}
+            onClick={() => void saveActiveDocument()}
             disabled={saving || (!dirty && !isNew)}
             title={problem ?? undefined}
           >
@@ -702,7 +716,7 @@ function WorkflowEditor({
                 remove.mutate(workflowId, {
                   onSuccess: () => {
                     toast.info('Deleted', 'Workflow removed.');
-                    closeWorkflow();
+                    continueDocumentNavigation(navigationOwner, closeWorkflow);
                   },
                   onError: () => toast.error('Delete failed', 'Could not reach the server.'),
                 });

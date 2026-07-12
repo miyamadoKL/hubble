@@ -54,15 +54,21 @@ function alertToRequest(alert: Alert): UpdateAlertRequest {
 }
 
 /** Alert 作成/編集フォームモーダル。 */
-export function AlertFormModal({
-  open,
+export function AlertFormModal({ open, ...props }: AlertFormModalProps) {
+  if (!open) return null;
+  const targetKey = props.alert?.id ?? 'new';
+  return <AlertFormModalBody key={targetKey} {...props} />;
+}
+
+/** 開くたびにマウントし直す、Alert フォームの状態保持部分。 */
+function AlertFormModalBody({
   alert,
   savedQueries,
   submitting,
   onClose,
   onCreate,
   onUpdate,
-}: AlertFormModalProps) {
+}: Omit<AlertFormModalProps, 'open'>) {
   const editing = Boolean(alert);
 
   const [name, setName] = useState(alert?.name ?? '');
@@ -86,8 +92,6 @@ export function AlertFormModal({
     initialNotifications.emailTo?.join(', ') ?? '',
   );
   const [webhookUrl, setWebhookUrl] = useState(initialNotifications.webhookUrl ?? '');
-
-  if (!open) return null;
 
   const cronValid = cronExpression.safeParse(cron).success;
   const nameValid = name.trim().length > 0;
@@ -137,7 +141,7 @@ export function AlertFormModal({
 
   return (
     <Modal
-      open={open}
+      open
       onClose={onClose}
       title={editing ? 'Edit alert' : 'New alert'}
       footer={

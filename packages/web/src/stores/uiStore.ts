@@ -11,6 +11,7 @@ import { create } from 'zustand';
 // ページ再読み込み後も復元できるようにする。
 import { persist } from 'zustand/middleware';
 import { principalStorageKey } from '../storage/principalStorage';
+import { requestDocumentNavigation } from '../navigation/documentNavigation';
 
 /**
  * UI store: theme + shell layout state only. Presentation
@@ -292,17 +293,60 @@ export const useUiStore = create<UiState>()(
       setShellRuntime: (shellContext, shellDefaultLimit) =>
         set({ shellContext, shellDefaultLimit }),
       // 既存ワークフローをメインエリアで開く。ダッシュボードビューとは排他。
-      openWorkflow: (id) => set({ workflowView: { kind: 'workflow', id }, dashboardView: null }),
+      openWorkflow: (id) => {
+        const current = get();
+        if (
+          current.workflowView?.kind === 'workflow' &&
+          current.workflowView.id === id &&
+          current.dashboardView === null
+        ) {
+          return;
+        }
+        requestDocumentNavigation(() =>
+          set({ workflowView: { kind: 'workflow', id }, dashboardView: null }),
+        );
+      },
       // 新規作成ビューを開く。ダッシュボードビューとは排他。
-      openNewWorkflow: () => set({ workflowView: { kind: 'new-workflow' }, dashboardView: null }),
+      openNewWorkflow: () => {
+        const current = get();
+        if (current.workflowView?.kind === 'new-workflow' && current.dashboardView === null) return;
+        requestDocumentNavigation(() =>
+          set({ workflowView: { kind: 'new-workflow' }, dashboardView: null }),
+        );
+      },
       // ワークフロービューを閉じてノートブック表示へ戻す。
-      closeWorkflow: () => set({ workflowView: null }),
+      closeWorkflow: () => {
+        if (get().workflowView === null) return;
+        requestDocumentNavigation(() => set({ workflowView: null }));
+      },
       // 既存ダッシュボードをメインエリアで開く。ワークフロービューとは排他。
-      openDashboard: (id) => set({ dashboardView: { kind: 'dashboard', id }, workflowView: null }),
+      openDashboard: (id) => {
+        const current = get();
+        if (
+          current.dashboardView?.kind === 'dashboard' &&
+          current.dashboardView.id === id &&
+          current.workflowView === null
+        ) {
+          return;
+        }
+        requestDocumentNavigation(() =>
+          set({ dashboardView: { kind: 'dashboard', id }, workflowView: null }),
+        );
+      },
       // 新規作成ビューを開く。ワークフロービューとは排他。
-      openNewDashboard: () => set({ dashboardView: { kind: 'new-dashboard' }, workflowView: null }),
+      openNewDashboard: () => {
+        const current = get();
+        if (current.dashboardView?.kind === 'new-dashboard' && current.workflowView === null)
+          return;
+        requestDocumentNavigation(() =>
+          set({ dashboardView: { kind: 'new-dashboard' }, workflowView: null }),
+        );
+      },
       // ダッシュボードビューを閉じてノートブック表示へ戻す。
-      closeDashboard: () => set({ dashboardView: null }),
+      closeDashboard: () => {
+        if (get().dashboardView === null) return;
+        requestDocumentNavigation(() => set({ dashboardView: null }));
+      },
       // AI パネルの開閉をトグルする。
       toggleAiPanel: () => set((s) => ({ aiPanelOpen: !s.aiPanelOpen })),
       // AI パネル幅を設定する。事前に clampAiPanelWidth で許容範囲に丸める。

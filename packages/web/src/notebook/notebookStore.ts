@@ -81,6 +81,7 @@ let persistence: NotebookPersistence | null = null;
 /** Wire the real API (or a stub in tests). Call once at app start. */
 export function __setPersistence(p: NotebookPersistence | null): void {
   persistence = p;
+  if (p === null) resetPersistenceScheduling();
 }
 
 /** オートセーブのデバウンス時間（2 秒でデバウンス）。 */
@@ -94,6 +95,7 @@ const WORKSPACE_KEY = principalStorageKey('hubble-workspace'); // open tab ids +
 const WORKSPACE_BACKUP_KEY = principalStorageKey('hubble-workspace-backup');
 // draft notebook 1 件ごとのスナップショットを保存するキーの接頭辞（末尾に id が付く）。
 const DRAFT_PREFIX = `${principalStorageKey('hubble-draft')}:`; // per-draft notebook snapshot
+const JOURNAL_PREFIX = `${principalStorageKey('hubble-notebook-journal')}:`;
 const ORPHAN_DRAFT_LIMIT = 5;
 
 // ---- Open-notebook record ---------------------------------------------------
@@ -119,6 +121,10 @@ export interface OpenNotebook {
   conflict: boolean;
   /** 保存開始後のローカル編集を識別する世代。 */
   editGeneration: number;
+  /** ブラウザー内またはサーバーで永続化済みの最新編集世代。 */
+  durableGeneration: number;
+  /** 最新編集世代のブラウザー内永続化に失敗したかどうか。 */
+  localPersistenceError: boolean;
 }
 
 // ストアが公開する state と action の全体。
@@ -301,9 +307,9 @@ function safeLocalStorage(): Storage | null {
 
 // 現在の openIds / activeId / draft か否かを localStorage に書き出す。
 // タブの開閉や切り替えのたびに呼ばれる。
-function writeWorkspace(state: NotebookStoreState): void {
+function writeWorkspace(state: NotebookStoreState): boolean {
   const ls = safeLocalStorage();
-  if (!ls) return;
+  if (!ls) return false;
   const currentDraftIds = state.openIds.filter((id) => state.open[id]?.draft);
   const openIds = pendingWorkspaceRestore
     ? mergeUnresolvedIds(
@@ -331,8 +337,10 @@ function writeWorkspace(state: NotebookStoreState): void {
   };
   try {
     ls.setItem(WORKSPACE_KEY, JSON.stringify(snapshot));
+    return true;
   } catch {
     /* quota / serialization — non-fatal */
+    return false;
   }
 }
 
@@ -414,22 +422,109 @@ export function resolveWorkspaceRestoreId(id: string): void {
   writeWorkspace(useNotebookStore.getState());
 }
 
+/** 保存済みnotebookの未反映編集を保持するlocal journal。 */
+export interface NotebookJournal {
+  version: 1;
+  id: string;
+  baseRevision: number;
+  editGeneration: number;
+  notebook: Notebook;
+}
+
+const notebookJournalSchema = z
+  .object({
+    version: z.literal(1),
+    id: z.string(),
+    baseRevision: z.number().int().nonnegative(),
+    editGeneration: z.number().int().nonnegative(),
+    notebook: notebookSchema,
+  })
+  .refine(
+    (journal) =>
+      journal.notebook.id === journal.id && journal.notebook.revision === journal.baseRevision,
+  );
+
+type JournalReadResult =
+  | { kind: 'valid'; journal: NotebookJournal }
+  | { kind: 'corrupt' }
+  | { kind: 'missing' };
+
 // draft notebook 1 件の中身をまるごと localStorage に書き出す（編集のたびに
 // 呼ばれ、これがそのまま「draft のオートセーブ」の実体になる）。
-function writeDraft(notebook: Notebook): void {
+function writeDraft(notebook: Notebook): boolean {
   const ls = safeLocalStorage();
-  if (!ls) return;
+  if (!ls) return false;
   try {
     ls.setItem(`${DRAFT_PREFIX}${notebook.id}`, JSON.stringify(notebook));
+    return true;
   } catch {
     /* non-fatal */
+    return false;
+  }
+}
+
+/** 保存済みnotebookの現在世代をlocal journalへ同期書き込みする。 */
+function writeNotebookJournal(entry: OpenNotebook): boolean {
+  const ls = safeLocalStorage();
+  if (!ls) return false;
+  const journal: NotebookJournal = {
+    version: 1,
+    id: entry.notebook.id,
+    baseRevision: entry.notebook.revision,
+    editGeneration: entry.editGeneration,
+    notebook: entry.notebook,
+  };
+  try {
+    ls.setItem(`${JOURNAL_PREFIX}${journal.id}`, JSON.stringify(journal));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 指定notebookのlocal journalを検証して読み出す。 */
+function readNotebookJournal(id: string): JournalReadResult {
+  const ls = safeLocalStorage();
+  if (!ls) return { kind: 'missing' };
+  const raw = ls.getItem(`${JOURNAL_PREFIX}${id}`);
+  if (!raw) return { kind: 'missing' };
+  try {
+    const parsed = notebookJournalSchema.safeParse(JSON.parse(raw));
+    if (parsed.success && parsed.data.id === id) {
+      return { kind: 'valid', journal: parsed.data };
+    }
+  } catch {
+    // JSONとして壊れているjournalも破損状態として扱い、rawは残す。
+  }
+  return { kind: 'corrupt' };
+}
+
+/** 対応世代のCAS成功後だけlocal journalを削除する。 */
+function removeNotebookJournal(id: string, savedGeneration?: number): boolean {
+  const ls = safeLocalStorage();
+  if (!ls) return true;
+  const key = `${JOURNAL_PREFIX}${id}`;
+  if (savedGeneration !== undefined) {
+    const current = readNotebookJournal(id);
+    if (current.kind === 'corrupt') return false;
+    if (current.kind === 'valid' && current.journal.editGeneration > savedGeneration) return true;
+  }
+  try {
+    ls.removeItem(key);
+    return true;
+  } catch {
+    return false;
   }
 }
 
 // draft のスナップショットを削除する（タブを閉じた時、保存が完了して正式な
 // notebook になった時に呼ばれる）。
 function removeDraft(id: string): void {
-  safeLocalStorage()?.removeItem(`${DRAFT_PREFIX}${id}`);
+  try {
+    safeLocalStorage()?.removeItem(`${DRAFT_PREFIX}${id}`);
+  } catch {
+    // サーバー保存後の削除失敗はnotebook本体の永続化結果へ影響しない。
+  }
 }
 
 type DraftReadResult =
@@ -597,6 +692,23 @@ export function readDraftRestoreResult(snapshot = readWorkspaceSnapshot()): Draf
 // トリガーにならないようにしている。
 const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+interface SaveWaiter {
+  generation: number;
+  resolve: (saved: Notebook | null) => void;
+}
+
+interface SaveCoordinator {
+  running: boolean;
+  cancelled: boolean;
+  rebaseOnCompletion: boolean;
+  waiters: SaveWaiter[];
+}
+
+// notebook単位の保存調停器をモジュールスコープに置き、オートセーブと明示保存を
+// 同じsingle-flightへ合流させる。
+const saveCoordinators = new Map<string, SaveCoordinator>();
+const notebookUpdateTails = new Map<string, Promise<void>>();
+
 // 保留中のオートセーブ timer を取り消す（保存が完了した時、閉じられた時、
 // 新しい編集で timer をリセットする時に呼ばれる）。
 function clearAutosave(id: string): void {
@@ -605,6 +717,29 @@ function clearAutosave(id: string): void {
     clearTimeout(t);
     autosaveTimers.delete(id);
   }
+}
+
+/** 閉じるまたは外部置換されたnotebookの保存調停器を無効化する。 */
+function cancelSavedNotebookQueue(id: string, rebaseOnCompletion: boolean): void {
+  const coordinator = saveCoordinators.get(id);
+  if (!coordinator) return;
+  coordinator.cancelled = true;
+  coordinator.rebaseOnCompletion = rebaseOnCompletion;
+  for (const waiter of coordinator.waiters) waiter.resolve(null);
+  coordinator.waiters = [];
+  if (saveCoordinators.get(id) === coordinator) saveCoordinators.delete(id);
+}
+
+/** テスト用の永続化差し替え時にtimerと調停器を初期化する。 */
+function resetPersistenceScheduling(): void {
+  for (const timer of autosaveTimers.values()) clearTimeout(timer);
+  autosaveTimers.clear();
+  for (const coordinator of saveCoordinators.values()) {
+    coordinator.cancelled = true;
+    coordinator.rebaseOnCompletion = false;
+    for (const waiter of coordinator.waiters) waiter.resolve(null);
+  }
+  saveCoordinators.clear();
 }
 
 // ---- Store ------------------------------------------------------------------
@@ -616,6 +751,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
   //  永続化をトリガーする」という一連の流れを 1 箇所にまとめている。
 
   /** Replace one open notebook's `notebook`, recompute variables, mark dirty. */
+  /** 開いているnotebookを更新し、変数再計算後に未保存状態へ移す。 */
   const mutate = (
     id: string,
     fn: (nb: Notebook) => Notebook,
@@ -639,13 +775,38 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     afterChange(id);
   };
 
+  /** 同期書き込みの成否を、対象編集世代が最新の場合だけ状態へ反映する。 */
+  const recordLocalPersistence = (id: string, generation: number, succeeded: boolean): void => {
+    set((state) => {
+      const current = state.open[id];
+      if (!current || current.editGeneration !== generation) return state;
+      return {
+        open: {
+          ...state.open,
+          [id]: {
+            ...current,
+            durableGeneration: succeeded
+              ? Math.max(current.durableGeneration, generation)
+              : current.durableGeneration,
+            localPersistenceError: !succeeded,
+          },
+        },
+      };
+    });
+  };
+
   /** After any change: persist the draft locally and (if saved) schedule a PUT. */
+  /** 編集後にブラウザーへ同期保存し、保存済みならPUTも予約する。 */
   const afterChange = (id: string): void => {
     const entry = get().open[id];
     if (!entry) return;
+    const contentPersisted = entry.draft ? writeDraft(entry.notebook) : writeNotebookJournal(entry);
+    const workspacePersisted = writeWorkspace(get());
+    recordLocalPersistence(id, entry.editGeneration, contentPersisted && workspacePersisted);
     if (entry.draft) {
       // draft はサーバーに保存先がないので localStorage への書き出しだけ行う。
-      writeDraft(entry.notebook);
+      // draftはサーバーに保存先がないため、同期書き込みの結果だけを状態へ反映する。
+      return;
     } else if (
       !entry.conflict &&
       canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })
@@ -662,36 +823,9 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     clearAutosave(id);
     const timer = setTimeout(() => {
       autosaveTimers.delete(id);
-      void saveNow(id);
+      void requestSavedNotebookSave(id);
     }, AUTOSAVE_DEBOUNCE_MS);
     autosaveTimers.set(id, timer);
-  };
-
-  /** Persist immediately via PUT (saved notebooks only). */
-  const saveNow = async (id: string): Promise<void> => {
-    const entry = get().open[id];
-    if (!entry || entry.draft || entry.conflict || !persistence) return;
-    if (!canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })) {
-      return;
-    }
-    if (!entry.dirty) return;
-    set((s) => ({ open: { ...s.open, [id]: { ...entry, saving: true } } }));
-    try {
-      const saved = await persistence.update(id, entry.notebook);
-      get().markSaved(id, saved, entry.editGeneration);
-    } catch (err) {
-      // Keep dirty; a later edit reschedules. Surface via toast at the call site.
-      // 失敗しても dirty のままにしておくことで、次の編集で再スケジュール
-      // される（＝リトライの仕組みを別途持たず、自然に再試行される）。
-      const cur = get().open[id];
-      if (cur) {
-        const conflict = err instanceof ApiClientError && err.status === 409;
-        if (conflict) clearAutosave(id);
-        set((s) => ({
-          open: { ...s.open, [id]: { ...cur, saving: false, conflict: cur.conflict || conflict } },
-        }));
-      }
-    }
   };
 
   return {
@@ -704,18 +838,30 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       // 既に開いていれば editing state（dirty/draft/saving）を維持したまま
       // 何もしない（＝二重に開いても上書きしない）。
       const existing = get().open[notebook.id];
+      const journalResult = !draft && !existing ? readNotebookJournal(notebook.id) : null;
+      const journal = journalResult?.kind === 'valid' ? journalResult.journal : null;
+      const restoredNotebook = journal
+        ? {
+            ...journal.notebook,
+            owner: notebook.owner,
+            myPermission: notebook.myPermission,
+          }
+        : notebook;
+      const journalConflict = journal !== null && journal.baseRevision !== notebook.revision;
       set((s) => {
         const open = {
           ...s.open,
           [notebook.id]: existing
             ? { ...existing }
             : {
-                notebook,
-                dirty: false,
+                notebook: restoredNotebook,
+                dirty: journal !== null,
                 draft,
                 saving: false,
-                conflict: false,
-                editGeneration: 0,
+                conflict: journalConflict,
+                editGeneration: journal?.editGeneration ?? 0,
+                durableGeneration: journal?.editGeneration ?? 0,
+                localPersistenceError: journalResult?.kind === 'corrupt',
               },
         };
         const openIds = s.openIds.includes(notebook.id) ? s.openIds : [...s.openIds, notebook.id];
@@ -730,7 +876,18 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       if (activate) workspaceActivationGeneration += 1;
       // 手動操作を含め、openになったIDは復元成功と同じく未解決集合から外す。
       removeWorkspaceRestoreId(notebook.id);
-      writeWorkspace(get());
+      const workspacePersisted = writeWorkspace(get());
+      if (!workspacePersisted) {
+        const current = get().open[notebook.id];
+        if (current) recordLocalPersistence(notebook.id, current.editGeneration, false);
+      }
+      if (
+        journal &&
+        !journalConflict &&
+        canPersistNotebookToServer({ draft: false, myPermission: notebook.myPermission })
+      ) {
+        scheduleAutosave(notebook.id);
+      }
     },
 
     replaceNotebook: (notebook) => {
@@ -738,6 +895,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       if (!existing) return;
       // 保留中のオートセーブがあれば取り消す (古い内容を PUT しないため)。
       clearAutosave(notebook.id);
+      cancelSavedNotebookQueue(notebook.id, false);
       set((s) => ({
         open: {
           ...s.open,
@@ -748,17 +906,22 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
             saving: false,
             conflict: false,
             editGeneration: 0,
+            durableGeneration: 0,
+            localPersistenceError: false,
           },
         },
       }));
+      removeNotebookJournal(notebook.id);
     },
 
     closeNotebook: (id) => {
       // 閉じるタブに保留中のオートセーブがあれば取り消す。
       clearAutosave(id);
+      cancelSavedNotebookQueue(id, true);
       const entry = get().open[id];
       // draft なら localStorage 上の下書きも一緒に消す（復元されないように）。
       if (entry?.draft) removeDraft(id);
+      else removeNotebookJournal(id);
       const previousActiveId = get().activeId;
       set((s) => {
         const open = { ...s.open };
@@ -804,7 +967,9 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
         active && (active.catalog || active.schema) ? active : (readRecentContexts()[0] ?? {});
       const nb = blankNotebook(ctx);
       get().openNotebook(nb, { draft: true, activate: true });
-      writeDraft(nb);
+      const contentPersisted = writeDraft(nb);
+      const workspacePersisted = writeWorkspace(get());
+      recordLocalPersistence(nb.id, 0, contentPersisted && workspacePersisted);
       return nb.id;
     },
 
@@ -968,6 +1133,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
               dirty: true,
               draft: false,
               saving: false,
+              durableGeneration: Math.max(entry.durableGeneration, savedGeneration),
             }
           : {
               notebook: persisted,
@@ -976,14 +1142,48 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
               saving: false,
               conflict: false,
               editGeneration: savedGeneration,
+              durableGeneration: savedGeneration,
+              localPersistenceError: false,
             };
         const openIds = s.openIds.map((x) => (x === id ? newKey : x));
         const activeId = s.activeId === id ? newKey : s.activeId;
         return { open, openIds, activeId };
       });
-      // draft から昇格したので、もう localStorage の下書きは不要。
-      if (wasDraft) removeDraft(id);
-      writeWorkspace(get());
+      const current = get().open[newKey];
+      let contentPersisted = true;
+      if (editedDuringSave && current) {
+        // 保存開始後の編集は新revisionをbaseにjournalを書き直してから次のPUTへ渡す。
+        contentPersisted = writeNotebookJournal(current);
+      } else if (!wasDraft) {
+        // 対応世代のCASが成功した場合だけ、その世代のjournalを削除する。
+        contentPersisted = removeNotebookJournal(id, savedGeneration);
+      }
+      // re-key後の本文を先に保存できた場合だけworkspaceの参照先を更新する。
+      const workspacePersisted = contentPersisted && writeWorkspace(get());
+      const localPersisted = contentPersisted && workspacePersisted;
+      if (wasDraft && localPersisted) {
+        // draft から昇格したので、もう localStorage の下書きは不要。
+        // draft昇格後は、本文とworkspaceを新idで保存できた場合だけ旧rawを削除する。
+        removeDraft(id);
+      }
+      if (current) {
+        set((state) => {
+          const latest = state.open[newKey];
+          if (!latest || latest.editGeneration !== current.editGeneration) return state;
+          return {
+            open: {
+              ...state.open,
+              [newKey]: {
+                ...latest,
+                durableGeneration: localPersisted
+                  ? Math.max(latest.durableGeneration, latest.editGeneration)
+                  : Math.max(latest.durableGeneration, savedGeneration),
+                localPersistenceError: !localPersisted,
+              },
+            },
+          };
+        });
+      }
       if (editedDuringSave) scheduleAutosave(newKey);
     },
 
@@ -994,6 +1194,201 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     },
   };
 });
+
+/** 指定世代までを待つ呼び出し元へ保存結果を通知する。 */
+function settleSaveWaiters(
+  coordinator: SaveCoordinator,
+  generation: number,
+  saved: Notebook | null,
+): void {
+  const remaining: SaveWaiter[] = [];
+  for (const waiter of coordinator.waiters) {
+    if (waiter.generation <= generation) waiter.resolve(saved);
+    else remaining.push(waiter);
+  }
+  coordinator.waiters = remaining;
+}
+
+/** Persist immediately via PUT (saved notebooks only). */
+/** notebook単位のsingle-flightへ保存要求を追加する。 */
+function requestSavedNotebookSave(id: string): Promise<Notebook | null> {
+  const entry = useNotebookStore.getState().open[id];
+  if (
+    !persistence ||
+    !entry ||
+    entry.draft ||
+    entry.conflict ||
+    !canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })
+  ) {
+    return Promise.resolve(null);
+  }
+  if (!entry.dirty) return Promise.resolve(entry.notebook);
+
+  let coordinator = saveCoordinators.get(id);
+  if (!coordinator) {
+    coordinator = { running: false, cancelled: false, rebaseOnCompletion: false, waiters: [] };
+    saveCoordinators.set(id, coordinator);
+  }
+  const result = new Promise<Notebook | null>((resolve) => {
+    coordinator!.waiters.push({ generation: entry.editGeneration, resolve });
+  });
+  if (!coordinator.running) {
+    coordinator.running = true;
+    void runSavedNotebookQueue(id, coordinator);
+  }
+  return result;
+}
+
+/** 同じnotebook IDのHTTP PUTを開始順に一件ずつ実行する。 */
+async function withNotebookUpdateTurn<T>(id: string, operation: () => Promise<T>): Promise<T> {
+  const previous = notebookUpdateTails.get(id) ?? Promise.resolve();
+  let release!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  notebookUpdateTails.set(id, turn);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (notebookUpdateTails.get(id) === turn) notebookUpdateTails.delete(id);
+  }
+}
+
+/** 閉じる前のPUT成功を、同じIDで開き直した編集のbase revisionへ反映する。 */
+function rebaseReopenedNotebook(id: string, baseRevision: number, saved: Notebook): void {
+  const current = useNotebookStore.getState().open[id];
+  if (!current || current.draft || current.notebook.revision !== baseRevision) return;
+  const next: OpenNotebook = current.dirty
+    ? {
+        ...current,
+        notebook: { ...current.notebook, revision: saved.revision },
+        saving: false,
+      }
+    : {
+        ...current,
+        notebook: saved,
+        saving: false,
+      };
+  useNotebookStore.setState((state) => ({ open: { ...state.open, [id]: next } }));
+  if (!next.dirty) return;
+  const contentPersisted = writeNotebookJournal(next);
+  const workspacePersisted = writeWorkspace(useNotebookStore.getState());
+  useNotebookStore.setState((state) => {
+    const latest = state.open[id];
+    if (!latest || latest !== next) return state;
+    const localPersisted = contentPersisted && workspacePersisted;
+    return {
+      open: {
+        ...state.open,
+        [id]: {
+          ...latest,
+          durableGeneration: localPersisted
+            ? Math.max(latest.durableGeneration, latest.editGeneration)
+            : latest.durableGeneration,
+          localPersistenceError: !localPersisted,
+        },
+      },
+    };
+  });
+}
+
+/** 調停器に蓄積した最新世代を直列保存し、中間世代をまとめる。 */
+async function runSavedNotebookQueue(id: string, coordinator: SaveCoordinator): Promise<void> {
+  while (!coordinator.cancelled) {
+    const shouldContinue = await withNotebookUpdateTurn(id, async () => {
+      if (coordinator.cancelled) return false;
+      const entry = useNotebookStore.getState().open[id];
+      const activePersistence = persistence;
+      if (
+        !activePersistence ||
+        !entry ||
+        entry.draft ||
+        entry.conflict ||
+        !entry.dirty ||
+        !canPersistNotebookToServer({ draft: false, myPermission: entry.notebook.myPermission })
+      ) {
+        return false;
+      }
+
+      const generation = entry.editGeneration;
+      const baseRevision = entry.notebook.revision;
+      const snapshot = entry.notebook;
+      useNotebookStore.setState((state) => {
+        const current = state.open[id];
+        if (!current || current.editGeneration !== generation) return state;
+        return { open: { ...state.open, [id]: { ...current, saving: true } } };
+      });
+
+      try {
+        const saved = await activePersistence.update(id, snapshot);
+        if (coordinator.cancelled) {
+          if (coordinator.rebaseOnCompletion) rebaseReopenedNotebook(id, baseRevision, saved);
+          return false;
+        }
+        const current = useNotebookStore.getState().open[id];
+        if (
+          current &&
+          !current.draft &&
+          current.notebook.revision === baseRevision &&
+          current.editGeneration >= generation
+        ) {
+          useNotebookStore.getState().markSaved(id, saved, generation);
+          settleSaveWaiters(coordinator, generation, saved);
+        } else {
+          // 閉じ直しや外部置換後に届いた旧応答は現在の編集状態へ適用しない。
+          settleSaveWaiters(coordinator, generation, null);
+        }
+      } catch (error) {
+        // Keep dirty; a later edit reschedules. Surface via toast at the call site.
+        // 失敗しても dirty のままにしておくことで、次の編集で再スケジュール
+        // される（＝リトライの仕組みを別途持たず、自然に再試行される）。
+        if (coordinator.cancelled) return false;
+        const current = useNotebookStore.getState().open[id];
+        const sameBase = current?.notebook.revision === baseRevision;
+        const conflict = error instanceof ApiClientError && error.status === 409;
+        const hasNewerGeneration =
+          sameBase && current !== undefined && current.editGeneration > generation;
+        if (current && sameBase && conflict) {
+          clearAutosave(id);
+          useNotebookStore.setState((state) => ({
+            open: {
+              ...state.open,
+              [id]: { ...current, saving: false, conflict: true },
+            },
+          }));
+          for (const waiter of coordinator.waiters) waiter.resolve(null);
+          coordinator.waiters = [];
+          return false;
+        }
+        if (!hasNewerGeneration) {
+          if (current && sameBase) {
+            useNotebookStore.setState((state) => ({
+              open: { ...state.open, [id]: { ...current, saving: false } },
+            }));
+          }
+          settleSaveWaiters(coordinator, generation, null);
+          return false;
+        }
+        // 古い世代の一時失敗は最新世代へ反映せず、最新snapshotを続けて試す。
+      }
+
+      const latest = useNotebookStore.getState().open[id];
+      if (!latest || latest.conflict || !latest.dirty || latest.editGeneration <= generation) {
+        return false;
+      }
+      clearAutosave(id);
+      return true;
+    });
+    if (!shouldContinue) break;
+  }
+
+  coordinator.running = false;
+  for (const waiter of coordinator.waiters) waiter.resolve(null);
+  coordinator.waiters = [];
+  if (saveCoordinators.get(id) === coordinator) saveCoordinators.delete(id);
+}
 
 // ---- Imperative save helpers (used by Ctrl+S / Save buttons) ----------------
 // ストアの action ではなくモジュール関数として提供しているのは、Ctrl+S や
@@ -1036,7 +1431,6 @@ export async function persistNewNotebook(id: string, name: string): Promise<Note
  * the persisted notebook, or null on failure / when not wired.
  */
 export async function persistSavedNotebook(id: string): Promise<Notebook | null> {
-  if (!persistence) return null;
   const store = useNotebookStore.getState();
   const entry = store.open[id];
   if (!entry || entry.draft || entry.conflict) return null;
@@ -1045,23 +1439,7 @@ export async function persistSavedNotebook(id: string): Promise<Notebook | null>
   }
   // 明示的な保存が発火するので、待機中のデバウンス timer は不要になる。
   clearAutosave(id);
-  store.setSaving(id, true);
-  try {
-    const saved = await persistence.update(id, entry.notebook);
-    store.markSaved(id, saved, entry.editGeneration);
-    return saved;
-  } catch (err) {
-    const cur = useNotebookStore.getState().open[id];
-    if (cur && err instanceof ApiClientError && err.status === 409) {
-      clearAutosave(id);
-      useNotebookStore.setState((s) => ({
-        open: { ...s.open, [id]: { ...cur, saving: false, conflict: true } },
-      }));
-    } else {
-      store.setSaving(id, false);
-    }
-    return null;
-  }
+  return requestSavedNotebookSave(id);
 }
 
 // ---- Selector hooks ---------------------------------------------------------
@@ -1086,13 +1464,32 @@ export function useActiveNotebook(): OpenNotebook | undefined {
  * descriptor objects in render — returning fresh objects from the selector would
  * defeat `useShallow`'s element-wise comparison and loop.
  */
-export function useNotebookTabs(): { id: string; name: string; dirty: boolean }[] {
+/**
+ * TopBar 用のタブ記述子（id、name、dirty、ブラウザー内永続化エラー）を、
+ * タブの表示順で返す。
+ * `openIds` と `open` という参照が安定した state を `useShallow` で購読し、
+ * 表示用オブジェクトはレンダー内で毎回組み立てる。selector内で新しい表示用
+ * オブジェクトを返すと`useShallow`の要素比較を無効にしてループするためである。
+ */
+export function useNotebookTabs(): {
+  id: string;
+  name: string;
+  dirty: boolean;
+  conflict: boolean;
+  localPersistenceError: boolean;
+}[] {
   const openIds = useNotebookStore(useShallow((s) => s.openIds));
   const open = useNotebookStore((s) => s.open);
   return openIds
     .filter((id) => open[id])
     .map((id) => {
       const e = open[id]!;
-      return { id, name: e.notebook.name, dirty: e.dirty };
+      return {
+        id,
+        name: e.notebook.name,
+        dirty: e.dirty,
+        conflict: e.conflict,
+        localPersistenceError: e.localPersistenceError,
+      };
     });
 }

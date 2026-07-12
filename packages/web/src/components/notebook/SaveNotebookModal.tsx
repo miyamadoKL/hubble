@@ -18,6 +18,7 @@ import { Button } from '../common/Button';
  * ノートブック保存用モーダルの本体。
  *
  * @param open - true のときモーダルを表示する。false のときは何も描画しない。
+ * @param targetId - 保存対象のノートブックID。対象変更時のフォーム再初期化に使う。
  * @param initialName - 入力欄の初期値として表示するノートブック名。
  * @param title - モーダルのタイトル文言（省略時は「Save notebook」）。
  * @param confirmLabel - 確定ボタンのラベル文言（省略時は「Save」）。
@@ -26,13 +27,36 @@ import { Button } from '../common/Button';
  */
 export function SaveNotebookModal({
   open,
+  targetId,
+  ...props
+}: {
+  open: boolean;
+  targetId: string | null;
+  initialName: string;
+  title?: string;
+  confirmLabel?: string;
+  onClose: () => void;
+  onConfirm: (name: string) => void;
+}) {
+  // Reset the field each time the dialog opens by keying on `open` via a render
+  // guard: when closed we don't render, so a fresh mount restores the initial.
+  // open が false のときは何も描画しない。これにより、次に開いたときは
+  // コンポーネントが再マウントされ、useState の初期値（initialName）に自然にリセットされる。
+  // 閉じている間は状態保持部分を描画しないため、次に開くとinitialNameを使って
+  // 新しくマウントされる。開いたまま保存対象が変わる場合もkeyで再初期化する。
+  if (!open) return null;
+  const targetKey = `${targetId ?? ''}\u0000${props.title ?? 'Save notebook'}\u0000${props.initialName}`;
+  return <SaveNotebookModalBody key={targetKey} {...props} />;
+}
+
+/** 開くたびにマウントし直す、Notebook 保存フォームの状態保持部分。 */
+function SaveNotebookModalBody({
   initialName,
   title = 'Save notebook',
   confirmLabel = 'Save',
   onClose,
   onConfirm,
 }: {
-  open: boolean;
   initialName: string;
   title?: string;
   confirmLabel?: string;
@@ -42,12 +66,6 @@ export function SaveNotebookModal({
   // name: 入力中のノートブック名。initialName を初期値として保持する。
   const [name, setName] = useState(initialName);
 
-  // Reset the field each time the dialog opens by keying on `open` via a render
-  // guard: when closed we don't render, so a fresh mount restores the initial.
-  // open が false のときは何も描画しない。これにより、次に開いたときは
-  // コンポーネントが再マウントされ、useState の初期値（initialName）に自然にリセットされる。
-  if (!open) return null;
-
   // 確定処理: 名前をトリムし、空でなければ親へ通知する。
   const confirm = () => {
     const trimmed = name.trim();
@@ -56,7 +74,7 @@ export function SaveNotebookModal({
 
   return (
     <Modal
-      open={open}
+      open
       onClose={onClose}
       title={title}
       description="Give the notebook a name to save it to the server."

@@ -37,6 +37,13 @@ function toSavePayload(rows: ShareDraftRow[]): ShareDraftRow[] {
     .filter((row) => row.subjectValue.length > 0);
 }
 
+type FetchShares = () => Promise<{ shares: DocumentShare[] }>;
+
+interface ShareLoadState {
+  source: FetchShares;
+  status: 'loading' | 'loaded' | 'error';
+}
+
 /**
  * 共有編集モーダル。
  *
@@ -86,10 +93,16 @@ function ShareModalBody({
   updateShares: (shares: ShareDraftRow[]) => Promise<{ shares: DocumentShare[] }>;
 }) {
   const [rows, setRows] = useState<ShareDraftRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadState, setLoadState] = useState<ShareLoadState>(() => ({
+    source: fetchShares,
+    status: 'loading',
+  }));
+  const activeLoadStatus = loadState.source === fetchShares ? loadState.status : 'loading';
+  const loading = activeLoadStatus === 'loading';
+  const loadError = activeLoadStatus === 'error';
 
   useEffect(() => {
     let cancelled = false;
@@ -97,20 +110,16 @@ function ShareModalBody({
       .then((res) => {
         if (cancelled) return;
         setRows(res.shares.length > 0 ? toDraftRows(res.shares) : [emptyShareRow()]);
-        setLoadError(null);
+        setLoadState({ source: fetchShares, status: 'loaded' });
       })
       .catch(() => {
         if (cancelled) return;
-        setLoadError('Could not load shares.');
-        setRows([emptyShareRow()]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        setLoadState({ source: fetchShares, status: 'error' });
       });
     return () => {
       cancelled = true;
     };
-  }, [fetchShares]);
+  }, [fetchShares, loadAttempt]);
 
   const updateRow = (index: number, patch: Partial<ShareDraftRow>) => {
     setValidationError(null);
@@ -128,6 +137,7 @@ function ShareModalBody({
   };
 
   const save = async () => {
+    if (activeLoadStatus !== 'loaded') return;
     const payload = toSavePayload(rows);
     const dup = findDuplicateShareIndices(payload);
     if (dup) {
@@ -159,7 +169,11 @@ function ShareModalBody({
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => void save()} disabled={loading || saving}>
+          <Button
+            variant="primary"
+            onClick={() => void save()}
+            disabled={loading || saving || loadError}
+          >
             {saving ? 'Saving…' : 'Save'}
           </Button>
         </>
@@ -169,13 +183,23 @@ function ShareModalBody({
         <div className="flex items-center justify-center gap-2 py-6 font-mono text-2xs text-ink-subtle">
           <Spinner size={14} /> Loading shares…
         </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-start gap-3">
+          <p className="w-full rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">
+            Could not load shares.
+          </p>
+          <Button
+            variant="default"
+            onClick={() => {
+              setLoadState({ source: fetchShares, status: 'loading' });
+              setLoadAttempt((attempt) => attempt + 1);
+            }}
+          >
+            Retry
+          </Button>
+        </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {loadError && (
-            <p className="rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">
-              {loadError}
-            </p>
-          )}
           {validationError && (
             <p className="rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">
               {validationError}

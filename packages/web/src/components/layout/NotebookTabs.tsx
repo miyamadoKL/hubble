@@ -17,6 +17,10 @@ export interface NotebookTab {
   name: string;
   /** 未保存の変更があるかどうか（true の場合はドット表示される）。 */
   dirty: boolean;
+  /** サーバー側revisionとローカル編集のbaseが一致しないかどうか。 */
+  conflict: boolean;
+  /** ブラウザー内の復旧用コピーを最新世代へ更新できなかったかどうか。 */
+  localPersistenceError: boolean;
 }
 
 /**
@@ -83,6 +87,7 @@ export function NotebookTabs({
  * Escape で編集前の値に戻してキャンセルする。
  *
  * @param tab - このタブが表す情報（id / name / dirty）。
+ *   `localPersistenceError` はブラウザー内の復旧用コピーを書けなかった状態を表す。
  * @param active - このタブが現在アクティブかどうか。
  * @param onSelect - タブ本体クリック時に呼ばれる。
  * @param onClose - × ボタン押下時に呼ばれる。
@@ -139,6 +144,24 @@ function TabItem({
           className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
         />
       )}
+      {tab.localPersistenceError && (
+        <span
+          aria-label="Browser recovery unavailable"
+          title="This edit could not be stored in browser recovery storage. Save before reloading."
+          className="shrink-0 text-xs font-bold text-danger"
+        >
+          !
+        </span>
+      )}
+      {tab.conflict && (
+        <span
+          aria-label="Notebook save conflict"
+          title="The server version changed. Use Save as to preserve this local version, then reload the original notebook."
+          className="shrink-0 text-xs font-bold text-warning"
+        >
+          !
+        </span>
+      )}
       {/* 編集中は名前入力欄、それ以外はタブ名ボタン（クリックで選択、ダブルクリックで編集開始）を出し分ける。 */}
       {editing ? (
         <input
@@ -165,7 +188,7 @@ function TabItem({
             setEditing(true);
           }}
           className="max-w-[10rem] truncate text-sm font-medium"
-          title={`${tab.name}${tab.dirty ? ' • unsaved' : ''} (double-click to rename)`}
+          title={`${tab.name}${tab.dirty ? ' • unsaved' : ''}${tab.conflict ? ' • save conflict' : ''}${tab.localPersistenceError ? ' • browser recovery unavailable' : ''} (double-click to rename)`}
         >
           {tab.name}
         </button>

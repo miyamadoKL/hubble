@@ -13,7 +13,7 @@ import type { HistoryResponse, QueryHistoryEntry } from '@hubble/contracts';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { FilePlus2, History, Play, Table2, TextCursorInput } from 'lucide-react';
 import { fetchHistory, HISTORY_PAGE_SIZE } from '../../api/history';
-import { insertAtActiveCursor, addSqlCellWithSource, runActiveSqlCell } from '../../notebook';
+import { insertAtActiveCursor, addSqlCellWithSource, runSqlCell } from '../../notebook';
 import { nextOffset, filterToStateParam, type HistoryFilter } from './historyPaging';
 import { StateBadge } from '../common/StateBadge';
 import { EmptyState } from '../common/EmptyState';
@@ -239,9 +239,12 @@ export function HistoryPanel() {
       toastDatasourceMissing(entry.datasourceId);
       return;
     }
-    if (addSqlCellWithSource(entry.statement)) {
+    const cellId = addSqlCellWithSource(entry.statement);
+    if (cellId) {
       const shell = useUiStore.getState().shellContext;
-      runActiveSqlCell(
+      const started = runSqlCell(
+        cellId,
+        entry.statement,
         {
           catalog: entry.catalog ?? shell.catalog,
           schema: entry.schema ?? shell.schema,
@@ -249,6 +252,7 @@ export function HistoryPanel() {
         },
         defaultLimit,
       );
+      if (!started) return;
       toast.success('Re-running query');
     }
   };

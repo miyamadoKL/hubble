@@ -256,6 +256,7 @@ export function AppShell() {
           mode によってタイトル/確定ボタンのラベルが「保存」「名前を付けて保存」で切り替わる。 */}
       <SaveNotebookModal
         open={saveRequest !== null}
+        targetId={activeId}
         initialName={activeEntry?.notebook.name ?? 'Untitled notebook'}
         title={saveRequest?.mode === 'saveAs' ? 'Save notebook as' : 'Save notebook'}
         confirmLabel={saveRequest?.mode === 'saveAs' ? 'Save a copy' : 'Save'}
