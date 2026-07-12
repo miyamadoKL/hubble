@@ -15,15 +15,33 @@ import { resolveRoleForPrincipal } from '../rbac/resolve';
 import type { LoadedRbac } from '../rbac/types';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import type { ServerConfig } from '../config';
-import type { WorkflowRecord, WorkflowRepository, WorkflowRunRepository } from '../store/workflows';
+import {
+  WorkflowRunClaimConflictError,
+  type WorkflowRecord,
+  type WorkflowRepository,
+  type WorkflowRunRepository,
+} from '../store/workflows';
 import { drainStatementWithCapture } from './execute';
 import { nextRunAfter } from '../schedule/cron';
-import { backoffMs, classifyFailure, shouldRetry } from '../schedule/retry';
+import {
+  backoffMs,
+  classifyFailure,
+  retryPolicyForStatement,
+  shouldRetry,
+} from '../schedule/retry';
 import type { AuditJson, AuditLogger } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { ResultJsonlCapture } from '../resultStore/jsonl';
 import type { SchedulerConfig } from '../schedule/scheduler';
 import type { GithubGovernanceService } from '../github/governance';
+import {
+  JobAdmissionRejectedError,
+  type JobCapacityLease,
+  type JobAdmissionController,
+  type JobAdmissionLease,
+} from '../schedule/admission';
+import { PeriodicRunner } from '../util/periodicRunner';
+import { raceSqlAbort } from '../engine/sql/abort';
 
 export interface WorkflowRunnerConfig {
   enabled: boolean;
@@ -46,6 +64,8 @@ export interface WorkflowRunnerDeps {
   resultKeyPrefix?: string;
   resultTtlDays?: number;
   githubGovernance: GithubGovernanceService;
+  /** schedule、workflow、alert で共有する実行枠。 */
+  admission: JobAdmissionController;
   config: WorkflowRunnerConfig;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -75,28 +95,32 @@ export class WorkflowRunInProgressError extends Error {
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-function defaultSetTimer(fn: () => void, ms: number): { clear: () => void } {
-  const handle = setTimeout(fn, ms);
-  if (typeof handle === 'object' && 'unref' in handle) (handle as { unref: () => void }).unref();
-  return { clear: () => clearTimeout(handle) };
-}
+// 省略時の setTimeout と unref は PeriodicRunner が共通実装する。
 
 /** ワークフロー実行と cron tick を担う。 */
 export class WorkflowRunner {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
-  private readonly setTimer: (fn: () => void, ms: number) => { clear: () => void };
+  private readonly periodic: PeriodicRunner;
+  private readonly shutdownAbort = new AbortController();
   private readonly nextFire = new Map<string, number>();
   private readonly inFlight = new Set<string>();
   private readonly running = new Map<string, Promise<void>>();
-  private tickHandle?: { clear: () => void };
+  private readonly starting = new Set<Promise<void>>();
+  // tick timer と進行中の走査は PeriodicRunner が所有する。
   private started = false;
   private stopping = false;
 
   constructor(private deps: WorkflowRunnerDeps) {
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? defaultSleep;
-    this.setTimer = deps.setTimer ?? defaultSetTimer;
+    this.periodic = new PeriodicRunner({
+      intervalMs: deps.config.tickSeconds * 1_000,
+      task: () => this.tick(),
+      logError: (message, error) => console.error(message, error),
+      errorMessage: 'workflow: periodic tick failed',
+      ...(deps.setTimer ? { setTimer: deps.setTimer } : {}),
+    });
   }
 
   setDefaultDatasourceId(id: string): void {
@@ -109,18 +133,18 @@ export class WorkflowRunner {
     await this.deps.runs.abortOrphans(new Date(this.now()).toISOString());
     if (!this.deps.config.enabled) return;
     await this.seedNextFires();
-    this.scheduleTick();
+    this.periodic.start();
   }
 
   async stop(): Promise<void> {
     this.stopping = true;
-    this.tickHandle?.clear();
-    this.tickHandle = undefined;
-    await Promise.allSettled([...this.running.values()]);
+    this.shutdownAbort.abort();
+    await this.periodic.stop();
+    await this.drainLifecycleTasks();
   }
 
   async whenIdle(): Promise<void> {
-    await Promise.allSettled([...this.running.values()]);
+    await this.drainLifecycleTasks();
   }
 
   get activeRuns(): number {
@@ -128,28 +152,52 @@ export class WorkflowRunner {
   }
 
   async runManual(workflow: WorkflowRecord): Promise<{ runId: string }> {
-    if (this.inFlight.has(workflow.id) || (await this.deps.runs.hasRunning(workflow.id))) {
-      throw new WorkflowRunInProgressError(workflow.id);
-    }
+    const admissionLease = this.deps.admission.tryAcquire('workflow', workflow.id);
     const scheduledForIso = new Date(this.now()).toISOString();
     this.inFlight.add(workflow.id);
-    let runId: string;
+    let finishStarting!: () => void;
+    const starting = new Promise<void>((resolve) => {
+      finishStarting = resolve;
+    });
+    this.starting.add(starting);
     try {
-      runId = await this.deps.runs.startRun(workflow, 'manual', scheduledForIso, scheduledForIso);
+      const runId = await this.deps.runs.startRun(
+        workflow,
+        'manual',
+        scheduledForIso,
+        scheduledForIso,
+      );
+      admissionLease.releaseCapacity();
+      const p = this.executeRun(workflow, runId, 'manual', scheduledForIso)
+        .catch((err: unknown) => {
+          console.error(`workflow: unexpected error in manual run ${workflow.id}`, err);
+        })
+        .finally(() => {
+          this.inFlight.delete(workflow.id);
+          this.running.delete(workflow.id);
+          admissionLease.release();
+        });
+      this.running.set(workflow.id, p);
+      return { runId };
     } catch (err) {
       this.inFlight.delete(workflow.id);
+      admissionLease.release();
+      if (err instanceof WorkflowRunClaimConflictError) {
+        throw new WorkflowRunInProgressError(workflow.id);
+      }
       throw err;
+    } finally {
+      this.starting.delete(starting);
+      finishStarting();
     }
-    const p = this.executeRun(workflow, runId, 'manual', scheduledForIso)
-      .catch((err: unknown) => {
-        console.error(`workflow: unexpected error in manual run ${workflow.id}`, err);
-      })
-      .finally(() => {
-        this.inFlight.delete(workflow.id);
-        this.running.delete(workflow.id);
-      });
-    this.running.set(workflow.id, p);
-    return { runId };
+  }
+
+  private async drainLifecycleTasks(): Promise<void> {
+    for (;;) {
+      const tasks = [...this.starting, ...this.running.values()];
+      if (tasks.length === 0) return;
+      await Promise.allSettled(tasks);
+    }
   }
 
   private async seedNextFires(): Promise<void> {
@@ -164,12 +212,7 @@ export class WorkflowRunner {
     }
   }
 
-  private scheduleTick(): void {
-    if (this.stopping) return;
-    this.tickHandle = this.setTimer(() => {
-      void this.tick().finally(() => this.scheduleTick());
-    }, this.deps.config.tickSeconds * 1000);
-  }
+  // PeriodicRunner は tick の失敗をログへ隔離してから次の単発 timer を予約する。
 
   async tick(): Promise<void> {
     if (this.stopping) return;
@@ -195,29 +238,44 @@ export class WorkflowRunner {
       if (next !== null) this.nextFire.set(workflow.id, next);
       else this.nextFire.delete(workflow.id);
 
-      if (this.inFlight.has(workflow.id)) continue;
-      if (this.inFlight.size >= this.deps.config.maxConcurrent) continue;
+      let lease: JobAdmissionLease;
+      try {
+        lease = this.deps.admission.tryAcquire('workflow', workflow.id);
+      } catch (err) {
+        if (err instanceof JobAdmissionRejectedError) continue;
+        throw err;
+      }
 
-      this.launch(workflow, new Date(scheduledFor).toISOString());
+      this.launch(workflow, new Date(scheduledFor).toISOString(), lease);
     }
   }
 
-  private launch(workflow: WorkflowRecord, scheduledForIso: string): void {
+  private launch(
+    workflow: WorkflowRecord,
+    scheduledForIso: string,
+    admissionLease: JobAdmissionLease,
+  ): void {
     this.inFlight.add(workflow.id);
-    const p = this.runOnce(workflow, scheduledForIso)
+    const p = this.runOnce(workflow, scheduledForIso, admissionLease)
       .catch((err: unknown) => {
         console.error(`workflow: unexpected error running workflow ${workflow.id}`, err);
       })
       .finally(() => {
         this.inFlight.delete(workflow.id);
         this.running.delete(workflow.id);
+        admissionLease.release();
       });
     this.running.set(workflow.id, p);
   }
 
-  private async runOnce(workflow: WorkflowRecord, scheduledForIso: string): Promise<void> {
+  private async runOnce(
+    workflow: WorkflowRecord,
+    scheduledForIso: string,
+    admissionLease: JobAdmissionLease,
+  ): Promise<void> {
     const startedAt = new Date(this.now()).toISOString();
     const runId = await this.deps.runs.startRun(workflow, 'cron', scheduledForIso, startedAt);
+    admissionLease.releaseCapacity();
     const governance = this.deps.githubGovernance;
     if (governance.enabled && !(await governance.isWorkflowApproved(workflow))) {
       await this.finishGovernanceBlockedRun(workflow, runId, 'cron', scheduledForIso, startedAt);
@@ -280,10 +338,22 @@ export class WorkflowRunner {
 
     for (let stageIndex = 0; stageIndex < workflow.stages.length; stageIndex += 1) {
       if (abortFromStage !== null) break;
+      if (this.shutdownAbort.signal.aborted) {
+        runStatus = 'aborted';
+        await this.deps.runs.skipRemaining(runId, stageIndex, new Date(this.now()).toISOString());
+        break;
+      }
       const stageSteps = runDetail.steps.filter((s) => s.stageIndex === stageIndex);
       const outcomes = await Promise.all(
         stageSteps.map((stepRun) =>
-          this.executeStep(workflow, workflowRole, runId, stepRun.id, stepById, persistStepResults),
+          this.executeStepWithCapacity(
+            workflow,
+            workflowRole,
+            runId,
+            stepRun.id,
+            stepById,
+            persistStepResults,
+          ),
         ),
       );
 
@@ -291,6 +361,11 @@ export class WorkflowRunner {
         const stepRun = stageSteps[i]!;
         const outcome = outcomes[i]!;
         const def = stepById.get(stepRun.stepId);
+        if (outcome.status === 'aborted') {
+          abortFromStage = stageIndex;
+          runStatus = 'aborted';
+          break;
+        }
         if (
           def &&
           (outcome.status === 'failed' || outcome.status === 'blocked') &&
@@ -327,6 +402,43 @@ export class WorkflowRunner {
     const finalRun = await this.deps.runs.getRun(runId);
     if (finalRun) {
       await this.recordWorkflowOutcome(workflow, runId, trigger, scheduledForIso, finalRun);
+    }
+  }
+
+  private async executeStepWithCapacity(
+    workflow: WorkflowRecord,
+    workflowRole: ReturnType<typeof resolveRoleForPrincipal>,
+    runId: string,
+    stepRunId: string,
+    stepById: Map<string, { step: WorkflowStep; stageIndex: number }>,
+    persistStepResults: boolean,
+  ): Promise<StepOutcome> {
+    let capacityLease: JobCapacityLease;
+    try {
+      capacityLease = await this.deps.admission.acquireCapacity(this.shutdownAbort.signal);
+    } catch (err) {
+      if (!this.shutdownAbort.signal.aborted) throw err;
+      // pending のまま残さないため、DB終端処理を持つ通常経路へ中断状態で渡す。
+      return this.executeStep(
+        workflow,
+        workflowRole,
+        runId,
+        stepRunId,
+        stepById,
+        persistStepResults,
+      );
+    }
+    try {
+      return await this.executeStep(
+        workflow,
+        workflowRole,
+        runId,
+        stepRunId,
+        stepById,
+        persistStepResults,
+      );
+    } finally {
+      capacityLease.release();
     }
   }
 
@@ -397,7 +509,7 @@ export class WorkflowRunner {
     stepRunId: string,
     persistStepResults: boolean,
   ): Promise<StepOutcome> {
-    const policy = workflow.retry;
+    const policy = retryPolicyForStatement(workflow.retry, step.statement);
     let attempt = 0;
     const effective = effectiveGuardLimits(this.deps.guardConfig, workflowRole);
 
@@ -425,6 +537,7 @@ export class WorkflowRunner {
     const releaseLease = engine.lease?.() ?? (() => {});
     try {
       for (;;) {
+        if (this.shutdownAbort.signal.aborted) return this.abortedStepOutcome(attempt);
         attempt += 1;
 
         try {
@@ -442,6 +555,7 @@ export class WorkflowRunner {
             ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
           });
         } catch (err) {
+          if (this.shutdownAbort.signal.aborted) return this.abortedStepOutcome(attempt);
           return {
             status: 'failed',
             attempt,
@@ -513,9 +627,34 @@ export class WorkflowRunner {
             schema: step.schema ?? undefined,
             user: workflow.owner,
           };
-          const result = await drainStatementWithCapture(client, step.statement, ctx, capture);
+          const result = await drainStatementWithCapture(
+            client,
+            step.statement,
+            ctx,
+            capture,
+            this.shutdownAbort.signal,
+          );
           if (capture) {
+            if (this.shutdownAbort.signal.aborted) {
+              await capture.abort();
+              return this.abortedStepOutcome(attempt);
+            }
             await capture.finish();
+            if (this.shutdownAbort.signal.aborted) {
+              const aborted = this.abortedStepOutcome(attempt);
+              try {
+                await this.deps.resultStore.delete(capture.key);
+                return aborted;
+              } catch (err) {
+                // 削除失敗時は即期限切れ参照をDBへ残し、expiry workerの再試行対象にする。
+                console.warn(`workflow: failed to delete aborted result ${capture.key}`, err);
+                return {
+                  ...aborted,
+                  resultObjectKey: capture.key,
+                  resultExpiresAt: new Date(this.now()).toISOString(),
+                };
+              }
+            }
             const expiresAt = this.resultExpiresAt();
             return {
               status: 'success',
@@ -536,6 +675,7 @@ export class WorkflowRunner {
           };
         } catch (err) {
           if (capture) await capture.abort();
+          if (this.shutdownAbort.signal.aborted) return this.abortedStepOutcome(attempt);
           const failureClass = classifyFailure(err);
           const errorType = errorTypeOf(err);
           const message = err instanceof Error ? err.message : String(err);
@@ -553,6 +693,9 @@ export class WorkflowRunner {
           await this.waitBeforeRetry(policy, attempt);
         }
       }
+    } catch (err) {
+      if (this.shutdownAbort.signal.aborted) return this.abortedStepOutcome(attempt);
+      throw err;
     } finally {
       releaseLease();
     }
@@ -575,7 +718,17 @@ export class WorkflowRunner {
   }
 
   private async waitBeforeRetry(policy: WorkflowRecord['retry'], attempt: number): Promise<void> {
-    await this.sleep(backoffMs(policy, attempt));
+    await raceSqlAbort(this.sleep(backoffMs(policy, attempt)), this.shutdownAbort.signal);
+  }
+
+  private abortedStepOutcome(attempt: number): StepOutcome {
+    return {
+      status: 'aborted',
+      attempt: Math.max(attempt, 1),
+      rowCount: null,
+      errorType: 'SERVER_SHUTDOWN',
+      errorMessage: 'Step aborted during server shutdown',
+    };
   }
 
   private createResultCapture(runId: string, stepRunId: string): ResultJsonlCapture | undefined {

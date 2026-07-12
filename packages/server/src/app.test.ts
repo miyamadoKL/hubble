@@ -64,6 +64,24 @@ describe('unknown /api route', () => {
   });
 });
 
+describe('API request body limit', () => {
+  it('rejects an oversized body before JSON parsing', async () => {
+    const { app } = await createTestContext({
+      configOverrides: { http: { maxBodyBytes: 64 } },
+    });
+    const res = await app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ statement: `SELECT '${'x'.repeat(128)}'` }),
+    });
+
+    expect(res.status).toBe(413);
+    expect((await res.json()) as unknown).toMatchObject({
+      error: { code: 'PAYLOAD_TOO_LARGE' },
+    });
+  });
+});
+
 describe('response security headers', () => {
   it.each([apiRoutes.healthz(), apiRoutes.config(), '/api/does-not-exist'])(
     'sets low-risk headers on %s',

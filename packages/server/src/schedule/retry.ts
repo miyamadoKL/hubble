@@ -1,6 +1,7 @@
 import { WRITE_NOT_ALLOWED } from '@hubble/contracts';
 import { AppError, TrinoQueryError, TrinoTransportError } from '../errors';
 import type { RetryPolicy } from '@hubble/contracts';
+import { classifyStatementWrite } from '../rbac/writeCheck';
 
 /**
  * Retry classification + backoff for scheduled runs (Query Scheduling feature).
@@ -45,6 +46,7 @@ export function classifyFailure(err: unknown): FailureClass {
   // Any other Trino query error that is NOT a USER_ERROR (engine fault) retries.
   // Unknown errors are treated as transient so a flaky run gets another chance.
   // 日本語: 未知のエラー・USER_ERROR 以外の Trino エラー (エンジン内部の不調等) は
+  // 日本語: 未知のエラーや USER_ERROR 以外の Trino エラー (エンジン内部の不調等) は
   // 安全側に倒して transient とし、フェイル気味の実行にもう一度チャンスを与える。
   return 'transient';
 }
@@ -80,4 +82,16 @@ export function backoffMs(policy: RetryPolicy, retryIndex: number): number {
  */
 export function shouldRetry(policy: RetryPolicy, attemptsMade: number): boolean {
   return attemptsMade < policy.maxAttempts;
+}
+
+/**
+ * ステートメントの副作用に応じた実効リトライポリシーを返す。
+ * 読み取りと確定できる文は設定済みポリシーを維持する。
+ * 書き込みまたは分類不能な文は、接続先での commit 後に応答だけを失った場合でも
+ * 同じ副作用を重ねないよう、実行試行を1回に制限する。
+ */
+export function retryPolicyForStatement(policy: RetryPolicy, statement: string): RetryPolicy {
+  if (classifyStatementWrite(statement) === 'allow') return policy;
+  if (policy.maxAttempts === 1) return policy;
+  return { ...policy, maxAttempts: 1 };
 }

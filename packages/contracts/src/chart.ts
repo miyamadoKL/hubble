@@ -6,6 +6,7 @@
  * リロード後も設定を復元できるよう契約層へ昇格した。
  */
 import { z } from 'zod';
+import { MAX_CHART_SERIES } from './limits';
 
 /** チャート種別。棒 / 折れ線 / タイムライン / 円 / 散布図の 5 種。 */
 export const chartTypeSchema = z.enum(['bars', 'lines', 'timeline', 'pie', 'scatter']);
@@ -58,3 +59,8 @@ export const chartConfigSchema = z.object({
 });
 /** チャート設定の推論型。 */
 export type ChartConfig = z.infer<typeof chartConfigSchema>;
+
+/** API 入力で系列配列を有界にしたチャート設定。 */
+export const chartConfigInputSchema = chartConfigSchema.extend({
+  yIndices: z.array(z.number().int().nonnegative()).max(MAX_CHART_SERIES),
+});

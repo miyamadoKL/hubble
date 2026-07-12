@@ -1,7 +1,14 @@
 import { z } from 'zod';
-import { chartConfigSchema } from './chart';
+import { chartConfigInputSchema, chartConfigSchema } from './chart';
 import { isoTimestamp } from './common';
 import { myPermissionSchema } from './share';
+import {
+  MAX_DASHBOARD_WIDGETS,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_SQL_LENGTH,
+} from './limits';
 
 /**
  * Dashboard 機能（クエリ結果とチャートのパネルをグリッド配置する画面）の契約を
@@ -122,20 +129,39 @@ export const dashboardListItemSchema = z.object({
 /** 一覧項目の推論型。 */
 export type DashboardListItem = z.infer<typeof dashboardListItemSchema>;
 
+// 保存済み response の互換性は保ち、作成と更新で受け付ける widget だけを有界にする。
+const queryWidgetInputSchema = queryWidgetSchema.extend({
+  id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  savedQueryId: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  title: z.string().max(MAX_NAME_LENGTH).optional(),
+  chart: chartConfigInputSchema.optional(),
+  counter: counterConfigSchema
+    .extend({ label: z.string().max(MAX_NAME_LENGTH).optional() })
+    .optional(),
+});
+const textWidgetInputSchema = textWidgetSchema.extend({
+  id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  text: z.string().max(MAX_SQL_LENGTH),
+});
+const dashboardWidgetInputSchema = z.discriminatedUnion('kind', [
+  queryWidgetInputSchema,
+  textWidgetInputSchema,
+]);
+
 /** `POST /api/dashboards` のリクエストボディ。widgets 省略時は空で作成される。 */
 export const createDashboardRequestSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  widgets: z.array(dashboardWidgetSchema).optional(),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+  widgets: z.array(dashboardWidgetInputSchema).max(MAX_DASHBOARD_WIDGETS).optional(),
 });
 /** 作成リクエストの推論型。 */
 export type CreateDashboardRequest = z.infer<typeof createDashboardRequestSchema>;
 
 /** `PUT /api/dashboards/:id` のリクエストボディ（可変フィールドの全置換）。 */
 export const updateDashboardRequestSchema = z.object({
-  name: z.string().min(1),
-  description: z.string(),
-  widgets: z.array(dashboardWidgetSchema),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH),
+  widgets: z.array(dashboardWidgetInputSchema).max(MAX_DASHBOARD_WIDGETS),
 });
 /** 更新リクエストの推論型。 */
 export type UpdateDashboardRequest = z.infer<typeof updateDashboardRequestSchema>;

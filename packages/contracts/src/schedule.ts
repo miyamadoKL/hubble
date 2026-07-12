@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isoTimestamp } from './common';
+import { MAX_IDENTIFIER_LENGTH, MAX_NAME_LENGTH, MAX_SQL_LENGTH } from './limits';
 
 /**
  * Query scheduling models (Query Scheduling feature).
@@ -225,11 +226,11 @@ export type Schedule = z.infer<typeof scheduleSchema>;
  * `POST /api/schedules`（新規作成）のリクエストボディ。
  */
 export const createScheduleRequestSchema = z.object({
-  name: z.string().min(1),
-  statement: z.string().min(1),
-  catalog: z.string().optional(),
-  schema: z.string().optional(),
-  cron: cronExpression,
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  statement: z.string().min(1).max(MAX_SQL_LENGTH),
+  catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  cron: cronExpression.max(MAX_IDENTIFIER_LENGTH),
   // 省略時は有効（enabled=true）として作成される（server 側の既定値に依存）。
   enabled: z.boolean().optional(),
   // 省略時は defaultRetryPolicy が適用される。
@@ -238,7 +239,7 @@ export const createScheduleRequestSchema = z.object({
   notifications: scheduleNotificationsSchema.optional(),
   /** Target datasource id. Omitted = default at create time. */
   // 実行先データソース id。省略時は作成時に既定データソースを保存する。
-  datasourceId: z.string().optional(),
+  datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
 });
 /** スケジュール作成リクエストの推論型。 */
 export type CreateScheduleRequest = z.infer<typeof createScheduleRequestSchema>;
@@ -255,15 +256,15 @@ export type CreateScheduleRequest = z.infer<typeof createScheduleRequestSchema>;
  */
 export const updateScheduleRequestSchema = z
   .object({
-    name: z.string().min(1).optional(),
-    statement: z.string().min(1).optional(),
-    catalog: z.string().nullable().optional(),
-    schema: z.string().nullable().optional(),
-    cron: cronExpression.optional(),
+    name: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
+    statement: z.string().min(1).max(MAX_SQL_LENGTH).optional(),
+    catalog: z.string().max(MAX_IDENTIFIER_LENGTH).nullable().optional(),
+    schema: z.string().max(MAX_IDENTIFIER_LENGTH).nullable().optional(),
+    cron: cronExpression.max(MAX_IDENTIFIER_LENGTH).optional(),
     enabled: z.boolean().optional(),
     retry: retryPolicySchema.optional(),
     notifications: scheduleNotificationsSchema.optional(),
-    datasourceId: z.string().optional(),
+    datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   })
   // 更新対象フィールドが 1 つも指定されていない空リクエストを拒否する。
   .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });

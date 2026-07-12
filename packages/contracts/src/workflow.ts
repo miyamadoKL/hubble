@@ -2,6 +2,12 @@ import { z } from 'zod';
 import { isoTimestamp } from './common';
 import { queryColumnSchema } from './query';
 import { cronExpression, retryPolicySchema } from './schedule';
+import {
+  MAX_DESCRIPTION_LENGTH,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_SQL_LENGTH,
+} from './limits';
 
 /**
  * クエリワークフロー機能の契約を定義するファイル。
@@ -64,6 +70,21 @@ export const workflowDefinitionSchema = z
     }
   });
 export type WorkflowDefinition = z.infer<typeof workflowDefinitionSchema>;
+
+const workflowStepInputSchema = workflowStepSchema.extend({
+  id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  statement: z.string().min(1).max(MAX_SQL_LENGTH),
+  datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+});
+const workflowStageInputSchema = workflowStageSchema.extend({
+  steps: z.array(workflowStepInputSchema).min(1).max(8),
+});
+const workflowDefinitionInputSchema = workflowDefinitionSchema.and(
+  z.array(workflowStageInputSchema),
+);
 
 /** ワークフロー実行の終端ステータス。 */
 export const workflowRunStatusSchema = z.enum([
@@ -152,11 +173,11 @@ export type Workflow = z.infer<typeof workflowSchema>;
 
 /** POST /api/workflows のリクエストボディ。 */
 export const createWorkflowRequestSchema = z.object({
-  name: z.string().min(1).max(200),
-  description: z.string().optional(),
-  stages: workflowDefinitionSchema,
-  datasourceId: z.string().optional(),
-  cron: cronExpression.nullable().optional(),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+  stages: workflowDefinitionInputSchema,
+  datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  cron: cronExpression.max(MAX_IDENTIFIER_LENGTH).nullable().optional(),
   enabled: z.boolean().optional(),
   retry: retryPolicySchema.optional(),
 });
@@ -165,11 +186,11 @@ export type CreateWorkflowRequest = z.infer<typeof createWorkflowRequestSchema>;
 /** PATCH /api/workflows/:id のリクエストボディ (部分更新)。 */
 export const updateWorkflowRequestSchema = z
   .object({
-    name: z.string().min(1).max(200).optional(),
-    description: z.string().optional(),
-    stages: workflowDefinitionSchema.optional(),
-    datasourceId: z.string().optional(),
-    cron: cronExpression.nullable().optional(),
+    name: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
+    description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+    stages: workflowDefinitionInputSchema.optional(),
+    datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+    cron: cronExpression.max(MAX_IDENTIFIER_LENGTH).nullable().optional(),
     enabled: z.boolean().optional(),
     retry: retryPolicySchema.optional(),
   })

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { S3Client } from '@aws-sdk/client-s3';
 import type { QueryRowsPage, QuerySnapshot } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
@@ -59,6 +60,8 @@ class MemoryResultStore implements ResultStore {
     }
     return { deleted, failed: [] };
   }
+
+  async close(): Promise<void> {}
 }
 
 async function submitPersistQuery(
@@ -105,6 +108,73 @@ afterEach(() => {
 });
 
 describe('ResultStore persistence', () => {
+  it('waits for background result persistence during QueryService drain', async () => {
+    let releaseUpload!: () => void;
+    const uploadGate = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    const store = new MemoryResultStore();
+    const originalPut = store.put.bind(store);
+    vi.spyOn(store, 'put').mockImplementation(async (key, body) => {
+      await uploadGate;
+      await originalPut(key, body);
+    });
+    const ctx = await createTestContext({ scenarios: [manyRows(2)], resultStore: store });
+    await submitPersistQuery(ctx);
+
+    let drained = false;
+    const draining = ctx.services.queries.drain().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    releaseUpload();
+    await draining;
+    expect(drained).toBe(true);
+  });
+
+  it('does not start result upload while a query waits for an execution slot', async () => {
+    let releaseAdvance!: () => void;
+    const advanceGate = new Promise<void>((resolve) => {
+      releaseAdvance = resolve;
+    });
+    const store = new MemoryResultStore();
+    const put = vi.spyOn(store, 'put');
+    const ctx = await createTestContext({
+      scenarios: [manyRows(2)],
+      resultStore: store,
+      configOverrides: {
+        query: {
+          concurrency: 1,
+          maxQueued: 2,
+          maxQueuedPerPrincipal: 2,
+        } as never,
+      },
+    });
+    ctx.fake.holdAdvance = advanceGate;
+
+    const submit = async (): Promise<string> => {
+      const response = await ctx.app.request('/api/queries', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ statement: 'SELECT * FROM persist' }),
+      });
+      expect(response.status).toBe(202);
+      return ((await response.json()) as { queryId: string }).queryId;
+    };
+    const firstId = await submit();
+    await vi.waitFor(() => expect(put).toHaveBeenCalledOnce());
+    const queuedId = await submit();
+    expect(ctx.services.registry.get(queuedId)?.state).toBe('queued');
+    expect(put).toHaveBeenCalledOnce();
+
+    await ctx.services.registry.get(queuedId)!.requestCancel();
+    await ctx.services.registry.get(queuedId)!.settled;
+    expect(put).toHaveBeenCalledOnce();
+    releaseAdvance();
+    await ctx.services.registry.get(firstId)!.settled;
+  });
+
   it('waits for downstream drain without retaining one promise per row', async () => {
     let releaseUpload!: () => void;
     const uploadGate = new Promise<void>((resolve) => {
@@ -126,6 +196,7 @@ describe('ResultStore persistence', () => {
       async deleteExpired() {
         return { deleted: [], failed: [] };
       },
+      async close() {},
     };
     const capture = new ResultJsonlCapture(store, 'blocked.jsonl.gz');
     capture.writeColumns(COLUMNS);
@@ -318,6 +389,7 @@ defaultRole: allowed
       async deleteExpired() {
         return { deleted: [], failed: [] };
       },
+      async close() {},
     };
     const logWarn = vi.fn();
     const ctx = await createTestContext({
@@ -352,7 +424,9 @@ describe('S3ResultStore', () => {
 
   it('uses real SDK client and command classes without connecting', async () => {
     const commands: string[] = [];
+    const destroy = vi.fn();
     const fakeClient = {
+      destroy,
       send: async (command: object) => {
         commands.push(command.constructor.name);
         if (command.constructor.name === 'GetObjectCommand') {
@@ -377,8 +451,24 @@ describe('S3ResultStore', () => {
     await store.put('prefix/q.jsonl.gz', Readable.from(Buffer.from('x')));
     await store.getStream('prefix/q.jsonl.gz');
     await store.delete('prefix/q.jsonl.gz');
+    await store.close();
 
     expect(uploaded[0]).toMatchObject({ bucket: 'bucket', key: 'prefix/q.jsonl.gz' });
     expect(commands).toEqual(['GetObjectCommand', 'DeleteObjectCommand']);
+    expect(destroy).not.toHaveBeenCalled();
+  });
+
+  it('destroys only its internally created SDK client and closes idempotently', async () => {
+    const destroy = vi.spyOn(S3Client.prototype, 'destroy').mockImplementation(() => undefined);
+    try {
+      const store = new S3ResultStore({ bucket: 'bucket', region: 'us-east-1' });
+
+      await store.close();
+      await store.close();
+
+      expect(destroy).toHaveBeenCalledOnce();
+    } finally {
+      destroy.mockRestore();
+    }
   });
 });

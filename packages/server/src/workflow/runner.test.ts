@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -23,6 +23,7 @@ import { WorkflowRunner } from './runner';
 import { AuditLogger, AuditRepository } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { NoneResultStore } from '../resultStore';
+import { JobAdmissionController } from '../schedule/admission';
 
 const VALIDATE_OK: FakeScenario = {
   match: 'EXPLAIN (TYPE VALIDATE)',
@@ -59,11 +60,46 @@ class MemoryResultStore implements ResultStore {
     return Readable.from(data);
   }
 
-  async delete(): Promise<void> {}
+  async delete(key: string): Promise<void> {
+    this.objects.delete(key);
+  }
 
   async deleteExpired(objects: { key: string }[]) {
     for (const object of objects) this.objects.delete(object.key);
     return { deleted: objects.map((o) => o.key), failed: [] };
+  }
+
+  async close(): Promise<void> {}
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+class GatedResultStore extends MemoryResultStore {
+  private readonly uploadGate = deferred();
+  private readonly uploadReached = deferred();
+
+  readonly reachedUpload = this.uploadReached.promise;
+  deleteFailure?: Error;
+
+  override async put(key: string, body: Readable): Promise<void> {
+    await super.put(key, body);
+    this.uploadReached.resolve();
+    await this.uploadGate.promise;
+  }
+
+  releaseUpload(): void {
+    this.uploadGate.resolve();
+  }
+
+  override async delete(key: string): Promise<void> {
+    if (this.deleteFailure) throw this.deleteFailure;
+    await super.delete(key);
   }
 }
 
@@ -87,10 +123,11 @@ async function makeHarness(
     guardMode?: 'off' | 'warn' | 'enforce';
     governance?: 'off' | 'on';
     runnerEnabled?: boolean;
+    maxConcurrent?: number;
   } = {},
   getRbac?: () => LoadedRbac,
   resultStore?: ResultStore,
-  onSleep?: () => void,
+  onSleep?: () => void | Promise<void>,
 ): Promise<Harness> {
   const db = await openMemoryDatabase();
   const fake = new FakeTrino(scenarios);
@@ -153,18 +190,18 @@ async function makeHarness(
     resultKeyPrefix: 'hubble-results/',
     resultTtlDays: 7,
     githubGovernance,
+    admission: new JobAdmissionController(configOverrides.maxConcurrent ?? 2),
     config: {
       enabled: configOverrides.runnerEnabled ?? false,
       tickSeconds: 15,
-      maxConcurrent: 2,
+      maxConcurrent: configOverrides.maxConcurrent ?? 2,
       runsRetention: 50,
       guardMode: configOverrides.guardMode ?? 'warn',
     },
     now,
-    sleep: (ms) => {
-      onSleep?.();
+    sleep: async (ms) => {
       sleeps.push(ms);
-      return Promise.resolve();
+      await onSleep?.();
     },
   });
   return {
@@ -235,6 +272,83 @@ describe('WorkflowRunner', () => {
     expect(executed.indexOf('STAGE1_C')).toBeGreaterThan(
       Math.max(executed.indexOf('STAGE0_A'), executed.indexOf('STAGE0_B')),
     );
+  });
+
+  it('limits parallel stage statements with the shared admission capacity', async () => {
+    const store = new GatedResultStore();
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'LIMITED_A',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+        {
+          match: 'LIMITED_B',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[2]] }],
+        },
+      ],
+      { maxConcurrent: 1 },
+      undefined,
+      store,
+    );
+    const workflow = await h.workflows.create('alice', {
+      name: 'bounded stage',
+      stages: workflowDefinitionSchema.parse([
+        {
+          steps: [
+            { id: 'st_a', name: 'A', statement: 'LIMITED_A' },
+            { id: 'st_b', name: 'B', statement: 'LIMITED_B' },
+          ],
+        },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+
+    const { runId } = await h.runner.runManual(workflow);
+    await store.reachedUpload;
+    expect(executedStatements(h.fake)).toHaveLength(1);
+    store.releaseUpload();
+    await h.runner.whenIdle();
+
+    expect(executedStatements(h.fake)).toHaveLength(2);
+    expect((await h.runs.getRun(runId))?.status).toBe('success');
+  });
+
+  it('waits for a manual workflow that is still creating its DB claim', async () => {
+    h = await makeHarness([VALIDATE_OK]);
+    const workflow = await h.workflows.create('alice', {
+      name: 'claim pending',
+      stages: workflowDefinitionSchema.parse([
+        { steps: [{ id: 'st_pending', name: 'Pending', statement: 'SELECT 1' }] },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const gate = deferred();
+    const startReached = deferred();
+    const originalStart = h.runs.startRun.bind(h.runs);
+    const start = vi.spyOn(h.runs, 'startRun').mockImplementation(async (...args) => {
+      startReached.resolve();
+      await gate.promise;
+      return originalStart(...args);
+    });
+
+    const manual = h.runner.runManual(workflow);
+    await startReached.promise;
+    let stopped = false;
+    const stopping = h.runner.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    gate.resolve();
+    const { runId } = await manual;
+    await stopping;
+    const run = await h.runs.getRun(runId);
+    expect(run?.status).toBe('aborted');
+    expect(run?.steps[0]?.status).toBe('skipped');
+    start.mockRestore();
   });
 
   it('stops on stop-policy failure and skips later steps', async () => {
@@ -331,7 +445,7 @@ describe('WorkflowRunner', () => {
     const w = await h.workflows.create('alice', {
       name: 'retry',
       stages: workflowDefinitionSchema.parse([
-        { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_FLAKY' }] },
+        { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1 /* SELECT_FLAKY */' }] },
       ]),
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       datasourceId: DEFAULT_DATASOURCE_ID,
@@ -342,6 +456,85 @@ describe('WorkflowRunner', () => {
     expect(run?.status).toBe('success');
     expect(run?.steps[0]?.attempt).toBe(2);
     expect(h.sleeps).toEqual([30_000]);
+  });
+
+  it('records an aborted run when shutdown interrupts retry backoff', async () => {
+    const sleepGate = deferred();
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'BACKOFF_ABORT',
+          error: { message: 'temporary failure', errorType: 'INTERNAL_ERROR' },
+        },
+      ],
+      {},
+      undefined,
+      new NoneResultStore(),
+      () => sleepGate.promise,
+    );
+    const workflow = await h.workflows.create('alice', {
+      name: 'backoff abort',
+      stages: workflowDefinitionSchema.parse([
+        {
+          steps: [{ id: 'st_abort', name: 'Abort', statement: 'SELECT 1 /* BACKOFF_ABORT */' }],
+        },
+      ]),
+      retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const { runId } = await h.runner.runManual(workflow);
+    await vi.waitFor(() => expect(h.sleeps).toEqual([30_000]));
+
+    await h.runner.stop();
+    const run = await h.runs.getRun(runId);
+    expect(run?.status).toBe('aborted');
+    expect(run?.steps[0]?.status).toBe('aborted');
+    sleepGate.resolve();
+  });
+
+  it('does not retry a write step after the engine accepts it and loses the response', async () => {
+    h = await makeHarness([
+      VALIDATE_OK,
+      {
+        match: 'WRITE_RESPONSE_LOST',
+        transportError: {
+          message: 'response lost after commit',
+          status: 503,
+        },
+      },
+    ]);
+    const workflow = await h.workflows.create('alice', {
+      name: 'write once',
+      stages: workflowDefinitionSchema.parse([
+        {
+          steps: [
+            {
+              id: 'st_write',
+              name: 'Write',
+              statement: 'UPDATE audit_log SET value = 1 /* WRITE_RESPONSE_LOST */',
+            },
+          ],
+        },
+      ]),
+      retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+
+    const { runId } = await h.runner.runManual(workflow);
+    await h.runner.whenIdle();
+
+    const acceptedWrites = h.fake.requests.filter(
+      (request) =>
+        request.method === 'POST' &&
+        request.body?.includes('WRITE_RESPONSE_LOST') &&
+        !request.body.startsWith('EXPLAIN'),
+    );
+    const run = await h.runs.getRun(runId);
+    expect(acceptedWrites).toHaveLength(1);
+    expect(run?.status).toBe('failed');
+    expect(run?.steps[0]?.attempt).toBe(1);
+    expect(h.sleeps).toEqual([]);
   });
 
   it('blocks step when Query Guard enforces a block', async () => {
@@ -453,6 +646,85 @@ defaultRole: trino-prod-only
     expect(step.rowCount).toBe(2);
     const keys = [...store.objects.keys()];
     expect(keys.some((k) => k.includes(runId) && k.includes(step.id))).toBe(true);
+  });
+
+  it('does not record success when shutdown arrives during result upload', async () => {
+    const store = new GatedResultStore();
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'UPLOAD_ABORT',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      {},
+      undefined,
+      store,
+    );
+    const workflow = await h.workflows.create('alice', {
+      name: 'upload abort',
+      stages: workflowDefinitionSchema.parse([
+        { steps: [{ id: 'st_upload', name: 'Upload', statement: 'UPLOAD_ABORT' }] },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const { runId } = await h.runner.runManual(workflow);
+    await store.reachedUpload;
+
+    const stopping = h.runner.stop();
+    store.releaseUpload();
+    await stopping;
+
+    const run = await h.runs.getRun(runId);
+    expect(run?.status).toBe('aborted');
+    expect(run?.steps[0]?.status).toBe('aborted');
+    expect(run?.steps[0]?.resultAvailable).toBe(false);
+    expect(store.objects.size).toBe(0);
+  });
+
+  it('keeps a retryable expiry reference when aborted result deletion fails', async () => {
+    const store = new GatedResultStore();
+    store.deleteFailure = new Error('S3 delete unavailable');
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'UPLOAD_DELETE_FAIL',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      {},
+      undefined,
+      store,
+    );
+    const workflow = await h.workflows.create('alice', {
+      name: 'upload delete fail',
+      stages: workflowDefinitionSchema.parse([
+        {
+          steps: [
+            { id: 'st_upload', name: 'Upload', statement: 'SELECT 1 /* UPLOAD_DELETE_FAIL */' },
+          ],
+        },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const { runId } = await h.runner.runManual(workflow);
+    await store.reachedUpload;
+
+    const stopping = h.runner.stop();
+    store.releaseUpload();
+    await stopping;
+
+    const run = await h.runs.getRun(runId);
+    const step = run!.steps[0]!;
+    const storedStep = await h.runs.getStepRun(runId, step.id);
+    expect(run?.status).toBe('aborted');
+    expect(step.status).toBe('aborted');
+    expect(storedStep?.resultObjectKey).toBe([...store.objects.keys()][0]);
+    expect(await h.runs.listExpiredResults(new Date(h.now()).toISOString())).toEqual([
+      { id: step.id, resultObjectKey: storedStep?.resultObjectKey },
+    ]);
   });
 
   it('aborts orphan runs on start', async () => {

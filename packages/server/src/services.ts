@@ -60,6 +60,8 @@ import { GithubSyncScheduler } from './github/syncScheduler';
 import { createAiProvider, type AiProvider } from './ai/provider';
 import { AiService } from './ai/service';
 import { AiRateLimiter } from './ai/rateLimiter';
+import { JobAdmissionController } from './schedule/admission';
+import type { ShutdownDrainContext } from './shutdown/coordinator';
 
 export interface Services {
   config: ServerConfig;
@@ -106,6 +108,13 @@ export interface Services {
   reloadConfig: () => Promise<void>;
   /** 現在公開中のデータソース世代が参照する secret file。 */
   readonly datasourceDependencyFiles: readonly string[];
+  /** query と手動jobの新規受付を同期的に止める。 */
+  stopAdmission: () => void;
+  /** worker、query、非同期永続化を期限までdrainする。 */
+  drain: (context: ShutdownDrainContext) => Promise<void>;
+  /** engine、ResultStore、通知、DBを一件の失敗で中断せずcloseする。 */
+  closeResources: () => Promise<void>;
+  /** HTTP serverを持たないテストなどで使う一括停止。 */
   shutdown: () => Promise<void>;
 }
 
@@ -126,6 +135,7 @@ export interface BuildServicesOptions {
   reloadLogError?: (message: string, err: unknown) => void;
   reloadLogWarn?: (message: string) => void;
   auditLogError?: (message: string, err: unknown) => void;
+  /** 注入した ResultStore の所有権は Services へ移り、shutdown時にcloseされる。 */
   resultStore?: ResultStore;
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
@@ -218,6 +228,9 @@ export async function buildServices(
     defaultDatasourceId: runtime.defaultDatasourceId,
     defaultMaxRows: config.query.maxRows,
     concurrency: config.query.concurrency,
+    maxQueued: config.query.maxQueued,
+    maxQueuedPerPrincipal: config.query.maxQueuedPerPrincipal,
+    maxTracked: config.query.maxTracked,
     ttlMs: config.query.ttlMinutes * 60_000,
     defaultOverflowMode: config.query.overflowMode,
     now: options.now,
@@ -254,6 +267,7 @@ export async function buildServices(
   const workflows = new WorkflowRepository(db);
   const workflowRuns = new WorkflowRunRepository(db, config.scheduler.runsRetention);
   const documentGitLinks = new DocumentGitLinkRepository(db);
+  const jobAdmission = new JobAdmissionController(config.scheduler.maxConcurrent);
   const githubGovernance = new GithubGovernanceService({
     config: config.github,
     links: documentGitLinks,
@@ -272,6 +286,7 @@ export async function buildServices(
     guardConfig: config.guard,
     audit,
     notifications,
+    admission: jobAdmission,
     config: {
       enabled: config.scheduler.enabled,
       tickSeconds: config.scheduler.tickSeconds,
@@ -293,6 +308,7 @@ export async function buildServices(
     getRbac: () => rbacState.current,
     guardConfig: config.guard,
     audit,
+    admission: jobAdmission,
     config: {
       enabled: config.scheduler.enabled,
       tickSeconds: config.scheduler.tickSeconds,
@@ -325,6 +341,7 @@ export async function buildServices(
       config.resultStore.kind === 's3' ? config.resultStore.prefix : 'hubble-results/',
     resultTtlDays: config.resultStore.ttlDays,
     githubGovernance,
+    admission: jobAdmission,
     config: {
       enabled: config.scheduler.enabled,
       tickSeconds: config.scheduler.tickSeconds,
@@ -483,6 +500,87 @@ export async function buildServices(
     }
   };
 
+  let drainPromise: Promise<void> | undefined;
+  let closeResourcesPromise: Promise<void> | undefined;
+  let shutdownPromise: Promise<void> | undefined;
+  const stopAdmission = (): void => {
+    registry.stopAccepting();
+    jobAdmission.stopAccepting();
+  };
+  const drain = (context: ShutdownDrainContext): Promise<void> => {
+    if (drainPromise) return drainPromise;
+    stopAdmission();
+    const tasks: Promise<unknown>[] = [
+      resultExpiry.stop(),
+      githubSyncScheduler?.stop() ?? Promise.resolve(),
+      workflowRunner.stop(),
+      alertEvaluator.stop(),
+      alertDeliveryWorker.stop(),
+      scheduler.stop(),
+      registry.shutdown({ deadlineAt: context.deadlineAt }).then((result) => {
+        if (result.timedOut) throw new Error('Query registry drain timed out');
+      }),
+      jobAdmission.whenIdle(),
+      queries.drain(),
+    ];
+    drainPromise = settleServiceTasks(tasks, context, 'Service drain');
+    return drainPromise;
+  };
+  const closeResources = (): Promise<void> => {
+    if (closeResourcesPromise) return closeResourcesPromise;
+    closeResourcesPromise = (async () => {
+      const errors: unknown[] = [];
+      const enginesToClose = [...new Set(engines.values())];
+      const ownedNotifications =
+        options.notificationSender === undefined
+          ? (notifications as NotificationService)
+          : undefined;
+      const closeOperations: Array<() => void | Promise<void>> = [
+        ...enginesToClose.map((engine) => () => engine.close()),
+        () => resultStore.close(),
+      ];
+      if (ownedNotifications !== undefined) {
+        closeOperations.push(() => ownedNotifications.close());
+      }
+      const resourceResults = await Promise.allSettled(
+        closeOperations.map((operation) => Promise.resolve().then(operation)),
+      );
+      errors.push(...rejectedReasons(resourceResults));
+
+      // DB は他のclose失敗にかかわらず最後に一度だけ閉じる。
+      const databaseResult = await Promise.allSettled([Promise.resolve().then(() => db.close())]);
+      errors.push(...rejectedReasons(databaseResult));
+      if (errors.length > 0) {
+        throw new AggregateError(errors, 'Service resource close failed');
+      }
+    })();
+    return closeResourcesPromise;
+  };
+  const shutdown = (): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+    stopAdmission();
+    const abort = new AbortController();
+    const context: ShutdownDrainContext = {
+      deadlineAt: Date.now() + config.shutdownTimeoutMs,
+      signal: abort.signal,
+    };
+    shutdownPromise = (async () => {
+      const timeout = setTimeout(() => abort.abort(), config.shutdownTimeoutMs);
+      timeout.unref?.();
+      try {
+        const errors: unknown[] = [];
+        const drained = await Promise.allSettled([drain(context)]);
+        errors.push(...rejectedReasons(drained));
+        const closed = await Promise.allSettled([closeResources()]);
+        errors.push(...rejectedReasons(closed));
+        if (errors.length > 0) throw new AggregateError(errors, 'Service shutdown failed');
+      } finally {
+        clearTimeout(timeout);
+      }
+    })();
+    return shutdownPromise;
+  };
+
   return {
     config,
     get rbac() {
@@ -528,15 +626,45 @@ export async function buildServices(
     get datasourceDependencyFiles() {
       return [...datasourceDependencyFiles];
     },
-    shutdown: async () => {
-      resultExpiry.stop();
-      await githubSyncScheduler?.stop();
-      await workflowRunner.stop();
-      await alertEvaluator.stop();
-      await alertDeliveryWorker.stop();
-      await scheduler.stop();
-      await registry.shutdown();
-      await db.close();
-    },
+    stopAdmission,
+    drain,
+    closeResources,
+    shutdown,
   };
+}
+
+function rejectedReasons(results: PromiseSettledResult<unknown>[]): unknown[] {
+  return results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
+}
+
+async function settleServiceTasks(
+  tasks: Promise<unknown>[],
+  context: ShutdownDrainContext,
+  label: string,
+): Promise<void> {
+  const allSettled = Promise.allSettled(tasks);
+  const remainingMs = context.deadlineAt - Date.now();
+  if (remainingMs <= 0 || context.signal.aborted) {
+    throw new Error(`${label} timed out`);
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let removeAbort: (() => void) | undefined;
+  try {
+    const results = await Promise.race([
+      allSettled,
+      new Promise<never>((_resolve, reject) => {
+        const fail = (): void => reject(new Error(`${label} timed out`));
+        timer = setTimeout(fail, remainingMs);
+        timer.unref?.();
+        context.signal.addEventListener('abort', fail, { once: true });
+        removeAbort = () => context.signal.removeEventListener('abort', fail);
+      }),
+    ]);
+    const errors = rejectedReasons(results);
+    if (errors.length > 0) throw new AggregateError(errors, `${label} failed`);
+  } finally {
+    if (timer) clearTimeout(timer);
+    removeAbort?.();
+  }
 }

@@ -3,6 +3,7 @@
  */
 import type { AlertChannelNotificationSender } from '../notification/service';
 import type { AlertDeliveryJob, AlertDeliveryRepository } from '../store/alertDeliveries';
+import { PeriodicRunner } from '../util/periodicRunner';
 
 const CLAIM_LIMIT = 50;
 
@@ -21,40 +22,33 @@ export interface AlertDeliveryWorkerDeps {
   logWarn?: (message: string, detail?: unknown) => void;
 }
 
-function defaultSetTimer(fn: () => void, ms: number): { clear: () => void } {
-  const handle = setTimeout(fn, ms);
-  handle.unref?.();
-  return { clear: () => clearTimeout(handle) };
-}
-
 /** 単一プロセス内でAlert通知配送を直列実行する。 */
 export class AlertDeliveryWorker {
   private readonly now: () => number;
-  private readonly setTimer: (fn: () => void, ms: number) => { clear: () => void };
   private readonly logWarn: (message: string, detail?: unknown) => void;
-  private timer?: { clear: () => void };
+  private readonly periodic: PeriodicRunner;
   private running?: Promise<void>;
-  private started = false;
-  private stopping = false;
 
   constructor(private readonly deps: AlertDeliveryWorkerDeps) {
     this.now = deps.now ?? Date.now;
-    this.setTimer = deps.setTimer ?? defaultSetTimer;
     this.logWarn = deps.logWarn ?? ((message, detail) => console.warn(message, detail));
+    this.periodic = new PeriodicRunner({
+      intervalMs: deps.config.intervalMs,
+      task: () => this.tick(),
+      logError: (message, error) => this.logWarn(message, error),
+      errorMessage: 'alert delivery: periodic tick failed',
+      ...(deps.setTimer ? { setTimer: deps.setTimer } : {}),
+    });
   }
 
   /** workerの周期実行を開始する。 */
   start(): void {
-    if (this.started) return;
-    this.started = true;
-    this.schedule();
+    this.periodic.start();
   }
 
   /** 新規tickを止め、実行中の配送完了を待つ。 */
   async stop(): Promise<void> {
-    this.stopping = true;
-    this.timer?.clear();
-    this.timer = undefined;
+    await this.periodic.stop();
     await this.running;
   }
 
@@ -66,13 +60,6 @@ export class AlertDeliveryWorker {
     });
     this.running = running;
     return running;
-  }
-
-  private schedule(): void {
-    if (this.stopping) return;
-    this.timer = this.setTimer(() => {
-      void this.tick().finally(() => this.schedule());
-    }, this.deps.config.intervalMs);
   }
 
   private async runTick(): Promise<void> {

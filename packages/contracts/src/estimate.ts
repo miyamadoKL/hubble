@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_IDENTIFIER_LENGTH, MAX_SQL_LENGTH } from './limits';
 
 /**
  * Query Guard estimate model (Query Guard feature).
@@ -20,14 +21,14 @@ import { z } from 'zod';
  */
 export const estimateRequestSchema = z.object({
   // 見積もり対象の SQL 文。
-  statement: z.string().min(1),
+  statement: z.string().min(1).max(MAX_SQL_LENGTH),
   // 実行時に使用するカタログ名（省略可）。
-  catalog: z.string().optional(),
+  catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   // 実行時に使用するスキーマ名（省略可）。
-  schema: z.string().optional(),
+  schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   /** Target datasource id. Omitted = default (first configured datasource). */
   // 見積もり対象のデータソース id。省略時は既定データソース。
-  datasourceId: z.string().optional(),
+  datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
 });
 /** 見積もりリクエストの推論型。 */
 export type EstimateRequest = z.infer<typeof estimateRequestSchema>;

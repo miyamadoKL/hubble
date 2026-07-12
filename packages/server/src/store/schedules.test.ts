@@ -8,7 +8,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { dbBackends } from '../test/dbBackends';
 import { DEFAULT_DATASOURCE_ID } from '../test/testEngine';
-import { ScheduleRepository, ScheduleRunRepository } from './schedules';
+import {
+  ScheduleRepository,
+  ScheduleRunClaimConflictError,
+  ScheduleRunRepository,
+} from './schedules';
 
 const ds = { datasourceId: DEFAULT_DATASOURCE_ID };
 
@@ -210,6 +214,32 @@ for (const backend of dbBackends) {
     });
 
     describe('ScheduleRunRepository', () => {
+      it('atomically claims one running row for concurrent requests', async () => {
+        const db2 = await open();
+        const schedules = new ScheduleRepository(db2);
+        const runs = new ScheduleRunRepository(db2, 50);
+        const schedule = await schedules.create('alice', {
+          name: 'claim',
+          statement: 'SELECT 1',
+          cron: '* * * * *',
+          ...ds,
+        });
+        const input = {
+          scheduleId: schedule.id,
+          owner: 'alice',
+          scheduledFor: '2026-01-01T00:00:00.000Z',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        };
+
+        const claims = await Promise.allSettled([runs.start(input), runs.start(input)]);
+        expect(claims.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+        expect(claims.filter((result) => result.status === 'rejected')).toHaveLength(1);
+        expect(claims.find((result) => result.status === 'rejected')).toMatchObject({
+          reason: expect.any(ScheduleRunClaimConflictError),
+        });
+        expect(await runs.list(schedule.id, 10)).toHaveLength(1);
+      });
+
       // start→finish で状態が running→終端に遷移すること、list() が
       // 新しい順に並ぶこと、abortOrphans() が running のまま残った行を
       // aborted にすることを検証する。

@@ -15,8 +15,9 @@ export interface FileReloadOptions {
   logError?: (message: string, err: unknown) => void;
 }
 
+/** ファイル監視の更新、即時 reload、停止と drain を操作するハンドル。 */
 export interface FileReloadHandle {
-  stop: () => void;
+  stop: () => Promise<void>;
   triggerReload: () => void;
   updateFiles: (files: WatchedFile[]) => void;
 }
@@ -44,23 +45,26 @@ export function startFileReload(
     if (st) lastMtime.set(file.path, st.mtimeMs);
   }
 
-  let reloading = false;
+  let reloadPromise: Promise<void> | undefined;
+  let stopped = false;
   const runReload = (): void => {
-    if (reloading) return;
-    reloading = true;
-    void (async () => {
-      try {
+    if (stopped || reloadPromise) return;
+    const currentReload = Promise.resolve()
+      .then(async () => {
         const reloads = new Set(watchedFiles.map((f) => f.reload));
         await Promise.all([...reloads].map((reload) => Promise.resolve(reload())));
-      } catch (err) {
+      })
+      .catch((err: unknown) => {
         logError('config reload failed', err);
-      } finally {
-        reloading = false;
-      }
-    })();
+      })
+      .finally(() => {
+        if (reloadPromise === currentReload) reloadPromise = undefined;
+      });
+    reloadPromise = currentReload;
   };
 
   const poll = (): void => {
+    if (stopped) return;
     let changed = false;
     for (const file of watchedFiles) {
       const st = stat(file.path);
@@ -106,13 +110,21 @@ export function startFileReload(
   };
   process.on('SIGHUP', onSighup);
 
+  let stopPromise: Promise<void> | undefined;
+  const stop = (): Promise<void> => {
+    if (stopPromise) return stopPromise;
+    stopped = true;
+    if (timer) clearInterval(timer);
+    process.off('SIGHUP', onSighup);
+    stopPromise = reloadPromise ?? Promise.resolve();
+    return stopPromise;
+  };
+
   return {
-    stop: () => {
-      if (timer) clearInterval(timer);
-      process.off('SIGHUP', onSighup);
-    },
+    stop,
     triggerReload: runReload,
     updateFiles: (nextFiles) => {
+      if (stopped) return;
       watchedFiles = nextFiles;
       const nextPaths = new Set(nextFiles.map((file) => file.path));
       for (const path of lastMtime.keys()) {

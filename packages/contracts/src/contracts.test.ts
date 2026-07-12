@@ -30,6 +30,7 @@ import {
   notebookSchema,
   createNotebookRequestSchema,
   updateNotebookRequestSchema,
+  createDashboardRequestSchema,
   savedQuerySchema,
   createSavedQueryRequestSchema,
   queryHistoryEntrySchema,
@@ -37,11 +38,18 @@ import {
   scheduleSchema,
   createScheduleRequestSchema,
   updateScheduleRequestSchema,
+  createWorkflowRequestSchema,
+  updateWorkflowRequestSchema,
   retryPolicySchema,
   scheduleNotificationsSchema,
   cronExpression,
   aiAssistRequestSchema,
   apiRoutes,
+  MAX_DASHBOARD_WIDGETS,
+  MAX_CHART_SERIES,
+  MAX_NOTEBOOK_CELLS,
+  MAX_SESSION_PROPERTIES,
+  MAX_SQL_LENGTH,
 } from './index';
 
 const ISO = '2026-06-12T10:00:00.000Z';
@@ -287,6 +295,18 @@ describe('query', () => {
 
   it('rejects an empty statement', () => {
     expect(createQueryRequestSchema.safeParse({ statement: '' }).success).toBe(false);
+  });
+
+  it('rejects an oversized statement and too many session properties', () => {
+    expect(
+      createQueryRequestSchema.safeParse({ statement: 'x'.repeat(MAX_SQL_LENGTH + 1) }).success,
+    ).toBe(false);
+    const sessionProperties = Object.fromEntries(
+      Array.from({ length: MAX_SESSION_PROPERTIES + 1 }, (_, index) => [`key_${index}`, 'value']),
+    );
+    expect(
+      createQueryRequestSchema.safeParse({ statement: 'SELECT 1', sessionProperties }).success,
+    ).toBe(false);
   });
 
   it('accepts all query states', () => {
@@ -636,6 +656,44 @@ describe('notebook', () => {
     expect(createNotebookRequestSchema.safeParse({ name: 'New' }).success).toBe(true);
   });
 
+  it('rejects oversized cell source and cell collections', () => {
+    expect(
+      createNotebookRequestSchema.safeParse({
+        name: 'New',
+        cells: [{ ...cell, source: 'x'.repeat(MAX_SQL_LENGTH + 1) }],
+      }).success,
+    ).toBe(false);
+    expect(
+      createNotebookRequestSchema.safeParse({
+        name: 'New',
+        cells: Array.from({ length: MAX_NOTEBOOK_CELLS + 1 }, (_, index) => ({
+          ...cell,
+          id: `cell_${index}`,
+        })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an oversized chart series collection', () => {
+    expect(
+      createNotebookRequestSchema.safeParse({
+        name: 'New',
+        cells: [
+          {
+            ...cell,
+            chart: {
+              type: 'lines',
+              xIndex: 0,
+              yIndices: Array.from({ length: MAX_CHART_SERIES + 1 }, () => 1),
+              sort: 'none',
+              limit: 100,
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects an UpdateNotebookRequest missing cells', () => {
     expect(
       updateNotebookRequestSchema.safeParse({
@@ -669,6 +727,83 @@ describe('savedQuery', () => {
     expect(createSavedQueryRequestSchema.safeParse({ name: 'x', statement: '' }).success).toBe(
       false,
     );
+  });
+
+  it('rejects an oversized saved statement', () => {
+    expect(
+      createSavedQueryRequestSchema.safeParse({
+        name: 'x',
+        statement: 'x'.repeat(MAX_SQL_LENGTH + 1),
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('dashboard input limits', () => {
+  it('rejects oversized text and widget collections', () => {
+    expect(
+      createDashboardRequestSchema.safeParse({
+        name: 'dashboard',
+        widgets: [
+          {
+            id: 'text_1',
+            kind: 'text',
+            position: { col: 0, row: 0, sizeX: 1, sizeY: 1 },
+            text: 'x'.repeat(MAX_SQL_LENGTH + 1),
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      createDashboardRequestSchema.safeParse({
+        name: 'dashboard',
+        widgets: Array.from({ length: MAX_DASHBOARD_WIDGETS + 1 }, (_, index) => ({
+          id: `text_${index}`,
+          kind: 'text',
+          position: { col: 0, row: index, sizeX: 1, sizeY: 1 },
+          text: 'text',
+        })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects oversized chart series and counter labels', () => {
+    const base = {
+      id: 'query_1',
+      kind: 'query',
+      position: { col: 0, row: 0, sizeX: 1, sizeY: 1 },
+      savedQueryId: 'saved_1',
+    } as const;
+    expect(
+      createDashboardRequestSchema.safeParse({
+        name: 'dashboard',
+        widgets: [
+          {
+            ...base,
+            viz: 'chart',
+            chart: {
+              type: 'lines',
+              xIndex: 0,
+              yIndices: Array.from({ length: MAX_CHART_SERIES + 1 }, () => 1),
+              sort: 'none',
+              limit: 100,
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      createDashboardRequestSchema.safeParse({
+        name: 'dashboard',
+        widgets: [
+          {
+            ...base,
+            viz: 'counter',
+            counter: { columnIndex: 0, label: 'x'.repeat(201) },
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -832,6 +967,14 @@ describe('schedule', () => {
     ).toBe(false);
   });
 
+  it('rejects oversized schedule SQL on create and update', () => {
+    const statement = 'x'.repeat(MAX_SQL_LENGTH + 1);
+    expect(
+      createScheduleRequestSchema.safeParse({ name: 'x', statement, cron: '* * * * *' }).success,
+    ).toBe(false);
+    expect(updateScheduleRequestSchema.safeParse({ statement }).success).toBe(false);
+  });
+
   it('rejects an empty UpdateScheduleRequest', () => {
     expect(updateScheduleRequestSchema.safeParse({}).success).toBe(false);
     expect(updateScheduleRequestSchema.safeParse({ enabled: false }).success).toBe(true);
@@ -842,6 +985,30 @@ describe('schedule', () => {
     expect(apiRoutes.schedule('sch_1')).toBe('/api/schedules/sch_1');
     expect(apiRoutes.scheduleRun('sch_1')).toBe('/api/schedules/sch_1/run');
     expect(apiRoutes.scheduleRuns('sch_1')).toBe('/api/schedules/sch_1/runs');
+  });
+});
+
+describe('workflow input limits', () => {
+  const stages = [
+    {
+      steps: [{ id: 'step_1', name: 'Step 1', statement: 'SELECT 1' }],
+    },
+  ];
+
+  it('rejects oversized workflow SQL on create and update', () => {
+    const oversizedStages = [
+      {
+        steps: [{ ...stages[0]!.steps[0]!, statement: 'x'.repeat(MAX_SQL_LENGTH + 1) }],
+      },
+    ];
+    expect(
+      createWorkflowRequestSchema.safeParse({ name: 'workflow', stages: oversizedStages }).success,
+    ).toBe(false);
+    expect(updateWorkflowRequestSchema.safeParse({ stages: oversizedStages }).success).toBe(false);
+  });
+
+  it('keeps valid workflow input accepted', () => {
+    expect(createWorkflowRequestSchema.safeParse({ name: 'workflow', stages }).success).toBe(true);
   });
 });
 

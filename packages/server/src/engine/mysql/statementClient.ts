@@ -12,6 +12,7 @@ import type { TrinoColumn, TrinoRequestContext, TrinoSessionMutations } from '..
 import { throwMysqlDriverError } from '../sql/errors';
 import { batchSize, buildPage, nextQueryId } from '../sql/response';
 import { RowStreamReader } from '../sql/streamReader';
+import { acquireSqlResource, createSqlAbortError, raceSqlAbort } from '../sql/abort';
 import type { MysqlPool } from './pool';
 
 export interface MysqlStatementClientOptions {
@@ -26,7 +27,6 @@ interface MysqlExecution {
   conn: PoolConnection;
   reader: RowStreamReader;
   columns?: TrinoColumn[];
-  threadId: number;
   rowCount: number;
   released: boolean;
   /** チェックアウト時に read only を上書きしたか。 */
@@ -73,16 +73,31 @@ export function createMysqlStatementClient(
     conn.release();
   };
 
-  const releaseExecution = async (exec: MysqlExecution): Promise<void> => {
+  const releaseExecution = async (exec: MysqlExecution, signal?: AbortSignal): Promise<void> => {
     if (exec.released) return;
-    exec.released = true;
-    executions.delete(exec.queryId);
     exec.reader.dispose();
-    await restoreAndReleaseConnection(exec.conn, exec.sessionReadOnlyApplied);
+    try {
+      if (exec.sessionReadOnlyApplied) {
+        await raceSqlAbort(
+          applyMysqlSessionReadOnly(exec.conn, options.datasourceReadOnly),
+          signal,
+          () => {
+            destroyExecution(exec);
+          },
+        );
+      }
+      if (exec.released) return;
+      exec.released = true;
+      executions.delete(exec.queryId);
+      exec.conn.release();
+    } catch (err) {
+      if (!exec.released) destroyExecution(exec);
+      throw err;
+    }
   };
 
   /** キャンセル等で進行中クエリが残る接続はプールへ返さず破棄する。 */
-  const destroyExecution = async (exec: MysqlExecution): Promise<void> => {
+  const destroyExecution = (exec: MysqlExecution): void => {
     if (exec.released) return;
     exec.released = true;
     executions.delete(exec.queryId);
@@ -90,17 +105,27 @@ export function createMysqlStatementClient(
     exec.conn.destroy();
   };
 
-  const checkout = async (): Promise<{ conn: PoolConnection; sessionReadOnlyApplied: boolean }> => {
-    const conn = await pool.getConnection();
+  const checkout = async (
+    signal?: AbortSignal,
+  ): Promise<{ conn: PoolConnection; sessionReadOnlyApplied: boolean }> => {
+    const conn = await acquireSqlResource(pool.getConnection(), signal, (lateConnection) => {
+      lateConnection.destroy();
+    });
+    let destroyed = false;
+    const destroy = (): void => {
+      if (destroyed) return;
+      destroyed = true;
+      conn.destroy();
+    };
     try {
       let sessionReadOnlyApplied = false;
       if (options.sessionReadOnly && !options.datasourceReadOnly) {
-        await applyMysqlSessionReadOnly(conn, true);
+        await raceSqlAbort(applyMysqlSessionReadOnly(conn, true), signal, destroy);
         sessionReadOnlyApplied = true;
       }
       return { conn, sessionReadOnlyApplied };
     } catch (err) {
-      conn.destroy();
+      if (!destroyed) conn.destroy();
       throw err;
     }
   };
@@ -117,16 +142,23 @@ export function createMysqlStatementClient(
       let conn: PoolConnection | undefined;
       let sessionReadOnlyApplied = false;
       let reader: RowStreamReader | undefined;
+      let ownsConnection = false;
+      const destroyLocalExecution = (): void => {
+        if (!conn || !ownsConnection) return;
+        ownsConnection = false;
+        reader?.dispose();
+        conn.destroy();
+      };
       try {
-        ({ conn, sessionReadOnlyApplied } = await checkout());
-        const threadId = conn.threadId ?? 0;
+        ({ conn, sessionReadOnlyApplied } = await checkout(signal));
+        ownsConnection = true;
         const rawConn = conn.connection as unknown as Connection;
         const stream = rawConn
           .query({ sql: statement, rowsAsArray: true })
           .stream({ highWaterMark: batchSize() });
 
         let columns: TrinoColumn[] | undefined;
-        await new Promise<void>((resolve, reject) => {
+        const fieldsReady = new Promise<void>((resolve, reject) => {
           stream.once('fields', (fields: FieldPacket[]) => {
             columns = fieldsToColumns(fields);
             resolve();
@@ -135,30 +167,36 @@ export function createMysqlStatementClient(
           // fields が来ないクエリもある。
           setTimeout(resolve, 0);
         });
+        await raceSqlAbort(fieldsReady, signal, destroyLocalExecution);
 
         reader = new RowStreamReader(stream, { batchSize: batchSize() });
-        const { rows, done } = await reader.readBatch(batchSize());
+        const { rows, done } = await raceSqlAbort(
+          reader.readBatch(batchSize()),
+          signal,
+          destroyLocalExecution,
+        );
         const exec: MysqlExecution = {
           queryId,
           conn,
           reader,
           columns,
-          threadId,
           rowCount: rows.length,
           released: false,
           sessionReadOnlyApplied,
         };
         executions.set(queryId, exec);
+        ownsConnection = false;
         conn = undefined;
 
         const nextUri = done ? undefined : queryId;
-        if (done) await releaseExecution(exec);
+        if (done) await releaseExecution(exec, signal);
         return buildPage(queryId, columns, rows, nextUri, exec.rowCount);
       } catch (err) {
         reader?.dispose();
-        if (conn) {
+        if (conn && ownsConnection) {
           await restoreAndReleaseConnection(conn, sessionReadOnlyApplied).catch(() => {});
         }
+        if (signal?.aborted) throw createSqlAbortError();
         throwMysqlDriverError(err);
       }
     },
@@ -169,19 +207,29 @@ export function createMysqlStatementClient(
       _mutations: TrinoSessionMutations,
       signal?: AbortSignal,
     ) {
-      if (signal?.aborted) throw new Error('Aborted');
       const exec = executions.get(nextUri);
       if (!exec) {
         return buildPage(nextUri, undefined, [], undefined, 0);
       }
+      if (signal?.aborted) {
+        destroyExecution(exec);
+        throw createSqlAbortError();
+      }
       try {
-        const { rows, done } = await exec.reader.readBatch(batchSize());
+        const { rows, done } = await raceSqlAbort(
+          exec.reader.readBatch(batchSize()),
+          signal,
+          () => {
+            destroyExecution(exec);
+          },
+        );
         exec.rowCount += rows.length;
         const next = done ? undefined : nextUri;
-        if (done) await releaseExecution(exec);
+        if (done) await releaseExecution(exec, signal);
         return buildPage(exec.queryId, undefined, rows, next, exec.rowCount);
       } catch (err) {
-        await releaseExecution(exec);
+        if (!exec.released) await releaseExecution(exec);
+        if (signal?.aborted) throw createSqlAbortError();
         throwMysqlDriverError(err);
       }
     },
@@ -190,18 +238,10 @@ export function createMysqlStatementClient(
       void ctx;
       const exec = executions.get(nextUri);
       if (!exec) return;
-      let killer: PoolConnection | undefined;
-      try {
-        killer = await pool.getConnection();
-        if (exec.threadId > 0) {
-          await killer.query(`KILL QUERY ${exec.threadId}`);
-        }
-      } catch {
-        // ベストエフォート。
-      } finally {
-        killer?.release();
-        await destroyExecution(exec);
-      }
+      // 旧実装の別接続KILLは次の扱いだった。
+      // ベストエフォート。
+      // 現在は実行接続を同期的に破棄する。
+      destroyExecution(exec);
     },
 
     async waitBackoff(attempt: number, signal?: AbortSignal): Promise<void> {

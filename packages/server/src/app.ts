@@ -14,6 +14,7 @@
  */
 import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { apiRoutes, meResponseSchema, type MeResponse } from '@hubble/contracts';
 import { loadServerConfig, toAppConfig } from './config';
 import { openDatabase } from './db';
@@ -121,6 +122,20 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
     }
     await next();
   });
+
+  // JSON parse より前に raw body を制限し、巨大入力を heap へ展開しない。
+  app.use(
+    '/api/*',
+    bodyLimit({
+      maxSize: services.config.http.maxBodyBytes,
+      onError: () => {
+        throw new AppError(413, {
+          code: 'PAYLOAD_TOO_LARGE',
+          message: `Request body exceeds ${services.config.http.maxBodyBytes} bytes`,
+        });
+      },
+    }),
+  );
 
   // healthz is always public: it must answer before auth.
   // 日本語: ヘルスチェックは認証ミドルウェアより前に登録し、常に認証不要で応答させる

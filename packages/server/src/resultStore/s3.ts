@@ -20,6 +20,7 @@ export interface S3ResultStoreOptions {
 
 /** S3 ResultStore のテスト用注入ポイント。 */
 export interface S3ResultStoreDeps {
+  /** 外部所有の client。S3ResultStore はこれを destroy しない。 */
   client?: S3Client;
   uploadFactory?: (params: { client: S3Client; bucket: string; key: string; body: Readable }) => {
     done(): Promise<unknown>;
@@ -39,12 +40,15 @@ export function buildS3ClientConfig(options: S3ResultStoreOptions): S3ClientConf
 export class S3ResultStore implements ResultStore {
   readonly enabled = true;
   private readonly client: S3Client;
+  private readonly ownsClient: boolean;
   private readonly uploadFactory: NonNullable<S3ResultStoreDeps['uploadFactory']>;
+  private closed = false;
 
   constructor(
     private readonly options: S3ResultStoreOptions,
     deps: S3ResultStoreDeps = {},
   ) {
+    this.ownsClient = deps.client === undefined;
     this.client = deps.client ?? new S3Client(buildS3ClientConfig(options));
     this.uploadFactory =
       deps.uploadFactory ??
@@ -96,5 +100,11 @@ export class S3ResultStore implements ResultStore {
       }
     }
     return { deleted, failed };
+  }
+
+  async close(): Promise<void> {
+    if (this.closed || !this.ownsClient) return;
+    this.closed = true;
+    this.client.destroy();
   }
 }

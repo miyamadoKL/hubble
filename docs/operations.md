@@ -173,6 +173,8 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 | 変数                              | 既定値                            | 説明                                                                                                                                                                                                                            |
 | --------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PORT`                            | `8080`                            | BFF の HTTP ポート                                                                                                                                                                                                              |
+| `HTTP_MAX_BODY_BYTES`             | `2097152`                         | API request body 全体の最大 byte 数。超過時は JSON の解析前に HTTP 413 で拒否                                                                                                                                                   |
+| `SHUTDOWN_TIMEOUT_MS`             | `60000`                           | HTTP 受付停止から強制 close へ移るまでの期限（ミリ秒）                                                                                                                                                                          |
 | `DATABASE_URL`                    | （未設定 = SQLite を使用）        | `postgres://` / `postgresql://` 形式の接続文字列（1st/production 推奨）。設定すると永続化バックエンドが PostgreSQL になり `DB_PATH` より優先されます。それ以外のスキームは起動時エラー（[§9.1](#91-postgresql-バックエンド主)） |
 | `DB_PATH`                         | `./data/hubble.db`                | SQLite ファイルパス（non-production 向け。`DATABASE_URL` 未設定時のみ使用）。`:memory:` で揮発（テスト用）                                                                                                                      |
 | `STATIC_DIR`                      | （未設定 = 配信しない）           | web ビルド成果物のディレクトリ。設定時に静的配信 + SPA フォールバック                                                                                                                                                           |
@@ -185,6 +187,9 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 | `DEFAULT_LIMIT`                   | `5000`                            | LIMIT 無しの `SELECT` に自動付加する行数                                                                                                                                                                                        |
 | `QUERY_MAX_ROWS`                  | `100000`                          | 1 クエリでサーバー側にバッファする行数上限                                                                                                                                                                                      |
 | `QUERY_CONCURRENCY`               | `5`                               | 同時に追走（トラッキング）するクエリ数の上限                                                                                                                                                                                    |
+| `QUERY_MAX_QUEUED`                | `100`                             | 実行枠を待てるクエリの全体上限。超過時は HTTP 429 と `QUERY_QUEUE_FULL` で拒否                                                                                                                                                  |
+| `QUERY_MAX_QUEUED_PER_PRINCIPAL`  | `20`                              | 同一 principal が実行枠を待てるクエリの上限。超過時は HTTP 429 と `QUERY_PRINCIPAL_QUEUE_FULL` で拒否                                                                                                                           |
+| `QUERY_MAX_TRACKED`               | `10000`                           | 終端済みを含めて registry が保持するクエリの上限。期限切れを掃除しても上限なら HTTP 429 と `QUERY_REGISTRY_FULL` で拒否                                                                                                         |
 | `QUERY_TTL_MINUTES`               | `30`                              | 完了クエリを保持してから sweep するまでの分数                                                                                                                                                                                   |
 | `QUERY_OVERFLOW_MODE`             | `truncate`                        | `QUERY_MAX_ROWS` 超過時の挙動（`truncate` = 打ち切り / `cancel` = 中止）                                                                                                                                                        |
 | `METADATA_TTL_SECONDS`            | `300`                             | メタデータキャッシュの TTL（秒）                                                                                                                                                                                                |
@@ -215,7 +220,7 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 | `QUERY_GUARD_BYTES_PER_SECOND`    | `0`（目安なし）                   | クラスタースループットの目安（バイト/秒）。0 以外を設定すると UI に「所要時間目安 = 推定スキャンバイト ÷ この値」を表示                                                                                                         |
 | `SCHEDULER_ENABLED`               | `true`                            | `false` にするとスケジューラーの tick ループを起動しない（API は生きたまま、スケジュールの登録や閲覧は可能）                                                                                                                    |
 | `SCHEDULER_TICK_SECONDS`          | `15`                              | due なスケジュールをスキャンする間隔（秒）                                                                                                                                                                                      |
-| `SCHEDULER_MAX_CONCURRENT`        | `2`                               | スケジューラー全体で同時実行できるスケジュール数の上限                                                                                                                                                                          |
+| `SCHEDULER_MAX_CONCURRENT`        | `2`                               | schedule、workflow step、alert で共有する statement 同時実行上限                                                                                                                                                                |
 | `SCHEDULER_RUNS_RETENTION`        | `50`                              | スケジュールごとに保持する実行履歴の上限行数（古い行はプルーン）                                                                                                                                                                |
 | `NOTIFY_SLACK_WEBHOOK_URL`        | （未設定）                        | スケジュール確定失敗通知で使う Slack incoming webhook URL。未設定時に Slack チャネルを選んだスケジュールは warn ログを出してスキップ                                                                                            |
 | `NOTIFY_SMTP_HOST`                | （未設定）                        | スケジュール確定失敗通知で使う SMTP ホスト。未設定時に email チャネルを選んだスケジュールは warn ログを出してスキップ                                                                                                           |
@@ -860,14 +865,17 @@ owner を `TRINO_USER` で埋めます**（`backfillOwners`、冪等）。両バ
 
 ## 10. チューニング
 
-| 変数                    | 意味                                   | 目安                                                                           |
-| ----------------------- | -------------------------------------- | ------------------------------------------------------------------------------ |
-| `QUERY_MAX_ROWS`        | 1 クエリでメモリにバッファする行数上限 | 大きいほどメモリ消費増。既定 100k。画面表示は上限まで、超過分は truncated 表示 |
-| `QUERY_CONCURRENCY`     | 同時に追走するクエリ数                 | サーバーの CPU/メモリと Trino 同時実行枠から決定。既定 5                       |
-| `QUERY_TTL_MINUTES`     | 完了クエリの保持時間                   | 長いほど再接続でスナップショットを取り戻しやすいがメモリ占有。既定 30 分       |
-| `METADATA_TTL_SECONDS`  | メタデータキャッシュ TTL               | 短いほど鮮度が上がるが Trino へのメタデータ問い合わせが増える。既定 300 秒     |
-| `QUERY_OVERFLOW_MODE`   | 上限超過時                             | `truncate`（既定, 打ち切り）/ `cancel`（クエリ中止）                           |
-| `RESULT_STORE_TTL_DAYS` | 保存済み結果の保持日数                 | S3 lifecycle rule は同じ日数か少し長めに設定。既定 7 日                        |
+| 変数                             | 意味                                   | 目安                                                                                      |
+| -------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `QUERY_MAX_ROWS`                 | 1 クエリでメモリにバッファする行数上限 | 大きいほどメモリ消費増。既定 100k。画面表示は上限まで、超過分は truncated 表示            |
+| `QUERY_CONCURRENCY`              | 同時に追走するクエリ数                 | サーバーの CPU、メモリ、Trino 同時実行枠から決定。既定 5                                  |
+| `QUERY_MAX_QUEUED`               | 実行枠を待つクエリの全体上限           | 短時間の集中を吸収できる件数にする。上限到達時は HTTP 429。既定 100                       |
+| `QUERY_MAX_QUEUED_PER_PRINCIPAL` | principal ごとの待機上限               | 一人の集中実行が待機枠を占有しない値にする。上限到達時は HTTP 429。既定 20                |
+| `QUERY_MAX_TRACKED`              | registry が保持するクエリの上限        | `QUERY_TTL_MINUTES` と完了頻度から決定。期限切れを掃除しても上限なら HTTP 429。既定 10000 |
+| `QUERY_TTL_MINUTES`              | 完了クエリの保持時間                   | 長いほど再接続でスナップショットを取り戻しやすいがメモリ占有。既定 30 分                  |
+| `METADATA_TTL_SECONDS`           | メタデータキャッシュ TTL               | 短いほど鮮度が上がるが Trino へのメタデータ問い合わせが増える。既定 300 秒                |
+| `QUERY_OVERFLOW_MODE`            | 上限超過時                             | `truncate`（既定, 打ち切り）/ `cancel`（クエリ中止）                                      |
+| `RESULT_STORE_TTL_DAYS`          | 保存済み結果の保持日数                 | S3 lifecycle rule は同じ日数か少し長めに設定。既定 7 日                                   |
 
 大結果のダウンロードについて：画面のグリッドは `QUERY_MAX_ROWS` で打ち切られますが、
 `RESULT_STORE=s3` で保存済み結果が残っている場合は保存済み object から全件を流します。
@@ -905,8 +913,8 @@ owner を `TRINO_USER` で埋めます**（`backfillOwners`、冪等）。両バ
 スケジューラーは server プロセス内で動作します。`SCHEDULER_TICK_SECONDS`（既定 15 秒）ごとに
 due なスケジュールをスキャンし、5 フィールド cron 式（分 時 日 月 曜日）をサーバーの
 ローカル時刻で評価して発火します。同一スケジュールのオーバーラップはなく、前の実行が
-終わっていなければ次の発火はスキップされます。`SCHEDULER_MAX_CONCURRENT`（既定 2）は
-スケジューラー全体での同時実行上限です。
+終わっていなければ次の発火はスキップされます。
+`SCHEDULER_MAX_CONCURRENT`（既定 2）は、schedule、workflow の各 step、alert が共有する statement 同時実行上限です。
 
 スケジューラーは **replicas=1 前提**で動作します（スケーリング時に重複実行が発生するため）。
 PostgreSQL バックエンドで API サーバー自体を複数レプリカに増やす場合でも、

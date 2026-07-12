@@ -81,6 +81,8 @@ class MemoryResultStore implements ResultStore {
     }
     return { deleted, failed: [] };
   }
+
+  async close(): Promise<void> {}
 }
 
 /** 永続化結果の history 記録を待つ（resultStore.test.ts と同じ流儀）。 */

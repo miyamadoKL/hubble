@@ -18,6 +18,7 @@ interface MailSender {
     subject: string;
     text: string;
   }): Promise<unknown>;
+  close?(): void | Promise<void>;
 }
 
 export interface FailureNotificationInput {
@@ -71,6 +72,7 @@ export interface NotificationServiceDeps {
   /** webhook の接続時 DNS 解決を差し替えるテスト用関数。 */
   webhookConnectionLookup?: SafeFetchOptions['connectionLookup'];
   /** email 送信に使う transport。未指定時は nodemailer から作る。 */
+  /** 外部所有の email 送信 transport。サービスはこれを close しない。 */
   mailSender?: MailSender;
   /** 通知送信結果を記録する監査ログ。 */
   audit?: AuditLogger;
@@ -89,6 +91,8 @@ export class NotificationService
   private readonly fetchImpl: SafeFetch;
   private readonly logWarn: (message: string, detail?: unknown) => void;
   private mailSender?: MailSender;
+  private ownsMailSender = false;
+  private closePromise?: Promise<void>;
 
   constructor(
     private readonly config: ServerConfig['notification'],
@@ -104,6 +108,12 @@ export class NotificationService
     });
     this.logWarn = deps.logWarn ?? ((message, detail) => console.warn(message, detail));
     this.mailSender = deps.mailSender;
+  }
+
+  /** サービスが所有する webhook 接続プールと SMTP transport を終了する。 */
+  close(): Promise<void> {
+    this.closePromise ??= this.closeOwnedResources();
+    return this.closePromise;
   }
 
   async sendFailure(input: FailureNotificationInput): Promise<void> {
@@ -241,7 +251,24 @@ export class NotificationService
       secure: port === 465,
       ...(auth ? { auth } : {}),
     });
+    this.ownsMailSender = true;
     return this.mailSender;
+  }
+
+  private async closeOwnedResources(): Promise<void> {
+    const operations: Array<() => void | Promise<void>> = [() => this.fetchImpl.close()];
+    if (this.ownsMailSender && this.mailSender?.close !== undefined) {
+      operations.push(() => this.mailSender?.close?.());
+    }
+    const results = await Promise.allSettled(
+      operations.map((operation) => Promise.resolve().then(operation)),
+    );
+    const errors = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : [],
+    );
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'Notification service resource close failed');
+    }
   }
 
   private renderFailureText(input: FailureNotificationInput): string {

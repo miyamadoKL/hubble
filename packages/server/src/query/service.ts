@@ -64,6 +64,8 @@ export interface SubmitQueryParams {
  * 記録し、クエリが終端状態に達した時点でその行を更新する。
  */
 export class QueryService {
+  private readonly backgroundTasks = new Set<Promise<void>>();
+
   constructor(private readonly params: QueryServiceParams) {}
 
   // 下位の QueryRegistry をそのまま公開する（HTTP ルート層が get/cancel 等
@@ -90,6 +92,7 @@ export class QueryService {
       roleName: params.roleName,
       maxRows: params.maxRows,
       overflowMode: params.overflowMode,
+      queuePrincipal: params.owner,
       makeResultObserver: (queryId) => {
         if (!persistResult) return undefined;
         capture = this.createResultCapture(queryId);
@@ -126,7 +129,7 @@ export class QueryService {
     // Update on settle (after the insert has been applied).
     // クエリが終端状態に達した（exec.settled が解決した）タイミングで、
     // かつ INSERT が完了していることを保証した上で、最終結果を UPDATE する。
-    void Promise.all([inserted, exec.settled]).then(() => {
+    const historyUpdated = Promise.all([inserted, exec.settled]).then(() => {
       const elapsedMs =
         exec.finishedAt !== undefined ? Math.max(exec.finishedAt - exec.submittedAt, 0) : 0;
       return this.params.history
@@ -142,11 +145,14 @@ export class QueryService {
           console.error('failed to record query history (update)', err);
         });
     });
+    this.trackBackground(historyUpdated);
 
-    const resultCapture = capture;
-    if (resultCapture) {
-      void Promise.all([inserted, exec.settled])
+    if (persistResult) {
+      const resultPersisted = Promise.all([inserted, exec.settled])
         .then(async () => {
+          // capture は実行枠の獲得時に生成するため、queue 中には undefined のままにする。
+          const resultCapture = capture;
+          if (!resultCapture) return;
           if (exec.state !== 'finished') {
             await resultCapture.abort();
             return;
@@ -182,9 +188,26 @@ export class QueryService {
             },
           });
         });
+      this.trackBackground(resultPersisted);
     }
 
     return exec;
+  }
+
+  /** 履歴更新、結果保存、監査記録の進行中 task がすべて終わるまで待つ。 */
+  async drain(): Promise<void> {
+    while (this.backgroundTasks.size > 0) {
+      await Promise.allSettled([...this.backgroundTasks]);
+    }
+  }
+
+  private trackBackground(task: Promise<unknown>): void {
+    const tracked = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.backgroundTasks.add(tracked);
+    void tracked.then(() => this.backgroundTasks.delete(tracked));
   }
 
   private createResultCapture(queryId: string): ResultJsonlCapture | undefined {

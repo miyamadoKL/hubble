@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { isoTimestamp } from './common';
 import { apiErrorDetailSchema } from './error';
+import {
+  MAX_IDENTIFIER_LENGTH,
+  MAX_SESSION_PROPERTIES,
+  MAX_SESSION_PROPERTY_VALUE_LENGTH,
+  MAX_SQL_LENGTH,
+} from './limits';
 
 /**
  * Query execution model.
@@ -17,29 +23,37 @@ import { apiErrorDetailSchema } from './error';
  */
 export const createQueryRequestSchema = z.object({
   // 実行する SQL 文。
-  statement: z.string().min(1),
+  statement: z.string().min(1).max(MAX_SQL_LENGTH),
   // 実行時のカタログ名。
-  catalog: z.string().optional(),
+  catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   // 実行時のスキーマ名。
-  schema: z.string().optional(),
+  schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   /** Trino session properties forwarded as `X-Trino-Session`. */
   // Trino セッションプロパティ。`X-Trino-Session` ヘッダーとして転送される。
-  sessionProperties: z.record(z.string(), z.string()).optional(),
+  sessionProperties: z
+    .record(
+      z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+      z.string().max(MAX_SESSION_PROPERTY_VALUE_LENGTH),
+    )
+    .refine((properties) => Object.keys(properties).length <= MAX_SESSION_PROPERTIES, {
+      message: `At most ${MAX_SESSION_PROPERTIES} session properties are allowed`,
+    })
+    .optional(),
   /**
    * @deprecated Server ignores client-specified source; X-Trino-Source is set by the engine.
    */
   // 非推奨。サーバーはクライアント指定を無視し、エンジンが X-Trino-Source を決める。
-  source: z.string().optional(),
+  source: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   // このクエリがどのノートブックから実行されたか（履歴記録用）。
-  notebookId: z.string().optional(),
+  notebookId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   // このクエリがどのセルから実行されたか（履歴記録用）。
-  cellId: z.string().optional(),
+  cellId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   /** Cap on rows buffered server-side for this query. */
   // このクエリについて server 側でバッファする行数の上限。省略時は server の既定値。
   maxRows: z.number().int().positive().optional(),
   /** Target datasource id. Omitted = default (first configured datasource). */
   // 実行先データソース id。省略時は既定データソース（設定順先頭）。
-  datasourceId: z.string().optional(),
+  datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
 });
 
 /** クエリ実行リクエストの推論型。 */

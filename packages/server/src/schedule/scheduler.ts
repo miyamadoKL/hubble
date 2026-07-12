@@ -28,12 +28,24 @@ import { resolveRoleForPrincipal } from '../rbac/resolve';
 import type { LoadedRbac } from '../rbac/types';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import type { ServerConfig } from '../config';
-import type { ScheduleRecord, ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
+import {
+  ScheduleRunClaimConflictError,
+  type ScheduleRecord,
+  type ScheduleRepository,
+  type ScheduleRunRepository,
+} from '../store/schedules';
 import { drainStatement } from './execute';
 import { nextRunAfter } from './cron';
-import { backoffMs, classifyFailure, shouldRetry } from './retry';
+import { backoffMs, classifyFailure, retryPolicyForStatement, shouldRetry } from './retry';
 import type { AuditJson, AuditLogger } from '../audit';
 import type { FailureNotificationSender } from '../notification/service';
+import {
+  JobAdmissionRejectedError,
+  type JobAdmissionController,
+  type JobAdmissionLease,
+} from './admission';
+import { PeriodicRunner } from '../util/periodicRunner';
+import { raceSqlAbort } from '../engine/sql/abort';
 
 /**
  * Resolved scheduler settings.
@@ -47,6 +59,8 @@ export interface SchedulerConfig {
   // tick() を呼び出す間隔（秒）。この間隔で全 enabled スケジュールを走査する。
   tickSeconds: number;
   // 同時に実行可能なスケジュール数の上限。tick() はこれを超えて新規発火しない。
+  // schedule、workflow、alert が共有する同時実行上限。
+  // services 層はこの値から共有 admission controller を1つ構築する。
   maxConcurrent: number;
   // schedule_runs テーブルに保持する実行履歴の最大件数（スケジュールごと）。
   runsRetention: number;
@@ -77,6 +91,8 @@ export interface SchedulerDeps {
   audit?: AuditLogger;
   /** スケジュール失敗時の外部通知。 */
   notifications?: FailureNotificationSender;
+  /** schedule、workflow、alert で共有する実行枠。 */
+  admission: JobAdmissionController;
   config: SchedulerConfig;
   /** Wall clock (injectable for tests). */
   // 日本語: 省略時は Date.now。テストでは仮想時計を注入して cron 発火判定を制御する。
@@ -109,13 +125,10 @@ interface RunOutcome {
 // 日本語: SchedulerDeps.sleep 省略時の既定実装。実際に ms ミリ秒待ってから解決する。
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+// 旧実装のtimer説明を残す。
 // 日本語: SchedulerDeps.setTimer 省略時の既定実装。setTimeout をラップし、
 // プロセス終了をタイマーが妨げないよう unref() できる場合は unref する。
-function defaultSetTimer(fn: () => void, ms: number): { clear: () => void } {
-  const handle = setTimeout(fn, ms);
-  if (typeof handle === 'object' && 'unref' in handle) (handle as { unref: () => void }).unref();
-  return { clear: () => clearTimeout(handle) };
-}
+// SchedulerDeps.setTimer 省略時の setTimeout と unref は PeriodicRunner が共通実装する。
 
 /**
  * In-process query scheduler (Query Scheduling feature).
@@ -131,18 +144,24 @@ function defaultSetTimer(fn: () => void, ms: number): { clear: () => void } {
  * skips missed fires and resumes at the next future occurrence. Overlap is
  * prevented per schedule, and total concurrency is capped by `maxConcurrent`.
  *
+ * 次回発火時刻は現在時刻から計算し、停止中の発火は埋め戻さない。
+ * 同一定義の重複と全ジョブ種別の同時実行上限は共有 admission controller が防ぐ。
+ *
  * 日本語: ライフサイクルは start() → (tick() の繰り返し) → stop() の順。
  * start() はまずクラッシュ復旧 (実行中のまま残った run を aborted にする) を行い、
  * enabled なら次回発火時刻を seed して tick タイマーを起動する。tick() は
  * 期限が来たスケジュールを非同期に launch() し、overlap (同一スケジュールの多重実行)
  * と maxConcurrent (全体の同時実行数上限) の両方を守る。stop() はタイマーを止めた上で
+ * と共有 admission controller の全体同時実行上限の両方を守る。stop() はタイマーを止めた上で
  * 実行中の Promise 群を待ち合わせ、グレースフルに終了する。
  */
 export class Scheduler {
   // 以下 3 つは SchedulerDeps から解決された実体 (省略時は defaultXxx にフォールバック)。
+  // 以下は SchedulerDeps から解決された実体 (省略時は defaultXxx にフォールバック)。
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
-  private readonly setTimer: (fn: () => void, ms: number) => { clear: () => void };
+  private readonly periodic: PeriodicRunner;
+  private readonly shutdownAbort = new AbortController();
 
   /** Next fire time (epoch ms) per schedule id, computed from "now". */
   // 日本語: スケジュール id ごとの「次に発火すべき時刻」。tick() のたびに現在時刻と比較し、
@@ -154,9 +173,12 @@ export class Scheduler {
   /** Promises for in-flight runs, awaited on shutdown. */
   // 日本語: stop()/whenIdle() が Promise.allSettled で待ち合わせるための実行中 Promise 群。
   private readonly running = new Map<string, Promise<void>>();
+  private readonly starting = new Set<Promise<void>>();
+  private readonly notificationTasks = new Set<Promise<void>>();
 
+  // 旧実装では次のhandleをScheduler自身が保持していた。
   // 日本語: 稼働中の tick タイマーのハンドル。stop() でこれを clear する。
-  private tickHandle?: { clear: () => void };
+  // 稼働中の tick timer と task は PeriodicRunner が保持し、stop() で停止して待つ。
   // 日本語: start() の多重呼び出しをガードする (冪等化)。
   private started = false;
   // 日本語: stop() 呼び出し後は true になり、以後 tick のスケジューリングを止める。
@@ -165,7 +187,13 @@ export class Scheduler {
   constructor(private deps: SchedulerDeps) {
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? defaultSleep;
-    this.setTimer = deps.setTimer ?? defaultSetTimer;
+    this.periodic = new PeriodicRunner({
+      intervalMs: deps.config.tickSeconds * 1_000,
+      task: () => this.tick(),
+      logError: (message, error) => console.error(message, error),
+      errorMessage: 'scheduler: periodic tick failed',
+      ...(deps.setTimer ? { setTimer: deps.setTimer } : {}),
+    });
   }
 
   setDefaultDatasourceId(id: string): void {
@@ -186,23 +214,25 @@ export class Scheduler {
     if (!this.deps.config.enabled) return;
     // 有効な全スケジュールの次回発火時刻を「現在時刻」基準で seed してから tick を起動する。
     await this.seedNextFires();
-    this.scheduleTick();
+    this.periodic.start();
   }
 
   /** Stop the tick loop and await any in-flight runs (graceful shutdown). */
   async stop(): Promise<void> {
     // 以後の tick 予約を止め、既存タイマーを解除する。
     this.stopping = true;
-    this.tickHandle?.clear();
-    this.tickHandle = undefined;
+    this.shutdownAbort.abort();
+    await this.periodic.stop();
     // 実行中の run が完了 (成功でも失敗でも) するまで待ってから戻る。
-    await Promise.allSettled([...this.running.values()]);
+    // claim中、実行中、通知中のtaskがすべて無くなるまで待ってから戻る。
+    await this.drainLifecycleTasks();
   }
 
   /** Await all currently in-flight runs to settle (no-op if idle). */
   async whenIdle(): Promise<void> {
     // 日本語: 主にテストから使う。実行中の全 run が終わるまで待機する。
-    await Promise.allSettled([...this.running.values()]);
+    // 日本語: 主にテストから使う。claim、実行、通知がすべて終わるまで待機する。
+    await this.drainLifecycleTasks();
   }
 
   /** Number of schedules with an in-flight run (overlap/concurrency view). */
@@ -224,15 +254,12 @@ export class Scheduler {
     }
   }
 
+  // 旧実装の再帰timer説明を残す。
   // 日本語: tickSeconds 後に自身を呼び出す tick() を 1 回分だけ予約する
   // (setInterval ではなく setTimeout の再帰にすることで、tick() の実行時間が
   // 次回予約に影響しても間隔がズレるだけで重複発火はしない)。stopping なら何もしない。
-  private scheduleTick(): void {
-    if (this.stopping) return;
-    this.tickHandle = this.setTimer(() => {
-      void this.tick().finally(() => this.scheduleTick());
-    }, this.deps.config.tickSeconds * 1000);
-  }
+  // PeriodicRunner は setInterval を使わず、tick 完了後に次の setTimeout を予約する。
+  // tick の実行時間は間隔を後ろへずらすだけで、同じ処理を重複発火させない。
 
   /**
    * One scan: fire every schedule whose next time has passed (subject to overlap
@@ -271,16 +298,26 @@ export class Scheduler {
       if (next !== null) this.nextFire.set(schedule.id, next);
       else this.nextFire.delete(schedule.id);
 
-      if (this.inFlight.has(schedule.id)) continue; // overlap: skip this fire
-      if (this.inFlight.size >= this.deps.config.maxConcurrent) continue; // at cap
+      let lease: JobAdmissionLease;
+      try {
+        lease = this.deps.admission.tryAcquire('schedule', schedule.id);
+      } catch (err) {
+        if (err instanceof JobAdmissionRejectedError) continue;
+        throw err;
+      }
 
       // 日本語: overlap/上限チェックを通過した場合のみ実際に非同期実行を開始する。
-      this.launch(schedule, new Date(scheduledFor).toISOString());
+      this.launch(schedule, new Date(scheduledFor).toISOString(), lease);
     }
   }
 
   /** Begin an async run, tracking it for overlap/shutdown bookkeeping. */
-  private launch(schedule: ScheduleRecord, scheduledForIso: string): void {
+  /** 非同期 run を開始し、重複防止と停止待機のため追跡する。 */
+  private launch(
+    schedule: ScheduleRecord,
+    scheduledForIso: string,
+    admissionLease: JobAdmissionLease,
+  ): void {
     // 日本語: inFlight への追加は同期的に行い、tick() の次のイテレーションからも
     // 「実行中」として見えるようにする (overlap 判定の一貫性のため)。
     this.inFlight.add(schedule.id);
@@ -295,6 +332,7 @@ export class Scheduler {
         // 成功/失敗いずれでも in-flight から外し、running から Promise を除去する。
         this.inFlight.delete(schedule.id);
         this.running.delete(schedule.id);
+        admissionLease.release();
       });
     this.running.set(schedule.id, p);
   }
@@ -303,46 +341,61 @@ export class Scheduler {
    * Manual run trigger (`POST /api/schedules/:id/run`). Uses the same execution
    * path and policy as the tick. Returns the run id, or throws if a run is
    * already in flight for this schedule. `scheduledFor` defaults to now.
+   *
+   * 手動 run を cron と同じ実行経路へ投入する。
+   * run id を返し、同一定義の重複または共有上限超過なら例外を投げる。
    */
   async runManual(schedule: ScheduleRecord): Promise<{ runId: string }> {
+    // 旧実装の二段階確認に関する説明を残す。
     // 日本語: メモリ上の inFlight とDB上の hasRunning の両方をチェックする。
     // inFlight は同一プロセス内の重複を、hasRunning は (別プロセス由来なども含め)
     // DB 上に running 行が残っているケースを捕捉する二重の安全網。
-    if (this.inFlight.has(schedule.id) || (await this.deps.runs.hasRunning(schedule.id))) {
-      throw new Error('A run is already in progress for this schedule');
-    }
+    const admissionLease = this.deps.admission.tryAcquire('schedule', schedule.id);
     const scheduledForIso = new Date(this.now()).toISOString();
     this.inFlight.add(schedule.id);
-    let runId: string;
+    let finishStarting!: () => void;
+    const starting = new Promise<void>((resolve) => {
+      finishStarting = resolve;
+    });
+    this.starting.add(starting);
     try {
       // 日本語: 先に schedule_runs へ running 状態の行を作る。ここで失敗したら
       // 実行を開始していないので inFlight を戻して例外を呼び出し元へ伝播する。
-      runId = await this.deps.runs.start({
+      const runId = await this.deps.runs.start({
         scheduleId: schedule.id,
         owner: schedule.owner,
         scheduledFor: scheduledForIso,
         startedAt: scheduledForIso,
       });
+      // Execute in the background; the route returns immediately with the run id.
+      // 日本語: ルートハンドラは runId を待たずに即座にレスポンスを返すため、
+      // 実際の検証、実行、リトライはここから非同期 (fire-and-forget) で進める。
+      const p = this.executeRun(schedule, runId, scheduledForIso)
+        .catch((err: unknown) => {
+          console.error(`scheduler: unexpected error in manual run ${schedule.id}`, err);
+        })
+        .finally(() => {
+          this.inFlight.delete(schedule.id);
+          this.running.delete(schedule.id);
+          admissionLease.release();
+        });
+      this.running.set(schedule.id, p);
+      return { runId };
     } catch (err) {
       this.inFlight.delete(schedule.id);
+      admissionLease.release();
+      if (err instanceof ScheduleRunClaimConflictError) {
+        throw new JobAdmissionRejectedError('duplicate', 'schedule', schedule.id);
+      }
       throw err;
+    } finally {
+      this.starting.delete(starting);
+      finishStarting();
     }
-    // Execute in the background; the route returns immediately with the run id.
-    // 日本語: ルートハンドラは runId を待たずに即座にレスポンスを返すため、
-    // 実際の検証、実行、リトライはここから非同期 (fire-and-forget) で進める。
-    const p = this.executeRun(schedule, runId, scheduledForIso)
-      .catch((err: unknown) => {
-        console.error(`scheduler: unexpected error in manual run ${schedule.id}`, err);
-      })
-      .finally(() => {
-        this.inFlight.delete(schedule.id);
-        this.running.delete(schedule.id);
-      });
-    this.running.set(schedule.id, p);
-    return { runId };
   }
 
   /** Insert the run row then execute (used by the tick path). */
+  /** cron 経路で running 行を claim してから実行する。 */
   private async runOnce(schedule: ScheduleRecord, scheduledForIso: string): Promise<void> {
     // 日本語: tick 経路では overlap チェックは launch() 呼び出し前 (tick 内) で
     // 既に済んでいるため、ここでは schedule_runs 行の作成と実行のみを行う。
@@ -384,7 +437,26 @@ export class Scheduler {
     await this.recordScheduleOutcome(schedule, runId, outcome, elapsedMs);
     if (outcome.status === 'failed') {
       // 通知送信はスケジュール実行の確定処理をブロックしない。
-      void this.sendFailureNotification(schedule, runId, outcome, scheduledForIso, finishedAt);
+      this.trackNotificationTask(
+        this.sendFailureNotification(schedule, runId, outcome, scheduledForIso, finishedAt),
+      );
+    }
+  }
+
+  private trackNotificationTask(task: Promise<void>): void {
+    const tracked = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.notificationTasks.add(tracked);
+    void tracked.then(() => this.notificationTasks.delete(tracked));
+  }
+
+  private async drainLifecycleTasks(): Promise<void> {
+    for (;;) {
+      const tasks = [...this.starting, ...this.running.values(), ...this.notificationTasks];
+      if (tasks.length === 0) return;
+      await Promise.allSettled(tasks);
     }
   }
 
@@ -446,8 +518,9 @@ export class Scheduler {
    * Run the validate -> guard -> execute pipeline with the schedule's retry
    * policy. Returns a terminal outcome; `attempt` is the number of attempts made.
    */
+  /** 検証、guard、実行を安全な実効リトライポリシーで繰り返し、終端結果を返す。 */
   private async attemptWithRetries(schedule: ScheduleRecord): Promise<RunOutcome> {
-    const policy = schedule.retry;
+    const policy = retryPolicyForStatement(schedule.retry, schedule.statement);
     let attempt = 0;
 
     const engine = getEngineOrUndefined(this.deps.engines, schedule.datasourceId);
@@ -484,6 +557,7 @@ export class Scheduler {
       // maybeRetry() が undefined を返した場合のみ waitBeforeRetry() を挟んで continue する。
       // つまりループを抜けるのは「確定」か「リトライ上限到達で確定」のいずれかのみ。
       for (;;) {
+        if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
         attempt += 1;
 
         try {
@@ -501,6 +575,7 @@ export class Scheduler {
             ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
           });
         } catch (err) {
+          if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
           const errorType = errorTypeOf(err);
           const message = err instanceof Error ? err.message : String(err);
           return {
@@ -602,7 +677,9 @@ export class Scheduler {
             schema: schedule.schema ?? undefined,
             user: schedule.owner,
           };
-          const result = await drainStatement(client, schedule.statement, ctx);
+          const result = await drainStatement(client, schedule.statement, ctx, {
+            signal: this.shutdownAbort.signal,
+          });
           return {
             status: 'success',
             attempt,
@@ -612,6 +689,7 @@ export class Scheduler {
             rowCount: result.rowCount,
           };
         } catch (err) {
+          if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
           // 日本語: retry.ts の classifyFailure で「再試行しても無駄 (deterministic)」か
           // 「一時的な障害 (transient)」かを判定する。
           const failureClass = classifyFailure(err);
@@ -634,6 +712,9 @@ export class Scheduler {
           await this.waitBeforeRetry(policy, attempt);
         }
       }
+    } catch (err) {
+      if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
+      throw err;
     } finally {
       releaseLease();
     }
@@ -666,7 +747,18 @@ export class Scheduler {
     // The upcoming retry index equals the number of attempts already made.
     // 日本語: retry.ts の backoffMs は 1-based の retryIndex を取る。ここまでの attempt 数が
     // そのまま「これから行うリトライの番号」になるため、そのまま渡してよい。
-    await this.sleep(backoffMs(policy, attempt));
+    await raceSqlAbort(this.sleep(backoffMs(policy, attempt)), this.shutdownAbort.signal);
+  }
+
+  private abortedOutcome(attempt: number): RunOutcome {
+    return {
+      status: 'aborted',
+      attempt: Math.max(attempt, 1),
+      trinoQueryId: null,
+      errorType: 'SERVER_SHUTDOWN',
+      errorMessage: 'Run aborted during server shutdown',
+      rowCount: null,
+    };
   }
 }
 

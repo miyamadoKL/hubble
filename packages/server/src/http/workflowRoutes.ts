@@ -38,6 +38,7 @@ import {
 import { resolveWorkflowRunExport } from '../workflow/exportResolve';
 import { writeXlsxWorkbook, XLSX_CONTENT_TYPE } from '../query/xlsx';
 import { SheetsExporter, type SheetsClientFactory } from '../query/exportSheets';
+import { JobAdmissionRejectedError } from '../schedule/admission';
 
 type App = Hono<{ Variables: AuthVariables }>;
 
@@ -271,8 +272,19 @@ export function workflowRoutes(services: Services): App {
       return c.json({ runId }, 202);
     } catch (err) {
       // 実行中エラーのみ 409 に変換する。DB 障害等それ以外の失敗はそのまま伝播させる。
-      if (err instanceof WorkflowRunInProgressError) {
-        throw AppError.conflict(`A run is already in progress for workflow ${id}`);
+      // 実行中と上限超過は409、shutdown中の受付終了は503へ変換する。
+      if (err instanceof WorkflowRunInProgressError || err instanceof JobAdmissionRejectedError) {
+        if (err instanceof JobAdmissionRejectedError && err.reason === 'closed') {
+          throw new AppError(503, {
+            code: 'SERVER_SHUTTING_DOWN',
+            message: 'Scheduled job admission is closed',
+          });
+        }
+        const message =
+          err instanceof JobAdmissionRejectedError && err.reason === 'capacity'
+            ? 'The scheduled job concurrency limit has been reached'
+            : `A run is already in progress for workflow ${id}`;
+        throw AppError.conflict(message);
       }
       throw err;
     }

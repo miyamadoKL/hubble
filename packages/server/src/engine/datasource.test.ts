@@ -11,6 +11,7 @@ import { deriveTrinoSourceTags } from './trino';
 import { openMemoryDatabase } from '../db';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
 import { Scheduler } from '../schedule/scheduler';
+import { JobAdmissionController } from '../schedule/admission';
 import { EstimateService } from '../query/estimateService';
 import { makeEnginesMap } from '../test/testEngine';
 import { FakeTrino } from '../test/fakeTrino';
@@ -312,6 +313,7 @@ describe('schedule datasource persistence', () => {
         cacheTtlSeconds: 0,
         bytesPerSecond: 0,
       },
+      admission: new JobAdmissionController(2),
       config: {
         enabled: false,
         tickSeconds: 15,

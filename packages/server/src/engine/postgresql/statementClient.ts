@@ -7,6 +7,7 @@ import type { StatementClient } from '../types';
 import type { TrinoColumn, TrinoRequestContext, TrinoSessionMutations } from '../../trino/types';
 import { throwPgDriverError } from '../sql/errors';
 import { batchSize, buildPage, nextQueryId } from '../sql/response';
+import { acquireSqlResource, createSqlAbortError, raceSqlAbort } from '../sql/abort';
 import type { PgPool } from './pool';
 
 const PG_OID_TYPES: Record<number, string> = {
@@ -36,7 +37,6 @@ interface PgExecution {
   client: PoolClient;
   cursor: Cursor;
   columns?: TrinoColumn[];
-  backendPid: number;
   rowCount: number;
   released: boolean;
   /** チェックアウト時に read only を上書きしたか。 */
@@ -71,44 +71,41 @@ export function createPgStatementClient(
 ): StatementClient {
   const executions = new Map<string, PgExecution>();
 
-  const restoreAndReleaseClient = async (
-    client: PoolClient,
-    sessionReadOnlyApplied: boolean,
-  ): Promise<void> => {
-    if (sessionReadOnlyApplied) {
-      try {
-        await applyPgSessionReadOnly(client, options.datasourceReadOnly);
-      } catch (err) {
-        const reason = err instanceof Error ? err : new Error(String(err));
-        client.release(reason);
-        throw err;
-      }
-    }
-    client.release();
-  };
-
-  const releaseExecution = async (exec: PgExecution): Promise<void> => {
+  const releaseExecution = async (exec: PgExecution, signal?: AbortSignal): Promise<void> => {
     if (exec.released) return;
-    exec.released = true;
-    executions.delete(exec.queryId);
     try {
-      await exec.cursor.close();
-    } catch {
-      // ベストエフォート。
+      await raceSqlAbort(exec.cursor.close(), signal, () => {
+        destroyExecution(exec, createSqlAbortError());
+      });
+      if (exec.released) return;
+      if (exec.sessionReadOnlyApplied) {
+        await raceSqlAbort(
+          applyPgSessionReadOnly(exec.client, options.datasourceReadOnly),
+          signal,
+          () => {
+            destroyExecution(exec, createSqlAbortError());
+          },
+        );
+      }
+      if (exec.released) return;
+      exec.released = true;
+      executions.delete(exec.queryId);
+      exec.client.release();
+    } catch (err) {
+      if (!exec.released) {
+        const reason = err instanceof Error ? err : new Error(String(err));
+        destroyExecution(exec, reason);
+      }
+      throw err;
     }
-    await restoreAndReleaseClient(exec.client, exec.sessionReadOnlyApplied);
   };
 
   /** キャンセル等で portal が残る接続はプールへ返さず破棄する。 */
-  const destroyExecution = async (exec: PgExecution, reason?: Error): Promise<void> => {
+  const destroyExecution = (exec: PgExecution, reason?: Error): void => {
     if (exec.released) return;
     exec.released = true;
     executions.delete(exec.queryId);
-    try {
-      await exec.cursor.close();
-    } catch {
-      // ベストエフォート。
-    }
+    void exec.cursor.close().catch(() => undefined);
     exec.client.release(reason ?? new Error('Query cancelled'));
   };
 
@@ -124,20 +121,32 @@ export function createPgStatementClient(
     client.release(err);
   };
 
-  const acquire = async (): Promise<{ client: PoolClient; sessionReadOnlyApplied: boolean }> => {
-    const client = await pool.connect();
+  const acquire = async (
+    signal?: AbortSignal,
+  ): Promise<{ client: PoolClient; sessionReadOnlyApplied: boolean }> => {
+    const client = await acquireSqlResource(pool.connect(), signal, (lateClient) => {
+      lateClient.release(createSqlAbortError());
+    });
+    let destroyed = false;
+    const destroy = (): void => {
+      if (destroyed) return;
+      destroyed = true;
+      client.release(createSqlAbortError());
+    };
     try {
       let sessionReadOnlyApplied = false;
       if (options.datasourceReadOnly) {
-        await applyPgSessionReadOnly(client, true);
+        await raceSqlAbort(applyPgSessionReadOnly(client, true), signal, destroy);
       } else if (options.sessionReadOnly) {
-        await applyPgSessionReadOnly(client, true);
+        await raceSqlAbort(applyPgSessionReadOnly(client, true), signal, destroy);
         sessionReadOnlyApplied = true;
       }
       return { client, sessionReadOnlyApplied };
     } catch (err) {
-      const reason = err instanceof Error ? err : new Error(String(err));
-      client.release(reason);
+      if (!destroyed) {
+        const reason = err instanceof Error ? err : new Error(String(err));
+        client.release(reason);
+      }
       throw err;
     }
   };
@@ -154,13 +163,23 @@ export function createPgStatementClient(
       let client: PoolClient | undefined;
       let cursor: Cursor | undefined;
       let sessionReadOnlyApplied = false;
+      let ownsClient = false;
+      const destroyLocalExecution = (): void => {
+        if (!client || !ownsClient) return;
+        ownsClient = false;
+        void cursor?.close().catch(() => undefined);
+        client.release(createSqlAbortError());
+      };
       try {
-        ({ client, sessionReadOnlyApplied } = await acquire());
-        const pidRes = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-        const backendPid = Number(pidRes.rows[0]?.pid ?? 0);
+        ({ client, sessionReadOnlyApplied } = await acquire(signal));
+        ownsClient = true;
         cursor = new Cursor(statement, undefined, { rowMode: 'array' });
         (client.query as (submittable: Cursor) => void)(cursor);
-        const rows = (await cursor.read(batchSize())) as unknown[][];
+        const rows = (await raceSqlAbort(
+          cursor.read(batchSize()),
+          signal,
+          destroyLocalExecution,
+        )) as unknown[][];
         const fields = cursorFields(cursor);
         const columns = fields ? fieldsToColumns(fields) : undefined;
         const done = rows.length < batchSize();
@@ -169,26 +188,27 @@ export function createPgStatementClient(
           client,
           cursor,
           columns,
-          backendPid,
           rowCount: rows.length,
           released: false,
           sessionReadOnlyApplied,
         };
         executions.set(queryId, exec);
+        ownsClient = false;
         client = undefined;
 
         const nextUri = done ? undefined : queryId;
-        if (done) await releaseExecution(exec);
+        if (done) await releaseExecution(exec, signal);
         return buildPage(queryId, columns, rows, nextUri, exec.rowCount);
       } catch (err) {
-        if (cursor) {
+        if (cursor && ownsClient) {
           try {
             await cursor.close();
           } catch {
             // ベストエフォート。
           }
         }
-        if (client) await destroyClient(client, err, sessionReadOnlyApplied);
+        if (client && ownsClient) await destroyClient(client, err, sessionReadOnlyApplied);
+        if (signal?.aborted) throw createSqlAbortError();
         throwPgDriverError(err, statement);
       }
     },
@@ -199,20 +219,26 @@ export function createPgStatementClient(
       _mutations: TrinoSessionMutations,
       signal?: AbortSignal,
     ) {
-      if (signal?.aborted) throw new Error('Aborted');
       const exec = executions.get(nextUri);
       if (!exec) {
         return buildPage(nextUri, undefined, [], undefined, 0);
       }
+      if (signal?.aborted) {
+        destroyExecution(exec, createSqlAbortError());
+        throw createSqlAbortError();
+      }
       try {
-        const rows = (await exec.cursor.read(batchSize())) as unknown[][];
+        const rows = (await raceSqlAbort(exec.cursor.read(batchSize()), signal, () => {
+          destroyExecution(exec, createSqlAbortError());
+        })) as unknown[][];
         exec.rowCount += rows.length;
         const done = rows.length < batchSize();
         const next = done ? undefined : nextUri;
-        if (done) await releaseExecution(exec);
+        if (done) await releaseExecution(exec, signal);
         return buildPage(exec.queryId, undefined, rows, next, exec.rowCount);
       } catch (err) {
-        await releaseExecution(exec);
+        if (!exec.released) await releaseExecution(exec);
+        if (signal?.aborted) throw createSqlAbortError();
         throwPgDriverError(err);
       }
     },
@@ -221,18 +247,7 @@ export function createPgStatementClient(
       void ctx;
       const exec = executions.get(nextUri);
       if (!exec) return;
-      let killer: PoolClient | undefined;
-      try {
-        killer = await pool.connect();
-        if (exec.backendPid > 0) {
-          await killer.query('SELECT pg_cancel_backend($1)', [exec.backendPid]);
-        }
-      } catch {
-        // ベストエフォート。
-      } finally {
-        killer?.release();
-        await destroyExecution(exec);
-      }
+      destroyExecution(exec);
     },
 
     async waitBackoff(attempt: number, signal?: AbortSignal): Promise<void> {

@@ -4,6 +4,7 @@
 import type { HistoryRepository } from '../store/history';
 import type { WorkflowRunRepository } from '../store/workflows';
 import type { ResultStore } from './store';
+import { PeriodicRunner } from '../util/periodicRunner';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -19,21 +20,31 @@ export interface ResultExpiryServiceOptions {
 
 /** 起動時と日次で期限切れ result を消すサービス。 */
 export class ResultExpiryService {
-  private timer?: { clear: () => void };
+  private readonly periodic: PeriodicRunner;
 
-  constructor(private readonly options: ResultExpiryServiceOptions) {}
+  constructor(private readonly options: ResultExpiryServiceOptions) {
+    this.periodic = new PeriodicRunner({
+      intervalMs: DAY_MS,
+      task: () => this.runOnce(),
+      logError: (message, error) => {
+        if (this.options.logWarn) this.options.logWarn(message, error);
+        else console.warn(message, error);
+      },
+      errorMessage: 'result expiry: periodic cleanup failed',
+      runImmediately: true,
+      ...(options.setTimer ? { setTimer: options.setTimer } : {}),
+    });
+  }
 
   /** 起動時掃除を投げ、日次タイマーを開始する。 */
   start(): void {
-    void this.runOnce();
-    const setTimer = this.options.setTimer ?? defaultSetTimer;
-    this.timer = setTimer(() => void this.runOnce(), DAY_MS);
+    this.periodic.start();
   }
 
   /** タイマーを停止する。 */
-  stop(): void {
-    this.timer?.clear();
-    this.timer = undefined;
+  /** timer を停止し、進行中の掃除を待つ。 */
+  async stop(): Promise<void> {
+    await this.periodic.stop();
   }
 
   /** 期限切れオブジェクトを削除し、DB の key を NULL 化する。 */
@@ -54,10 +65,4 @@ export class ResultExpiryService {
       this.options.logWarn?.(`failed to delete expired result ${failed.key}`, failed.error);
     }
   }
-}
-
-function defaultSetTimer(fn: () => void, ms: number): { clear: () => void } {
-  const timer = setInterval(fn, ms);
-  timer.unref?.();
-  return { clear: () => clearInterval(timer) };
 }
