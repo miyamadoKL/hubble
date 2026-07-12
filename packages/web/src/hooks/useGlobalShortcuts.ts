@@ -10,6 +10,7 @@ import { useUiStore } from '../stores/uiStore';
 import { saveActiveNotebook, runActiveSqlCell } from '../notebook';
 import { getActiveEditor } from '../editor/activeEditor';
 import { formatEditor } from '../editor/formatter';
+import { saveActiveDocument } from '../navigation/documentNavigation';
 import { matchShortcut, type FocusContext, type KeyChord } from './shortcuts';
 
 /**
@@ -18,6 +19,7 @@ import { matchShortcut, type FocusContext, type KeyChord } from './shortcuts';
  *
  *   - Ctrl/Cmd+K  → command palette      (any focus)
  *   - Ctrl/Cmd+S  → save notebook        (any focus; draft → name modal)
+ *                     Workflow と Dashboard の編集中は現在画面を保存する。
  *   - Ctrl+Alt+T  → toggle theme         (any focus)
  *   - Ctrl/Cmd+Shift+F → format SQL      (any focus; targets the last editor)
  *   - Ctrl/Cmd+I  → format SQL           (only when NOT in an editor — the editor
@@ -37,6 +39,7 @@ import { matchShortcut, type FocusContext, type KeyChord } from './shortcuts';
  * 対応するショートカット:
  *   - Ctrl/Cmd+K            → コマンドパレット表示（フォーカス位置を問わない）
  *   - Ctrl/Cmd+S            → ノートブック保存（ドラフトの場合は名前入力モーダルへ）
+ *                              Workflow と Dashboard の編集中は現在画面を保存する。
  *   - Ctrl+Alt+T            → テーマ切り替え（フォーカス位置を問わない）
  *   - Ctrl/Cmd+Shift+F      → SQL整形（フォーカス位置を問わず、最後にフォーカスしたエディタが対象）
  *   - Ctrl/Cmd+I            → SQL整形（エディタにフォーカスがないときのみ。エディタ自身が
@@ -95,9 +98,13 @@ export function useGlobalShortcuts(): void {
           // A draft needs a name (modal); a saved notebook PUTs immediately.
           // ドラフト（未保存）のノートブックは名前入力が必要なのでモーダルを要求し、
           // 既に保存済みのノートブックはそのまま PUT で上書き保存する。
+          // Workflow または Dashboard の編集画面が登録されている場合は、その画面の
+          // 保存処理を優先し、背後の notebook を保存しない。
           // saveActiveNotebook が返す結果に needsName プロパティが含まれる場合、
           // 名前未設定のドラフトだったと判断して requestSave('save') でモーダルを開く。
-          void saveActiveNotebook().then((result) => {
+          void saveActiveDocument().then(async (handled) => {
+            if (handled) return;
+            const result = await saveActiveNotebook();
             if ('needsName' in result) requestSave('save');
           });
           break;

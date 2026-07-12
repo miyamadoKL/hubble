@@ -87,8 +87,18 @@ function parseEmailRecipients(value: string): string[] {
  * 各フィールドをローカル state として保持する。保存ボタンは名前必須、SQL 構文有効、
  * cron 式有効、送信中でない、をすべて満たしたときだけ活性化する。
  */
-export function ScheduleFormModal({
-  open,
+export function ScheduleFormModal({ open, ...props }: ScheduleFormModalProps) {
+  // Reset the form to the target schedule's values each time the modal opens.
+  // Rendering nothing while closed means a fresh mount restores these defaults.
+  // 閉じている間は状態保持部分を描画しないため、次に開くと対象scheduleの初期値で
+  // 新しくマウントされる。開いたまま対象が変わる場合もkeyで同じ再初期化を行う。
+  if (!open) return null;
+  const targetKey = props.schedule?.id ?? 'new';
+  return <ScheduleFormModalBody key={targetKey} {...props} />;
+}
+
+/** 開くたびにマウントし直す、Schedule フォームの状態保持部分。 */
+function ScheduleFormModalBody({
   schedule,
   context,
   datasources,
@@ -98,7 +108,7 @@ export function ScheduleFormModal({
   onClose,
   onCreate,
   onUpdate,
-}: ScheduleFormModalProps) {
+}: Omit<ScheduleFormModalProps, 'open'>) {
   const editing = Boolean(schedule);
 
   const [name, setName] = useState(schedule?.name ?? '');
@@ -118,10 +128,6 @@ export function ScheduleFormModal({
   const [datasourceId, setDatasourceId] = useState(
     schedule?.datasourceId ?? defaultDatasourceId ?? datasources[0]?.id ?? '',
   );
-
-  // Reset the form to the target schedule's values each time the modal opens.
-  // Rendering nothing while closed means a fresh mount restores these defaults.
-  if (!open) return null;
 
   // フォームのバリデーション: SQL 文の構文チェック、cron 式の書式チェック、名前の必須
   // チェックをまとめて評価する。いずれかが不成立、または送信中であれば保存不可。
@@ -182,7 +188,7 @@ export function ScheduleFormModal({
 
   return (
     <Modal
-      open={open}
+      open
       onClose={onClose}
       title={editing ? 'Edit schedule' : 'New schedule'}
       description="Run a SQL statement on a cron schedule. The statement is validated before it runs."

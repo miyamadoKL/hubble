@@ -34,6 +34,7 @@ export { useNotebookWorkspace } from './useNotebookWorkspace';
 export {
   runAllCells,
   runActiveSqlCell,
+  runSqlCell,
   isActiveNotebookRunning,
   cancelActiveNotebook,
   saveActiveNotebook,

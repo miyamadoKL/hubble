@@ -316,6 +316,25 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
   };
 
   /**
+   * 現在の実行を新しい操作で置き換え、旧実行の停止、購読解除、待機解除を一括して行う。
+   * サーバーへの停止要求はベストエフォートとし、失敗してもローカルの置き換えを妨げない。
+   */
+  const supersede = (cellId: string): number => {
+    const rt = runtimeFor(cellId);
+    const current = get().cells[cellId];
+    const previousSettle = rt.settle;
+    rt.settle = undefined;
+    const generation = ++rt.generation;
+
+    if (current && !TERMINAL.has(current.state) && current.queryId) {
+      void cancelQuery(current.queryId).catch(() => undefined);
+    }
+    teardown(cellId);
+    previousSettle?.resolve('canceled');
+    return generation;
+  };
+
+  /**
    * Subscribe to a query and route events into the cell record.
    * クエリの SSE イベントを購読し、種類ごとにセルレコードへ反映するディスパッチャ。
    */
@@ -434,12 +453,12 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
     ctx: ExecutionContext,
     batch?: { index: number; total: number },
   ): Promise<QueryState> => {
+    const rt = runtimeFor(cellId);
     // Bump the generation: any in-flight subscription for this cell is now stale.
     // 世代をインクリメントする: これでこのセルの進行中の購読は全て「古い」ものになる。
-    const rt = runtimeFor(cellId);
+    // セルの世代を進め、進行中だった購読をすべて旧世代として無効化する。
+    const generation = supersede(cellId);
     rt.cancelRequested = false;
-    teardown(cellId);
-    const generation = ++rt.generation;
 
     // 終端状態に達したら resolve される Promise。runUnits の逐次実行が
     // 「1 つ前の文が終わるまで待つ」ために使う。
@@ -558,10 +577,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
     // 結果ペインのクリア。世代を進めて購読を閉じたうえで、cells からエントリ
     // そのものを削除する（idle 状態へ戻す）。
     clear: (cellId) => {
-      const rt = runtimeFor(cellId);
-      rt.generation++;
-      teardown(cellId);
-      rt.settle = undefined;
+      supersede(cellId);
       set((s) => {
         const next = { ...s.cells };
         delete next[cellId];

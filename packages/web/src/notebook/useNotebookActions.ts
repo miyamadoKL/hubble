@@ -119,20 +119,46 @@ export function runActiveSqlCell(
     (focusedCellId && notebook.cells.find((c) => c.id === focusedCellId && c.kind === 'sql')) ||
     notebook.cells.find((c) => c.kind === 'sql');
   if (!cell || cell.kind !== 'sql') return;
+  // Query Guardの拒否と理由表示を含む共通処理へ、選択したセルを明示して委譲する。
+  runSqlCell(cell.id, cell.source, context, defaultLimit);
+}
+
+/**
+ * 指定した SQL セルだけを、呼び出し元が選択した文と一致する場合に実行する。
+ *
+ * @param cellId 実行対象として明示されたセル ID。
+ * @param statement 実行対象として明示された SQL 文。
+ * @param context 実行時の catalog、schema、datasource。
+ * @param defaultLimit 自動 LIMIT の既定値。
+ * @returns 実行を開始した場合は true、それ以外は false。
+ */
+export function runSqlCell(
+  cellId: string,
+  statement: string,
+  context: { catalog?: string; schema?: string; datasourceId?: string },
+  defaultLimit: number,
+): boolean {
+  const store = useNotebookStore.getState();
+  const entry = store.activeId ? store.open[store.activeId] : undefined;
+  if (!entry) return false;
+  const cell = entry.notebook.cells.find((candidate) => candidate.id === cellId);
+  // セルと選択文の対応が崩れていた場合は、別セルの SQL を誤実行しない。
+  if (!cell || cell.kind !== 'sql' || cell.source !== statement) return false;
   // Query Guard: refuse a blocked active cell (the toast explains why).
-  if (refuseIfBlocked(cell.id)) return;
+  if (refuseIfBlocked(cellId)) return false;
 
   const values: Record<string, string> = {};
-  for (const v of notebook.variables) values[v.name] = v.value;
-  const units = resolveCellUnits(cell.source, values);
-  if (units === null) return; // missing variable — toast already shown
-  if (units.length === 0) return;
+  for (const variable of entry.notebook.variables) values[variable.name] = variable.value;
+  const units = resolveCellUnits(statement, values);
+  if (units === null || units.length === 0) return false;
 
-  const ctx: ExecutionContext = { ...context, notebookId: notebook.id };
+  const ctx: ExecutionContext = { ...context, notebookId: entry.notebook.id };
   const opts = { autoLimit: true, limit: defaultLimit };
   // 実行単位が 1 個ならシンプルな単発実行、複数あれば逐次実行（バッチ）にする。
-  if (units.length === 1) executionActions().runUnit(cell.id, units[0]!, ctx, opts);
-  else void executionActions().runUnits(cell.id, units, ctx, opts);
+  // 実行単位が1個なら単発実行し、複数なら順序を保ったbatchとして実行する。
+  if (units.length === 1) executionActions().runUnit(cellId, units[0]!, ctx, opts);
+  else void executionActions().runUnits(cellId, units, ctx, opts);
+  return true;
 }
 
 /** True when any SQL cell of the active notebook is currently running. */

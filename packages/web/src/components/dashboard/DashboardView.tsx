@@ -32,6 +32,14 @@ import { listDashboardShares, updateDashboardShares } from '../../api/dashboards
 import { isDocumentOwner } from '../../utils/documentShare';
 import { AddWidgetModal } from './AddWidgetModal';
 import { WidgetCard } from './WidgetCard';
+import {
+  useDocumentNavigationGuard,
+  useDocumentNavigationOwner,
+} from '../../hooks/useDocumentNavigationGuard';
+import {
+  continueDocumentNavigation,
+  saveActiveDocument,
+} from '../../navigation/documentNavigation';
 
 /** グリッドの列数 (Redash と同じ感覚の 6 列)。 */
 const GRID_COLS = 6;
@@ -135,6 +143,7 @@ function DashboardEditor({
   const createMutation = useCreateDashboard();
   const updateMutation = useUpdateDashboard();
   const deleteMutation = useDeleteDashboard();
+  const navigationOwner = useDocumentNavigationOwner();
   const saving = createMutation.isPending || updateMutation.isPending;
 
   // 共有経由の view 権限では編集させない (サーバー側でも拒否されるが UI でも隠す)。
@@ -146,6 +155,7 @@ function DashboardEditor({
   const layout = useMemo(() => toLayout(widgets), [widgets]);
 
   const save = async () => {
+    if (!dirty && !isNew) return;
     try {
       if (isNew) {
         const created = await createMutation.mutateAsync({
@@ -153,7 +163,9 @@ function DashboardEditor({
           widgets,
         });
         // 作成後は保存済みダッシュボードとして開き直す。
-        useUiStore.getState().openDashboard(created.id);
+        continueDocumentNavigation(navigationOwner, () =>
+          useUiStore.getState().openDashboard(created.id),
+        );
         toast.success('Dashboard created');
       } else {
         await updateMutation.mutateAsync({
@@ -173,12 +185,21 @@ function DashboardEditor({
     }
   };
 
+  useDocumentNavigationGuard(
+    {
+      label: name.trim() || 'Untitled dashboard',
+      dirty,
+      save,
+    },
+    navigationOwner,
+  );
+
   const remove = async () => {
     if (isNew) return;
     try {
       await deleteMutation.mutateAsync(dashboard.id);
       toast.success('Dashboard deleted');
-      onClose();
+      continueDocumentNavigation(navigationOwner, onClose);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete dashboard');
     }
@@ -221,7 +242,7 @@ function DashboardEditor({
                 size="sm"
                 icon={Save}
                 disabled={saving}
-                onClick={() => void save()}
+                onClick={() => void saveActiveDocument()}
               >
                 {saving ? 'Saving…' : 'Save'}
               </Button>

@@ -43,6 +43,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('open / close / active', () => {
@@ -192,6 +193,83 @@ describe('serialization round-trip', () => {
 });
 
 describe('autosave debounce (fake timers)', () => {
+  test('保存済みnotebookの編集をPUT前にlocal journalへ同期保存する', () => {
+    vi.useFakeTimers();
+    __setPersistence({
+      create: vi.fn(async (nb) => nb),
+      update: vi.fn(async (_id, nb) => ({ ...nb, revision: nb.revision + 1 })),
+    });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT journal');
+
+    const journal = JSON.parse(localStorage.getItem('hubble-notebook-journal:nb-1')!);
+    expect(journal).toMatchObject({
+      version: 1,
+      id: 'nb-1',
+      baseRevision: 1,
+      editGeneration: 1,
+      notebook: { id: 'nb-1', revision: 1 },
+    });
+    expect(journal.notebook.cells[0].source).toBe('SELECT journal');
+    expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+      durableGeneration: 1,
+      localPersistenceError: false,
+    });
+  });
+
+  test('reload時に同じbase revisionのlocal journalを未保存編集として復元する', () => {
+    vi.useFakeTimers();
+    const local = makeNotebook({
+      cells: [{ id: 'c1', kind: 'sql', source: 'SELECT recovered' }],
+    });
+    localStorage.setItem(
+      'hubble-notebook-journal:nb-1',
+      JSON.stringify({
+        version: 1,
+        id: 'nb-1',
+        baseRevision: 1,
+        editGeneration: 4,
+        notebook: local,
+      }),
+    );
+
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+
+    expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+      notebook: { cells: [{ source: 'SELECT recovered' }] },
+      dirty: true,
+      conflict: false,
+      editGeneration: 4,
+      durableGeneration: 4,
+    });
+  });
+
+  test('server revisionが進んだlocal journalは内容を保全して競合扱いにする', () => {
+    const local = makeNotebook({
+      cells: [{ id: 'c1', kind: 'sql', source: 'SELECT local' }],
+    });
+    localStorage.setItem(
+      'hubble-notebook-journal:nb-1',
+      JSON.stringify({
+        version: 1,
+        id: 'nb-1',
+        baseRevision: 1,
+        editGeneration: 2,
+        notebook: local,
+      }),
+    );
+
+    useNotebookStore.getState().openNotebook(makeNotebook({ revision: 2 }), { draft: false });
+
+    expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+      notebook: { cells: [{ source: 'SELECT local' }] },
+      dirty: true,
+      conflict: true,
+    });
+    expect(localStorage.getItem('hubble-notebook-journal:nb-1')).not.toBeNull();
+  });
+
   test('a saved notebook PUTs once after the debounce window', async () => {
     vi.useFakeTimers();
     const update = vi.fn(async (_id: string, nb: Notebook) => nb);
@@ -244,17 +322,250 @@ describe('autosave debounce (fake timers)', () => {
         cells: [{ id: 'c1', kind: 'sql', source: 'SELECT 2' }],
       }),
     );
-    await Promise.resolve();
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(2));
 
     const current = useNotebookStore.getState().open['nb-1']!;
     expect(current.notebook.cells[0]?.source).toBe('SELECT 3');
     expect(current.notebook.revision).toBe(2);
     expect(current.dirty).toBe(true);
-    expect(current.saving).toBe(false);
+    expect(current.saving).toBe(true);
+
+    expect(update.mock.calls[1]?.[1].revision).toBe(2);
+    expect(JSON.parse(localStorage.getItem('hubble-notebook-journal:nb-1')!)).toMatchObject({
+      baseRevision: 2,
+      editGeneration: 2,
+      notebook: { cells: [{ source: 'SELECT 3' }] },
+    });
+    resolveUpdate(
+      makeNotebook({
+        revision: 3,
+        cells: [{ id: 'c1', kind: 'sql', source: 'SELECT 3' }],
+      }),
+    );
+    await vi.waitFor(() => expect(useNotebookStore.getState().open['nb-1']?.saving).toBe(false));
+    expect(useNotebookStore.getState().open['nb-1']?.dirty).toBe(false);
+    expect(localStorage.getItem('hubble-notebook-journal:nb-1')).toBeNull();
+  });
+
+  test('保存中の明示Saveを同じsingle-flightへ合流させる', async () => {
+    vi.useFakeTimers();
+    let active = 0;
+    let maxActive = 0;
+    const resolvers: ((notebook: Notebook) => void)[] = [];
+    const update = vi.fn(
+      (_id: string, notebook: Notebook) =>
+        new Promise<Notebook>((resolve) => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          resolvers.push((saved) => {
+            active -= 1;
+            resolve(saved);
+          });
+          void notebook;
+        }),
+    );
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT 2');
 
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    expect(update).toHaveBeenCalledTimes(2);
-    expect(update.mock.calls[1]?.[1].revision).toBe(2);
+    const explicit = persistSavedNotebook('nb-1');
+    expect(update).toHaveBeenCalledTimes(1);
+    resolvers[0]!(makeNotebook({ revision: 2 }));
+
+    await expect(explicit).resolves.toMatchObject({ revision: 2 });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(maxActive).toBe(1);
+    expect(useNotebookStore.getState().open['nb-1']?.conflict).toBe(false);
+  });
+
+  test('閉じる前のPUT応答が同じIDで開き直したnotebookを上書きしない', async () => {
+    vi.useFakeTimers();
+    let resolveOldSave!: (notebook: Notebook) => void;
+    const update = vi.fn(
+      () =>
+        new Promise<Notebook>((resolve) => {
+          resolveOldSave = resolve;
+        }),
+    );
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT before-close');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+
+    useNotebookStore.getState().closeNotebook('nb-1');
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT after-reopen');
+    resolveOldSave(
+      makeNotebook({
+        revision: 2,
+        cells: [{ id: 'c1', kind: 'sql', source: 'SELECT before-close' }],
+      }),
+    );
+    await Promise.resolve();
+
+    expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+      notebook: { revision: 2, cells: [{ source: 'SELECT after-reopen' }] },
+      dirty: true,
+      saving: false,
+      conflict: false,
+    });
+  });
+
+  test('閉じる前のPUT完了まで開き直し後のPUTを待ち、新revisionへrebaseする', async () => {
+    vi.useFakeTimers();
+    let resolveOldSave!: (notebook: Notebook) => void;
+    const update = vi
+      .fn<(_id: string, notebook: Notebook) => Promise<Notebook>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Notebook>((resolve) => {
+            resolveOldSave = resolve;
+          }),
+      )
+      .mockImplementationOnce(async (_id, notebook) => ({
+        ...notebook,
+        revision: notebook.revision + 1,
+      }));
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT before-close');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+
+    useNotebookStore.getState().closeNotebook('nb-1');
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT after-reopen');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    expect(update).toHaveBeenCalledOnce();
+
+    resolveOldSave(
+      makeNotebook({
+        revision: 2,
+        cells: [{ id: 'c1', kind: 'sql', source: 'SELECT before-close' }],
+      }),
+    );
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+
+    expect(update.mock.calls[1]?.[1]).toMatchObject({
+      revision: 2,
+      cells: [{ source: 'SELECT after-reopen' }],
+    });
+    await vi.waitFor(() =>
+      expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+        notebook: { revision: 3, cells: [{ source: 'SELECT after-reopen' }] },
+        dirty: false,
+        saving: false,
+        conflict: false,
+      }),
+    );
+  });
+
+  test('古い世代の一時失敗後に最新世代だけを直列保存する', async () => {
+    vi.useFakeTimers();
+    let rejectFirst!: (error: Error) => void;
+    let resolveSecond!: (notebook: Notebook) => void;
+    const update = vi
+      .fn<(_id: string, notebook: Notebook) => Promise<Notebook>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Notebook>((_resolve, reject) => {
+            rejectFirst = reject;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<Notebook>((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT old');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT latest');
+    const explicit = persistSavedNotebook('nb-1');
+
+    rejectFirst(new TypeError('offline'));
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    expect(update.mock.calls[1]?.[1].cells[0]?.source).toBe('SELECT latest');
+    resolveSecond(
+      makeNotebook({
+        revision: 2,
+        cells: [{ id: 'c1', kind: 'sql', source: 'SELECT latest' }],
+      }),
+    );
+
+    await expect(explicit).resolves.toMatchObject({ revision: 2 });
+    expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+      dirty: false,
+      saving: false,
+      conflict: false,
+    });
+    expect(localStorage.getItem('hubble-notebook-journal:nb-1')).toBeNull();
+  });
+
+  test('local journal書き込み失敗を表示状態に反映し、次世代成功で解除する', () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let failJournal = true;
+    const guarded = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage,
+      key,
+      value,
+    ) {
+      if (failJournal && key === 'hubble-notebook-journal:nb-1') {
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return originalSetItem.call(this, key, value);
+    });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT failed');
+    expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+      durableGeneration: 0,
+      localPersistenceError: true,
+    });
+
+    failJournal = false;
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT durable');
+    expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+      durableGeneration: 2,
+      localPersistenceError: false,
+    });
+    guarded.mockRestore();
+  });
+
+  test('PUT成功時は保存世代より古いjournalを削除する', async () => {
+    vi.useFakeTimers();
+    const originalSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (
+        key === 'hubble-notebook-journal:nb-1' &&
+        (JSON.parse(value) as { editGeneration?: number }).editGeneration === 2
+      ) {
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return originalSetItem.call(this, key, value);
+    });
+    const update = vi.fn(async (_id: string, notebook: Notebook) => ({
+      ...notebook,
+      revision: notebook.revision + 1,
+    }));
+    __setPersistence({ create: vi.fn(async (nb) => nb), update });
+    useNotebookStore.getState().openNotebook(makeNotebook(), { draft: false });
+
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT generation-1');
+    useNotebookStore.getState().setCellSource('nb-1', 'c1', 'SELECT generation-2');
+    expect(localStorage.getItem('hubble-notebook-journal:nb-1')).toContain('generation-1');
+    expect(useNotebookStore.getState().open['nb-1']?.localPersistenceError).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(localStorage.getItem('hubble-notebook-journal:nb-1')).toBeNull();
+    expect(useNotebookStore.getState().open['nb-1']).toMatchObject({
+      dirty: false,
+      localPersistenceError: false,
+    });
   });
 
   test('a revision conflict preserves local edits and stops autosave', async () => {
@@ -297,6 +608,58 @@ describe('autosave debounce (fake timers)', () => {
     expect(localStorage.getItem(`hubble-draft:${id}`)).toContain('SELECT 9');
   });
 
+  test('draft書き込み失敗も状態へ反映し、後続世代の成功で解除する', () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let blockedId: string | null = null;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (blockedId && key === `hubble-draft:${blockedId}`) {
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return originalSetItem.call(this, key, value);
+    });
+    const id = useNotebookStore.getState().createBlankNotebook();
+    blockedId = id;
+    const cellId = useNotebookStore.getState().open[id]!.notebook.cells[0]!.id;
+
+    useNotebookStore.getState().setCellSource(id, cellId, 'SELECT failed');
+    expect(useNotebookStore.getState().open[id]).toMatchObject({
+      durableGeneration: 0,
+      localPersistenceError: true,
+    });
+
+    blockedId = null;
+    useNotebookStore.getState().setCellSource(id, cellId, 'SELECT durable');
+    expect(useNotebookStore.getState().open[id]).toMatchObject({
+      durableGeneration: 2,
+      localPersistenceError: false,
+    });
+  });
+
+  test('workspace書き込み失敗時はdraft本文が書けても警告し、後続編集で再試行する', () => {
+    const originalSetItem = Storage.prototype.setItem;
+    let failWorkspace = true;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (failWorkspace && key === 'hubble-workspace') {
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return originalSetItem.call(this, key, value);
+    });
+
+    const id = useNotebookStore.getState().createBlankNotebook();
+    expect(localStorage.getItem(`hubble-draft:${id}`)).not.toBeNull();
+    expect(useNotebookStore.getState().open[id]?.localPersistenceError).toBe(true);
+
+    failWorkspace = false;
+    const cellId = useNotebookStore.getState().open[id]!.notebook.cells[0]!.id;
+    useNotebookStore.getState().setCellSource(id, cellId, 'SELECT durable workspace');
+
+    expect(localStorage.getItem('hubble-workspace')).toContain(id);
+    expect(useNotebookStore.getState().open[id]).toMatchObject({
+      durableGeneration: 1,
+      localPersistenceError: false,
+    });
+  });
+
   test('view-only shared notebook is NOT autosaved to the server', async () => {
     vi.useFakeTimers();
     const update = vi.fn(async (_id: string, nb: Notebook) => nb);
@@ -330,6 +693,49 @@ describe('explicit persistence', () => {
     expect(s.open['server-id']?.dirty).toBe(false);
     expect(s.open[id]).toBeUndefined();
     expect(localStorage.getItem(`hubble-draft:${id}`)).toBeNull();
+  });
+
+  test('POST中の編集後にworkspaceのre-keyが失敗した場合は旧draftを保持する', async () => {
+    vi.useFakeTimers();
+    let submitted!: Notebook;
+    let resolveCreate!: (notebook: Notebook) => void;
+    const create = vi.fn(
+      (notebook: Notebook) =>
+        new Promise<Notebook>((resolve) => {
+          submitted = notebook;
+          resolveCreate = resolve;
+        }),
+    );
+    __setPersistence({ create, update: vi.fn(async (_i, nb) => nb) });
+    const id = useNotebookStore.getState().createBlankNotebook();
+    const cellId = useNotebookStore.getState().open[id]!.notebook.cells[0]!.id;
+
+    const saving = persistNewNotebook(id, 'Saved name');
+    useNotebookStore.getState().setCellSource(id, cellId, 'SELECT edited during POST');
+    const oldDraftRaw = localStorage.getItem(`hubble-draft:${id}`);
+    expect(oldDraftRaw).toContain('SELECT edited during POST');
+
+    const originalSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === 'hubble-workspace') {
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return originalSetItem.call(this, key, value);
+    });
+    resolveCreate({ ...submitted, id: 'server-id', revision: 1 });
+    await saving;
+
+    expect(localStorage.getItem(`hubble-draft:${id}`)).toBe(oldDraftRaw);
+    expect(localStorage.getItem('hubble-workspace')).toContain(id);
+    expect(localStorage.getItem('hubble-workspace')).not.toContain('server-id');
+    expect(localStorage.getItem('hubble-notebook-journal:server-id')).toContain(
+      'SELECT edited during POST',
+    );
+    expect(useNotebookStore.getState().open['server-id']).toMatchObject({
+      dirty: true,
+      localPersistenceError: true,
+      notebook: { cells: [{ source: 'SELECT edited during POST' }] },
+    });
   });
 
   test('persistSavedNotebook PUTs immediately and clears dirty', async () => {

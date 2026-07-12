@@ -200,6 +200,76 @@ describe('executionStore generation guard (stale discard)', () => {
     expect(cell.rows).toEqual([[2]]);
   });
 
+  test('再実行は旧queryを停止して旧batchの待機を解除する', async () => {
+    createQuery
+      .mockResolvedValueOnce({ queryId: 'old-batch-query' })
+      .mockResolvedValueOnce({ queryId: 'replacement-query' });
+    cancelQuery.mockRejectedValueOnce(new Error('best-effort cancel failed'));
+
+    const oldBatch = useExecutionStore
+      .getState()
+      .runUnits('cell-superseded', [unit('SELECT old'), unit('DELETE FROM old')], CTX, OPTS);
+    await flush();
+    const oldSource = lastSource();
+
+    useExecutionStore.getState().runUnit('cell-superseded', unit('SELECT replacement'), CTX, OPTS);
+    await oldBatch;
+    await flush();
+
+    expect(cancelQuery).toHaveBeenCalledWith('old-batch-query');
+    expect(oldSource.closed).toBe(true);
+    expect(createQuery).toHaveBeenCalledTimes(2);
+    expect(useExecutionStore.getState().cells['cell-superseded']).toMatchObject({
+      queryId: 'replacement-query',
+      statement: 'SELECT replacement',
+    });
+  });
+
+  test('queryId確定前の再実行は旧batchを解除し、確定後の旧queryを停止する', async () => {
+    let resolveOldCreate!: (value: { queryId: string }) => void;
+    createQuery
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ queryId: string }>((resolve) => {
+            resolveOldCreate = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ queryId: 'replacement-after-race' });
+
+    const oldBatch = useExecutionStore
+      .getState()
+      .runUnits('cell-create-race', [unit('SELECT old'), unit('DELETE FROM old')], CTX, OPTS);
+    useExecutionStore.getState().runUnit('cell-create-race', unit('SELECT replacement'), CTX, OPTS);
+    await oldBatch;
+    resolveOldCreate({ queryId: 'late-old-query' });
+    await flush();
+
+    expect(cancelQuery).toHaveBeenCalledWith('late-old-query');
+    expect(createQuery).toHaveBeenCalledTimes(2);
+    expect(useExecutionStore.getState().cells['cell-create-race']).toMatchObject({
+      queryId: 'replacement-after-race',
+      statement: 'SELECT replacement',
+    });
+  });
+
+  test('clearは停止要求の失敗時も旧batchの待機と購読を残さない', async () => {
+    createQuery.mockResolvedValueOnce({ queryId: 'query-cleared-during-batch' });
+    cancelQuery.mockRejectedValueOnce(new Error('best-effort cancel failed'));
+    const oldBatch = useExecutionStore
+      .getState()
+      .runUnits('cell-cleared', [unit('SELECT old'), unit('DELETE FROM old')], CTX, OPTS);
+    await flush();
+    const oldSource = lastSource();
+
+    useExecutionStore.getState().clear('cell-cleared');
+    await oldBatch;
+
+    expect(cancelQuery).toHaveBeenCalledWith('query-cleared-during-batch');
+    expect(oldSource.closed).toBe(true);
+    expect(createQuery).toHaveBeenCalledTimes(1);
+    expect(useExecutionStore.getState().cells['cell-cleared']).toBeUndefined();
+  });
+
   test('cancel bumps the generation and ignores trailing server events', async () => {
     createQuery.mockResolvedValue({ queryId: 'qid-cancel' });
     const store = useExecutionStore.getState();
