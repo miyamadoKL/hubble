@@ -2,14 +2,16 @@
  * WorkflowRepository / WorkflowRunRepository の振る舞いを dbBackends で検証する。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import type { SqlDatabase } from '../db/sqlDatabase';
+import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { workflowDefinitionSchema } from '@hubble/contracts';
 import { dbBackends } from '../test/dbBackends';
 import { DEFAULT_DATASOURCE_ID } from '../test/testEngine';
+import { ResultObjectDeletionRepository } from './resultObjectDeletions';
 import {
   WorkflowRepository,
   WorkflowRunClaimConflictError,
   WorkflowRunRepository,
+  WorkflowRunTargetNotFoundError,
 } from './workflows';
 
 const ds = { datasourceId: DEFAULT_DATASOURCE_ID };
@@ -26,6 +28,24 @@ const sampleStages = workflowDefinitionSchema.parse([
   },
 ]);
 
+function failAfterResultObjectDeletionInsert(database: SqlDatabase): SqlDatabase {
+  const wrap = (handle: SqlDatabase): SqlDatabase => ({
+    dialect: handle.dialect,
+    query: <T>(sql: string, params?: readonly SqlParam[]) => handle.query<T>(sql, params),
+    run: async (sql, params) => {
+      await handle.run(sql, params);
+      if (sql.includes('INSERT INTO result_object_deletions')) {
+        throw new Error('outbox unavailable');
+      }
+    },
+    exec: (sql) => handle.exec(sql),
+    transaction: <T>(fn: (tx: SqlDatabase) => Promise<T>) =>
+      handle.transaction((tx) => fn(wrap(tx))),
+    close: () => handle.close(),
+  });
+  return wrap(database);
+}
+
 for (const backend of dbBackends) {
   describe(`workflow repositories on ${backend.name}`, () => {
     let db: SqlDatabase;
@@ -33,6 +53,7 @@ for (const backend of dbBackends) {
     afterEach(async () => {
       if (db) {
         if (db.dialect === 'postgres') {
+          await db.run('DELETE FROM result_object_deletions');
           await db.run('DELETE FROM workflow_step_runs');
           await db.run('DELETE FROM workflow_runs');
           await db.run('DELETE FROM workflows');
@@ -97,10 +118,11 @@ for (const backend of dbBackends) {
         expect(enabled.map((w) => w.name).sort()).toEqual(['cron']);
       });
 
-      it('cascade-deletes runs when workflow is removed', async () => {
+      it('run の result key を outbox に残してから workflow を削除する', async () => {
         const db2 = await open();
         const repo = new WorkflowRepository(db2);
         const runs = new WorkflowRunRepository(db2, 50);
+        const deletions = new ResultObjectDeletionRepository(db2);
         const w = await repo.create('alice', {
           name: 'w',
           stages: sampleStages,
@@ -112,6 +134,14 @@ for (const backend of dbBackends) {
           '2026-01-01T00:00:00.000Z',
           '2026-01-01T00:00:00.000Z',
         );
+        const stepRunId = (await runs.getRun(runId))!.steps[0]!.id;
+        await runs.finishStep(stepRunId, {
+          status: 'success',
+          attempt: 1,
+          resultObjectKey: 'hubble-results/workflow/delete.jsonl.gz',
+          resultExpiresAt: '2026-02-01T00:00:00.000Z',
+          finishedAt: '2026-01-01T00:00:01.000Z',
+        });
         await runs.finishRun(runId, w.id, {
           status: 'success',
           finishedAt: '2026-01-01T00:00:01.000Z',
@@ -120,7 +150,127 @@ for (const backend of dbBackends) {
         expect(await runs.listRuns(w.id, 10)).toHaveLength(1);
         await repo.delete('alice', w.id);
         expect(await runs.listRuns(w.id, 10)).toHaveLength(0);
+        expect(await deletions.listForTest()).toEqual([
+          expect.objectContaining({
+            key: 'hubble-results/workflow/delete.jsonl.gz',
+            attempts: 0,
+          }),
+        ]);
       });
+
+      it('workflow 削除後に step が完了しても result key を outbox に残す', async () => {
+        const db2 = await open();
+        const repo = new WorkflowRepository(db2);
+        const runs = new WorkflowRunRepository(db2, 50);
+        const deletions = new ResultObjectDeletionRepository(db2);
+        const workflow = await repo.create('alice', {
+          name: 'delete before finish',
+          stages: workflowDefinitionSchema.parse([
+            { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
+          ]),
+          ...ds,
+        });
+        const runId = await runs.startRun(
+          workflow,
+          'manual',
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z',
+        );
+        const stepRunId = (await runs.getRun(runId))!.steps[0]!.id;
+
+        await repo.delete('alice', workflow.id);
+        await runs.finishStep(stepRunId, {
+          status: 'success',
+          attempt: 1,
+          resultObjectKey: 'hubble-results/workflow/delete-before-finish.jsonl.gz',
+          resultExpiresAt: '2026-02-01T00:00:00.000Z',
+          finishedAt: '2026-01-01T00:00:01.000Z',
+        });
+
+        expect(await runs.getRun(runId)).toBeUndefined();
+        expect(await deletions.listForTest()).toEqual([
+          expect.objectContaining({
+            key: 'hubble-results/workflow/delete-before-finish.jsonl.gz',
+            attempts: 0,
+          }),
+        ]);
+      });
+
+      it('delete 後の finishStep で outbox insert が失敗しても一部登録を残さない', async () => {
+        const db2 = await open();
+        const repo = new WorkflowRepository(db2);
+        const runs = new WorkflowRunRepository(db2, 50);
+        const deletions = new ResultObjectDeletionRepository(db2);
+        const workflow = await repo.create('alice', {
+          name: 'finish rollback',
+          stages: workflowDefinitionSchema.parse([
+            { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
+          ]),
+          ...ds,
+        });
+        const runId = await runs.startRun(
+          workflow,
+          'manual',
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z',
+        );
+        const stepRunId = (await runs.getRun(runId))!.steps[0]!.id;
+        await repo.delete('alice', workflow.id);
+        const failingRuns = new WorkflowRunRepository(failAfterResultObjectDeletionInsert(db2), 50);
+
+        await expect(
+          failingRuns.finishStep(stepRunId, {
+            status: 'success',
+            attempt: 1,
+            resultObjectKey: 'hubble-results/workflow/finish-rollback.jsonl.gz',
+            resultExpiresAt: '2026-02-01T00:00:00.000Z',
+            finishedAt: '2026-01-01T00:00:01.000Z',
+          }),
+        ).rejects.toThrow('outbox unavailable');
+        expect(await deletions.listForTest()).toEqual([]);
+      });
+
+      const atomicDeleteTest = backend.name === 'sqlite' ? it : it.skip;
+      atomicDeleteTest(
+        'outbox insert 失敗時は workflow と run の削除を rollback する',
+        async () => {
+          const db2 = await open();
+          const repo = new WorkflowRepository(db2);
+          const runs = new WorkflowRunRepository(db2, 50);
+          const workflow = await repo.create('alice', {
+            name: 'rollback',
+            stages: workflowDefinitionSchema.parse([
+              { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
+            ]),
+            ...ds,
+          });
+          const runId = await runs.startRun(
+            workflow,
+            'manual',
+            '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z',
+          );
+          const stepRunId = (await runs.getRun(runId))!.steps[0]!.id;
+          await runs.finishStep(stepRunId, {
+            status: 'success',
+            attempt: 1,
+            resultObjectKey: 'hubble-results/workflow/rollback.jsonl.gz',
+            resultExpiresAt: '2026-02-01T00:00:00.000Z',
+            finishedAt: '2026-01-01T00:00:01.000Z',
+          });
+          await db2.exec(
+            `CREATE TRIGGER reject_result_object_deletion
+           BEFORE INSERT ON result_object_deletions
+           BEGIN
+             SELECT RAISE(ABORT, 'outbox unavailable');
+           END;`,
+          );
+
+          await expect(repo.delete('alice', workflow.id)).rejects.toThrow('outbox unavailable');
+          expect(await repo.get('alice', workflow.id)).toBeDefined();
+          expect(await runs.getRun(runId)).toBeDefined();
+        },
+      );
     });
 
     describe('WorkflowRunRepository', () => {
@@ -143,6 +293,23 @@ for (const backend of dbBackends) {
           reason: expect.any(WorkflowRunClaimConflictError),
         });
         expect(await runs.listRuns(workflow.id, 10)).toHaveLength(1);
+      });
+
+      it('delete が先に完了した workflow record から run を再生成しない', async () => {
+        const db2 = await open();
+        const workflows = new WorkflowRepository(db2);
+        const runs = new WorkflowRunRepository(db2, 50);
+        const workflow = await workflows.create('alice', {
+          name: 'deleted target',
+          stages: sampleStages,
+          ...ds,
+        });
+        await workflows.delete('alice', workflow.id);
+
+        await expect(
+          runs.startRun(workflow, 'manual', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+        ).rejects.toBeInstanceOf(WorkflowRunTargetNotFoundError);
+        expect(await runs.listRuns(workflow.id, 10)).toEqual([]);
       });
 
       it('expands steps on startRun and finishes run', async () => {
@@ -205,6 +372,7 @@ for (const backend of dbBackends) {
         const db2 = await open();
         const repo = new WorkflowRepository(db2);
         const runs = new WorkflowRunRepository(db2, 2);
+        const deletions = new ResultObjectDeletionRepository(db2);
         const w = await repo.create('alice', {
           name: 'w',
           stages: workflowDefinitionSchema.parse([
@@ -215,6 +383,14 @@ for (const backend of dbBackends) {
         for (let i = 0; i < 4; i++) {
           const ts = `2026-01-01T00:0${i}:00.000Z`;
           const runId = await runs.startRun(w, 'manual', ts, ts);
+          const stepRunId = (await runs.getRun(runId))!.steps[0]!.id;
+          await runs.finishStep(stepRunId, {
+            status: 'success',
+            attempt: 1,
+            resultObjectKey: `hubble-results/workflow/prune-${i}.jsonl.gz`,
+            resultExpiresAt: '2026-02-01T00:00:00.000Z',
+            finishedAt: ts,
+          });
           await runs.finishRun(runId, w.id, {
             status: 'success',
             finishedAt: ts,
@@ -222,7 +398,70 @@ for (const backend of dbBackends) {
           });
         }
         expect(await runs.listRuns(w.id, 10)).toHaveLength(2);
+        expect((await deletions.listForTest()).map((job) => job.key)).toEqual([
+          'hubble-results/workflow/prune-0.jsonl.gz',
+          'hubble-results/workflow/prune-1.jsonl.gz',
+        ]);
       });
+
+      const atomicPruneTest = backend.name === 'sqlite' ? it : it.skip;
+      atomicPruneTest(
+        'outbox insert 失敗時は retention 対象の run 削除を rollback する',
+        async () => {
+          const db2 = await open();
+          const repo = new WorkflowRepository(db2);
+          const runs = new WorkflowRunRepository(db2, 1);
+          const workflow = await repo.create('alice', {
+            name: 'prune rollback',
+            stages: workflowDefinitionSchema.parse([
+              { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
+            ]),
+            ...ds,
+          });
+          const firstRunId = await runs.startRun(
+            workflow,
+            'manual',
+            '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z',
+          );
+          const firstStepId = (await runs.getRun(firstRunId))!.steps[0]!.id;
+          await runs.finishStep(firstStepId, {
+            status: 'success',
+            attempt: 1,
+            resultObjectKey: 'hubble-results/workflow/prune-rollback.jsonl.gz',
+            resultExpiresAt: '2026-02-01T00:00:00.000Z',
+            finishedAt: '2026-01-01T00:00:01.000Z',
+          });
+          await runs.finishRun(firstRunId, workflow.id, {
+            status: 'success',
+            finishedAt: '2026-01-01T00:00:01.000Z',
+            elapsedMs: 1,
+          });
+          const secondRunId = await runs.startRun(
+            workflow,
+            'manual',
+            '2026-01-01T00:01:00.000Z',
+            '2026-01-01T00:01:00.000Z',
+          );
+          await db2.exec(
+            `CREATE TRIGGER reject_pruned_result_object_deletion
+           BEFORE INSERT ON result_object_deletions
+           BEGIN
+             SELECT RAISE(ABORT, 'outbox unavailable');
+           END;`,
+          );
+
+          await expect(
+            runs.finishRun(secondRunId, workflow.id, {
+              status: 'success',
+              finishedAt: '2026-01-01T00:01:01.000Z',
+              elapsedMs: 1,
+            }),
+          ).rejects.toThrow('outbox unavailable');
+          expect(await runs.getRun(firstRunId)).toBeDefined();
+          expect(await runs.listRuns(workflow.id, 10)).toHaveLength(2);
+        },
+      );
 
       it('lists expired step results', async () => {
         const db2 = await open();

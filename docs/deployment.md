@@ -54,8 +54,8 @@ multi-stage の流れ：
 
 イメージは `DATABASE_URL` を既定で設定しないため、単体 `docker run` では
 `DB_PATH`（SQLite、non-production 想定）が使われます。`/data` は `VOLUME` 化されており、
-SQLite（`notebooks` / `saved_queries` / `query_history`）がコンテナ再作成をまたいで
-永続化されます。**production では `-e DATABASE_URL=postgres://...` を渡して PostgreSQL に
+SQLite に保存された application table がコンテナ再作成をまたいで永続化されます。
+**production では `-e DATABASE_URL=postgres://...` を渡して PostgreSQL に
 してください**（[`operations.md` §9](operations.md#9-データ管理)）。
 
 `datasources.yaml` は必須です。単体 `docker run` ではファイルをコンテナへマウントし、
@@ -146,12 +146,12 @@ docker compose down -v        # ボリューム（SQLite データ）も削除
 | `configmap.yaml`  | 非機密の環境変数 + `datasources.yaml` 本体（ConfigMap のキーとしてマウント）                                                        |
 | `secret.yaml`     | `TRINO_PASSWORD`（`datasources.yaml` の `passwordEnv` 参照先）と `DATABASE_URL`（**いずれもプレースホルダ**。実値に差し替えること） |
 | `pvc.yaml`        | SQLite 用 PVC（`ReadWriteOnce`、`/data` にマウント）。**non-production 向け、既定の `kustomization.yaml` には含まれない**           |
-| `deployment.yaml` | Deployment（既定 **replicas=1**、`RollingUpdate`、`/api/healthz` で liveness/readiness）                                            |
+| `deployment.yaml` | Deployment（**replicas=1**、`Recreate`、`/api/healthz` で liveness/readiness）                                                      |
 | `service.yaml`    | Service（`ClusterIP`、`:80` → コンテナ `:8080`）                                                                                    |
 
-既定は PostgreSQL（`DATABASE_URL`、`secret.yaml`）が永続化バックエンドです。DB を外部の
-PostgreSQL が一元管理するため `replicas` を 1 に固定する必要はなく、`RollingUpdate` で
-複数レプリカに増やせます（増やす場合は `deployment.yaml` の `replicas` を変更）。
+既定は PostgreSQL（`DATABASE_URL`、`secret.yaml`）が永続化バックエンドです。
+ただし、query registry、SSE の待機状態、各 worker の所有状態は Pod 間で共有されません。
+永続化バックエンドにかかわらず、`replicas: 1` と `Recreate` を維持してください。
 `DATABASE_URL` の例：
 
 ```yaml
@@ -162,8 +162,8 @@ stringData:
 
 non-production で SQLite（`DB_PATH` + PVC）を使う場合は `pvc.yaml` を
 `kustomization.yaml` の `resources` に追加し、`deployment.yaml` の PVC マウント（コメント
-アウト済み）を有効化してください（[§5](#5-永続化バックエンドと-replicas-の制約)）。この
-場合のみ `replicas=1` / `Recreate` が必須です。
+アウト済み）を有効化してください（[§5](#5-永続化バックエンドと-replicas-の制約)）。
+SQLite では、`Recreate` が旧 Pod による `ReadWriteOnce` PVC の解放も保証します。
 
 ### 4.1 レンダリングと検証
 
@@ -237,29 +237,37 @@ sudo k3s ctr images import hubble-0.1.0.tar
 ## 5. 永続化バックエンドと replicas の制約
 
 Hubble の永続化は PostgreSQL（`DATABASE_URL`、1st/production 推奨）または SQLite
-（`DB_PATH`、non-production）です。どちらも要約データ（notebooks / saved_queries /
-query_history）のみを保持し、結果の行データは保存しません
-（[`operations.md` §9](operations.md#9-データ管理)）。
+（`DB_PATH`、non-production）です。
+どちらも Notebook、Workflow、Schedule、Alert、共有設定、実行履歴などの application table を保持します。
+result store を有効にした場合は、保存済み結果の object key も保持します（[`operations.md` §9](operations.md#9-データ管理)）。
 
 ### PostgreSQL（既定、production 推奨）
 
-DB を外部の PostgreSQL が一元管理するため、**`replicas` を 1 に固定する必要はありません**。
-`deployment.yaml` は既定で `replicas: 1` + `RollingUpdate` ですが、負荷に応じて `replicas`
-を増やしても DB 競合は起きません。PVC も不要です。バックアップは `pg_dump` / `pg_restore`
-を使ってください（[`operations.md` §9.1](operations.md#91-postgresql-バックエンド主)）。
+PostgreSQL が共有するのは永続データであり、実行中の処理を所有する状態ではありません。
+query registry、SSE の待機状態、AI のレート制限、schedule、workflow、alert、GitHub 同期の状態はプロセス内にあります。
+このため、PostgreSQL を使う場合も **`replicas: 1` と `Recreate` が必須**です。
+
+`RollingUpdate` では、新 Pod の起動処理が DB 上の `running` レコードを orphan と判断し、旧 Pod が実行している job を abort する可能性があります。
+リクエストが別の Pod に届くと、SSE の購読や cancel が元の query を見つけられない問題もあります。
+PVC は不要で、バックアップには `pg_dump` / `pg_restore` を使ってください（[`operations.md` §9.1](operations.md#91-postgresql-バックエンド主)）。
 
 ### SQLite（non-production 向け）
 
 SQLite は**単一ファイル**（`DB_PATH`）を使うため、複数プロセスから同時に開けません。
-SQLite を使う場合のみ、次が**必須**です。
+プロセス内状態に関する制約に加えて、次の SQLite 固有の条件があります。
 
-- Kubernetes では **replicas を 1 に固定**し、PVC は `ReadWriteOnce`、ロールアウト戦略は
-  `Recreate`（旧 Pod が PVC を解放してから新 Pod が attach）にする（`pvc.yaml` を
-  `kustomization.yaml` に追加し、`deployment.yaml` のコメントアウト済み設定を有効化）。
-  `RollingUpdate` や replicas>1 は DB 競合や破損の原因です。
+- PVC は `ReadWriteOnce` にし、`pvc.yaml` を `kustomization.yaml` に追加して、
+  `deployment.yaml` のコメントアウト済みマウント設定を有効化します。
+- `Recreate` により、旧 Pod が PVC を解放してから新 Pod が attach する順序を保ちます。
+  SQLite 構成での `RollingUpdate` や `replicas` が 2 以上の構成は、DB 競合や破損の原因です。
 - Hubble は水平スケールしません。負荷はデータソース（Trino 等）側でスケールさせます。
 - バックアップは稼働中ならオンラインバックアップ（`sqlite3 … ".backup"`）が安全です
   （[`operations.md` §9.2](operations.md#92-sqlitenon-production-向け)）。
+
+### 制約を解除する条件
+
+複数 replica と `RollingUpdate` を許可するには、分散 claim、worker の leader election、共有 query state、query 所有 Pod への routing affinity が必要です。
+これらを実装し、実環境で SSE の再接続、cancel、job の引き継ぎを検証するまでは、この制約を解除できません。
 
 ---
 

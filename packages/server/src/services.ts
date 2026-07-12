@@ -22,6 +22,7 @@ import { HistoryRepository } from './store/history';
 import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
 import { AlertRepository } from './store/alerts';
 import { AlertDeliveryRepository } from './store/alertDeliveries';
+import { ResultObjectDeletionRepository } from './store/resultObjectDeletions';
 import { WorkflowRepository, WorkflowRunRepository } from './store/workflows';
 import { Scheduler } from './schedule/scheduler';
 import { AlertEvaluator } from './alert/evaluator';
@@ -264,6 +265,7 @@ export async function buildServices(
   const scheduleRuns = new ScheduleRunRepository(db, config.scheduler.runsRetention);
   const alerts = new AlertRepository(db);
   const alertDeliveries = new AlertDeliveryRepository(db);
+  const resultObjectDeletions = new ResultObjectDeletionRepository(db);
   const workflows = new WorkflowRepository(db);
   const workflowRuns = new WorkflowRunRepository(db, config.scheduler.runsRetention);
   const documentGitLinks = new DocumentGitLinkRepository(db);
@@ -356,6 +358,7 @@ export async function buildServices(
   const resultExpiry = new ResultExpiryService({
     history,
     workflowRuns,
+    deletions: resultObjectDeletions,
     resultStore,
     now: options.now,
     logWarn: options.resultStoreLogWarn,

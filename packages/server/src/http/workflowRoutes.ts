@@ -26,7 +26,11 @@ import type { Principal } from '../auth/principal';
 import { requireDatasourceAccess, schedulePrincipalIdentity } from '../rbac/check';
 import { resolveRoleForPrincipal } from '../rbac/resolve';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
-import type { WorkflowRecord, WorkflowRunRecord } from '../store/workflows';
+import {
+  WorkflowRunTargetNotFoundError,
+  type WorkflowRecord,
+  type WorkflowRunRecord,
+} from '../store/workflows';
 import { WorkflowRunInProgressError } from '../workflow/runner';
 import { nextRunIso } from '../schedule/cron';
 import { intParam, parseJsonBody } from './validate';
@@ -271,6 +275,9 @@ export function workflowRoutes(services: Services): App {
       const { runId } = await services.workflowRunner.runManual(record);
       return c.json({ runId }, 202);
     } catch (err) {
+      if (err instanceof WorkflowRunTargetNotFoundError) {
+        throw AppError.notFound(`Workflow ${id} not found`);
+      }
       // 実行中エラーのみ 409 に変換する。DB 障害等それ以外の失敗はそのまま伝播させる。
       // 実行中と上限超過は409、shutdown中の受付終了は503へ変換する。
       if (err instanceof WorkflowRunInProgressError || err instanceof JobAdmissionRejectedError) {

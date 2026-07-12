@@ -21,6 +21,7 @@ import {
 import type { ResolvedDatasource } from './datasource/types';
 import { parseCidrList, type ParsedCidr } from './auth/cidr';
 import { isValidCron } from './schedule/cron';
+import { DEFAULT_POSTGRES_TIMEOUTS, type PostgresTimeouts } from './db/postgresTimeouts';
 
 /** How a proxy-supplied principal is derived from SSO headers. */
 /** 日本語: `AUTH_USER_MAPPING` で選択する、SSO ヘッダから principal（実行ユーザー名）を
@@ -54,11 +55,13 @@ export interface AuthConfig {
  * default (`DB_PATH`); `postgres` is selected when `DATABASE_URL` is a
  * `postgres://` / `postgresql://` URL.
  *
- * 日本語: 選択された永続化バックエンド。判別共用体 (discriminated union) になっており、
+ * 選択された永続化バックエンド。判別共用体になっており、
  * `kind` の値によって `path`（SQLite のファイルパス）と `url`（PostgreSQL の接続文字列）
- * のどちらを持つかが決まる。両方を同時に持つことはない。
+ * のどちらを持つかが決まる。PostgreSQL の場合はアプリ永続化専用の期限設定も持つ。
  */
-export type DatabaseConfig = { kind: 'sqlite'; path: string } | { kind: 'postgres'; url: string };
+export type DatabaseConfig =
+  | { kind: 'sqlite'; path: string }
+  | { kind: 'postgres'; url: string; timeouts: PostgresTimeouts };
 
 /** クエリ結果保存バックエンド設定。 */
 export type ResultStoreConfig =
@@ -345,6 +348,25 @@ function envNonNegativeInt(env: Env, key: string, fallback: number): number {
   return envInt(env, key, fallback, 0);
 }
 
+// JavaScript の timer と PostgreSQL の timeout parameter が安全に扱える範囲で、
+// ミリ秒の期限値を厳密な十進整数として読む。
+function envTimeoutMs(env: Env, key: string, fallback: number): number {
+  const raw = env[key];
+  if (raw === undefined || raw === '') return fallback;
+  const normalized = raw.trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`Invalid timeout for env var ${key}: ${JSON.stringify(raw)}`);
+  }
+  const value = Number(normalized);
+  if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647) {
+    throw new Error(
+      `Invalid timeout for env var ${key}: ${JSON.stringify(raw)} ` +
+        '(expected integer milliseconds between 1 and 2147483647)',
+    );
+  }
+  return value;
+}
+
 // 値が無ければ undefined を返す（DEFAULT_CATALOG のように「未設定なら機能自体を
 // 使わない」というオプショナル項目向け）。
 function envOptional(env: Env, key: string): string | undefined {
@@ -403,7 +425,33 @@ export function resolveDatabaseConfig(env: Env): DatabaseConfig {
           'only postgres:// / postgresql:// (PostgreSQL) or DB_PATH (SQLite) are supported',
       );
     }
-    return { kind: 'postgres', url };
+    return {
+      kind: 'postgres',
+      url,
+      timeouts: {
+        connectionMs: envTimeoutMs(
+          env,
+          'DATABASE_CONNECT_TIMEOUT_MS',
+          DEFAULT_POSTGRES_TIMEOUTS.connectionMs,
+        ),
+        statementMs: envTimeoutMs(
+          env,
+          'DATABASE_STATEMENT_TIMEOUT_MS',
+          DEFAULT_POSTGRES_TIMEOUTS.statementMs,
+        ),
+        lockMs: envTimeoutMs(env, 'DATABASE_LOCK_TIMEOUT_MS', DEFAULT_POSTGRES_TIMEOUTS.lockMs),
+        idleTransactionMs: envTimeoutMs(
+          env,
+          'DATABASE_IDLE_TX_TIMEOUT_MS',
+          DEFAULT_POSTGRES_TIMEOUTS.idleTransactionMs,
+        ),
+        transactionMs: envTimeoutMs(
+          env,
+          'DATABASE_TRANSACTION_TIMEOUT_MS',
+          DEFAULT_POSTGRES_TIMEOUTS.transactionMs,
+        ),
+      },
+    };
   }
   // DATABASE_URL 未設定時は歴史的デフォルトである SQLite を使う。
   return { kind: 'sqlite', path: envStr(env, 'DB_PATH', './data/hubble.db') };

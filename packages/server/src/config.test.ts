@@ -2,6 +2,70 @@ import { describe, expect, it } from 'vitest';
 import { loadServerConfig } from './config';
 
 describe('loadServerConfig integer bounds', () => {
+  it('loads finite PostgreSQL persistence timeout defaults', () => {
+    expect(
+      loadServerConfig({ DATABASE_URL: 'postgres://hubble:secret@db/hubble' }).database,
+    ).toEqual({
+      kind: 'postgres',
+      url: 'postgres://hubble:secret@db/hubble',
+      timeouts: {
+        connectionMs: 10_000,
+        statementMs: 30_000,
+        lockMs: 10_000,
+        idleTransactionMs: 30_000,
+        transactionMs: 60_000,
+      },
+    });
+  });
+
+  it('loads PostgreSQL persistence timeouts and rejects non-positive values', () => {
+    const config = loadServerConfig({
+      DATABASE_URL: 'postgres://hubble:secret@db/hubble',
+      DATABASE_CONNECT_TIMEOUT_MS: '1200',
+      DATABASE_STATEMENT_TIMEOUT_MS: '2300',
+      DATABASE_LOCK_TIMEOUT_MS: '3400',
+      DATABASE_IDLE_TX_TIMEOUT_MS: '4500',
+      DATABASE_TRANSACTION_TIMEOUT_MS: '5600',
+    });
+    expect(config.database).toMatchObject({
+      timeouts: {
+        connectionMs: 1200,
+        statementMs: 2300,
+        lockMs: 3400,
+        idleTransactionMs: 4500,
+        transactionMs: 5600,
+      },
+    });
+
+    for (const key of [
+      'DATABASE_CONNECT_TIMEOUT_MS',
+      'DATABASE_STATEMENT_TIMEOUT_MS',
+      'DATABASE_LOCK_TIMEOUT_MS',
+      'DATABASE_IDLE_TX_TIMEOUT_MS',
+      'DATABASE_TRANSACTION_TIMEOUT_MS',
+    ]) {
+      expect(() =>
+        loadServerConfig({
+          DATABASE_URL: 'postgres://hubble:secret@db/hubble',
+          [key]: '0',
+        }),
+      ).toThrow(new RegExp(key));
+    }
+
+    expect(() =>
+      loadServerConfig({
+        DATABASE_URL: 'postgres://hubble:secret@db/hubble',
+        DATABASE_CONNECT_TIMEOUT_MS: '1.5',
+      }),
+    ).toThrow(/DATABASE_CONNECT_TIMEOUT_MS/);
+    expect(() =>
+      loadServerConfig({
+        DATABASE_URL: 'postgres://hubble:secret@db/hubble',
+        DATABASE_CONNECT_TIMEOUT_MS: '2147483648',
+      }),
+    ).toThrow(/between 1 and 2147483647/);
+  });
+
   it('rejects QUERY_CONCURRENCY=0', () => {
     expect(() => loadServerConfig({ QUERY_CONCURRENCY: '0' })).toThrow(/minimum: 1/);
   });
