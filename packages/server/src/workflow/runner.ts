@@ -736,7 +736,7 @@ export class WorkflowRunner {
     const prefix = this.deps.resultKeyPrefix ?? 'hubble-results/';
     return new ResultJsonlCapture(
       this.deps.resultStore,
-      `${prefix}workflow/${runId}/${stepRunId}.jsonl.gz`,
+      `${prefix}workflow/${runId}/${stepRunId}.jsonl.zst`,
     );
   }
 

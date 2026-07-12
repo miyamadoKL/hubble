@@ -10,7 +10,14 @@ import type { QueryRowsPage, QuerySnapshot } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 import type { DeleteExpiredResult, ExpiredResultObject, ResultStore } from './store';
-import { readPersistedRowsPage, ResultJsonlCapture } from './jsonl';
+import {
+  openPersistedResult,
+  readPersistedResultMetadata,
+  readPersistedRowsPage,
+  ResultJsonlCapture,
+  streamPersistedCsv,
+  streamPersistedResultEvents,
+} from './jsonl';
 import { S3ResultStore, buildS3ClientConfig } from './s3';
 import type { HistoryResultRef } from '../store/history';
 import { ResultObjectDeletionRepository } from '../store/resultObjectDeletions';
@@ -218,6 +225,123 @@ describe('ResultStore persistence', () => {
     expect(objects.has('blocked.jsonl.gz')).toBe(true);
   });
 
+  it('writes and reads a zstd JSONL object with the native node:zlib codec', async () => {
+    const store = new MemoryResultStore();
+    const key = 'hubble-results/native-zstd.jsonl.zst';
+    const capture = new ResultJsonlCapture(store, key);
+    capture.writeColumns(COLUMNS);
+    await capture.writeRows([
+      [1, 'one'],
+      [2, 'two'],
+    ]);
+    await capture.finish();
+
+    const page = await readPersistedRowsPage(await store.getStream(key), 0, 10, { key });
+
+    expect(capture.format).toBe('jsonl.zst');
+    expect(page.columns).toEqual(COLUMNS);
+    expect(page.rows).toEqual([
+      [1, 'one'],
+      [2, 'two'],
+    ]);
+    expect(page.totalRows).toBe(2);
+  });
+
+  it('uses the zstd dual reader for metadata, cursor, CSV, and result events', async () => {
+    const store = new MemoryResultStore();
+    const key = 'hubble-results/dual-reader.jsonl.zst';
+    const capture = new ResultJsonlCapture(store, key);
+    capture.writeColumns(COLUMNS);
+    await capture.writeRows([[1, 'one']]);
+    await capture.finish();
+
+    const metadata = await readPersistedResultMetadata(await store.getStream(key), { key });
+    const cursor = await openPersistedResult(await store.getStream(key), { key });
+    const rows: unknown[][] = [];
+    for await (const row of cursor.rows) rows.push(row);
+    const csv: string[] = [];
+    for await (const chunk of streamPersistedCsv(await store.getStream(key), { key }))
+      csv.push(chunk);
+    const events: unknown[] = [];
+    for await (const event of streamPersistedResultEvents(await store.getStream(key), undefined, {
+      key,
+    })) {
+      events.push(event);
+    }
+
+    expect(metadata.columns).toEqual(COLUMNS);
+    expect(rows).toEqual([[1, 'one']]);
+    expect(csv.join('')).toBe('id,note\r\n1,one\r\n');
+    expect(events).toEqual([
+      { type: 'columns', columns: COLUMNS },
+      { type: 'row', row: [1, 'one'] },
+    ]);
+  });
+
+  it.each([
+    { name: 'gzip', key: 'hubble-results/table-gzip.jsonl.gz' },
+    { name: 'zstd', key: 'hubble-results/table-zstd.jsonl.zst' },
+  ])('runs the same reader group for $name objects', async ({ key }) => {
+    const store = new MemoryResultStore();
+    const capture = new ResultJsonlCapture(store, key);
+    capture.writeColumns(COLUMNS);
+    await capture.writeRows([[7, 'seven']]);
+    await capture.finish();
+    const options = { key, format: capture.format };
+
+    const metadata = await readPersistedResultMetadata(await store.getStream(key), options);
+    const page = await readPersistedRowsPage(await store.getStream(key), 0, 10, options);
+    const cursor = await openPersistedResult(await store.getStream(key), options);
+    const rows: unknown[][] = [];
+    for await (const row of cursor.rows) rows.push(row);
+    const csv: string[] = [];
+    for await (const chunk of streamPersistedCsv(await store.getStream(key), options))
+      csv.push(chunk);
+    const events: unknown[] = [];
+    for await (const event of streamPersistedResultEvents(
+      await store.getStream(key),
+      undefined,
+      options,
+    )) {
+      events.push(event);
+    }
+
+    expect(metadata.columns).toEqual(COLUMNS);
+    expect(page.rows).toEqual([[7, 'seven']]);
+    expect(rows).toEqual([[7, 'seven']]);
+    expect(csv.join('')).toBe('id,note\r\n7,seven\r\n');
+    expect(events).toEqual([
+      { type: 'columns', columns: COLUMNS },
+      { type: 'row', row: [7, 'seven'] },
+    ]);
+  });
+
+  it.each([
+    {
+      contentKey: 'hubble-results/priority-gzip.jsonl.gz',
+      format: 'jsonl.gz' as const,
+      readKey: 'hubble-results/wrong-extension.jsonl.zst',
+    },
+    {
+      contentKey: 'hubble-results/priority-zstd.jsonl.zst',
+      format: 'jsonl.zst' as const,
+      readKey: 'hubble-results/wrong-extension.jsonl.gz',
+    },
+  ])('uses format before an opposite key extension', async ({ contentKey, format, readKey }) => {
+    const store = new MemoryResultStore();
+    const capture = new ResultJsonlCapture(store, contentKey);
+    capture.writeColumns(COLUMNS);
+    await capture.writeRows([[8, 'eight']]);
+    await capture.finish();
+
+    const options = { format, key: readKey };
+    const metadata = await readPersistedResultMetadata(await store.getStream(contentKey), options);
+    const page = await readPersistedRowsPage(await store.getStream(contentKey), 0, 10, options);
+
+    expect(metadata.columns).toEqual(COLUMNS);
+    expect(page.rows).toEqual([[8, 'eight']]);
+  });
+
   it('streams all rows to fake ResultStore and records the history object key', async () => {
     const store = new MemoryResultStore();
     const ctx = await createTestContext({
@@ -228,16 +352,94 @@ describe('ResultStore persistence', () => {
 
     const queryId = await submitPersistQuery(ctx);
     const ref = await waitForResultRef(ctx, queryId);
-    expect(ref.resultObjectKey).toBe(`hubble-results/${queryId}.jsonl.gz`);
+    expect(ref.resultObjectKey).toBe(`hubble-results/${queryId}.jsonl.zst`);
+    expect(ref.rowCount).toBe(20);
+    expect(ref.columns).toEqual(COLUMNS);
+    expect(ref.format).toBe('jsonl.zst');
     expect(new Date(ref.resultExpiresAt).getTime()).toBeGreaterThan(Date.now());
 
-    const page = await readPersistedRowsPage(await store.getStream(ref.resultObjectKey), 18, 5);
+    const page = await readPersistedRowsPage(await store.getStream(ref.resultObjectKey), 18, 5, {
+      format: ref.format,
+      key: ref.resultObjectKey,
+    });
     expect(page.columns).toEqual(COLUMNS);
     expect(page.totalRows).toBe(20);
     expect(page.rows).toEqual([
       [18, 'note_18'],
       [19, 'note_19'],
     ]);
+  });
+
+  it('records a finished history row while result upload is still pending', async () => {
+    let releaseUpload!: () => void;
+    const uploadGate = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    const store = new MemoryResultStore();
+    const originalPut = store.put.bind(store);
+    vi.spyOn(store, 'put').mockImplementation(async (key, body) => {
+      await uploadGate;
+      await originalPut(key, body);
+    });
+    const ctx = await createTestContext({ scenarios: [manyRows(3)], resultStore: store });
+
+    const queryId = await submitPersistQuery(ctx);
+    await vi.waitFor(async () => {
+      const entry = await ctx.services.history.get('admin', queryId);
+      expect(entry).toMatchObject({ id: queryId, state: 'finished', rowCount: 3 });
+    });
+
+    releaseUpload();
+    await ctx.services.queries.drain();
+  });
+
+  it('atomically records terminal history fields with the result link', async () => {
+    let currentTime = Date.now();
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({
+      scenarios: [manyRows(3)],
+      resultStore: store,
+      now: () => {
+        currentTime += 10;
+        return currentTime;
+      },
+    });
+    let releaseUpdate!: () => void;
+    const updateGate = new Promise<void>((resolve) => {
+      releaseUpdate = resolve;
+    });
+    const update = vi
+      .spyOn(ctx.services.history, 'update')
+      .mockImplementation(async () => updateGate);
+
+    const queryId = await submitPersistQuery(ctx);
+    const ref = await waitForResultRef(ctx, queryId);
+    const history = await ctx.services.history.list('admin', { limit: 10 });
+    const entry = history.items.find((item) => item.id === queryId);
+    expect(entry).toMatchObject({
+      id: queryId,
+      state: 'finished',
+      rowCount: 3,
+      resultAvailable: true,
+      resultExpiresAt: ref.resultExpiresAt,
+    });
+    expect(entry?.elapsedMs).toBeGreaterThan(0);
+    expect(ref.state).toBe('finished');
+    expect(ref.rowCount).toBe(3);
+    expect(ref.columns).toEqual(COLUMNS);
+    expect(ref.format).toBe('jsonl.zst');
+    expect(update).toHaveBeenCalledOnce();
+
+    dropExecution(ctx, queryId);
+    const snapshot = await ctx.app.request(`/api/queries/${queryId}`);
+    expect(snapshot.status).toBe(200);
+    expect((await snapshot.json()) as { state: string; rowCount: number }).toMatchObject({
+      state: 'finished',
+      rowCount: 3,
+    });
+
+    releaseUpdate();
+    await ctx.services.queries.drain();
   });
 
   it('query result の DB 関連付けに失敗した場合は upload 済み object を削除する', async () => {
@@ -254,8 +456,8 @@ describe('ResultStore persistence', () => {
     const queryId = await submitPersistQuery(ctx);
     await ctx.services.queries.drain();
 
-    expect(store.deleted).toContain(`hubble-results/${queryId}.jsonl.gz`);
-    expect(store.objects.has(`hubble-results/${queryId}.jsonl.gz`)).toBe(false);
+    expect(store.deleted).toContain(`hubble-results/${queryId}.jsonl.zst`);
+    expect(store.objects.has(`hubble-results/${queryId}.jsonl.zst`)).toBe(false);
     expect(await ctx.services.history.getResultRef('admin', queryId)).toBeUndefined();
     expect(logWarn).toHaveBeenCalledWith('failed to persist query result', linkError);
   });
@@ -272,7 +474,7 @@ describe('ResultStore persistence', () => {
     await ctx.services.queries.drain();
 
     expect(await new ResultObjectDeletionRepository(ctx.db).listForTest()).toEqual([
-      expect.objectContaining({ key: `hubble-results/${queryId}.jsonl.gz` }),
+      expect.objectContaining({ key: `hubble-results/${queryId}.jsonl.zst` }),
     ]);
   });
 
@@ -288,7 +490,7 @@ describe('ResultStore persistence', () => {
     const queryId = await submitPersistQuery(ctx);
     await ctx.services.queries.drain();
 
-    const key = `hubble-results/${queryId}.jsonl.gz`;
+    const key = `hubble-results/${queryId}.jsonl.zst`;
     expect(store.objects.has(key)).toBe(true);
     expect(store.deleted).not.toContain(key);
     expect((await ctx.services.history.getResultRef('admin', queryId))?.resultObjectKey).toBe(key);
@@ -326,7 +528,10 @@ describe('ResultStore persistence', () => {
       })(),
     );
 
-    const page = await readPersistedRowsPage(stream, 10, 5, { totalRows });
+    const page = await readPersistedRowsPage(stream, 10, 5, {
+      totalRows,
+      key: 'legacy.jsonl.gz',
+    });
 
     expect(page.totalRows).toBe(totalRows);
     expect(page.rows.map((row) => row[0])).toEqual([10, 11, 12, 13, 14]);
@@ -344,6 +549,7 @@ describe('ResultStore persistence', () => {
     });
     const queryId = await submitPersistQuery(ctx);
     await waitForResultRef(ctx, queryId);
+    const getStream = vi.spyOn(store, 'getStream');
     dropExecution(ctx, queryId);
 
     const snapRes = await ctx.app.request(`/api/queries/${queryId}`);
@@ -352,6 +558,7 @@ describe('ResultStore persistence', () => {
     expect(snap.columns).toEqual(COLUMNS);
     expect(snap.rowCount).toBe(12);
     expect(snap.datasourceId).toBe('trino-default');
+    expect(getStream).not.toHaveBeenCalled();
 
     const rowsRes = await ctx.app.request(`/api/queries/${queryId}/rows?offset=10&limit=5`);
     expect(rowsRes.status).toBe(200);
@@ -362,6 +569,38 @@ describe('ResultStore persistence', () => {
       [10, 'note_10'],
       [11, 'note_11'],
     ]);
+  });
+
+  it('falls back to JSONL metadata for an old result object without saved columns', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({ scenarios: [manyRows(4)], resultStore: store });
+    const queryId = await submitPersistQuery(ctx);
+    await waitForResultRef(ctx, queryId);
+    await ctx.db.run('UPDATE query_history SET result_columns_json = NULL WHERE id = ?', [queryId]);
+    const getStream = vi.spyOn(store, 'getStream');
+    dropExecution(ctx, queryId);
+
+    const response = await ctx.app.request(`/api/queries/${queryId}`);
+
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { columns?: unknown }).columns).toEqual(COLUMNS);
+    expect(getStream).toHaveBeenCalledOnce();
+  });
+
+  it('uses an explicit history list projection without result metadata columns', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({ scenarios: [manyRows(1)], resultStore: store });
+    await submitPersistQuery(ctx);
+    const query = vi.spyOn(ctx.db, 'query');
+
+    await ctx.services.history.list('admin', { limit: 10 });
+
+    const listSql = query.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('ORDER BY submitted_at DESC, id DESC'));
+    expect(listSql).toBeDefined();
+    expect(listSql).toContain('SELECT id, statement, catalog, schema, trino_query_id');
+    expect(listSql).not.toContain('result_columns_json');
   });
 
   it('uses persisted CSV before the truncated re-exec path', async () => {
@@ -460,6 +699,15 @@ defaultRole: allowed
       queryId,
       ref.resultObjectKey,
       '2000-01-01T00:00:00.000Z',
+      {
+        state: ref.state,
+        rowCount: ref.rowCount,
+        elapsedMs: ref.elapsedMs,
+        trinoQueryId: ref.trinoQueryId,
+        errorMessage: ref.errorMessage,
+      },
+      ref.columns ?? [],
+      ref.format ?? 'jsonl.zst',
     );
 
     await ctx.services.resultExpiry.runOnce();
@@ -532,25 +780,47 @@ describe('S3ResultStore', () => {
         return {};
       },
     };
-    const uploaded: Array<{ bucket: string; key: string; body: Readable }> = [];
+    const uploaded: Array<{
+      bucket: string;
+      key: string;
+      body: Readable;
+      contentEncoding: string;
+    }> = [];
     const store = new S3ResultStore(
       { bucket: 'bucket', region: 'us-east-1' },
       {
         client: fakeClient as never,
         uploadFactory: (params) => ({
           done: async () => {
-            uploaded.push({ bucket: params.bucket, key: params.key, body: params.body });
+            uploaded.push({
+              bucket: params.bucket,
+              key: params.key,
+              body: params.body,
+              contentEncoding: params.contentEncoding,
+            });
           },
         }),
       },
     );
 
     await store.put('prefix/q.jsonl.gz', Readable.from(Buffer.from('x')));
+    await store.put('prefix/q.jsonl.zst', Readable.from(Buffer.from('x')));
     await store.getStream('prefix/q.jsonl.gz');
     await store.delete('prefix/q.jsonl.gz');
     await store.close();
 
-    expect(uploaded[0]).toMatchObject({ bucket: 'bucket', key: 'prefix/q.jsonl.gz' });
+    expect(uploaded).toEqual([
+      expect.objectContaining({
+        bucket: 'bucket',
+        key: 'prefix/q.jsonl.gz',
+        contentEncoding: 'gzip',
+      }),
+      expect.objectContaining({
+        bucket: 'bucket',
+        key: 'prefix/q.jsonl.zst',
+        contentEncoding: 'zstd',
+      }),
+    ]);
     expect(commands).toEqual(['GetObjectCommand', 'DeleteObjectCommand']);
     expect(destroy).not.toHaveBeenCalled();
   });

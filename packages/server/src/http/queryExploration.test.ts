@@ -2,7 +2,7 @@
  * 結果探索 API（rows/search, profile）の結合テスト。
  */
 import { Readable } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ResultProfile, ResultSearchPage } from '@hubble/contracts';
 import { apiRoutes } from '@hubble/contracts';
 import { createTestContext, waitForTerminal } from '../test/harness';
@@ -200,6 +200,7 @@ describe('persisted result exploration (rows beyond QUERY_MAX_ROWS)', () => {
   async function persistedCtx(): Promise<{
     ctx: Awaited<ReturnType<typeof createTestContext>>;
     queryId: string;
+    store: MemoryResultStore;
   }> {
     const store = new MemoryResultStore();
     const ctx = await createTestContext({
@@ -211,7 +212,7 @@ describe('persisted result exploration (rows beyond QUERY_MAX_ROWS)', () => {
     await waitForTerminal(ctx.services, queryId);
     await waitForResultRef(ctx, queryId);
     dropExecution(ctx, queryId);
-    return { ctx, queryId };
+    return { ctx, queryId, store };
   }
 
   it('searches all persisted rows, not just the in-memory truncation', async () => {
@@ -253,6 +254,103 @@ describe('persisted result exploration (rows beyond QUERY_MAX_ROWS)', () => {
     });
     expect(profile.columns[0]!.min).toBe('0');
     expect(profile.columns[0]!.max).toBe('11');
+  });
+
+  it('returns 304 for a matching persisted rows ETag without reading ResultStore', async () => {
+    const { ctx, queryId, store } = await persistedCtx();
+    const first = await ctx.app.request(apiRoutes.queryRows(queryId));
+    const etag = first.headers.get('etag');
+    expect(first.status).toBe(200);
+    expect(etag).toMatch(/^W\/"/);
+
+    const getStream = vi.spyOn(store, 'getStream');
+    const revalidated = await ctx.app.request(apiRoutes.queryRows(queryId), {
+      headers: { 'if-none-match': etag! },
+    });
+
+    expect(revalidated.status).toBe(304);
+    expect(revalidated.headers.get('etag')).toBe(etag);
+    expect(revalidated.headers.get('cache-control')).toBe('private, no-cache');
+    expect(getStream).not.toHaveBeenCalled();
+  });
+
+  it('returns 304 for a matching persisted profile ETag without reading ResultStore', async () => {
+    const { ctx, queryId, store } = await persistedCtx();
+    const first = await ctx.app.request(apiRoutes.queryProfile(queryId));
+    const etag = first.headers.get('etag');
+    expect(first.status).toBe(200);
+    expect(etag).toMatch(/^W\/"/);
+
+    const getStream = vi.spyOn(store, 'getStream');
+    const revalidated = await ctx.app.request(apiRoutes.queryProfile(queryId), {
+      headers: { 'if-none-match': etag! },
+    });
+
+    expect(revalidated.status).toBe(304);
+    expect(getStream).not.toHaveBeenCalled();
+  });
+
+  it('returns the normal body when the persisted rows ETag does not match', async () => {
+    const { ctx, queryId, store } = await persistedCtx();
+    const first = await ctx.app.request(apiRoutes.queryRows(queryId));
+    expect(first.status).toBe(200);
+
+    const getStream = vi.spyOn(store, 'getStream');
+    const response = await ctx.app.request(apiRoutes.queryRows(queryId), {
+      headers: { 'if-none-match': 'W/"different-result"' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { totalBuffered: number }).totalBuffered).toBe(12);
+    expect(getStream).toHaveBeenCalledOnce();
+  });
+
+  it('does not return 304 to a non-owner with a matching ETag', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({
+      env: { AUTH_MODE: 'proxy', AUTH_USER_MAPPING: 'user' },
+      remoteAddress: () => '127.0.0.1',
+      scenarios: [persistScenario(3)],
+      resultStore: store,
+    });
+    const ownerHeaders = { ...alice, 'x-forwarded-user': 'alice' };
+    const nonOwnerHeaders = { ...bob, 'x-forwarded-user': 'bob' };
+    const queryId = await submit(
+      ctx.app,
+      { statement: 'SELECT * FROM persist', maxRows: 3 },
+      ownerHeaders,
+    );
+    await waitForTerminal(ctx.services, queryId);
+    await waitForResultRef(ctx, queryId, 'alice');
+    dropExecution(ctx, queryId);
+
+    const ownerResponse = await ctx.app.request(apiRoutes.queryRows(queryId), {
+      headers: ownerHeaders,
+    });
+    const etag = ownerResponse.headers.get('etag');
+    const nonOwnerResponse = await ctx.app.request(apiRoutes.queryRows(queryId), {
+      headers: { ...nonOwnerHeaders, 'if-none-match': etag! },
+    });
+
+    expect(ownerResponse.status).toBe(200);
+    expect(etag).toBeTruthy();
+    expect(nonOwnerResponse.status).toBe(404);
+  });
+
+  it('does not return 304 for an expired persisted result', async () => {
+    const { ctx, queryId } = await persistedCtx();
+    const first = await ctx.app.request(apiRoutes.queryRows(queryId));
+    const etag = first.headers.get('etag');
+    await ctx.db.run('UPDATE query_history SET result_expires_at = ? WHERE id = ?', [
+      '2000-01-01T00:00:00.000Z',
+      queryId,
+    ]);
+
+    const response = await ctx.app.request(apiRoutes.queryRows(queryId), {
+      headers: { 'if-none-match': etag! },
+    });
+
+    expect(response.status).toBe(404);
   });
 
   it('rejects out-of-range columnIndex against persisted columns', async () => {

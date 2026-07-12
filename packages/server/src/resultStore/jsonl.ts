@@ -1,7 +1,13 @@
 /**
- * gzip JSONL 形式のクエリ結果ストリームを読み書きするヘルパー。
+ * 圧縮 JSONL 形式のクエリ結果ストリームを読み書きするヘルパー。
  */
-import { createGunzip, createGzip } from 'node:zlib';
+import {
+  constants as zlibConstants,
+  createGunzip,
+  createGzip,
+  createZstdCompress,
+  createZstdDecompress,
+} from 'node:zlib';
 import { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import type { QueryColumn } from '@hubble/contracts';
@@ -14,6 +20,17 @@ type ResultJsonlLine =
   | { kind: 'columns'; columns: QueryColumn[] }
   | { kind: 'record'; row: unknown[] };
 
+/** 結果オブジェクトの JSONL 形式。拡張子と履歴行の format に保存する。 */
+export type ResultFormat = 'jsonl.gz' | 'jsonl.zst';
+
+/** 保存済み結果を読むときに圧縮形式を解決するための情報。 */
+export interface PersistedResultReadOptions {
+  /** T1 の履歴行に保存された形式。key より優先する。 */
+  format?: string;
+  /** 旧履歴行で形式を推測する object key。 */
+  key?: string;
+}
+
 /** 保存済み結果のページ。 */
 export interface PersistedRowsPage {
   columns: QueryColumn[];
@@ -22,9 +39,11 @@ export interface PersistedRowsPage {
 }
 
 /** 保存済み結果ページを読み取るときに DB 由来の既知情報を渡すオプション。 */
-export interface ReadPersistedRowsPageOptions {
+export interface ReadPersistedRowsPageOptions extends PersistedResultReadOptions {
   /** artifact 全体を走査せず返せる、永続化済みの総行数。 */
   totalRows?: number;
+  /** 履歴行に保存された列メタデータ。旧行では未指定で JSONL から読む。 */
+  columns?: QueryColumn[];
 }
 
 /** 保存済み結果の列メタデータ。 */
@@ -32,19 +51,22 @@ export interface PersistedResultMetadata {
   columns: QueryColumn[];
 }
 
-/** 実行中の結果を gzip JSONL へ流し込む writer。 */
+/** 実行中の結果を key の拡張子に応じた圧縮 JSONL へ流し込む writer。 */
 export class ResultJsonlCapture {
-  private readonly input = createGzip();
+  private readonly input: ReturnType<typeof createGzip> | ReturnType<typeof createZstdCompress>;
   private readonly upload: Promise<void>;
   private writeTail: Promise<void> = Promise.resolve();
   private closed = false;
   private sawColumns = false;
   private failure?: unknown;
+  readonly format: ResultFormat;
 
   constructor(
     private readonly store: ResultStore,
     readonly key: string,
   ) {
+    this.format = resultFormatForKey(key);
+    this.input = createCompression(this.format);
     this.upload = Promise.resolve()
       .then(() => this.store.put(this.key, this.input))
       .catch((err: unknown) => {
@@ -136,7 +158,7 @@ export class ResultJsonlCapture {
   }
 }
 
-/** gzip JSONL から指定ページの行を読み取る。 */
+/** 圧縮 JSONL から指定ページの行を読み取る。 */
 export async function readPersistedRowsPage(
   stream: Readable,
   offset: number,
@@ -144,7 +166,7 @@ export async function readPersistedRowsPage(
   options: ReadPersistedRowsPageOptions = {},
 ): Promise<PersistedRowsPage> {
   const rows: unknown[][] = [];
-  let columns: QueryColumn[] = [];
+  let columns: QueryColumn[] = options.columns ?? [];
   let scannedRows = 0;
   const knownTotalRows =
     options.totalRows !== undefined &&
@@ -154,9 +176,9 @@ export async function readPersistedRowsPage(
       : undefined;
   const targetEnd =
     knownTotalRows === undefined ? undefined : Math.min(knownTotalRows, offset + limit);
-  for await (const line of readResultLines(stream)) {
+  for await (const line of readResultLines(stream, undefined, options)) {
     if (line.kind === 'columns') {
-      columns = line.columns;
+      if (options.columns === undefined) columns = line.columns;
       if (knownTotalRows !== undefined && (limit === 0 || offset >= knownTotalRows)) break;
       continue;
     }
@@ -177,7 +199,7 @@ export interface PersistedResultCursor {
 }
 
 /**
- * gzip JSONL から列情報と行ストリームを取り出す。
+ * 圧縮 JSONL から列情報と行ストリームを取り出す。
  *
  * `readPersistedRowsPage` と違い全行を配列へ materialize せず、行を 1 行ずつ
  * 消費できるカーソルを返す。永続化結果は QUERY_MAX_ROWS で有界ではないため、
@@ -185,11 +207,14 @@ export interface PersistedResultCursor {
  * writer は常に columns 行を先頭へ書くが、欠落したファイルにも耐えるよう
  * 先頭行がレコードだった場合は columns を空配列とし、その行を行ストリームに含める。
  *
- * @param stream - ResultStore から取得した gzip JSONL の Readable。
+ * @param stream - ResultStore から取得した圧縮 JSONL の Readable。
  * @returns 列メタデータと行の非同期イテレーター。
  */
-export async function openPersistedResult(stream: Readable): Promise<PersistedResultCursor> {
-  const lines = readResultLines(stream);
+export async function openPersistedResult(
+  stream: Readable,
+  options: PersistedResultReadOptions = {},
+): Promise<PersistedResultCursor> {
+  const lines = readResultLines(stream, undefined, options);
   const first = await lines.next();
 
   // 先頭行から列情報を決める。バッファするのは最大 1 行なのでメモリは有界。
@@ -215,20 +240,24 @@ export async function openPersistedResult(stream: Readable): Promise<PersistedRe
   return { columns, rows: rows() };
 }
 
-/** gzip JSONL の先頭メタ行から列情報を読み取る。 */
+/** 圧縮 JSONL の先頭メタ行から列情報を読み取る。 */
 export async function readPersistedResultMetadata(
   stream: Readable,
+  options: PersistedResultReadOptions = {},
 ): Promise<PersistedResultMetadata> {
-  for await (const line of readResultLines(stream)) {
+  for await (const line of readResultLines(stream, undefined, options)) {
     if (line.kind === 'columns') return { columns: line.columns };
   }
   return { columns: [] };
 }
 
-/** gzip JSONL を CSV テキストチャンクへ変換する。 */
-export async function* streamPersistedCsv(stream: Readable): AsyncGenerator<string> {
+/** 圧縮 JSONL を CSV テキストチャンクへ変換する。 */
+export async function* streamPersistedCsv(
+  stream: Readable,
+  options: PersistedResultReadOptions = {},
+): AsyncGenerator<string> {
   let headerWritten = false;
-  for await (const line of readResultLines(stream)) {
+  for await (const line of readResultLines(stream, undefined, options)) {
     if (line.kind === 'columns') {
       if (line.columns.length > 0)
         yield `${csvRecord(line.columns.map((column) => column.name))}\r\n`;
@@ -242,10 +271,11 @@ export async function* streamPersistedCsv(stream: Readable): AsyncGenerator<stri
   }
 }
 
-/** gzip JSONL を serializer 非依存の結果イベントへ変換する。 */
+/** 圧縮 JSONL を serializer 非依存の結果イベントへ変換する。 */
 export function streamPersistedResultEvents(
   stream: Readable,
   signal?: AbortSignal,
+  options: PersistedResultReadOptions = {},
 ): AsyncGenerator<QueryResultEvent> {
   // generator の最初の next より前に中断されても、既に開いた S3 body を閉じる。
   const abortBeforeStart = (): void => {
@@ -258,7 +288,7 @@ export function streamPersistedResultEvents(
     signal?.removeEventListener('abort', abortBeforeStart);
     if (signal?.aborted) throw createSqlAbortError();
     let columnsWritten = false;
-    for await (const line of readResultLines(stream, signal)) {
+    for await (const line of readResultLines(stream, signal, options)) {
       if (line.kind === 'columns') {
         columnsWritten = true;
         yield { type: 'columns', columns: line.columns };
@@ -277,15 +307,16 @@ export function streamPersistedResultEvents(
 async function* readResultLines(
   stream: Readable,
   signal?: AbortSignal,
+  options: PersistedResultReadOptions = {},
 ): AsyncGenerator<ResultJsonlLine> {
-  const gunzip = createGunzip();
+  const decompressor = createDecompressor(options);
   const lines = createInterface({
-    input: stream.pipe(gunzip),
+    input: stream.pipe(decompressor),
     crlfDelay: Infinity,
   });
   const abort = (): void => {
     lines.close();
-    gunzip.destroy();
+    decompressor.destroy();
     stream.destroy();
   };
   signal?.addEventListener('abort', abort, { once: true });
@@ -299,7 +330,7 @@ async function* readResultLines(
     signal?.removeEventListener('abort', abort);
     // page window を満たして途中終了した場合も、S3 body と解凍処理を止める。
     lines.close();
-    gunzip.destroy();
+    decompressor.destroy();
     stream.destroy();
   }
   if (signal?.aborted) throw createSqlAbortError();
@@ -312,4 +343,28 @@ function parseLine(line: string): ResultJsonlLine {
     return { kind: 'record', row: parsed.row };
   }
   throw new Error('Invalid persisted result JSONL line');
+}
+
+function resultFormatForKey(key: string): ResultFormat {
+  return key.endsWith('.jsonl.zst') ? 'jsonl.zst' : 'jsonl.gz';
+}
+
+function resultCodecFor(options: PersistedResultReadOptions): ResultFormat {
+  if (options.format !== undefined) {
+    return options.format.toLowerCase().includes('zst') ? 'jsonl.zst' : 'jsonl.gz';
+  }
+  return options.key ? resultFormatForKey(options.key) : 'jsonl.gz';
+}
+
+function createCompression(format: ResultFormat) {
+  if (format === 'jsonl.zst') {
+    return createZstdCompress({
+      params: { [zlibConstants.ZSTD_c_compressionLevel]: 3 },
+    });
+  }
+  return createGzip();
+}
+
+function createDecompressor(options: PersistedResultReadOptions) {
+  return resultCodecFor(options) === 'jsonl.zst' ? createZstdDecompress() : createGunzip();
 }

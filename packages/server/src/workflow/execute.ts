@@ -13,7 +13,7 @@ export interface DrainWithCaptureResult {
 }
 
 /**
- * ステートメントを完走し、行数を数える。capture があれば列と行を gzip JSONL へ流す。
+ * ステートメントを完走し、行数を数える。capture があれば列と行を圧縮 JSONL へ流す。
  */
 export async function drainStatementWithCapture(
   client: StatementClient,
