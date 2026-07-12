@@ -2,8 +2,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { QueryEvent } from '@hubble/contracts';
 import {
+  DEFAULT_SSE_BACKLOG_BYTES,
   encodeSseEvent,
   flushPendingSseEvents,
+  SerializedSseWriter,
+  SseBacklogOverflowError,
   throughForcedTerminal,
   type EncodedSseEvent,
 } from './sse';
@@ -85,5 +88,103 @@ describe('encodeSseEvent', () => {
     await flushPendingSseEvents(events, false, () => true, write);
 
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it('queue済みだが未送信の終端で先行batchのrowsを捨てない', async () => {
+    const firstBatch: EncodedSseEvent[] = [
+      { frame: 'rows-1', forcedTerminal: false },
+      { frame: 'rows-2', forcedTerminal: false },
+    ];
+    const terminalBatch: EncodedSseEvent[] = [{ frame: 'error-and-done', forcedTerminal: true }];
+    const written: string[] = [];
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let terminalWritten = false;
+    const write = async (frame: string): Promise<void> => {
+      written.push(frame);
+      if (frame === 'rows-1') {
+        firstStarted();
+        await firstBlocked;
+      }
+    };
+
+    const flushingFirst = flushPendingSseEvents(firstBatch, false, () => terminalWritten, write);
+    await firstStartedPromise;
+    // 終端が次 batch へ queue されても、未送信の間は terminalWritten を立てない。
+    releaseFirst();
+    await flushingFirst;
+    expect(written).toEqual(['rows-1', 'rows-2']);
+
+    await flushPendingSseEvents(terminalBatch, true, () => terminalWritten, write);
+    terminalWritten = true;
+    expect(written).toEqual(['rows-1', 'rows-2', 'error-and-done']);
+  });
+});
+
+describe('SerializedSseWriter', () => {
+  it('同じ接続の write を一列に直列化する', async () => {
+    let releaseFirst!: () => void;
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const writes: string[] = [];
+    const writer = new SerializedSseWriter(async (frame) => {
+      writes.push(frame);
+      if (frame === 'first') await first;
+    });
+
+    expect(writer.enqueue('first')).toBe(true);
+    expect(writer.enqueue('second')).toBe(true);
+    await vi.waitFor(() => expect(writes).toEqual(['first']));
+
+    releaseFirst();
+    await writer.drain();
+    expect(writes).toEqual(['first', 'second']);
+  });
+
+  it('write rejection を通知して後続 frame を送らない', async () => {
+    const failure = new Error('connection closed');
+    const onFailure = vi.fn();
+    const write = vi.fn().mockRejectedValue(failure);
+    const writer = new SerializedSseWriter(write, { onFailure });
+
+    expect(writer.enqueue('first')).toBe(true);
+    await writer.drain();
+
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(onFailure).toHaveBeenCalledWith(failure);
+    expect(writer.enqueue('second')).toBe(false);
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it('未送信 byte 上限を超えた接続を失敗させる', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const onFailure = vi.fn();
+    const writer = new SerializedSseWriter(() => blocked, {
+      maxBacklogBytes: 8,
+      onFailure,
+    });
+
+    expect(writer.enqueue('12345678')).toBe(true);
+    expect(writer.enqueue('x')).toBe(false);
+    expect(onFailure).toHaveBeenCalledWith(expect.any(SseBacklogOverflowError));
+    expect(writer.enqueue('y')).toBe(false);
+
+    release();
+    await writer.drain();
+  });
+
+  it('既定 backlog 上限を有限値にする', () => {
+    expect(DEFAULT_SSE_BACKLOG_BYTES).toBeGreaterThan(0);
+    expect(Number.isFinite(DEFAULT_SSE_BACKLOG_BYTES)).toBe(true);
   });
 });

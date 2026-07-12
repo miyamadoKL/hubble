@@ -5,6 +5,7 @@
 import { emptySessionMutations, type TrinoColumn, type TrinoRequestContext } from '../trino/types';
 import type { StatementClient } from '../engine/types';
 import { createSqlAbortError } from '../engine/sql/abort';
+import { driveStatementPages } from '../engine/statementDriver';
 
 export interface FetchRowsResult {
   columns: TrinoColumn[];
@@ -26,74 +27,35 @@ export async function fetchStatementRows(
   signal?: AbortSignal,
 ): Promise<FetchRowsResult> {
   const mutations = emptySessionMutations();
-  let cancelUri: string | undefined;
-  try {
-    throwIfAborted(signal);
-    let page = await client.start(statement, ctx, mutations, signal);
-    cancelUri = page.nextUri;
-    throwIfAborted(signal);
-    let columns: TrinoColumn[] = page.columns ?? [];
-    const rows: unknown[][] = [];
-    if (page.data) {
-      for (const row of page.data) {
+  throwIfAborted(signal);
+  let columns: TrinoColumn[] = [];
+  const rows: unknown[][] = [];
+  let truncated = false;
+  // 上限到達時は observer から追走を打ち切る。残った nextUri の DELETE は
+  // 共通 driver がベストエフォートで行い、失敗しても truncated 判定は維持する。
+  await driveStatementPages({
+    client,
+    statement,
+    ctx,
+    mutations,
+    signal,
+    onPage: ({ page }) => {
+      if (page.columns && columns.length === 0) columns = page.columns;
+      for (const row of page.data ?? []) {
         rows.push(row);
         if (rows.length >= maxRows) {
-          await cancelRemainingPage(client, page.nextUri, ctx);
-          throwIfAborted(signal);
-          return { columns, rows, truncated: true };
+          truncated = true;
+          return 'stop';
         }
       }
-    }
-
-    let idleAttempt = 0;
-    while (page.nextUri) {
-      cancelUri = page.nextUri;
-      const hadData = page.data !== undefined && page.data.length > 0;
-      if (hadData) {
-        idleAttempt = 0;
-      } else {
-        await client.waitBackoff(idleAttempt, signal);
-        throwIfAborted(signal);
-        idleAttempt += 1;
-      }
-      page = await client.advance(page.nextUri, ctx, mutations, signal);
-      cancelUri = page.nextUri;
-      throwIfAborted(signal);
-      if (page.columns && columns.length === 0) columns = page.columns;
-      if (page.data) {
-        for (const row of page.data) {
-          rows.push(row);
-          if (rows.length >= maxRows) {
-            await cancelRemainingPage(client, page.nextUri, ctx);
-            throwIfAborted(signal);
-            return { columns, rows, truncated: true };
-          }
-        }
-      }
-    }
-    return { columns, rows, truncated: false };
-  } catch (error) {
-    if (signal?.aborted) await cancelRemainingPage(client, cancelUri, ctx);
-    throw error;
-  }
+      return 'continue';
+    },
+  });
+  return { columns, rows, truncated };
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw createSqlAbortError();
-}
-
-/** 打ち切り後も残るクエリを可能な範囲で停止する。 */
-async function cancelRemainingPage(
-  client: StatementClient,
-  nextUri: string | undefined,
-  ctx: TrinoRequestContext,
-): Promise<void> {
-  if (nextUri === undefined) return;
-  try {
-    await client.cancel(nextUri, ctx);
-  } catch {
-    // cancel失敗は結果の打ち切り判定へ影響させない。
-  }
 }
 
 /** カラム名からインデックスを解決する。見つからなければ -1。 */

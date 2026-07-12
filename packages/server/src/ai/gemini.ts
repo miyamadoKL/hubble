@@ -6,7 +6,7 @@
  */
 import { AppError } from '../errors';
 import type { AiPrompt, AiProvider } from './provider';
-import { parseSseDataLines } from './sse';
+import { invalidResponse, parseSseDataLines } from './sse';
 
 const DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com';
 
@@ -70,12 +70,31 @@ export class GeminiProvider implements AiProvider {
       } catch {
         continue;
       }
+      const finishReason = extractFinishReason(parsed);
+      if (finishReason !== undefined && finishReason !== 'STOP') {
+        throw invalidResponse(`Gemini generation stopped with finishReason ${finishReason}`);
+      }
       const text = extractGeminiText(parsed);
       if (text !== undefined && text.length > 0) {
         yield text;
       }
+      if (finishReason === 'STOP') return;
     }
+    throw invalidResponse('Gemini SSE response ended before a finishReason was received');
   }
+}
+
+/** Gemini のいずれかの候補から終了理由を取り出す。 */
+function extractFinishReason(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidates = (payload as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates)) return undefined;
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue;
+    const finishReason = (candidate as { finishReason?: unknown }).finishReason;
+    if (typeof finishReason === 'string' && finishReason.length > 0) return finishReason;
+  }
+  return undefined;
 }
 
 /** Gemini SSE ペイロードからテキスト断片を取り出す。 */

@@ -59,12 +59,15 @@ export interface EstimateRequestParams {
 // キャッシュ 1 エントリ分（見積もり結果 + 有効期限）。
 interface CacheEntry {
   datasourceId: string;
+  generation: number;
   result: EstimateResult;
   expiresAt: number;
 }
 
 // キャッシュの最大保持件数。超過分は挿入順（古い順）に破棄する。
 const MAX_CACHE_ENTRIES = 500;
+const DATASOURCE_RELOADING_CODE = 'DATASOURCE_RELOADING';
+const MAX_ESTIMATE_ATTEMPTS = 2;
 
 /**
  * Query Guard estimation service (Query Guard feature).
@@ -87,6 +90,7 @@ export class EstimateService {
   // エンジンオブジェクトごとに EstimateService 内の世代番号を割り当てる。
   private readonly engineGenerations = new WeakMap<QueryEngine, number>();
   private nextEngineGeneration = 1;
+  private readonly cacheGenerations = new Map<string, number>();
 
   constructor(
     private readonly engines: Map<string, QueryEngine>,
@@ -100,9 +104,15 @@ export class EstimateService {
   }
 
   invalidateDatasource(datasourceId: string): void {
+    this.cacheGenerations.set(datasourceId, this.cacheGeneration(datasourceId) + 1);
     for (const [key, entry] of this.cache) {
       if (entry.datasourceId === datasourceId) this.cache.delete(key);
     }
+  }
+
+  /** データソースの現在のキャッシュ世代を返す。 */
+  private cacheGeneration(datasourceId: string): number {
+    return this.cacheGenerations.get(datasourceId) ?? 0;
   }
 
   private engineGeneration(engine: QueryEngine): number {
@@ -114,12 +124,29 @@ export class EstimateService {
     return generation;
   }
 
+  /** 見積もり開始時のデータソース世代とエンジンが現在も有効かを確認する。 */
+  private isCurrentAttempt(
+    params: EstimateRequestParams,
+    datasourceId: string,
+    engine: QueryEngine,
+    generation: number,
+  ): boolean {
+    if (this.cacheGeneration(datasourceId) !== generation) return false;
+    try {
+      const current = resolveEngine(this.engines, params.datasourceId, this.defaultDatasourceId);
+      return current.datasourceId === datasourceId && current.engine === engine;
+    } catch {
+      return false;
+    }
+  }
+
   // タプル境界を保持する JSON 配列でキャッシュキーを作り、各文字列に空白や
   // 区切り文字が含まれても別の実行コンテキストと衝突しないようにする。
   private cacheKey(
     params: EstimateRequestParams,
     datasourceId: string,
     engine: QueryEngine,
+    cacheGeneration: number,
   ): string {
     const guard = params.guard;
     const guardKey = guard
@@ -128,6 +155,7 @@ export class EstimateService {
     return JSON.stringify([
       1,
       datasourceId,
+      cacheGeneration,
       this.engineGeneration(engine),
       params.roleName ?? null,
       guardKey,
@@ -170,13 +198,18 @@ export class EstimateService {
       params.datasourceId,
       this.defaultDatasourceId,
     );
-    const key = this.cacheKey(params, datasourceId, engine);
-    return this.getFresh(key);
+    const generation = this.cacheGeneration(datasourceId);
+    const key = this.cacheKey(params, datasourceId, engine, generation);
+    return this.getFresh(key, generation);
   }
 
-  private getFresh(key: string): EstimateResult | undefined {
+  private getFresh(key: string, generation: number): EstimateResult | undefined {
     const entry = this.cache.get(key);
     if (!entry) return undefined;
+    if (entry.generation !== generation) {
+      this.cache.delete(key);
+      return undefined;
+    }
     if (entry.expiresAt <= this.now()) {
       // 期限切れなら削除してキャッシュミス扱いにする。
       this.cache.delete(key);
@@ -186,10 +219,19 @@ export class EstimateService {
   }
 
   // 見積もり結果をキャッシュへ格納する。TTL が 0 以下なら保存しない。
-  private store(key: string, datasourceId: string, result: EstimateResult): void {
+  private store(
+    key: string,
+    datasourceId: string,
+    generation: number,
+    engine: QueryEngine,
+    result: EstimateResult,
+  ): void {
     if (this.config.cacheTtlSeconds <= 0) return;
+    if (this.cacheGeneration(datasourceId) !== generation) return;
+    if (this.engines.get(datasourceId) !== engine) return;
     this.cache.set(key, {
       datasourceId,
+      generation,
       result,
       expiresAt: this.now() + this.config.cacheTtlSeconds * 1000,
     });
@@ -206,33 +248,42 @@ export class EstimateService {
   // まずキャッシュを確認し、ヒットすればそれを返す。ミスであれば対象エンジンへ
   // 委譲して EXPLAIN を実行し、結果をキャッシュへ格納してから返す。
   async estimate(params: EstimateRequestParams): Promise<EstimateResult> {
-    const { datasourceId, engine } = resolveEngine(
-      this.engines,
-      params.datasourceId,
-      this.defaultDatasourceId,
-    );
-
-    if (!engine.capabilities.costEstimate) {
-      throw AppError.badRequest(
-        `Datasource ${datasourceId} does not support cost estimation`,
-        'ESTIMATE_NOT_SUPPORTED',
+    for (let attempt = 0; attempt < MAX_ESTIMATE_ATTEMPTS; attempt += 1) {
+      const { datasourceId, engine } = resolveEngine(
+        this.engines,
+        params.datasourceId,
+        this.defaultDatasourceId,
       );
+
+      if (!engine.capabilities.costEstimate) {
+        throw AppError.badRequest(
+          `Datasource ${datasourceId} does not support cost estimation`,
+          'ESTIMATE_NOT_SUPPORTED',
+        );
+      }
+
+      const generation = this.cacheGeneration(datasourceId);
+      const key = this.cacheKey(params, datasourceId, engine, generation);
+      const cached = this.getFresh(key, generation);
+      if (cached) return cached;
+
+      const limits = this.resolveLimits(params);
+      const result = await engine.estimate(params, {
+        mode: limits.mode,
+        maxScanBytes: limits.maxScanBytes,
+        maxScanRows: limits.maxScanRows,
+        onUnknown: limits.onUnknown,
+        estimateTimeoutMs: this.config.estimateTimeoutMs,
+        bytesPerSecond: this.config.bytesPerSecond,
+      });
+      if (!this.isCurrentAttempt(params, datasourceId, engine, generation)) continue;
+      this.store(key, datasourceId, generation, engine, result);
+      return result;
     }
 
-    const key = this.cacheKey(params, datasourceId, engine);
-    const cached = this.getFresh(key);
-    if (cached) return cached;
-
-    const limits = this.resolveLimits(params);
-    const result = await engine.estimate(params, {
-      mode: limits.mode,
-      maxScanBytes: limits.maxScanBytes,
-      maxScanRows: limits.maxScanRows,
-      onUnknown: limits.onUnknown,
-      estimateTimeoutMs: this.config.estimateTimeoutMs,
-      bytesPerSecond: this.config.bytesPerSecond,
+    throw new AppError(503, {
+      code: DATASOURCE_RELOADING_CODE,
+      message: 'Datasource changed repeatedly while estimating the query; retry the request',
     });
-    this.store(key, datasourceId, result);
-    return result;
   }
 }

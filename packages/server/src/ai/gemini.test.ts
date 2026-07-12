@@ -31,7 +31,7 @@ describe('GeminiProvider', () => {
         });
         return sseResponse([
           'data: {"candidates":[{"content":{"parts":[{"text":"Hello "}]}}]}\n\n',
-          'data: {"candidates":[{"content":{"parts":[{"text":"world"}]}}]}\n\n',
+          'data: {"candidates":[{"content":{"parts":[{"text":"world"}]},"finishReason":"STOP"}]}\n\n',
         ]);
       }) as typeof fetch,
     });
@@ -44,6 +44,48 @@ describe('GeminiProvider', () => {
       parts.push(text);
     }
     expect(parts).toEqual(['Hello ', 'world']);
+  });
+
+  it.each([
+    ['終端なし', ['data: {"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}\n\n']],
+    ['malformed のみ', ['data: not-json\n\n']],
+  ])('%s の EOF を INVALID_RESPONSE として拒否する', async (_name, chunks) => {
+    const provider = new GeminiProvider({
+      model: 'gemini-2.5-flash',
+      apiKey: 'test-key',
+      maxOutputTokens: 321,
+      fetchImpl: (async () => sseResponse(chunks)) as typeof fetch,
+    });
+
+    await expect(async () => {
+      for await (const part of provider.stream(
+        { system: 'sys', user: 'user' },
+        new AbortController().signal,
+      )) {
+        void part;
+      }
+    }).rejects.toMatchObject({ detail: { code: 'INVALID_RESPONSE' } });
+  });
+
+  it.each(['MAX_TOKENS', 'SAFETY'])('%s 終端を INVALID_RESPONSE として拒否する', async (reason) => {
+    const provider = new GeminiProvider({
+      model: 'gemini-2.5-flash',
+      apiKey: 'test-key',
+      maxOutputTokens: 321,
+      fetchImpl: (async () =>
+        sseResponse([
+          `data: {"candidates":[{"content":{"parts":[{"text":"SELECT * FR"}]},"finishReason":"${reason}"}]}\n\n`,
+        ])) as typeof fetch,
+    });
+
+    await expect(async () => {
+      for await (const part of provider.stream(
+        { system: 'sys', user: 'user' },
+        new AbortController().signal,
+      )) {
+        void part;
+      }
+    }).rejects.toMatchObject({ detail: { code: 'INVALID_RESPONSE' } });
   });
 
   it('throws AppError(502) on non-2xx responses', async () => {

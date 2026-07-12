@@ -19,6 +19,7 @@ import { AppError } from '../errors';
 import { classifyStatementWrite } from '../rbac/writeCheck';
 import { emptySessionMutations, type TrinoColumn, type TrinoRequestContext } from '../trino/types';
 import type { QueryExecution } from './execution';
+import { statementPages } from '../engine/statementDriver';
 
 /** バッファのみで済むか、全文取得のための再実行が必要か。 */
 export function needsCsvReexec(exec: QueryExecution): boolean {
@@ -238,7 +239,6 @@ export async function* streamCsvReexec(
   const ctx: TrinoRequestContext = { ...exec.ctx, source: DOWNLOAD_SOURCE };
   const mutations = emptySessionMutations();
 
-  let currentNextUri: string | undefined;
   let headerWritten = false;
   let chunk = '';
   let sinceFlush = 0;
@@ -250,9 +250,17 @@ export async function* streamCsvReexec(
     chunk += csvRecord(columns.map((col) => col.name)) + '\r\n';
   };
 
-  try {
-    // クエリを再実行し、最初のページを取得。
-    let page = await client.start(exec.statement, ctx, mutations, signal);
+  // chunk を yield している間も共通 driver が現在の nextUri を所有する。
+  // consumer の切断や generator の close では driver の finally が DELETE する。
+  // If we left the loop early (client disconnect or an error) the query may
+  // still be running server-side; DELETE its current nextUri to tear it down.
+  for await (const page of statementPages({
+    client,
+    statement: exec.statement,
+    ctx,
+    mutations,
+    signal,
+  })) {
     writeHeader(page.columns);
     if (page.data) {
       for (const row of page.data) {
@@ -260,50 +268,14 @@ export async function* streamCsvReexec(
         sinceFlush += 1;
       }
     }
-
-    // nextUri がある限りポーリングを続ける（execution.ts の run() と同様の
-    // バックオフ規律: データがあれば即座に、無ければ段階的に待つ）。
-    let idleAttempt = 0;
-    while (page.nextUri) {
-      currentNextUri = page.nextUri;
-      if (signal?.aborted) break;
-      const hadData = page.data !== undefined && page.data.length > 0;
-      if (hadData) {
-        idleAttempt = 0;
-      } else {
-        await client.waitBackoff(idleAttempt, signal);
-        idleAttempt += 1;
-      }
-      if (signal?.aborted) break;
-      page = await client.advance(page.nextUri, ctx, mutations, signal);
-      writeHeader(page.columns);
-      if (page.data) {
-        for (const row of page.data) {
-          chunk += csvRecord(row) + '\r\n';
-          sinceFlush += 1;
-        }
-      }
-      if (sinceFlush >= flushEvery) {
-        yield chunk;
-        chunk = '';
-        sinceFlush = 0;
-      }
-    }
-    // Reached here without a nextUri => the query finished; no teardown needed.
-    // nextUri が無い状態でここに到達した場合はクエリが正常完了しているので、
-    // 後始末（DELETE）は不要。
-    if (!page.nextUri) currentNextUri = undefined;
-    if (!signal?.aborted && chunk !== '') yield chunk;
-  } finally {
-    // If we left the loop early (client disconnect or an error) the query may
-    // still be running server-side; DELETE its current nextUri to tear it down.
-    // ループを早期に抜けた場合（クライアント切断やエラー）、Trino 側では
-    // クエリがまだ動いている可能性があるため、直近の nextUri へ DELETE を
-    // 送って後始末する。
-    if (currentNextUri) {
-      await client.cancel(currentNextUri, ctx).catch(() => {});
+    if (sinceFlush >= flushEvery) {
+      yield chunk;
+      chunk = '';
+      sinceFlush = 0;
     }
   }
+  // Reached here without a nextUri => the query finished; no teardown needed.
+  if (chunk !== '') yield chunk;
 }
 
 // 列情報が判明する（columns イベント）か、クエリが終端状態になるまで待つ。

@@ -4,6 +4,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { QueryEngine } from '../engine/types';
 import { EstimateService, type EstimateRequestParams } from './estimateService';
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 const CONFIG = {
   mode: 'enforce',
   maxScanBytes: 1000,
@@ -14,7 +22,7 @@ const CONFIG = {
   bytesPerSecond: 0,
 } as const;
 
-function estimateResult(marker: number): EstimateResult {
+function estimateResult(marker: number, decision: 'allow' | 'block' = 'allow'): EstimateResult {
   return {
     status: 'estimated',
     scanBytes: marker,
@@ -23,7 +31,7 @@ function estimateResult(marker: number): EstimateResult {
     outputBytes: marker,
     estimatedSeconds: null,
     tables: [],
-    verdict: { decision: 'allow', reasons: [] },
+    verdict: { decision, reasons: decision === 'block' ? ['blocked by current engine'] : [] },
     elapsedMs: marker,
   };
 }
@@ -31,11 +39,12 @@ function estimateResult(marker: number): EstimateResult {
 function fakeEngine(
   datasourceId: string,
   marker: number,
+  decision: 'allow' | 'block' = 'allow',
 ): {
   engine: QueryEngine;
   estimate: ReturnType<typeof vi.fn>;
 } {
-  const estimate = vi.fn(async () => estimateResult(marker));
+  const estimate = vi.fn(async () => estimateResult(marker, decision));
   const engine = {
     datasourceId,
     kind: 'trino',
@@ -147,5 +156,70 @@ describe('EstimateService cache key', () => {
 
     expect(first.estimate).toHaveBeenCalledTimes(2);
     expect(second.estimate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restore an estimate that crossed datasource invalidation', async () => {
+    const pending = deferred<EstimateResult>();
+    const first = fakeEngine('ds', 1);
+    first.engine.estimate = vi
+      .fn()
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValue(estimateResult(2));
+    const engines = new Map<string, QueryEngine>([['ds', first.engine]]);
+    const service = new EstimateService(engines, 'ds', CONFIG);
+
+    const oldRequest = service.estimate(request());
+    service.invalidateDatasource('ds');
+    pending.resolve(estimateResult(1));
+    await expect(oldRequest).resolves.toMatchObject({ elapsedMs: 2 });
+    expect(service.getCached(request())).toMatchObject({ elapsedMs: 2 });
+
+    await expect(service.estimate(request())).resolves.toMatchObject({ elapsedMs: 2 });
+    expect(first.engine.estimate).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not return an old allow verdict after the engine is replaced', async () => {
+    const pending = deferred<EstimateResult>();
+    const first = fakeEngine('ds', 1);
+    first.engine.estimate = vi.fn(() => pending.promise);
+    const second = fakeEngine('ds', 2, 'block');
+    const engines = new Map<string, QueryEngine>([['ds', first.engine]]);
+    const service = new EstimateService(engines, 'ds', CONFIG);
+
+    const oldRequest = service.estimate(request());
+    engines.set('ds', second.engine);
+    pending.resolve(estimateResult(1));
+    await expect(oldRequest).resolves.toMatchObject({
+      elapsedMs: 2,
+      verdict: { decision: 'block' },
+    });
+
+    await expect(service.estimate(request())).resolves.toMatchObject({ elapsedMs: 2 });
+    expect(first.engine.estimate).toHaveBeenCalledOnce();
+    expect(second.estimate).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when the datasource generation changes during both attempts', async () => {
+    const firstPending = deferred<EstimateResult>();
+    const secondPending = deferred<EstimateResult>();
+    const engine = fakeEngine('ds', 1);
+    engine.engine.estimate = vi
+      .fn()
+      .mockImplementationOnce(() => firstPending.promise)
+      .mockImplementationOnce(() => secondPending.promise);
+    const engines = new Map<string, QueryEngine>([['ds', engine.engine]]);
+    const service = new EstimateService(engines, 'ds', CONFIG);
+
+    const estimating = service.estimate(request());
+    service.invalidateDatasource('ds');
+    firstPending.resolve(estimateResult(1));
+    await vi.waitFor(() => expect(engine.engine.estimate).toHaveBeenCalledTimes(2));
+    service.invalidateDatasource('ds');
+    secondPending.resolve(estimateResult(2));
+
+    await expect(estimating).rejects.toMatchObject({
+      status: 503,
+      detail: { code: 'DATASOURCE_RELOADING' },
+    });
   });
 });

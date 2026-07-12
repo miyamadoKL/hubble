@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
+import { gzipSync } from 'node:zlib';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -12,6 +13,7 @@ import type { DeleteExpiredResult, ExpiredResultObject, ResultStore } from './st
 import { readPersistedRowsPage, ResultJsonlCapture } from './jsonl';
 import { S3ResultStore, buildS3ClientConfig } from './s3';
 import type { HistoryResultRef } from '../store/history';
+import { ResultObjectDeletionRepository } from '../store/resultObjectDeletions';
 
 const COLUMNS = [
   { name: 'id', type: 'bigint' },
@@ -236,6 +238,101 @@ describe('ResultStore persistence', () => {
       [18, 'note_18'],
       [19, 'note_19'],
     ]);
+  });
+
+  it('query result の DB 関連付けに失敗した場合は upload 済み object を削除する', async () => {
+    const store = new MemoryResultStore();
+    const logWarn = vi.fn();
+    const ctx = await createTestContext({
+      scenarios: [manyRows(3)],
+      resultStore: store,
+      resultStoreLogWarn: logWarn,
+    });
+    const linkError = new Error('DB link failed');
+    vi.spyOn(ctx.services.history, 'setResultObject').mockRejectedValueOnce(linkError);
+
+    const queryId = await submitPersistQuery(ctx);
+    await ctx.services.queries.drain();
+
+    expect(store.deleted).toContain(`hubble-results/${queryId}.jsonl.gz`);
+    expect(store.objects.has(`hubble-results/${queryId}.jsonl.gz`)).toBe(false);
+    expect(await ctx.services.history.getResultRef('admin', queryId)).toBeUndefined();
+    expect(logWarn).toHaveBeenCalledWith('failed to persist query result', linkError);
+  });
+
+  it('DB 関連付けと即時削除が失敗した場合は object を outbox へ登録する', async () => {
+    const store = new MemoryResultStore();
+    vi.spyOn(store, 'delete').mockRejectedValue(new Error('S3 delete unavailable'));
+    const ctx = await createTestContext({ scenarios: [manyRows(2)], resultStore: store });
+    vi.spyOn(ctx.services.history, 'setResultObject').mockRejectedValueOnce(
+      new Error('DB link failed'),
+    );
+
+    const queryId = await submitPersistQuery(ctx);
+    await ctx.services.queries.drain();
+
+    expect(await new ResultObjectDeletionRepository(ctx.db).listForTest()).toEqual([
+      expect.objectContaining({ key: `hubble-results/${queryId}.jsonl.gz` }),
+    ]);
+  });
+
+  it('DB link の commit 応答だけを失った場合は live object を削除しない', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({ scenarios: [manyRows(2)], resultStore: store });
+    const setResultObject = ctx.services.history.setResultObject.bind(ctx.services.history);
+    vi.spyOn(ctx.services.history, 'setResultObject').mockImplementation(async (...args) => {
+      await setResultObject(...args);
+      throw new Error('commit response lost');
+    });
+
+    const queryId = await submitPersistQuery(ctx);
+    await ctx.services.queries.drain();
+
+    const key = `hubble-results/${queryId}.jsonl.gz`;
+    expect(store.objects.has(key)).toBe(true);
+    expect(store.deleted).not.toContain(key);
+    expect((await ctx.services.history.getResultRef('admin', queryId))?.resultObjectKey).toBe(key);
+    expect(await new ResultObjectDeletionRepository(ctx.db).listForTest()).toEqual([]);
+  });
+
+  it('既知の総行数があれば page window 後に gzip 入力を閉じる', async () => {
+    const totalRows = 1_000;
+    const records = Array.from({ length: totalRows }, (_, index) => ({
+      kind: 'record',
+      row: [index, randomBytes(64).toString('hex')],
+    }));
+    const payload = [
+      JSON.stringify({ kind: 'columns', columns: COLUMNS }),
+      ...records.map((record) => JSON.stringify(record)),
+      '',
+    ].join('\n');
+    const compressed = gzipSync(payload);
+    const chunks = Array.from({ length: Math.ceil(compressed.length / 64) }, (_, index) =>
+      compressed.subarray(index * 64, (index + 1) * 64),
+    );
+    let yieldedChunks = 0;
+    let sourceClosed = false;
+    const stream = Readable.from(
+      (async function* () {
+        try {
+          for (const chunk of chunks) {
+            yieldedChunks += 1;
+            yield chunk;
+            await new Promise<void>((resolve) => setImmediate(resolve));
+          }
+        } finally {
+          sourceClosed = true;
+        }
+      })(),
+    );
+
+    const page = await readPersistedRowsPage(stream, 10, 5, { totalRows });
+
+    expect(page.totalRows).toBe(totalRows);
+    expect(page.rows.map((row) => row[0])).toEqual([10, 11, 12, 13, 14]);
+    expect(yieldedChunks).toBeLessThan(chunks.length);
+    expect(stream.destroyed).toBe(true);
+    await vi.waitFor(() => expect(sourceClosed).toBe(true));
   });
 
   it('restores snapshot and rows from ResultStore after registry memory is gone', async () => {

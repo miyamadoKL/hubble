@@ -24,6 +24,7 @@ import { AuditLogger, AuditRepository } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { NoneResultStore } from '../resultStore';
 import { JobAdmissionController } from '../schedule/admission';
+import { ResultObjectDeletionRepository } from '../store/resultObjectDeletions';
 
 const VALIDATE_OK: FakeScenario = {
   match: 'EXPLAIN (TYPE VALIDATE)',
@@ -111,6 +112,7 @@ interface Harness {
   runner: WorkflowRunner;
   audit: AuditLogger;
   resultStore: ResultStore;
+  resultObjectDeletions: ResultObjectDeletionRepository;
   links: DocumentGitLinkRepository;
   sleeps: number[];
   now: () => number;
@@ -169,6 +171,7 @@ async function makeHarness(
     bytesPerSecond: 0,
   });
   const sleeps: number[] = [];
+  const resultObjectDeletions = new ResultObjectDeletionRepository(db);
   const runner = new WorkflowRunner({
     workflows,
     runs,
@@ -187,6 +190,7 @@ async function makeHarness(
     },
     audit,
     resultStore: store,
+    resultObjectDeletions,
     resultKeyPrefix: 'hubble-results/',
     resultTtlDays: 7,
     githubGovernance,
@@ -212,6 +216,7 @@ async function makeHarness(
     runner,
     audit,
     resultStore: store,
+    resultObjectDeletions,
     links,
     sleeps,
     now,
@@ -648,6 +653,87 @@ defaultRole: trino-prod-only
     expect(keys.some((k) => k.includes(runId) && k.includes(step.id))).toBe(true);
   });
 
+  it('step result の DB 関連付けに失敗した場合は upload 済み object を削除する', async () => {
+    const store = new MemoryResultStore();
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'LINK_FAILURE',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      {},
+      undefined,
+      store,
+    );
+    const workflow = await h.workflows.create('alice', {
+      name: 'link failure cleanup',
+      stages: workflowDefinitionSchema.parse([
+        { steps: [{ id: 'st_link', name: 'Link', statement: 'LINK_FAILURE' }] },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const linkError = new Error('DB link failed');
+    vi.spyOn(h.runs, 'finishStep').mockRejectedValueOnce(linkError);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await h.runner.runManual(workflow);
+    await h.runner.whenIdle();
+
+    expect(store.objects.size).toBe(0);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('unexpected error in manual run'),
+      linkError,
+    );
+    log.mockRestore();
+  });
+
+  it('finishStep の commit 応答だけを失った場合は live object を削除しない', async () => {
+    const store = new MemoryResultStore();
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'LINK_RESPONSE_LOST',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      {},
+      undefined,
+      store,
+    );
+    const workflow = await h.workflows.create('alice', {
+      name: 'link response lost',
+      stages: workflowDefinitionSchema.parse([
+        { steps: [{ id: 'st_link', name: 'Link', statement: 'LINK_RESPONSE_LOST' }] },
+      ]),
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const finishStep = h.runs.finishStep.bind(h.runs);
+    const responseLost = new Error('commit response lost');
+    vi.spyOn(h.runs, 'finishStep').mockImplementationOnce(async (...args) => {
+      await finishStep(...args);
+      throw responseLost;
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const { runId } = await h.runner.runManual(workflow);
+    await h.runner.whenIdle();
+
+    const step = (await h.runs.getRun(runId))!.steps[0]!;
+    const storedStep = await h.runs.getStepRun(runId, step.id);
+    const key = [...store.objects.keys()][0]!;
+    expect(storedStep?.resultObjectKey).toBe(key);
+    expect(store.objects.has(key)).toBe(true);
+    expect(await h.resultObjectDeletions.listForTest()).toEqual([]);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('unexpected error in manual run'),
+      responseLost,
+    );
+    log.mockRestore();
+  });
+
   it('does not record success when shutdown arrives during result upload', async () => {
     const store = new GatedResultStore();
     h = await makeHarness(
@@ -683,7 +769,7 @@ defaultRole: trino-prod-only
     expect(store.objects.size).toBe(0);
   });
 
-  it('keeps a retryable expiry reference when aborted result deletion fails', async () => {
+  it('削除に失敗した中断 result を durable outbox へ登録する', async () => {
     const store = new GatedResultStore();
     store.deleteFailure = new Error('S3 delete unavailable');
     h = await makeHarness(
@@ -718,12 +804,11 @@ defaultRole: trino-prod-only
 
     const run = await h.runs.getRun(runId);
     const step = run!.steps[0]!;
-    const storedStep = await h.runs.getStepRun(runId, step.id);
     expect(run?.status).toBe('aborted');
     expect(step.status).toBe('aborted');
-    expect(storedStep?.resultObjectKey).toBe([...store.objects.keys()][0]);
-    expect(await h.runs.listExpiredResults(new Date(h.now()).toISOString())).toEqual([
-      { id: step.id, resultObjectKey: storedStep?.resultObjectKey },
+    expect(step.resultAvailable).toBe(false);
+    expect(await h.resultObjectDeletions.listForTest()).toEqual([
+      expect.objectContaining({ key: [...store.objects.keys()][0] }),
     ]);
   });
 

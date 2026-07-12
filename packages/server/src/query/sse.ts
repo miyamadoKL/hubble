@@ -23,6 +23,97 @@ export interface EncodedSseEvent {
   forcedTerminal: boolean;
 }
 
+/** live SSE 接続が保持できる未送信 frame の既定上限。 */
+export const DEFAULT_SSE_BACKLOG_BYTES = 4 * 1024 * 1024;
+
+/** 遅い接続の未送信 SSE frame が上限を超えたことを表す。 */
+export class SseBacklogOverflowError extends Error {
+  constructor(readonly maxBacklogBytes: number) {
+    super(`SSE backlog exceeded ${maxBacklogBytes} bytes`);
+    this.name = 'SseBacklogOverflowError';
+  }
+}
+
+/** SerializedSseWriter の生成オプション。 */
+export interface SerializedSseWriterOptions {
+  maxBacklogBytes?: number;
+  onFailure?: (error: unknown) => void;
+}
+
+/**
+ * SSE frame を一接続につき一列で送信し、未送信 byte 数を上限内に保つ。
+ *
+ * enqueue は同期 callback から呼べる。write の失敗または backlog 超過後は新しい
+ * frame を受け付けず、待機中の frame も送信しない。
+ */
+export class SerializedSseWriter {
+  private tail: Promise<void> = Promise.resolve();
+  private backlogBytes = 0;
+  private accepting = true;
+  private failed = false;
+  private readonly maxBacklogBytes: number;
+  private readonly onFailure: (error: unknown) => void;
+
+  constructor(
+    private readonly write: (frame: string) => Promise<unknown>,
+    options: SerializedSseWriterOptions = {},
+  ) {
+    this.maxBacklogBytes = options.maxBacklogBytes ?? DEFAULT_SSE_BACKLOG_BYTES;
+    this.onFailure = options.onFailure ?? (() => undefined);
+  }
+
+  /** frame を送信列へ追加する。停止中または上限超過時は false を返す。 */
+  enqueue(frame: string): boolean {
+    if (!this.accepting || this.failed) return false;
+    const frameBytes = Buffer.byteLength(frame);
+    if (frameBytes > this.maxBacklogBytes - this.backlogBytes) {
+      this.fail(new SseBacklogOverflowError(this.maxBacklogBytes));
+      return false;
+    }
+
+    this.backlogBytes += frameBytes;
+    const operation = this.tail.then(async () => {
+      if (this.failed) return;
+      await this.write(frame);
+    });
+    this.tail = operation
+      .catch((error: unknown) => {
+        this.fail(error);
+      })
+      .finally(() => {
+        this.backlogBytes -= frameBytes;
+      });
+    return true;
+  }
+
+  /** 追加受付を止め、すでに追加した frame の送信は継続する。 */
+  seal(): void {
+    this.accepting = false;
+  }
+
+  /** 接続切断時に追加受付と待機中 frame の送信を止める。 */
+  abort(): void {
+    this.accepting = false;
+    this.failed = true;
+  }
+
+  /** すでに追加した frame の送信列が空になるまで待つ。 */
+  async drain(): Promise<void> {
+    await this.tail;
+  }
+
+  private fail(error: unknown): void {
+    if (this.failed) return;
+    this.failed = true;
+    this.accepting = false;
+    try {
+      this.onFailure(error);
+    } catch (callbackError) {
+      console.error('query SSE failure callback failed', callbackError);
+    }
+  }
+}
+
 /** 最初の合成終端を含み、それより後を除いた送信対象を返す。 */
 export function throughForcedTerminal(
   events: readonly EncodedSseEvent[],
