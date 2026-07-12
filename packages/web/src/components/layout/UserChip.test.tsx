@@ -28,6 +28,7 @@ const proxyMe: MeResponse = {
   user: 'alice',
   email: 'alice@example.com',
   authMode: 'proxy',
+  storageScope: 'a'.repeat(64),
   role: 'analyst',
   permissions: ['query.write'],
   datasources: [

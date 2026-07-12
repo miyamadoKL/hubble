@@ -5,9 +5,32 @@
  * 「認証が必要」画面 (AuthRequired) を表示する役割を持つ。認証の判定は
  * `/api/me` エンドポイントの結果 (useMe) に基づいて行う。
  */
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useMe, isUnauthenticated } from '../../hooks/useMe';
+import {
+  acknowledgeLegacyDataNotice,
+  activatePrincipalStorage,
+  isLegacyDataNoticeAcknowledged,
+  type LegacyBrowserData,
+} from '../../storage/principalStorage';
 import { AuthRequired } from './AuthRequired';
+
+/** identity が同じ page lifetime 内で変わった場合に全 client state を破棄する。 */
+function reloadForIdentityChange(): void {
+  window.location.reload();
+}
+
+interface AuthGateProps {
+  children: ReactNode;
+  /** テストで page reload を観測するための注入点。 */
+  onIdentityChange?: () => void;
+}
+
+interface ReadyIdentity {
+  principal: string;
+  scope: string;
+  legacyData: LegacyBrowserData;
+}
 
 /**
  * Gate the app on authentication. `/api/me` is the canonical
@@ -16,8 +39,8 @@ import { AuthRequired } from './AuthRequired';
  * "authentication required" screen. In `none` mode `/api/me` always succeeds,
  * so the gate is transparent.
  *
- * While the probe is in flight we render the app optimistically; behind an
- * oauth2-proxy the request resolves immediately and there is no flash.
+ * While the probe or principal namespace setup is in flight, the app remains
+ * unmounted so no previous user's browser state can be restored.
  *
  * アプリ全体を認証状態に応じて出し分けるコンポーネント。
  * `/api/me` を認証状態の正規のプローブとして扱う。`proxy` モードでは、
@@ -26,17 +49,115 @@ import { AuthRequired } from './AuthRequired';
  * 画面に差し替える。`none` モードでは `/api/me` が常に成功するため、この
  * ゲートは実質的に素通り (透過) になる。
  *
- * プローブが実行中の間はいったん楽観的に子要素 (children) をそのまま
- * 描画する。oauth2-proxy 配下ではリクエストが即座に解決するため、
- * 画面のちらつき (flash) は発生しない。
+ * プローブと principal namespace の準備が終わるまでは子要素を描画しない。
+ * 認証主体が決まる前に前利用者の browser state を復元しないためである。
  *
  * @param children ゲートを通過した場合に描画する子要素 (アプリ本体)。
+ * @param onIdentityChange 同じ page 内で認証主体が変わった場合の再読み込み処理。
  */
-export function AuthGate({ children }: { children: ReactNode }) {
-  // `/api/me` の呼び出し結果からエラー情報のみを取り出す。
-  const { error } = useMe();
+export function AuthGate({ children, onIdentityChange = reloadForIdentityChange }: AuthGateProps) {
+  const { data, error, refetch } = useMe();
+  const [readyIdentity, setReadyIdentity] = useState<ReadyIdentity | null>(null);
+  const [failedPrincipal, setFailedPrincipal] = useState<string | null>(null);
+  const [activationAttempt, setActivationAttempt] = useState(0);
+  const [acknowledgedLegacyScope, setAcknowledgedLegacyScope] = useState<string | null>(null);
+  const principal = data?.user;
+  const storageScope = data?.storageScope;
+  const authMode = data?.authMode;
+  const activationError = principal !== undefined && failedPrincipal === principal;
+
+  useEffect(() => {
+    if (!principal || !storageScope || !authMode) return;
+    let active = true;
+    void Promise.resolve()
+      .then(() => activatePrincipalStorage(principal, storageScope, authMode))
+      .then((result) => {
+        if (!active) return;
+        if (result.kind === 'identity-changed') {
+          onIdentityChange();
+          return;
+        }
+        setFailedPrincipal(null);
+        setReadyIdentity({
+          principal,
+          scope: result.scope,
+          legacyData: result.legacyData,
+        });
+        if (result.legacyData === 'preserved' && isLegacyDataNoticeAcknowledged()) {
+          setAcknowledgedLegacyScope(result.scope);
+        }
+      })
+      .catch(() => {
+        if (active) setFailedPrincipal(principal);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activationAttempt, authMode, onIdentityChange, principal, storageScope]);
+
   // エラーが「未認証」を示す場合は、アプリ本体の代わりに認証要求画面を表示する。
   if (isUnauthenticated(error)) return <AuthRequired />;
-  // 認証済み（または none モードで常に成功）の場合はそのまま子要素を描画する。
+
+  if (
+    !data ||
+    readyIdentity?.principal !== data.user ||
+    readyIdentity.scope !== data.storageScope
+  ) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface-base text-sm text-ink-muted">
+        <span>
+          {activationError || error ? 'Unable to verify your identity.' : 'Verifying identity…'}
+        </span>
+        {(activationError || error) && (
+          <button
+            type="button"
+            className="rounded border border-border-base px-3 py-1.5 text-ink-base"
+            onClick={() => {
+              if (activationError) setActivationAttempt((attempt) => attempt + 1);
+              else void refetch();
+            }}
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (readyIdentity.legacyData === 'preserved' && acknowledgedLegacyScope !== readyIdentity.scope) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface-base px-6 text-center text-sm text-ink-muted">
+        <strong className="text-ink-base">Previous browser data was not loaded</strong>
+        <p className="max-w-lg">
+          An older workspace is still stored in this browser. Hubble kept it separate instead of
+          replacing this account&apos;s current data. The raw local data has been preserved.
+        </p>
+        <button
+          type="button"
+          className="rounded border border-border-base px-3 py-1.5 text-ink-base"
+          onClick={() => {
+            acknowledgeLegacyDataNotice();
+            setAcknowledgedLegacyScope(readyIdentity.scope);
+          }}
+        >
+          Continue with this account
+        </button>
+      </div>
+    );
+  }
+
+  if (readyIdentity.legacyData === 'migration-failed') {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface-base px-6 text-center text-sm text-ink-muted">
+        <strong className="text-ink-base">Previous browser data could not be migrated</strong>
+        <p className="max-w-lg">
+          The original local data was preserved. Free browser storage if necessary, then reload to
+          retry before opening the workspace.
+        </p>
+      </div>
+    );
+  }
+
+  // 認証済み主体の storage namespace が確定した後だけ子要素を描画する。
   return <>{children}</>;
 }

@@ -8,6 +8,7 @@ import { SavedQueryRepository } from '../store/savedQueries';
 import { DocumentShareRepository } from '../store/documentShares';
 import { WorkflowRepository } from '../store/workflows';
 import { AlertRepository } from '../store/alerts';
+import type { LoadedRbac } from '../rbac/types';
 import { dbBackends } from '../test/dbBackends';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import {
@@ -24,6 +25,11 @@ import { GithubSyncService } from './syncService';
 const KEY = Buffer.alloc(32, 2);
 const REPO = 'acme/hubble-docs';
 const DEFAULT_BRANCH = 'main';
+const TEST_RBAC = {
+  roles: new Map([['unrestricted', { permissions: new Set(['query.write', 'ai.use'] as const) }]]),
+  assignments: [],
+  defaultRole: 'unrestricted',
+} satisfies LoadedRbac;
 
 class FakeGithubClient implements GithubClient {
   readonly branches = new Map<string, string>();
@@ -145,6 +151,7 @@ function buildService(
     alerts,
     audit,
     encryptionKey: KEY,
+    getRbac: () => TEST_RBAC,
     now,
   });
   return {
@@ -575,6 +582,49 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
       emailTo: ['new-ops@example.com'],
       webhookUrl: 'https://secret.example/existing',
     });
+    await db.close();
+  });
+
+  it('pullDocument rejects an alert update after saved-query access is revoked', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const { service, savedQueries, alerts, links, shares } = buildService(db, client);
+    await service.connect('alice', 'oauth-code');
+    const sharedQuery = await savedQueries.create('bob', {
+      name: 'Shared metric',
+      statement: 'SELECT 1',
+    });
+    await shares.replaceForDocument(
+      'saved_query',
+      sharedQuery.id,
+      [{ subjectType: 'user', subjectValue: 'alice', permission: 'view' }],
+      'bob',
+    );
+    const alert = await alerts.create('alice', {
+      name: 'Local alert',
+      savedQueryId: sharedQuery.id,
+      columnName: 'count',
+      op: '>',
+      value: '100',
+      cron: '0 * * * *',
+    });
+    const approvedHash = contentHash(alertToContent(alert));
+    await links.upsert('alert', alert.id, {
+      path: documentPath('alert', alert.id),
+      approvedHash,
+    });
+    await shares.replaceForDocument('saved_query', sharedQuery.id, [], 'bob');
+    client.files.set(`${DEFAULT_BRANCH}:alerts/${alert.id}.yaml`, {
+      contentText: alertToContent({ ...alert, name: 'Remote alert' }),
+      sha: 'alert-revoked-sha',
+    });
+
+    await expect(service.pullDocument(principalAlice, 'alert', alert.id)).rejects.toMatchObject({
+      status: 404,
+      detail: { code: 'NOT_FOUND' },
+    });
+    expect((await alerts.getById(alert.id))?.name).toBe('Local alert');
+    expect((await links.get('alert', alert.id))?.approvedHash).toBe(approvedHash);
     await db.close();
   });
 

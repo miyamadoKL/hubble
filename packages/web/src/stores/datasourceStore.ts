@@ -6,6 +6,7 @@
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { principalStorageKey } from '../storage/principalStorage';
 
 interface DatasourceState {
   /** 現在選択中のデータソース id。 */
@@ -21,6 +22,6 @@ export const useDatasourceStore = create<DatasourceState>()(
       selectedId: null,
       setSelectedId: (selectedId) => set({ selectedId }),
     }),
-    { name: 'hubble-datasource' },
+    { name: principalStorageKey('hubble-datasource') },
   ),
 );

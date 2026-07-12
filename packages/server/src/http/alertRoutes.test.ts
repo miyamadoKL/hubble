@@ -32,7 +32,97 @@ function jsonHeaders(): Record<string, string> {
   return { 'content-type': 'application/json' };
 }
 
+const aliceHeaders = { ...jsonHeaders(), 'x-forwarded-email': 'alice@corp.com' };
+const bobHeaders = { ...jsonHeaders(), 'x-forwarded-email': 'bob@corp.com' };
+
+async function createAlertForSharedQuery(
+  ctx: Awaited<ReturnType<typeof createTestContext>>,
+  cron: string,
+): Promise<Alert> {
+  const savedQueryResponse = await ctx.app.request('/api/saved-queries', {
+    method: 'POST',
+    headers: aliceHeaders,
+    body: JSON.stringify({ name: 'shared metric', statement: 'SELECT alert_val' }),
+  });
+  const savedQuery = (await savedQueryResponse.json()) as { id: string };
+  await ctx.app.request(`/api/saved-queries/${savedQuery.id}/shares`, {
+    method: 'PUT',
+    headers: aliceHeaders,
+    body: JSON.stringify({
+      shares: [{ subjectType: 'user', subjectValue: 'bob', permission: 'view' }],
+    }),
+  });
+  const alertResponse = await ctx.app.request('/api/alerts', {
+    method: 'POST',
+    headers: bobHeaders,
+    body: JSON.stringify({
+      name: 'shared spike',
+      savedQueryId: savedQuery.id,
+      columnName: 'count',
+      op: '>',
+      value: '100',
+      cron,
+      notifications: { channels: ['slack'] },
+    }),
+  });
+  const alert = alertSchema.parse(await alertResponse.json()) as Alert;
+  await ctx.app.request(`/api/saved-queries/${savedQuery.id}/shares`, {
+    method: 'PUT',
+    headers: aliceHeaders,
+    body: JSON.stringify({ shares: [] }),
+  });
+  return alert;
+}
+
 describe('alert routes', () => {
+  it('does not manually evaluate a saved query after its share is revoked', async () => {
+    const ctx = await createTestContext({
+      scenarios: [VALIDATE_OK, QUERY_OK],
+      env: { AUTH_MODE: 'proxy' },
+      remoteAddress: () => '127.0.0.1',
+    });
+    const alert = await createAlertForSharedQuery(ctx, '0 * * * *');
+    await ctx.services.alerts.update('bob', alert.id, { state: 'triggered' });
+    const requestsBeforeEval = ctx.fake.requests.length;
+
+    const response = await ctx.app.request(`/api/alerts/${alert.id}/eval`, {
+      method: 'POST',
+      headers: bobHeaders,
+    });
+
+    expect(response.status).toBe(200);
+    expect(alertEvalResponseSchema.parse(await response.json())).toMatchObject({
+      previousState: 'triggered',
+      state: 'triggered',
+      conditionMet: false,
+      notified: false,
+      errorType: 'SAVED_QUERY_ACCESS_DENIED',
+    });
+    expect(ctx.fake.requests).toHaveLength(requestsBeforeEval);
+    await ctx.services.shutdown();
+  });
+
+  it('does not run a cron evaluation after a saved-query share is revoked', async () => {
+    let now = Date.parse('2026-07-12T00:00:00.000Z');
+    const ctx = await createTestContext({
+      scenarios: [VALIDATE_OK, QUERY_OK],
+      env: { AUTH_MODE: 'proxy' },
+      remoteAddress: () => '127.0.0.1',
+      now: () => now,
+    });
+    const alert = await createAlertForSharedQuery(ctx, '* * * * *');
+    await ctx.services.alertEvaluator.tick();
+    now += 60_001;
+    const requestsBeforeEval = ctx.fake.requests.length;
+
+    await ctx.services.alertEvaluator.tick();
+    await ctx.services.alertEvaluator.whenIdle();
+
+    expect(ctx.fake.requests).toHaveLength(requestsBeforeEval);
+    expect((await ctx.services.alerts.get('bob', alert.id))?.state).toBe('unknown');
+    await ctx.services.shutdown();
+  });
+
   it('creates, lists, updates, evaluates, and deletes an alert', async () => {
     const ctx = await createTestContext({ scenarios: [VALIDATE_OK, QUERY_OK] });
 

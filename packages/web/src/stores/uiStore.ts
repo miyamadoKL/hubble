@@ -10,6 +10,7 @@ import { create } from 'zustand';
 // persist ミドルウェア: ストアの状態の一部を localStorage 等に永続化し、
 // ページ再読み込み後も復元できるようにする。
 import { persist } from 'zustand/middleware';
+import { principalStorageKey } from '../storage/principalStorage';
 
 /**
  * UI store: theme + shell layout state only. Presentation
@@ -309,7 +310,7 @@ export const useUiStore = create<UiState>()(
     }),
     {
       // localStorage に保存する際のキー名。
-      name: 'hubble-ui',
+      name: principalStorageKey('hubble-ui'),
       // Persist durable layout choices only; palette is transient.
       // 永続化すべき「恒久的なレイアウト選択」のみを対象にする関数。
       // paletteOpen や saveRequest など一時的なフラグは含めない

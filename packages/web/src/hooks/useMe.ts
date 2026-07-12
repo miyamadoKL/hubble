@@ -39,7 +39,11 @@ export function useMe() {
     queryKey: meQueryKey,
     queryFn: fetchMe,
     staleTime: ME_STALE_MS,
-    refetchOnWindowFocus: true,
+    // SSO cookie は別 tab で切り替わり得るため、fresh cache でも focus 復帰時に
+    // identity を再確認する。前面に置き続けた場合も周期 probe で切替を検出する。
+    refetchOnWindowFocus: 'always',
+    refetchOnReconnect: 'always',
+    refetchInterval: ME_STALE_MS,
     // Don't hammer the server on a 401 — surface it to the auth screen instead.
     // 401（未認証）の場合はリトライしてもサーバーに負荷をかけるだけで解決しないため、
     // 即座に諦めて認証必須画面にエラーを伝播させる。それ以外のエラーは1回だけ再試行する。

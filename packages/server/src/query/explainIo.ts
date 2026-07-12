@@ -28,19 +28,15 @@ import type { EstimateTable } from '@hubble/contracts';
  *     "estimate": { "outputRowCount", "outputSizeInBytes", ... }   // query output
  *   }
  *
- * Statistics-less tables emit the *string* `"NaN"` (and possibly `"Infinity"`)
- * in place of numbers; those — and any non-finite value — are treated as `null`
- * (unknown). Per-table scan figures are summed; a sum is `null` only when no
- * input table contributed a finite value.
- *
  * Trino の `EXPLAIN (TYPE IO, FORMAT JSON)` 出力のパーサー（Query Guard 機能）。
  *
  * このステートメントは単一の varchar セルとして、上記のような形状の JSON
  * ドキュメントを返す。統計情報を持たないテーブルは数値の代わりに *文字列*
  * `"NaN"`（場合によっては `"Infinity"`）を返してくる。これらと、その他の
- * 非有限値はすべて `null`（不明）として扱う。テーブルごとのスキャン量は
- * 合算するが、合算値が `null` になるのは、入力テーブルのどれ 1 つも
- * 有限値を提供しなかった場合のみ。
+ * 非有限値はすべて `null`（不明）として扱う。テーブルごとの有限なスキャン量は
+ * 合算しつつ、行数とバイト数ごとに全入力テーブルを見積もれたかも保持する。
+ * 入力テーブルが空ならスキャン量は 0 で完全、入力が全て不明なら合計値は null で
+ * 不完全、既知と不明が混在する場合は既知小計を保ったまま不完全とする。
  */
 
 /** A finite number, or `null` when the value is missing/`"NaN"`/non-finite. */
@@ -80,9 +76,13 @@ export interface ParsedIoPlan {
   /** Sum of input-table `outputSizeInBytes` (null when wholly unknown). */
   // 入力テーブルの `outputSizeInBytes` の合算値（全テーブルが不明なら null）。
   scanBytes: number | null;
+  /** 全入力テーブルのバイト数を見積もれた場合は true。 */
+  scanBytesComplete: boolean;
   /** Sum of input-table `outputRowCount` (null when wholly unknown). */
   // 入力テーブルの `outputRowCount` の合算値（全テーブルが不明なら null）。
   scanRows: number | null;
+  /** 全入力テーブルの行数を見積もれた場合は true。 */
+  scanRowsComplete: boolean;
   /** Top-level query output estimate. */
   // クエリ全体の出力（トップレベル estimate）に関する見積もり。
   outputRows: number | null;
@@ -128,14 +128,20 @@ export function parseExplainIoJson(cell: string): ParsedIoPlan | undefined {
   }
 
   const tables: EstimateTable[] = [];
-  let scanBytes: number | null = null;
-  let scanRows: number | null = null;
+  let scanBytes = 0;
+  let scanRows = 0;
+  let hasKnownBytes = false;
+  let hasKnownRows = false;
+  const hasInputTableList = Array.isArray(plan.inputTableColumnInfos);
+  let scanBytesComplete = hasInputTableList;
+  let scanRowsComplete = hasInputTableList;
+  const inputs = hasInputTableList ? plan.inputTableColumnInfos! : [];
 
   // 入力テーブルごとに行数とバイト数を取り出し、テーブル別内訳（tables）へ
   // 積み上げつつ、全体の合算値（scanRows/scanBytes）を加算していく。
-  // 値が null（不明）のテーブルは合算対象から除外される（=無視されるだけで
-  // エラーにはしない）。
-  for (const input of plan.inputTableColumnInfos ?? []) {
+  // 値が null のテーブルは有限値の小計には含めないが、完全性を false にして
+  // Query Guard が小計を全量見積もりと誤認しないようにする。
+  for (const input of inputs) {
     const rows = finiteOrNull(input.estimate?.outputRowCount);
     const bytes = finiteOrNull(input.estimate?.outputSizeInBytes);
     tables.push({
@@ -145,14 +151,26 @@ export function parseExplainIoJson(cell: string): ParsedIoPlan | undefined {
       rows,
       bytes,
     });
-    if (rows !== null) scanRows = (scanRows ?? 0) + rows;
-    if (bytes !== null) scanBytes = (scanBytes ?? 0) + bytes;
+    if (rows === null) {
+      scanRowsComplete = false;
+    } else {
+      scanRows += rows;
+      hasKnownRows = true;
+    }
+    if (bytes === null) {
+      scanBytesComplete = false;
+    } else {
+      scanBytes += bytes;
+      hasKnownBytes = true;
+    }
   }
 
   return {
     hasWriteOutputs: (plan.outputTableColumnInfos?.length ?? 0) > 0,
-    scanBytes,
-    scanRows,
+    scanBytes: hasKnownBytes || (hasInputTableList && inputs.length === 0) ? scanBytes : null,
+    scanBytesComplete,
+    scanRows: hasKnownRows || (hasInputTableList && inputs.length === 0) ? scanRows : null,
+    scanRowsComplete,
     outputRows: finiteOrNull(plan.estimate?.outputRowCount),
     outputBytes: finiteOrNull(plan.estimate?.outputSizeInBytes),
     tables,

@@ -25,6 +25,9 @@ import { WorkflowRepository, type WorkflowRecord } from '../store/workflows';
 import { AlertRepository, type AlertRecord } from '../store/alerts';
 import { DocumentShareRepository } from '../store/documentShares';
 import type { SqlDatabase } from '../db/sqlDatabase';
+import { schedulePrincipalIdentity } from '../rbac/check';
+import { resolveRoleForPrincipal } from '../rbac/resolve';
+import type { LoadedRbac } from '../rbac/types';
 import { branchNameFor, contentHash, documentPath, documentToContent } from './canonical';
 import {
   parseAlertContent,
@@ -79,6 +82,8 @@ export interface GithubSyncServiceDeps {
   alerts: AlertRepository;
   audit: AuditLogger;
   encryptionKey: Buffer;
+  /** Alert owner の現在ロールを pull 適用時に解決するための RBAC getter。 */
+  getRbac: () => LoadedRbac;
   now?: () => number;
 }
 
@@ -659,6 +664,19 @@ export class GithubSyncService {
         const existing = await repositories.alerts.getById(id);
         if (!existing) {
           throw AppError.notFound('Alert not found');
+        }
+        const identity = schedulePrincipalIdentity(existing.owner, existing.principalSnapshot);
+        const role = resolveRoleForPrincipal(this.deps.getRbac(), identity);
+        const savedQuery = await repositories.savedQueries.get(
+          {
+            user: existing.owner,
+            groups: identity.groups ?? [],
+            role: role.name,
+          },
+          parsed.savedQueryId,
+        );
+        if (!savedQuery) {
+          throw AppError.notFound('Saved query not found');
         }
         await repositories.alerts.update(owner, id, {
           name: parsed.name,

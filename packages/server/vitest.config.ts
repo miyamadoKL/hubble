@@ -13,6 +13,8 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   test: {
+    // 過去 build の ignored dist が残っていても、生成済み test を重複実行しない。
+    include: ['src/**/*.test.ts'],
     fileParallelism: process.env.TEST_DATABASE_URL ? false : true,
   },
 });

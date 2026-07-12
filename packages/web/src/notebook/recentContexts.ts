@@ -12,13 +12,15 @@
 // ヘルパーはそれを localStorage への安全なアクセスでラップしたもの。
 // ============================================================================
 
+import { principalStorageKey } from '../storage/principalStorage';
+
 /** 1 つの catalog.schema コンテキスト。 */
 export interface ContextValue {
   catalog: string;
   schema: string;
 }
 
-export const RECENT_CONTEXTS_KEY = 'hubble-recent-contexts';
+export const RECENT_CONTEXTS_KEY = principalStorageKey('hubble-recent-contexts');
 export const MAX_RECENT_CONTEXTS = 5;
 
 /** Two contexts are the same iff catalog and schema both match. */

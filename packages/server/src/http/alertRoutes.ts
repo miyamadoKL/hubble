@@ -16,8 +16,7 @@ import type { Services } from '../services';
 import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
 import type { Principal } from '../auth/principal';
-import { requireDatasourceAccess, schedulePrincipalIdentity } from '../rbac/check';
-import { resolveRoleForPrincipal } from '../rbac/resolve';
+import { requireDatasourceAccess } from '../rbac/check';
 import type { AlertRecord } from '../store/alerts';
 import { nextRunIso } from '../schedule/cron';
 import { parseJsonBody } from './validate';
@@ -129,14 +128,6 @@ export function alertRoutes(services: Services): App {
     const id = c.req.param('id');
     const record = await services.alerts.get(owner, id);
     if (!record) throw AppError.notFound(`Alert ${id} not found`);
-    const sq = await services.savedQueries.getByIdUnscoped(record.savedQueryId);
-    if (!sq) throw AppError.notFound(`Saved query ${record.savedQueryId} not found`);
-    const datasourceId = sq.datasourceId ?? services.defaultDatasourceId;
-    const ownerRole = resolveRoleForPrincipal(
-      services.rbac,
-      schedulePrincipalIdentity(owner, record.principalSnapshot),
-    );
-    requireDatasourceAccess(ownerRole, datasourceId);
     try {
       const outcome = await services.alertEvaluator.evalManual(record);
       return c.json(alertEvalResponseSchema.parse(outcome));

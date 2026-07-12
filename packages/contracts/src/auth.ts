@@ -34,6 +34,8 @@ export const meResponseSchema = z.object({
   email: z.string().optional(),
   // 現在有効な認証モード。none の場合 web は右上のユーザーチップを非表示にする。
   authMode: authModeSchema,
+  // browser storage を利用者単位に分離するための opaque な SHA-256 scope。
+  storageScope: z.string().regex(/^[0-9a-f]{64}$/),
   // 解決済みロール名（rbac.yaml または組み込み unrestricted）。
   role: z.string().min(1),
   // ロールに紐づく権限一覧（ソート済みで返す）。

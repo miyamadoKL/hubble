@@ -137,6 +137,7 @@ describe('auth', () => {
       meResponseSchema.parse({
         user: 'alice',
         authMode: 'proxy',
+        storageScope: 'a'.repeat(64),
         role: 'member',
         permissions: [],
         datasources: [],
@@ -144,6 +145,7 @@ describe('auth', () => {
     ).toEqual({
       user: 'alice',
       authMode: 'proxy',
+      storageScope: 'a'.repeat(64),
       role: 'member',
       permissions: [],
       datasources: [],
@@ -153,6 +155,7 @@ describe('auth', () => {
         user: 'alice',
         email: 'alice@example.com',
         authMode: 'proxy',
+        storageScope: 'a'.repeat(64),
         role: 'admin',
         permissions: ['query.write'],
         datasources: [

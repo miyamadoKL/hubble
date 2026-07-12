@@ -56,6 +56,7 @@ import { detectVariables, reconcileVariables } from './variables';
 import { readRecentContexts } from './recentContexts';
 import { canPersistNotebookToServer } from '../utils/documentShare';
 import { ApiClientError } from '../api/client';
+import { principalStorageKey } from '../storage/principalStorage';
 
 // ---- Persistence injection --------------------------------------------------
 
@@ -89,10 +90,10 @@ export const AUTOSAVE_DEBOUNCE_MS = 2000;
 // ---- localStorage keys ------------------------------------------------------
 
 // ワークスペース（開いているタブ id 一覧 + アクティブ id）を保存するキー。
-const WORKSPACE_KEY = 'hubble-workspace'; // open tab ids + active id
-const WORKSPACE_BACKUP_KEY = 'hubble-workspace-backup';
+const WORKSPACE_KEY = principalStorageKey('hubble-workspace'); // open tab ids + active id
+const WORKSPACE_BACKUP_KEY = principalStorageKey('hubble-workspace-backup');
 // draft notebook 1 件ごとのスナップショットを保存するキーの接頭辞（末尾に id が付く）。
-const DRAFT_PREFIX = 'hubble-draft:'; // per-draft notebook snapshot
+const DRAFT_PREFIX = `${principalStorageKey('hubble-draft')}:`; // per-draft notebook snapshot
 const ORPHAN_DRAFT_LIMIT = 5;
 
 // ---- Open-notebook record ---------------------------------------------------

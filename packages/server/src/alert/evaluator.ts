@@ -204,15 +204,26 @@ export class AlertEvaluator {
 
   private async evaluateAlert(alert: AlertRecord): Promise<AlertEvalOutcome> {
     const previousState = alert.state;
-    const savedQuery = await this.deps.savedQueries.getByIdUnscoped(alert.savedQueryId);
+    const alertIdentity = schedulePrincipalIdentity(alert.owner, alert.principalSnapshot);
+    const alertRole = resolveRoleForPrincipal(this.deps.getRbac(), alertIdentity);
+    const savedQuery = await this.deps.savedQueries.get(
+      {
+        user: alert.owner,
+        groups: alertIdentity.groups ?? [],
+        role: alertRole.name,
+      },
+      alert.savedQueryId,
+    );
     if (!savedQuery) {
-      return this.persistOutcome(alert, previousState, {
+      const outcome = await this.persistOutcome(alert, previousState, {
         conditionMet: false,
         observedValue: null,
         notified: false,
-        errorType: 'NOT_FOUND',
-        errorMessage: `Saved query '${alert.savedQueryId}' not found`,
+        errorType: 'SAVED_QUERY_ACCESS_DENIED',
+        errorMessage: `Saved query '${alert.savedQueryId}' is not accessible to the alert owner`,
       });
+      await this.recordAudit(alert, outcome);
+      return outcome;
     }
 
     const datasourceId = savedQuery.datasourceId ?? this.deps.defaultDatasourceId;
@@ -227,10 +238,6 @@ export class AlertEvaluator {
       });
     }
 
-    const alertRole = resolveRoleForPrincipal(
-      this.deps.getRbac(),
-      schedulePrincipalIdentity(alert.owner, alert.principalSnapshot),
-    );
     if (!roleAllowsDatasource(alertRole, datasourceId)) {
       return this.persistOutcome(alert, previousState, {
         conditionMet: false,
@@ -426,7 +433,12 @@ export class AlertEvaluator {
     },
     alerts = this.deps.alerts,
   ): Promise<AlertEvalOutcome> {
-    const newState = input.newState ?? nextAlertState(previousState, input.conditionMet);
+    // 評価エラーは条件の真偽を確定していないため、直前の alert state を維持する。
+    // 正常評価だけを nextAlertState へ渡し、共有復旧後の誤 rearm と再通知を防ぐ。
+    const hasError = input.errorType !== null || input.errorMessage !== null;
+    const newState =
+      input.newState ??
+      (hasError ? previousState : nextAlertState(previousState, input.conditionMet));
     const nowIso = new Date(this.now()).toISOString();
     const lastTriggeredAt =
       newState === 'triggered'
@@ -502,14 +514,14 @@ export class AlertEvaluator {
   private async recordAudit(
     alert: AlertRecord,
     outcome: AlertEvalOutcome,
-    datasourceId: string,
+    datasourceId?: string,
   ): Promise<void> {
     if (!this.deps.audit) return;
     await this.deps.audit.record({
       actor: alert.owner,
       action: 'alert.evaluate',
       target: alert.id,
-      datasource: datasourceId,
+      ...(datasourceId !== undefined ? { datasource: datasourceId } : {}),
       detail: {
         alertId: alert.id,
         savedQueryId: alert.savedQueryId,

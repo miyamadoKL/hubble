@@ -41,9 +41,13 @@ export interface VerdictInput {
   /** Estimated input scan bytes (null = unknown). */
   // 見積もられた入力スキャンバイト数（null = 不明）。
   scanBytes: number | null;
+  /** 全入力テーブルのバイト数を見積もれた場合は true。 */
+  scanBytesComplete: boolean;
   /** Estimated input scan rows (null = unknown). */
   // 見積もられた入力スキャン行数（null = 不明）。
   scanRows: number | null;
+  /** 全入力テーブルの行数を見積もれた場合は true。 */
+  scanRowsComplete: boolean;
 }
 
 /** Group digits for human-readable reasons: 6001215 -> "6,001,215". */
@@ -119,7 +123,7 @@ export function computeVerdict(input: VerdictInput, limits: GuardLimits): GuardV
   } else {
     // status === 'estimated'
     // EXPLAIN が成功し、少なくとも一部の見積もり値が得られたケース。
-    const { scanBytes, scanRows } = input;
+    const { scanBytes, scanRows, scanBytesComplete, scanRowsComplete } = input;
     const bytesKnown = scanBytes !== null;
     const rowsKnown = scanRows !== null;
 
@@ -143,13 +147,21 @@ export function computeVerdict(input: VerdictInput, limits: GuardLimits): GuardV
       want('block');
     }
 
-    // Both estimates unknown AND a limit is set -> apply ON_UNKNOWN.
-    // バイト数と行数の両方が不明で、かつ上限が設定されている場合にのみ
-    // ON_UNKNOWN を適用する（片方でも判明していればそちらの判定を優先する）。
-    if (!bytesKnown && !rowsKnown && limitsConfigured) {
+    // 上限を設定した指標に未知値が 1 つでも含まれる場合は、既知テーブルの
+    // 小計が得られていても全量とは扱わず ON_UNKNOWN を適用する。
+    const incompleteDimensions: string[] = [];
+    if (limits.maxScanBytes > 0 && (!bytesKnown || !scanBytesComplete)) {
+      incompleteDimensions.push('bytes');
+    }
+    if (limits.maxScanRows > 0 && (!rowsKnown || !scanRowsComplete)) {
+      incompleteDimensions.push('rows');
+    }
+    if (incompleteDimensions.length > 0 && limitsConfigured) {
       const decision = onUnknownDecision(limits.onUnknown);
       if (decision !== 'allow') {
-        reasons.push('Scan cost could not be estimated for this query');
+        reasons.push(
+          `Scan ${incompleteDimensions.join(' and ')} could not be fully estimated for this query`,
+        );
         want(decision);
       }
     }

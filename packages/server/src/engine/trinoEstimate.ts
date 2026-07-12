@@ -77,11 +77,18 @@ function buildResult(
 ): EstimateResult {
   const scanBytes = parsed?.scanBytes ?? null;
   const scanRows = parsed?.scanRows ?? null;
+  const scanBytesComplete = parsed?.scanBytesComplete ?? false;
+  const scanRowsComplete = parsed?.scanRowsComplete ?? false;
   // guardVerdict.ts の純粋関数へ委譲して allow/warn/block を決定する。
-  const verdict = computeVerdict({ status, scanBytes, scanRows }, options.limits);
+  const verdict = computeVerdict(
+    { status, scanBytes, scanRows, scanBytesComplete, scanRowsComplete },
+    options.limits,
+  );
   // 設定されたスループット（bytesPerSecond）からおおよその所要時間を概算する。
   const estimatedSeconds =
-    options.bytesPerSecond > 0 && scanBytes !== null ? scanBytes / options.bytesPerSecond : null;
+    options.bytesPerSecond > 0 && scanBytes !== null && scanBytesComplete
+      ? scanBytes / options.bytesPerSecond
+      : null;
   return {
     status,
     scanBytes,

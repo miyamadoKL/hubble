@@ -49,6 +49,8 @@ describe('parseExplainIoJson', () => {
     const plan = parseExplainIoJson(LINEITEM)!;
     expect(plan.scanRows).toBe(6001215);
     expect(plan.scanBytes).toBe(783988912);
+    expect(plan.scanRowsComplete).toBe(true);
+    expect(plan.scanBytesComplete).toBe(true);
     expect(plan.outputRows).toBe(6001215);
     expect(plan.outputBytes).toBe(783988912);
     expect(plan.tables).toEqual([
@@ -60,6 +62,8 @@ describe('parseExplainIoJson', () => {
     const plan = parseExplainIoJson(NAN_TABLE)!;
     expect(plan.scanRows).toBeNull();
     expect(plan.scanBytes).toBeNull();
+    expect(plan.scanRowsComplete).toBe(false);
+    expect(plan.scanBytesComplete).toBe(false);
     expect(plan.outputRows).toBeNull();
     expect(plan.outputBytes).toBeNull();
     expect(plan.tables[0]).toEqual({
@@ -86,7 +90,25 @@ describe('parseExplainIoJson', () => {
     expect(plan.scanBytes).toBeNull();
   });
 
-  it('sums known tables and ignores unknown ones in the totals', () => {
+  it('tracks row and byte completeness independently', () => {
+    const cell = JSON.stringify({
+      inputTableColumnInfos: [
+        {
+          table: { catalog: 'c', schemaTable: { schema: 's', table: 't' } },
+          estimate: { outputRowCount: 10, outputSizeInBytes: 'NaN' },
+        },
+      ],
+      estimate: {},
+    });
+    const plan = parseExplainIoJson(cell)!;
+
+    expect(plan.scanRows).toBe(10);
+    expect(plan.scanRowsComplete).toBe(true);
+    expect(plan.scanBytes).toBeNull();
+    expect(plan.scanBytesComplete).toBe(false);
+  });
+
+  it('keeps known subtotals and marks unknown JOIN inputs as incomplete', () => {
     const cell = JSON.stringify({
       inputTableColumnInfos: [
         {
@@ -107,6 +129,8 @@ describe('parseExplainIoJson', () => {
     const plan = parseExplainIoJson(cell)!;
     expect(plan.scanRows).toBe(150);
     expect(plan.scanBytes).toBe(1500);
+    expect(plan.scanRowsComplete).toBe(false);
+    expect(plan.scanBytesComplete).toBe(false);
     expect(plan.tables.map((t) => t.table)).toEqual(['a', 'b', 'd']);
   });
 
@@ -116,10 +140,26 @@ describe('parseExplainIoJson', () => {
       estimate: { outputRowCount: 4.0, outputSizeInBytes: 220.0 },
     });
     const plan = parseExplainIoJson(cell)!;
-    expect(plan.scanRows).toBeNull();
-    expect(plan.scanBytes).toBeNull();
+    expect(plan.scanRows).toBe(0);
+    expect(plan.scanBytes).toBe(0);
+    expect(plan.scanRowsComplete).toBe(true);
+    expect(plan.scanBytesComplete).toBe(true);
     expect(plan.tables).toEqual([]);
     expect(plan.outputRows).toBe(4);
+  });
+
+  it.each([
+    ['missing', { estimate: { outputRowCount: 1_000_000, outputSizeInBytes: 1_000_000 } }],
+    ['null', { inputTableColumnInfos: null, estimate: {} }],
+    ['invalid', { inputTableColumnInfos: {}, estimate: {} }],
+  ])('treats a %s input-table list as an incomplete estimate', (_name, raw) => {
+    const plan = parseExplainIoJson(JSON.stringify(raw))!;
+
+    expect(plan.scanRows).toBeNull();
+    expect(plan.scanBytes).toBeNull();
+    expect(plan.scanRowsComplete).toBe(false);
+    expect(plan.scanBytesComplete).toBe(false);
+    expect(plan.tables).toEqual([]);
   });
 
   it('tolerates a missing estimate field on a table', () => {
@@ -138,6 +178,7 @@ describe('parseExplainIoJson', () => {
       bytes: null,
     });
     expect(plan.scanRows).toBeNull();
+    expect(plan.scanRowsComplete).toBe(false);
   });
 
   it('returns undefined for a non-JSON echoed statement (unsupported)', () => {
