@@ -1,16 +1,17 @@
 /**
  * 期限切れクエリ結果オブジェクトと、参照削除済みの結果オブジェクトを削除するサービス。
  */
-import type { HistoryRepository } from '../store/history';
+import type { ExpiredHistoryResult, HistoryRepository } from '../store/history';
 import type {
   ResultObjectDeletionJob,
   ResultObjectDeletionRepository,
 } from '../store/resultObjectDeletions';
-import type { WorkflowRunRepository } from '../store/workflows';
+import type { ExpiredWorkflowStepResult, WorkflowRunRepository } from '../store/workflows';
 import type { ResultStore } from './store';
 import { PeriodicRunner } from '../util/periodicRunner';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const REFERENCE_EXPIRY_PAGE_SIZE = 100;
 const DELETION_CLAIM_LIMIT = 100;
 const DELETION_RETRY_BASE_MS = 60_000;
 
@@ -87,16 +88,42 @@ export class ResultExpiryService {
     if (!this.options.resultStore.enabled) return;
     const nowMs = this.options.now?.() ?? Date.now();
     const nowIso = new Date(nowMs).toISOString();
-    const historyExpired = await this.options.history.listExpiredResults(nowIso);
-    const workflowExpired = await this.options.workflowRuns.listExpiredResults(nowIso);
-    const keys = [
-      ...new Set([
-        ...historyExpired.map((item) => item.resultObjectKey),
-        ...workflowExpired.map((item) => item.resultObjectKey),
-      ]),
-    ];
-    if (keys.length === 0) return;
-    await this.deleteBatch(keys, [], nowMs, nowIso);
+    let historyAfter: { resultExpiresAt: string; id: string } | undefined;
+    let workflowAfter: { resultExpiresAt: string; id: string } | undefined;
+    let historyDone = false;
+    let workflowDone = false;
+    while (!historyDone || !workflowDone) {
+      const historyPage: Promise<ExpiredHistoryResult[]> = historyDone
+        ? Promise.resolve([])
+        : this.options.history.listExpiredResults(nowIso, {
+            after: historyAfter,
+            limit: REFERENCE_EXPIRY_PAGE_SIZE,
+          });
+      const workflowPage: Promise<ExpiredWorkflowStepResult[]> = workflowDone
+        ? Promise.resolve([])
+        : this.options.workflowRuns.listExpiredResults(nowIso, {
+            after: workflowAfter,
+            limit: REFERENCE_EXPIRY_PAGE_SIZE,
+          });
+      const [historyExpired, workflowExpired] = await Promise.all([historyPage, workflowPage]);
+      historyDone = historyExpired.length < REFERENCE_EXPIRY_PAGE_SIZE;
+      workflowDone = workflowExpired.length < REFERENCE_EXPIRY_PAGE_SIZE;
+      const lastHistory = historyExpired.at(-1);
+      if (lastHistory) {
+        historyAfter = { resultExpiresAt: lastHistory.resultExpiresAt, id: lastHistory.id };
+      }
+      const lastWorkflow = workflowExpired.at(-1);
+      if (lastWorkflow) {
+        workflowAfter = { resultExpiresAt: lastWorkflow.resultExpiresAt, id: lastWorkflow.id };
+      }
+      const keys = [
+        ...new Set([
+          ...historyExpired.map((item) => item.resultObjectKey),
+          ...workflowExpired.map((item) => item.resultObjectKey),
+        ]),
+      ];
+      if (keys.length > 0) await this.deleteBatch(keys, [], nowMs, nowIso);
+    }
   }
 
   private async runDeletionOutbox(): Promise<void> {

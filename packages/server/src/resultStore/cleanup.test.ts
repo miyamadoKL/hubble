@@ -184,6 +184,61 @@ describe('ResultExpiryService periodic execution', () => {
     }
   });
 
+  it('期限切れ参照を100件ずつカーソル走査し、全件配列を作らない', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: `qry_${String(index).padStart(3, '0')}`,
+      resultObjectKey: `hubble-results/${String(index).padStart(3, '0')}.jsonl.gz`,
+      resultExpiresAt: '2025-12-01T00:00:00.000Z',
+    }));
+    const finalItem = {
+      id: 'qry_100',
+      resultObjectKey: 'hubble-results/100.jsonl.gz',
+      resultExpiresAt: '2025-12-02T00:00:00.000Z',
+    };
+    const listExpiredResults = vi
+      .fn<HistoryRepository['listExpiredResults']>()
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce([finalItem]);
+    const history = {
+      listExpiredResults,
+      clearResultObjects: vi.fn().mockResolvedValue(undefined),
+    } as unknown as HistoryRepository;
+    const workflowRuns = {
+      listExpiredResults: vi.fn().mockResolvedValue([]),
+      clearResultObjects: vi.fn().mockResolvedValue(undefined),
+    } as unknown as WorkflowRunRepository;
+    const deleteExpired = vi
+      .fn<ResultStore['deleteExpired']>()
+      .mockImplementation(async (items) => ({
+        deleted: items.map((item) => item.key),
+        failed: [],
+      }));
+    const service = new ResultExpiryService({
+      history,
+      workflowRuns,
+      deletions: {
+        claimDue: vi.fn().mockResolvedValue([]),
+        complete: vi.fn().mockResolvedValue(undefined),
+      } as unknown as ResultObjectDeletionRepository,
+      resultStore: { enabled: true, deleteExpired } as unknown as ResultStore,
+      now: () => Date.parse('2026-01-01T00:00:00.000Z'),
+    });
+
+    await service.runOnce();
+
+    expect(listExpiredResults).toHaveBeenNthCalledWith(1, '2026-01-01T00:00:00.000Z', {
+      after: undefined,
+      limit: 100,
+    });
+    expect(listExpiredResults).toHaveBeenNthCalledWith(2, '2026-01-01T00:00:00.000Z', {
+      after: { resultExpiresAt: firstPage[99]!.resultExpiresAt, id: firstPage[99]!.id },
+      limit: 100,
+    });
+    expect(deleteExpired).toHaveBeenCalledTimes(2);
+    expect(deleteExpired.mock.calls[0]![0]).toHaveLength(100);
+    expect(deleteExpired.mock.calls[1]![0]).toEqual([{ key: finalItem.resultObjectKey }]);
+  });
+
   it('claim 上限を超える due job を同じ runOnce 内で drain する', async () => {
     const db = await openMemoryDatabase();
     const deletions = new ResultObjectDeletionRepository(db);

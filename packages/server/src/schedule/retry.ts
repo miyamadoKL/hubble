@@ -1,5 +1,5 @@
 import { WRITE_NOT_ALLOWED } from '@hubble/contracts';
-import { AppError, TrinoQueryError, TrinoTransportError } from '../errors';
+import { AppError, SqlDriverError, TrinoQueryError, TrinoTransportError } from '../errors';
 import type { RetryPolicy } from '@hubble/contracts';
 import { classifyStatementWrite } from '../rbac/writeCheck';
 
@@ -33,6 +33,8 @@ function isQueryBlocked(err: unknown): boolean {
 /** Classify a thrown error as a deterministic or transient failure. */
 // 日本語: 上から順に判定し、最初に該当した分類を返す。
 export function classifyFailure(err: unknown): FailureClass {
+  // SQL driver の retry class は HTTP status や Trino errorType と独立に決める。
+  if (err instanceof SqlDriverError) return err.retryClass;
   // A Trino USER_ERROR is deterministic (bad SQL / analysis error).
   // 日本語: SQL 自体が悪い (構文/意味エラー) ので、何度再試行しても失敗する。
   if (err instanceof TrinoQueryError && err.trino.errorType === 'USER_ERROR') {
@@ -48,7 +50,6 @@ export function classifyFailure(err: unknown): FailureClass {
   if (err instanceof TrinoTransportError) return 'transient';
   // Any other Trino query error that is NOT a USER_ERROR (engine fault) retries.
   // Unknown errors are treated as transient so a flaky run gets another chance.
-  // 日本語: 未知のエラー・USER_ERROR 以外の Trino エラー (エンジン内部の不調等) は
   // 日本語: 未知のエラーや USER_ERROR 以外の Trino エラー (エンジン内部の不調等) は
   // 安全側に倒して transient とし、フェイル気味の実行にもう一度チャンスを与える。
   return 'transient';

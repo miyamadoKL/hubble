@@ -306,6 +306,26 @@ for (const backend of dbBackends) {
         expect(page.items).toHaveLength(1);
         expect(page.total).toBe(2);
       });
+
+      it('submittedAtが同じ履歴をid順で安定してページングする', async () => {
+        const repo = new HistoryRepository(await open());
+        for (const id of ['h_same_a', 'h_same_b']) {
+          await repo.insert({
+            id,
+            statement: 'SELECT 1',
+            state: 'finished',
+            owner: 'alice',
+            datasourceId: 'trino-default',
+            submittedAt: '2026-01-01T00:00:00.000Z',
+          });
+        }
+
+        const first = await repo.list('alice', { offset: 0, limit: 1 });
+        const second = await repo.list('alice', { offset: 1, limit: 1 });
+
+        expect(first.items.map((entry) => entry.id)).toEqual(['h_same_b']);
+        expect(second.items.map((entry) => entry.id)).toEqual(['h_same_a']);
+      });
     });
   });
 }

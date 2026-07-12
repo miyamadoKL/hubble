@@ -17,11 +17,35 @@ import {
 import type { QueryExecution } from './execution';
 import { DOWNLOAD_SOURCE, needsCsvReexec, statementAllowsCsvReexec } from './csv';
 import { statementPages } from '../engine/statementDriver';
+import { raceSqlAbort } from '../engine/sql/abort';
 
 /** クエリ結果の列定義または 1 行を表すイベント。 */
 export type QueryResultEvent =
   | { type: 'columns'; columns: QueryColumn[] }
   | { type: 'row'; row: unknown[] };
+
+/** 即時のイベント列、または消費開始時にイベント列を開く factory。 */
+export type QueryResultEventInput =
+  | AsyncGenerator<QueryResultEvent>
+  | ((
+      signal?: AbortSignal,
+    ) => AsyncGenerator<QueryResultEvent> | Promise<AsyncGenerator<QueryResultEvent>>);
+
+/** lazy factory の場合だけ現在の消費対象を開く。 */
+export async function openQueryResultEvents(
+  input: QueryResultEventInput,
+  signal?: AbortSignal,
+): Promise<AsyncGenerator<QueryResultEvent>> {
+  if (typeof input !== 'function') return input;
+  const pending = Promise.resolve(input(signal));
+  return raceSqlAbort(pending, signal, () => {
+    // factory が中断後に完了しても、開いた入力を未消費のまま残さない。
+    void pending.then(
+      (events) => events.return(undefined).catch(() => undefined),
+      () => undefined,
+    );
+  });
+}
 
 /** 行イベントストリームの取得元。監査 detail やレスポンスに使う。 */
 export type QueryResultEventSource = 'buffer' | 'bufferedPartial' | 'resultStore' | 'reexec';

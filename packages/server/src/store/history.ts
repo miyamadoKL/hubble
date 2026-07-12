@@ -84,6 +84,13 @@ export interface HistoryResultRef {
 export interface ExpiredHistoryResult {
   id: string;
   resultObjectKey: string;
+  resultExpiresAt: string;
+}
+
+/** 期限切れ結果を安定した順序でページ走査するためのカーソル。 */
+export interface ExpiredHistoryResultCursor {
+  resultExpiresAt: string;
+  id: string;
 }
 
 // 履歴に保存する SQL 文の最大長。長大なクエリでテーブルが肥大化しないよう
@@ -162,14 +169,13 @@ export class HistoryRepository {
   /** 指定 key 群の result 参照を NULL に戻す。 */
   async clearResultObjects(keys: string[]): Promise<void> {
     if (keys.length === 0) return;
-    for (const key of keys) {
-      await this.db.run(
-        `UPDATE query_history
-         SET result_object_key=NULL, result_expires_at=NULL
-         WHERE result_object_key=?`,
-        [key],
-      );
-    }
+    const placeholders = keys.map(() => '?').join(', ');
+    await this.db.run(
+      `UPDATE query_history
+       SET result_object_key=NULL, result_expires_at=NULL
+       WHERE result_object_key IN (${placeholders})`,
+      keys,
+    );
   }
 
   /** owner が所有する単一の履歴エントリを id で取得する。存在しなければ undefined。 */
@@ -191,17 +197,54 @@ export class HistoryRepository {
     return rows[0] ? rowToResultRef(rows[0]) : undefined;
   }
 
-  /** 期限切れ result 参照を列挙する。 */
-  async listExpiredResults(nowIso: string): Promise<ExpiredHistoryResult[]> {
+  /** 期限切れ result 参照を失効時刻と id のカーソル順でページ取得する。 */
+  async listExpiredResults(
+    nowIso: string,
+    options: { after?: ExpiredHistoryResultCursor; limit?: number } = {},
+  ): Promise<ExpiredHistoryResult[]> {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
+    const cursorWhere = options.after
+      ? 'AND (result_expires_at > ? OR (result_expires_at = ? AND id > ?))'
+      : '';
+    const params: SqlParam[] = [nowIso];
+    if (options.after) {
+      params.push(options.after.resultExpiresAt, options.after.resultExpiresAt, options.after.id);
+    }
+    params.push(limit);
     const rows = await this.db.query<{
       id: string;
       result_object_key: string;
+      result_expires_at: string;
     }>(
-      `SELECT id, result_object_key FROM query_history
-       WHERE result_object_key IS NOT NULL AND result_expires_at IS NOT NULL AND result_expires_at <= ?`,
-      [nowIso],
+      `SELECT id, result_object_key, result_expires_at FROM query_history
+       WHERE result_object_key IS NOT NULL AND result_expires_at IS NOT NULL
+         AND result_expires_at <= ? ${cursorWhere}
+       ORDER BY result_expires_at ASC, id ASC
+       LIMIT ?`,
+      params,
     );
-    return rows.map((row) => ({ id: row.id, resultObjectKey: row.result_object_key }));
+    return rows.map((row) => ({
+      id: row.id,
+      resultObjectKey: row.result_object_key,
+      resultExpiresAt: row.result_expires_at,
+    }));
+  }
+
+  /** S3 object 参照を持たず、保持期限を過ぎた履歴を古い順にページ削除する。 */
+  async pruneBefore(cutoffIso: string, limit: number): Promise<number> {
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM query_history
+       WHERE submitted_at < ? AND result_object_key IS NULL
+         AND id IN (
+         SELECT id FROM query_history
+         WHERE submitted_at < ? AND result_object_key IS NULL
+         ORDER BY submitted_at ASC, id ASC
+         LIMIT ?
+       )
+       RETURNING id`,
+      [cutoffIso, cutoffIso, limit],
+    );
+    return rows.length;
   }
 
   /**
@@ -228,7 +271,9 @@ export class HistoryRepository {
     const total = Number(countRows[0]?.c ?? 0);
 
     const rows = await this.db.query<HistoryRow>(
-      `SELECT * FROM query_history ${where} ORDER BY submitted_at DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM query_history ${where}
+       ORDER BY submitted_at DESC, id DESC
+       LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
 

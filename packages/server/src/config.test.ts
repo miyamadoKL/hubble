@@ -205,6 +205,35 @@ describe('loadServerConfig integer bounds', () => {
     expect(config.notification.channelTimeoutMs).toBe(9_000);
   });
 
+  it('loads table retention defaults and overrides', () => {
+    expect(loadServerConfig({}).dataRetention).toEqual({
+      alertDeliveryDays: 30,
+      queryHistoryDays: 90,
+      auditLogDays: 365,
+      batchSize: 500,
+    });
+    expect(
+      loadServerConfig({
+        ALERT_DELIVERY_RETENTION_DAYS: '7',
+        QUERY_HISTORY_RETENTION_DAYS: '45',
+        AUDIT_LOG_RETENTION_DAYS: '730',
+        DATA_RETENTION_BATCH_SIZE: '25',
+      }).dataRetention,
+    ).toEqual({
+      alertDeliveryDays: 7,
+      queryHistoryDays: 45,
+      auditLogDays: 730,
+      batchSize: 25,
+    });
+    expect(
+      loadServerConfig({
+        ALERT_DELIVERY_RETENTION_DAYS: '0',
+        QUERY_HISTORY_RETENTION_DAYS: '0',
+        AUDIT_LOG_RETENTION_DAYS: '0',
+      }).dataRetention,
+    ).toMatchObject({ alertDeliveryDays: 0, queryHistoryDays: 0, auditLogDays: 0 });
+  });
+
   it('defaults GitHub integration to disabled', () => {
     expect(loadServerConfig({}).github).toEqual({
       enabled: false,

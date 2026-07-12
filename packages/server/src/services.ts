@@ -64,6 +64,7 @@ import { AiRateLimiter } from './ai/rateLimiter';
 import { JobAdmissionController } from './schedule/admission';
 import type { ShutdownDrainContext } from './shutdown/coordinator';
 import { ReadinessService } from './health/readiness';
+import { DataRetentionService } from './retention/service';
 
 export interface Services {
   config: ServerConfig;
@@ -93,6 +94,8 @@ export interface Services {
   audit: AuditLogger;
   resultStore: ResultStore;
   resultExpiry: ResultExpiryService;
+  /** 永続テーブルの期限切れ行をページ削除する日次サービス。 */
+  dataRetention: DataRetentionService;
   notifications: FailureNotificationSender &
     AlertNotificationSender &
     AlertChannelNotificationSender;
@@ -143,6 +146,8 @@ export interface BuildServicesOptions {
   resultStore?: ResultStore;
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
+  dataRetentionSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
+  dataRetentionLogWarn?: (message: string, err: unknown) => void;
   notificationLogWarn?: (message: string, detail?: unknown) => void;
   notificationSender?: FailureNotificationSender &
     AlertNotificationSender &
@@ -192,7 +197,8 @@ export async function buildServices(
   );
   await backfillOwners(db, config.trino.user);
 
-  const audit = new AuditLogger(new AuditRepository(db), options.auditLogError);
+  const auditRepository = new AuditRepository(db);
+  const audit = new AuditLogger(auditRepository, options.auditLogError);
   const aiProvider = options.aiProvider ?? createAiProvider(config.ai, options.fetchImpl);
   const aiLimits =
     config.ai.provider === 'off'
@@ -375,6 +381,16 @@ export async function buildServices(
     setTimer: options.resultCleanupSetTimer,
   });
   resultExpiry.start();
+  const dataRetention = new DataRetentionService({
+    alertDeliveries,
+    history,
+    audit: auditRepository,
+    policy: config.dataRetention,
+    now: options.now,
+    logWarn: options.dataRetentionLogWarn,
+    setTimer: options.dataRetentionSetTimer,
+  });
+  dataRetention.start();
 
   const githubNow = options.now ?? (() => Date.now());
   let github: GithubSyncService | undefined;
@@ -524,6 +540,7 @@ export async function buildServices(
     if (drainPromise) return drainPromise;
     stopAdmission();
     const tasks: Promise<unknown>[] = [
+      dataRetention.stop(),
       resultExpiry.stop(),
       githubSyncScheduler?.stop() ?? Promise.resolve(),
       workflowRunner.stop(),
@@ -626,6 +643,7 @@ export async function buildServices(
     audit,
     resultStore,
     resultExpiry,
+    dataRetention,
     notifications,
     github,
     githubSyncScheduler,

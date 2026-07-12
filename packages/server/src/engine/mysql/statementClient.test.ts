@@ -3,7 +3,7 @@
  */
 import { Readable } from 'node:stream';
 import { describe, it, expect } from 'vitest';
-import type { FieldPacket } from 'mysql2/promise';
+import mysql, { type FieldPacket } from 'mysql2/promise';
 import { TrinoQueryError, TrinoTransportError } from '../../errors';
 import { emptySessionMutations } from '../../trino/types';
 import { SQL_BATCH_SIZE } from '../sql/constants';
@@ -14,6 +14,8 @@ const FIELDS = [{ name: 'n', type: 'LONG' }] as unknown as FieldPacket[];
 
 interface FakePoolOptions {
   rows?: unknown[][];
+  /** query が通知する列 metadata。 */
+  fields?: FieldPacket[];
   /** getConnection を保留するゲート。 */
   connectionGate?: Promise<void>;
   /** fields 送信後の行送信を保留するゲート。 */
@@ -59,7 +61,7 @@ function makeFakePool(opts: FakePoolOptions = {}): {
                       stream.emit('error', opts.error);
                       return;
                     }
-                    stream.emit('fields', FIELDS);
+                    stream.emit('fields', opts.fields ?? FIELDS);
                     opts.onFields?.();
                     await opts.rowsGate;
                     for (const [index, row] of rows.entries()) {
@@ -133,6 +135,28 @@ describe('createMysqlStatementClient', () => {
     expect(page.stats?.state).toBe('FINISHED');
     expect(actions.filter((action) => action === 'release')).toHaveLength(1);
     expect(actions).not.toContain('destroy');
+  });
+
+  it('mysql2の数値型コードをalert評価で使える型名へ変換する', async () => {
+    const fields = [
+      { name: 'large_count', type: mysql.Types.LONGLONG },
+      { name: 'ratio', columnType: mysql.Types.NEWDECIMAL },
+    ] as unknown as FieldPacket[];
+    const { pool } = makeFakePool({
+      fields,
+      rows: [['9007199254740993', '1.0000000000000001']],
+    });
+    const client = createMysqlStatementClient(pool, {
+      datasourceReadOnly: false,
+      sessionReadOnly: false,
+    });
+
+    const page = await client.start('SELECT metrics', { source: 'test' }, emptySessionMutations());
+
+    expect(page.columns).toEqual([
+      { name: 'large_count', type: 'bigint' },
+      { name: 'ratio', type: 'decimal' },
+    ]);
   });
 
   it('splits large result sets across advance pages', async () => {

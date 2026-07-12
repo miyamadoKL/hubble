@@ -151,6 +151,37 @@ for (const backend of dbBackends) {
         expect(await runs.list(s.id, 10)).toHaveLength(0);
       });
 
+      it('run削除が失敗したらschedule削除もrollbackする', async () => {
+        const db2 = await open();
+        if (db2.dialect !== 'sqlite') return;
+        const repo = new ScheduleRepository(db2);
+        const runs = new ScheduleRunRepository(db2, 50);
+        const schedule = await repo.create('alice', {
+          name: 'rollback',
+          statement: 'SELECT 1',
+          cron: '* * * * *',
+          ...ds,
+        });
+        await runs.start({
+          scheduleId: schedule.id,
+          owner: 'alice',
+          scheduledFor: '2026-01-01T00:00:00.000Z',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        });
+        await db2.exec(`
+          CREATE TRIGGER reject_schedule_run_delete
+          BEFORE DELETE ON schedule_runs
+          BEGIN
+            SELECT RAISE(ABORT, 'run delete failed');
+          END;
+        `);
+
+        await expect(repo.delete('alice', schedule.id)).rejects.toThrow('run delete failed');
+
+        expect(await repo.get('alice', schedule.id)).toBeDefined();
+        expect(await runs.list(schedule.id, 10)).toHaveLength(1);
+      });
+
       it('persists datasource_id from create input', async () => {
         const repo = new ScheduleRepository(await open());
         const created = await repo.create('alice', {
@@ -294,6 +325,58 @@ for (const backend of dbBackends) {
         expect(aborted).toBe(1);
         const after = await runs.list(s.id, 10);
         expect(after.find((r) => r.id === r2)?.status).toBe('aborted');
+      });
+
+      it('複数スケジュールの直近 run を1クエリで取得する', async () => {
+        const db2 = await open();
+        const schedules = new ScheduleRepository(db2);
+        const runs = new ScheduleRunRepository(db2, 50);
+        const first = await schedules.create('alice', {
+          name: 'first',
+          statement: 'SELECT 1',
+          cron: '* * * * *',
+          ...ds,
+        });
+        const second = await schedules.create('alice', {
+          name: 'second',
+          statement: 'SELECT 2',
+          cron: '* * * * *',
+          ...ds,
+        });
+        const firstRun = await runs.start({
+          scheduleId: first.id,
+          owner: 'alice',
+          scheduledFor: '2026-01-01T00:00:00.000Z',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        });
+        const secondRun = await runs.start({
+          scheduleId: second.id,
+          owner: 'alice',
+          scheduledFor: '2026-01-01T00:01:00.000Z',
+          startedAt: '2026-01-01T00:01:00.000Z',
+        });
+        const query = vi.spyOn(db2, 'query');
+        query.mockClear();
+
+        const latest = await runs.latestMany([first.id, second.id]);
+
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(latest.get(first.id)?.id).toBe(firstRun);
+        expect(latest.get(second.id)?.id).toBe(secondRun);
+      });
+
+      it('1000件超の直近 run 検索を500 idずつに分割する', async () => {
+        const db2 = await open();
+        const runs = new ScheduleRunRepository(db2, 50);
+        const query = vi.spyOn(db2, 'query');
+
+        const latest = await runs.latestMany(
+          Array.from({ length: 1_001 }, (_, index) => `sch_${index}`),
+        );
+
+        expect(latest.size).toBe(0);
+        expect(query).toHaveBeenCalledTimes(3);
+        expect(query.mock.calls.map((call) => call[1]?.length)).toEqual([500, 500, 1]);
       });
 
       // retention（保持上限）を超えた古い実行履歴が自動的に間引かれ、

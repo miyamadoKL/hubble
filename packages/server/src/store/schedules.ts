@@ -30,6 +30,8 @@ import type { PrincipalIdentity } from '../auth/principal';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 
+const SQL_ID_CHUNK_SIZE = 500;
+
 export const schedulePrincipalSnapshotSchema = z.object({
   user: z.string().min(1),
   email: z.string().min(1).optional(),
@@ -382,16 +384,18 @@ export class ScheduleRepository {
   /** Delete a schedule and all of its runs. Returns true if it existed. */
   // スケジュール本体とその実行履歴を全て削除する。存在しなければ false。
   async delete(owner: string, id: string): Promise<boolean> {
-    const deleted = await this.db.query<{ id: string }>(
-      'DELETE FROM schedules WHERE id = ? AND owner = ? RETURNING id',
-      [id, owner],
-    );
-    if (deleted.length === 0) return false;
-    // App-side cascade (no FK ON DELETE; see migration 0003).
-    // 外部キーの ON DELETE CASCADE を使っていない（migration 0003 参照）ため、
-    // アプリ側で schedule_runs を明示的に削除してカスケードを模倣する。
-    await this.db.run('DELETE FROM schedule_runs WHERE schedule_id = ?', [id]);
-    return true;
+    return this.db.transaction(async (tx) => {
+      const deleted = await tx.query<{ id: string }>(
+        'DELETE FROM schedules WHERE id = ? AND owner = ? RETURNING id',
+        [id, owner],
+      );
+      if (deleted.length === 0) return false;
+      // App-side cascade (no FK ON DELETE; see migration 0003).
+      // 外部キーの ON DELETE CASCADE を使っていない（migration 0003 参照）ため、
+      // 同じ transaction で schedule_runs を削除してカスケードを模倣する。
+      await tx.run('DELETE FROM schedule_runs WHERE schedule_id = ?', [id]);
+      return true;
+    });
   }
 }
 
@@ -589,6 +593,30 @@ export class ScheduleRunRepository {
   async latest(scheduleId: string): Promise<ScheduleRunRecord | undefined> {
     const rows = await this.list(scheduleId, 1);
     return rows[0];
+  }
+
+  /** 複数スケジュールそれぞれの直近 run を500 idごとのクエリで取得する。 */
+  async latestMany(scheduleIds: readonly string[]): Promise<Map<string, ScheduleRunRecord>> {
+    if (scheduleIds.length === 0) return new Map();
+    const result = new Map<string, ScheduleRunRecord>();
+    for (let offset = 0; offset < scheduleIds.length; offset += SQL_ID_CHUNK_SIZE) {
+      const chunk = scheduleIds.slice(offset, offset + SQL_ID_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await this.db.query<ScheduleRunRow>(
+        `SELECT * FROM (
+           SELECT schedule_runs.*,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY schedule_id ORDER BY started_at DESC, id DESC
+                  ) AS run_rank
+           FROM schedule_runs
+           WHERE schedule_id IN (${placeholders})
+         ) ranked
+         WHERE run_rank = 1`,
+        chunk,
+      );
+      for (const row of rows) result.set(row.schedule_id, rowToRun(row));
+    }
+    return result;
   }
 
   /** True if a run for this schedule is currently in `running` state. */

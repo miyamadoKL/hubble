@@ -6,7 +6,7 @@
  * 完了/失敗時は接続をプールへ返却し、キャンセル時は進行中クエリの接続を破棄する。
  */
 import type { Connection } from 'mysql2';
-import type { PoolConnection, FieldPacket } from 'mysql2/promise';
+import mysql, { type PoolConnection, type FieldPacket } from 'mysql2/promise';
 import type { StatementClient } from '../types';
 import type { TrinoColumn, TrinoRequestContext, TrinoSessionMutations } from '../../trino/types';
 import { throwMysqlDriverError } from '../sql/errors';
@@ -33,11 +33,29 @@ interface MysqlExecution {
   sessionReadOnlyApplied: boolean;
 }
 
+const MYSQL_NUMERIC_TYPE_NAMES = new Map<number, string>([
+  [mysql.Types.DECIMAL, 'decimal'],
+  [mysql.Types.TINY, 'tinyint'],
+  [mysql.Types.SHORT, 'smallint'],
+  [mysql.Types.LONG, 'integer'],
+  [mysql.Types.FLOAT, 'float'],
+  [mysql.Types.DOUBLE, 'double'],
+  [mysql.Types.LONGLONG, 'bigint'],
+  [mysql.Types.INT24, 'integer'],
+  [mysql.Types.NEWDECIMAL, 'decimal'],
+]);
+
 function fieldsToColumns(fields: FieldPacket[]): TrinoColumn[] {
-  return fields.map((f) => ({
-    name: f.name,
-    type: typeof f.type === 'string' ? f.type : 'unknown',
-  }));
+  return fields.map((field) => {
+    const typeCode = field.columnType ?? (typeof field.type === 'number' ? field.type : undefined);
+    return {
+      name: field.name,
+      type:
+        typeof field.type === 'string'
+          ? field.type
+          : (MYSQL_NUMERIC_TYPE_NAMES.get(typeCode ?? -1) ?? 'unknown'),
+    };
+  });
 }
 
 async function applyMysqlSessionReadOnly(conn: PoolConnection, readOnly: boolean): Promise<void> {

@@ -11,6 +11,11 @@ const QUERY_OK: FakeScenario = {
   pages: [{ columns: [{ name: 'count', type: 'bigint' }], data: [[150]] }],
 };
 
+const QUERY_INVALID_NUMERIC: FakeScenario = {
+  match: 'SELECT invalid_numeric',
+  pages: [{ columns: [{ name: 'count', type: 'bigint' }], data: [['not-a-number']] }],
+};
+
 const VALIDATE_OK: FakeScenario = {
   match: 'EXPLAIN (TYPE VALIDATE)',
   pages: [{ columns: [{ name: 'result', type: 'boolean' }], data: [[true]] }],
@@ -191,6 +196,74 @@ describe('alert routes', () => {
     const delRes = await ctx.app.request(`/api/alerts/${created.id}`, { method: 'DELETE' });
     expect(delRes.status).toBe(200);
 
+    await ctx.services.shutdown();
+  });
+
+  it('does not report an evaluator database failure as an evaluation conflict', async () => {
+    const ctx = await createTestContext({ scenarios: [VALIDATE_OK, QUERY_OK] });
+    const savedQueryResponse = await ctx.app.request('/api/saved-queries', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: 'metric', statement: 'SELECT alert_val' }),
+    });
+    const savedQuery = (await savedQueryResponse.json()) as { id: string };
+    const alertResponse = await ctx.app.request('/api/alerts', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        name: 'db-failure',
+        savedQueryId: savedQuery.id,
+        columnName: 'count',
+        op: '>',
+        value: '100',
+        cron: '0 * * * *',
+      }),
+    });
+    const alert = alertSchema.parse(await alertResponse.json());
+    vi.spyOn(ctx.services.alertEvaluator, 'evalManual').mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+
+    const response = await ctx.app.request(`/api/alerts/${alert.id}/eval`, { method: 'POST' });
+
+    expect(response.status).toBe(500);
+    expect((await response.json()) as unknown).toMatchObject({ error: { code: 'INTERNAL' } });
+    await ctx.services.shutdown();
+  });
+
+  it('returns an explicit evaluation error for an invalid numeric result', async () => {
+    const ctx = await createTestContext({ scenarios: [VALIDATE_OK, QUERY_INVALID_NUMERIC] });
+    const savedQueryResponse = await ctx.app.request('/api/saved-queries', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ name: 'invalid metric', statement: 'SELECT invalid_numeric' }),
+    });
+    const savedQuery = (await savedQueryResponse.json()) as { id: string };
+    const alertResponse = await ctx.app.request('/api/alerts', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        name: 'invalid numeric alert',
+        savedQueryId: savedQuery.id,
+        columnName: 'count',
+        op: '>',
+        value: '100',
+        cron: '0 * * * *',
+      }),
+    });
+    const alert = alertSchema.parse(await alertResponse.json());
+
+    const response = await ctx.app.request(`/api/alerts/${alert.id}/eval`, { method: 'POST' });
+
+    expect(response.status).toBe(200);
+    expect(alertEvalResponseSchema.parse(await response.json())).toMatchObject({
+      previousState: 'unknown',
+      state: 'unknown',
+      conditionMet: false,
+      observedValue: null,
+      notified: false,
+      errorType: 'INVALID_NUMERIC_VALUE',
+    });
     await ctx.services.shutdown();
   });
 

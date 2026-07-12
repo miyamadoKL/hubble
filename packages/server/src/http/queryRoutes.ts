@@ -902,7 +902,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
       const xlsx = new PassThrough();
-      const writer = writeXlsx(resolved.events, xlsx).catch((err) => {
+      const writer = writeXlsx(resolved.events, xlsx, { signal: ac.signal }).catch((err) => {
         xlsx.destroy(err instanceof Error ? err : new Error(String(err)));
         throw err;
       });

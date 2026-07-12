@@ -26,6 +26,9 @@ export function createMysqlPool(ds: ResolvedMysqlDatasource): MysqlPool {
     database: ds.database,
     connectionLimit: ds.maxConnections,
     connectTimeout: resolveDatasourceConnectTimeoutMs(),
+    // BIGINT と DECIMAL は Number 化せず文字列で受け取り、桁落ちを防ぐ。
+    supportBigNumbers: true,
+    bigNumberStrings: true,
     rowsAsArray: true,
     ssl,
     waitForConnections: true,

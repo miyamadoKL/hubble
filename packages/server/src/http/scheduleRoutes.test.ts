@@ -6,7 +6,7 @@
  * 挙動（構文エラー時の 400 化、cron 不正時の事前拒否）、手動実行と実行履歴の記録、
  * 実行中スケジュールへの同時実行リクエストが 409 になることを検証する。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -351,5 +351,27 @@ describe('schedule routes', () => {
     const body = (await second.json()) as { error: { code: string } };
     expect(body.error.code).toBe('CONFLICT');
     // Note: do not call shutdown() here — it would await the held run forever.
+  });
+
+  it('does not report a database failure as a run conflict', async () => {
+    const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+    const created = scheduleSchema.parse(
+      await (
+        await ctx.app.request('/api/schedules', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ name: 'db-failure', statement: 'SELECT 1', cron: '* * * * *' }),
+        })
+      ).json(),
+    );
+    vi.spyOn(ctx.services.scheduleRuns, 'start').mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+
+    const response = await ctx.app.request(`/api/schedules/${created.id}/run`, { method: 'POST' });
+
+    expect(response.status).toBe(500);
+    expect((await response.json()) as unknown).toMatchObject({ error: { code: 'INTERNAL' } });
+    await ctx.services.shutdown();
   });
 });

@@ -64,8 +64,8 @@ function toRunSummary(run: WorkflowRunRecord): WorkflowRunSummary {
   };
 }
 
-async function toWorkflow(services: Services, record: WorkflowRecord): Promise<Workflow> {
-  const latest = await services.workflowRuns.latest(record.id);
+/** 永続化された workflow と任意の直近 run を API 表現へ変換する。 */
+function toWorkflow(record: WorkflowRecord, latest?: WorkflowRunRecord): Workflow {
   return {
     id: record.id,
     name: record.name,
@@ -80,6 +80,11 @@ async function toWorkflow(services: Services, record: WorkflowRecord): Promise<W
     nextRunAt: record.enabled && record.cron ? nextRunIso(record.cron, new Date()) : null,
     lastRun: latest ? toRunSummary(latest) : null,
   };
+}
+
+/** 単一 workflow の直近 run を読み、API 表現へ変換する。 */
+async function loadWorkflow(services: Services, record: WorkflowRecord): Promise<Workflow> {
+  return toWorkflow(record, await services.workflowRuns.latest(record.id));
 }
 
 async function assertStepWritable(
@@ -194,7 +199,10 @@ export function workflowRoutes(services: Services): App {
     const owner = c.var.principal.user;
     const query = c.req.query('query');
     const records = await services.workflows.list(owner, query);
-    return c.json(await Promise.all(records.map((r) => toWorkflow(services, r))));
+    const latestByWorkflow = await services.workflowRuns.latestMany(
+      records.map((record) => record.id),
+    );
+    return c.json(records.map((record) => toWorkflow(record, latestByWorkflow.get(record.id))));
   });
 
   app.post('/', async (c) => {
@@ -218,14 +226,14 @@ export function workflowRoutes(services: Services): App {
       retry: body.retry,
       principalSnapshot: c.var.principal,
     });
-    return c.json(await toWorkflow(services, record), 201);
+    return c.json(await loadWorkflow(services, record), 201);
   });
 
   app.get('/:id', async (c) => {
     const owner = c.var.principal.user;
     const record = await services.workflows.get(owner, c.req.param('id'));
     if (!record) throw AppError.notFound(`Workflow ${c.req.param('id')} not found`);
-    return c.json(await toWorkflow(services, record));
+    return c.json(await loadWorkflow(services, record));
   });
 
   app.patch('/:id', async (c) => {
@@ -251,7 +259,7 @@ export function workflowRoutes(services: Services): App {
       principalSnapshot: c.var.principal,
     });
     if (!updated) throw AppError.notFound(`Workflow ${id} not found`);
-    return c.json(await toWorkflow(services, updated));
+    return c.json(await loadWorkflow(services, updated));
   });
 
   app.delete('/:id', async (c) => {
@@ -436,15 +444,16 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
       const xlsx = new PassThrough();
-      const sheets = await Promise.all(
-        resolved.sheets.map(async ({ step, name }) => ({
-          name,
-          events: streamPersistedResultEvents(
+      const sheets = resolved.sheets.map(({ step, name }) => ({
+        name,
+        // 各 worksheet の消費開始時まで ResultStore stream を開かない。
+        events: async (signal?: AbortSignal) =>
+          streamPersistedResultEvents(
             await services.resultStore.getStream(step.resultObjectKey),
+            signal,
           ),
-        })),
-      );
-      const writer = writeXlsxWorkbook(sheets, xlsx).catch((err) => {
+      }));
+      const writer = writeXlsxWorkbook(sheets, xlsx, { signal: ac.signal }).catch((err) => {
         xlsx.destroy(err instanceof Error ? err : new Error(String(err)));
         throw err;
       });
@@ -461,14 +470,12 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
     const workflow = await services.workflows.getById(resolved.workflowId);
     const title = workflow ? `${workflow.name} ${runId}` : runId;
     const exporter = new SheetsExporter(services.config.export.sheets, options.sheetsClientFactory);
-    const sheets = await Promise.all(
-      resolved.sheets.map(async ({ step, name }) => ({
-        name,
-        events: streamPersistedResultEvents(
-          await services.resultStore.getStream(step.resultObjectKey),
-        ),
-      })),
-    );
+    const sheets = resolved.sheets.map(({ step, name }) => ({
+      name,
+      // Sheets API が対象 sheet を処理する直前にだけ ResultStore stream を開く。
+      events: async () =>
+        streamPersistedResultEvents(await services.resultStore.getStream(step.resultObjectKey)),
+    }));
     const response = await exporter.exportMultiSheet({
       title,
       email: principal.email,

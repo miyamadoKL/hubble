@@ -3,7 +3,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ResolvedMysqlDatasource } from './types';
-import { applyDatasourceReloadSync, planDatasourceReload, probeCandidateEngines } from './reload';
+import {
+  applyDatasourceReloadSync,
+  closeEngineWithTimeout,
+  planDatasourceReload,
+  probeCandidateEngines,
+} from './reload';
 import { createMysqlEngine } from '../engine/mysql/engine';
 import { TEST_TRINO_CONFIG } from '../test/testEngine';
 import type { QueryEngine } from '../engine/types';
@@ -63,6 +68,27 @@ describe('probeCandidateEngines', () => {
     } as unknown as Parameters<typeof probeCandidateEngines>[0];
 
     await expect(probeCandidateEngines(plan, 5)).rejects.toThrow('timed out');
+  });
+});
+
+describe('closeEngineWithTimeout', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('close成功時にtimeoutをunrefしてclearする', async () => {
+    const unref = vi.fn();
+    const timer = { unref } as unknown as ReturnType<typeof setTimeout>;
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockReturnValue(timer);
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(() => {});
+    const engine = {
+      datasourceId: 'test-engine',
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as QueryEngine;
+
+    await closeEngineWithTimeout(engine, 1_000);
+
+    expect(setTimeoutSpy).toHaveBeenCalledOnce();
+    expect(unref).toHaveBeenCalledOnce();
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(timer);
   });
 });
 

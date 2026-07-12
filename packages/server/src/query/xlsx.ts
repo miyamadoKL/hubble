@@ -8,7 +8,12 @@ import ExcelJS from 'exceljs';
 import type { Writable } from 'node:stream';
 import { AppError } from '../errors';
 import { formatCell } from './csv';
-import type { QueryResultEvent } from './resultEvents';
+import {
+  openQueryResultEvents,
+  type QueryResultEvent,
+  type QueryResultEventInput,
+} from './resultEvents';
+import { createSqlAbortError, raceSqlAbort } from '../engine/sql/abort';
 
 /** Excel ワークシート 1 枚に書き込める最大行数。ヘッダ行を含む。 */
 export const XLSX_MAX_ROWS = 1_048_576;
@@ -22,6 +27,8 @@ export const XLSX_CONTENT_TYPE =
 export interface XlsxWriteOptions {
   /** シート名。 */
   sheetName?: string;
+  /** HTTP 切断などで入力と出力を中断する signal。 */
+  signal?: AbortSignal;
 }
 
 /** JS 値を Excel セル値に変換する。 */
@@ -47,11 +54,17 @@ export function checkXlsxDataRowLimit(dataRows: number): void {
 async function writeWorksheetEvents(
   worksheet: ExcelJS.Worksheet,
   events: AsyncGenerator<QueryResultEvent>,
+  signal?: AbortSignal,
 ): Promise<void> {
   let headerWritten = false;
   let dataRows = 0;
 
-  for await (const event of events) {
+  for (;;) {
+    const next = await raceSqlAbort(events.next(), signal, () => {
+      void events.return(undefined).catch(() => undefined);
+    });
+    if (next.done) break;
+    const event = next.value;
     if (event.type === 'columns') {
       if (headerWritten) continue;
       headerWritten = true;
@@ -82,14 +95,17 @@ export async function writeXlsx(
     useSharedStrings: false,
   });
   const worksheet = workbook.addWorksheet(options.sheetName ?? 'Results');
-  await writeWorksheetEvents(worksheet, events);
-  await workbook.commit();
+  await writeWorksheetEvents(worksheet, events, options.signal);
+  await raceSqlAbort(workbook.commit(), options.signal, () => {
+    output.destroy(createSqlAbortError());
+  });
 }
 
 /** 複数シートを 1 つの xlsx workbook として writable stream へ書き込む。 */
 export async function writeXlsxWorkbook(
-  sheets: ReadonlyArray<{ name: string; events: AsyncGenerator<QueryResultEvent> }>,
+  sheets: ReadonlyArray<{ name: string; events: QueryResultEventInput }>,
   output: Writable,
+  options: Pick<XlsxWriteOptions, 'signal'> = {},
 ): Promise<void> {
   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
     stream: output,
@@ -98,7 +114,13 @@ export async function writeXlsxWorkbook(
   });
   for (const sheet of sheets) {
     const worksheet = workbook.addWorksheet(sheet.name);
-    await writeWorksheetEvents(worksheet, sheet.events);
+    await writeWorksheetEvents(
+      worksheet,
+      await openQueryResultEvents(sheet.events, options.signal),
+      options.signal,
+    );
   }
-  await workbook.commit();
+  await raceSqlAbort(workbook.commit(), options.signal, () => {
+    output.destroy(createSqlAbortError());
+  });
 }

@@ -140,6 +140,22 @@ export class AlertDeliveryRepository {
     );
   }
 
+  /** 保持期限を過ぎた sent と dead のジョブを古い順にページ削除する。 */
+  async pruneTerminalBefore(cutoffIso: string, limit: number): Promise<number> {
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM alert_deliveries
+       WHERE id IN (
+         SELECT id FROM alert_deliveries
+         WHERE status IN ('sent', 'dead') AND updated_at < ?
+         ORDER BY updated_at ASC, id ASC
+         LIMIT ?
+       )
+       RETURNING id`,
+      [cutoffIso, limit],
+    );
+    return rows.length;
+  }
+
   /** テストと運用確認用に全ジョブを作成順で返す。 */
   async listForTest(): Promise<AlertDeliveryJob[]> {
     const rows = await this.db.query<AlertDeliveryRow>(

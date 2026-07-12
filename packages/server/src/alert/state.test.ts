@@ -2,7 +2,13 @@
  * Alert 状態遷移と閾値比較のユニットテスト。
  */
 import { describe, expect, it } from 'vitest';
-import { compareThreshold, nextAlertState, selectObservedValue, shouldNotify } from './state';
+import {
+  AlertNumericConversionError,
+  compareThreshold,
+  nextAlertState,
+  selectObservedValue,
+  shouldNotify,
+} from './state';
 
 describe('alert state', () => {
   it('compares numeric thresholds', () => {
@@ -17,11 +23,78 @@ describe('alert state', () => {
     expect(compareThreshold({ observed: 'a', op: '>', threshold: 'b' })).toBe(false);
   });
 
+  it('compares integers beyond the IEEE 754 safe range without rounding', () => {
+    expect(
+      compareThreshold({
+        observed: '9007199254740993',
+        op: '>',
+        threshold: '9007199254740992',
+        columnType: 'bigint',
+      }),
+    ).toBe(true);
+    expect(
+      compareThreshold({
+        observed: '9007199254740993',
+        op: '==',
+        threshold: '9007199254740992',
+        columnType: 'bigint',
+      }),
+    ).toBe(false);
+  });
+
+  it('compares arbitrary precision decimals and exponents exactly', () => {
+    expect(
+      compareThreshold({
+        observed: '12345678901234567890.0000000002',
+        op: '>',
+        threshold: '12345678901234567890.0000000001',
+        columnType: 'decimal(38,10)',
+      }),
+    ).toBe(true);
+    expect(
+      compareThreshold({
+        observed: '-1.20e3',
+        op: '==',
+        threshold: '-1200',
+        columnType: 'numeric',
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects invalid and already-rounded values for exact numeric columns', () => {
+    expect(() =>
+      compareThreshold({ observed: 'not-a-number', op: '>', threshold: '1', columnType: 'bigint' }),
+    ).toThrow(AlertNumericConversionError);
+    expect(() =>
+      compareThreshold({
+        observed: 9_007_199_254_740_992,
+        op: '>',
+        threshold: '1',
+        columnType: 'bigint',
+      }),
+    ).toThrow(AlertNumericConversionError);
+    expect(() =>
+      compareThreshold({ observed: 9_007_199_254_740_992, op: '>', threshold: '1' }),
+    ).toThrow(AlertNumericConversionError);
+  });
+
+  it('rejects an overflowing bigint for an approximate numeric column', () => {
+    expect(() =>
+      compareThreshold({ observed: 10n ** 1_000n, op: '>', threshold: '1', columnType: 'double' }),
+    ).toThrow(AlertNumericConversionError);
+  });
+
   it('selects first, max, and min', () => {
     const rows = [[1], [3], [2]];
     expect(selectObservedValue(rows, 0, 'first')).toBe(1);
     expect(selectObservedValue(rows, 0, 'max')).toBe(3);
     expect(selectObservedValue(rows, 0, 'min')).toBe(1);
+  });
+
+  it('selects exact max and min values without converting to Number', () => {
+    const rows = [['9007199254740992'], ['9007199254740993'], ['-9007199254740994']];
+    expect(selectObservedValue(rows, 0, 'max', 'bigint')).toBe('9007199254740993');
+    expect(selectObservedValue(rows, 0, 'min', 'bigint')).toBe('-9007199254740994');
   });
 
   it('computes next state from condition', () => {

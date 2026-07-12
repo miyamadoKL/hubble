@@ -103,6 +103,22 @@ export class AuditRepository {
     return id;
   }
 
+  /** 保持期限を過ぎた監査ログを古い順にページ削除する。 */
+  async pruneBefore(cutoffIso: string, limit: number): Promise<number> {
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM audit_log
+       WHERE id IN (
+         SELECT id FROM audit_log
+         WHERE created_at < ?
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?
+       )
+       RETURNING id`,
+      [cutoffIso, limit],
+    );
+    return rows.length;
+  }
+
   async listForTest(): Promise<AuditLogRow[]> {
     const rows = await this.db.query<AuditLogDbRow>(
       'SELECT * FROM audit_log ORDER BY created_at ASC, id ASC',

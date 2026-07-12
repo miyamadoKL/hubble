@@ -7,7 +7,11 @@ import type { QueryColumn } from '@hubble/contracts';
 import type { ExportConfig } from '../config';
 import { AppError } from '../errors';
 import { formatCell } from './csv';
-import type { QueryResultEvent } from './resultEvents';
+import {
+  openQueryResultEvents,
+  type QueryResultEvent,
+  type QueryResultEventInput,
+} from './resultEvents';
 
 const SHEETS_CELL_LIMIT = 10_000_000;
 const SHEETS_SAFE_CELL_LIMIT = Math.floor(SHEETS_CELL_LIMIT * 0.8);
@@ -195,7 +199,7 @@ export class SheetsExporter {
   async exportMultiSheet(input: {
     title: string;
     email?: string;
-    sheets: ReadonlyArray<{ name: string; events: AsyncGenerator<QueryResultEvent> }>;
+    sheets: ReadonlyArray<{ name: string; events: QueryResultEventInput }>;
   }): Promise<{ spreadsheetId: string; url: string }> {
     const credentialsFile = this.config.credentialsFile;
     if (!credentialsFile) {
@@ -233,7 +237,7 @@ export class SheetsExporter {
           chunk = [];
         };
 
-        for await (const event of sheet.events) {
+        for await (const event of await openQueryResultEvents(sheet.events)) {
           if (event.type === 'columns') {
             columns = event.columns;
             totalCells += event.columns.length;

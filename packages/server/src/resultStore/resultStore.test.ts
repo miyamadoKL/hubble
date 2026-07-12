@@ -555,6 +555,33 @@ describe('S3ResultStore', () => {
     expect(destroy).not.toHaveBeenCalled();
   });
 
+  it('期限切れ object を最大8並行で削除する', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const fakeClient = {
+      destroy: vi.fn(),
+      send: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+        inFlight -= 1;
+        return {};
+      },
+    };
+    const store = new S3ResultStore(
+      { bucket: 'bucket', region: 'us-east-1' },
+      { client: fakeClient as never },
+    );
+
+    const result = await store.deleteExpired(
+      Array.from({ length: 20 }, (_, index) => ({ key: `result-${index}` })),
+    );
+
+    expect(result.failed).toEqual([]);
+    expect(result.deleted).toHaveLength(20);
+    expect(maxInFlight).toBe(8);
+  });
+
   it('destroys only its internally created SDK client and closes idempotently', async () => {
     const destroy = vi.spyOn(S3Client.prototype, 'destroy').mockImplementation(() => undefined);
     try {

@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import ExcelJS from 'exceljs';
 import {
   toXlsxCellValue,
@@ -69,6 +69,76 @@ describe('xlsx export writer', () => {
     expect(workbook.getWorksheet('First')?.getRow(1).getCell(1).value).toBe('a');
     expect(workbook.getWorksheet('First')?.rowCount).toBe(2);
     expect(workbook.getWorksheet('Second')?.rowCount).toBe(3);
+  });
+
+  it('opens each worksheet event source only when its turn is consumed', async () => {
+    const out = new PassThrough();
+    let firstConsumed = false;
+    const first = vi.fn(() =>
+      (async function* (): AsyncGenerator<QueryResultEvent> {
+        yield { type: 'columns', columns: [{ name: 'a', type: 'bigint' }] };
+        firstConsumed = true;
+      })(),
+    );
+    const second = vi.fn(() => {
+      expect(firstConsumed).toBe(true);
+      return (async function* (): AsyncGenerator<QueryResultEvent> {
+        yield { type: 'columns', columns: [{ name: 'b', type: 'bigint' }] };
+      })();
+    });
+
+    await Promise.all([
+      collect(out),
+      writeXlsxWorkbook(
+        [
+          { name: 'First', events: first },
+          { name: 'Second', events: second },
+        ],
+        out,
+      ),
+    ]);
+
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+  });
+
+  it('中断時に処理中の入力を閉じ、後続worksheetを開かない', async () => {
+    const out = new PassThrough();
+    out.resume();
+    const controller = new AbortController();
+    let activeReturned = false;
+    const active = vi.fn((signal?: AbortSignal) =>
+      (async function* (): AsyncGenerator<QueryResultEvent> {
+        try {
+          yield { type: 'columns', columns: [{ name: 'a', type: 'bigint' }] };
+          await new Promise<void>((resolve) => {
+            signal?.addEventListener('abort', () => resolve(), { once: true });
+          });
+        } finally {
+          activeReturned = true;
+        }
+      })(),
+    );
+    const later = vi.fn(() =>
+      (async function* (): AsyncGenerator<QueryResultEvent> {
+        yield { type: 'columns', columns: [] };
+      })(),
+    );
+    const writing = writeXlsxWorkbook(
+      [
+        { name: 'Active', events: active },
+        { name: 'Later', events: later },
+      ],
+      out,
+      { signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(active).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(writing).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(activeReturned).toBe(true));
+    expect(later).not.toHaveBeenCalled();
   });
 
   it('enforces row limits per worksheet', () => {

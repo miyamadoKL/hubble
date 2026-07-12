@@ -46,6 +46,8 @@ const OWNED_TABLES = [
   'workflow_step_runs',
   'result_object_deletions',
   'alerts',
+  'alert_deliveries',
+  'audit_log',
   'github_connections',
   'document_git_links',
 ] as const;
