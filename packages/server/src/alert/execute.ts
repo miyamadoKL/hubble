@@ -4,6 +4,7 @@
  */
 import { emptySessionMutations, type TrinoColumn, type TrinoRequestContext } from '../trino/types';
 import type { StatementClient } from '../engine/types';
+import { createSqlAbortError } from '../engine/sql/abort';
 
 export interface FetchRowsResult {
   columns: TrinoColumn[];
@@ -22,43 +23,63 @@ export async function fetchStatementRows(
   statement: string,
   ctx: TrinoRequestContext,
   maxRows = ALERT_MAX_ROWS,
+  signal?: AbortSignal,
 ): Promise<FetchRowsResult> {
   const mutations = emptySessionMutations();
-  let page = await client.start(statement, ctx, mutations);
-  let columns: TrinoColumn[] = page.columns ?? [];
-  const rows: unknown[][] = [];
-  if (page.data) {
-    for (const row of page.data) {
-      rows.push(row);
-      if (rows.length >= maxRows) {
-        await cancelRemainingPage(client, page.nextUri, ctx);
-        return { columns, rows, truncated: true };
-      }
-    }
-  }
-
-  let idleAttempt = 0;
-  while (page.nextUri) {
-    const hadData = page.data !== undefined && page.data.length > 0;
-    if (hadData) {
-      idleAttempt = 0;
-    } else {
-      await client.waitBackoff(idleAttempt);
-      idleAttempt += 1;
-    }
-    page = await client.advance(page.nextUri, ctx, mutations);
-    if (page.columns && columns.length === 0) columns = page.columns;
+  let cancelUri: string | undefined;
+  try {
+    throwIfAborted(signal);
+    let page = await client.start(statement, ctx, mutations, signal);
+    cancelUri = page.nextUri;
+    throwIfAborted(signal);
+    let columns: TrinoColumn[] = page.columns ?? [];
+    const rows: unknown[][] = [];
     if (page.data) {
       for (const row of page.data) {
         rows.push(row);
         if (rows.length >= maxRows) {
           await cancelRemainingPage(client, page.nextUri, ctx);
+          throwIfAborted(signal);
           return { columns, rows, truncated: true };
         }
       }
     }
+
+    let idleAttempt = 0;
+    while (page.nextUri) {
+      cancelUri = page.nextUri;
+      const hadData = page.data !== undefined && page.data.length > 0;
+      if (hadData) {
+        idleAttempt = 0;
+      } else {
+        await client.waitBackoff(idleAttempt, signal);
+        throwIfAborted(signal);
+        idleAttempt += 1;
+      }
+      page = await client.advance(page.nextUri, ctx, mutations, signal);
+      cancelUri = page.nextUri;
+      throwIfAborted(signal);
+      if (page.columns && columns.length === 0) columns = page.columns;
+      if (page.data) {
+        for (const row of page.data) {
+          rows.push(row);
+          if (rows.length >= maxRows) {
+            await cancelRemainingPage(client, page.nextUri, ctx);
+            throwIfAborted(signal);
+            return { columns, rows, truncated: true };
+          }
+        }
+      }
+    }
+    return { columns, rows, truncated: false };
+  } catch (error) {
+    if (signal?.aborted) await cancelRemainingPage(client, cancelUri, ctx);
+    throw error;
   }
-  return { columns, rows, truncated: false };
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw createSqlAbortError();
 }
 
 /** 打ち切り後も残るクエリを可能な範囲で停止する。 */

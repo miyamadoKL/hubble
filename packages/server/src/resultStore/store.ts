@@ -26,6 +26,8 @@ export interface ResultStore {
   delete(key: string): Promise<void>;
   /** 期限切れ候補を削除し、削除できた key と失敗した key を返す。 */
   deleteExpired(objects: ExpiredResultObject[]): Promise<DeleteExpiredResult>;
+  /** このバックエンドが所有する通信資源を終了する。 */
+  close(): Promise<void>;
 }
 
 /** 保存しない設定で使う no-op 実装。 */
@@ -45,4 +47,6 @@ export class NoneResultStore implements ResultStore {
   async deleteExpired(objects: ExpiredResultObject[]): Promise<DeleteExpiredResult> {
     return { deleted: objects.map((object) => object.key), failed: [] };
   }
+
+  async close(): Promise<void> {}
 }

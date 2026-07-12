@@ -459,6 +459,14 @@ export interface StartRunInput {
   startedAt: string;
 }
 
+/** 同一スケジュールの running claim が既に存在する。 */
+export class ScheduleRunClaimConflictError extends Error {
+  constructor(readonly scheduleId: string) {
+    super(`A run is already in progress for schedule ${scheduleId}`);
+    this.name = 'ScheduleRunClaimConflictError';
+  }
+}
+
 /**
  * Fields recorded when a run finishes (one run per row).
  *
@@ -521,16 +529,22 @@ export class ScheduleRunRepository {
   ) {}
 
   /** Insert a `running` row and return its generated id. */
+  /** `running` 行を原子的に claim し、生成した id を返す。 */
   // 実行開始時に呼ばれる。attempt=0 かつ status='running' で1行挿入し、
   // 生成した run id を返す（finish() で同じ id を使って更新する）。
   async start(input: StartRunInput): Promise<string> {
     const id = newId('run_');
-    await this.db.run(
+    const inserted = await this.db.query<{ id: string }>(
       `INSERT INTO schedule_runs
          (id, schedule_id, owner, status, attempt, scheduled_for, started_at)
-       VALUES (?, ?, ?, 'running', 0, ?, ?)`,
+       VALUES (?, ?, ?, 'running', 0, ?, ?)
+       ON CONFLICT (schedule_id) WHERE status = 'running' DO NOTHING
+       RETURNING id`,
       [id, input.scheduleId, input.owner, input.scheduledFor, input.startedAt],
     );
+    if (inserted.length === 0) {
+      throw new ScheduleRunClaimConflictError(input.scheduleId);
+    }
     return id;
   }
 

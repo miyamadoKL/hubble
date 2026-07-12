@@ -93,6 +93,13 @@ export interface ExportConfig {
 export interface ServerConfig {
   /** 日本語: HTTP リッスンポート（`PORT`、既定 8080）。 */
   port: number;
+  /** `SHUTDOWN_TIMEOUT_MS`。受付停止から強制closeへ移るまでの期限。 */
+  shutdownTimeoutMs: number;
+  /** HTTP リクエスト受け付け時の資源上限。 */
+  http: {
+    /** `HTTP_MAX_BODY_BYTES`。API request body 全体の最大 byte 数。 */
+    maxBodyBytes: number;
+  };
   /** Resolved persistence backend (DATABASE_URL takes precedence over DB_PATH). */
   /** 日本語: `DATABASE_URL`（postgres://.. なら PostgreSQL）を優先し、未設定なら
    * `DB_PATH`（既定 `./data/hubble.db`）を使う SQLite にフォールバックする。 */
@@ -143,6 +150,12 @@ export interface ServerConfig {
     /** 日本語: `QUERY_CONCURRENCY`（既定 5）。同時に nextUri を追走できるクエリ数の
      * 上限（semaphore で制御）。 */
     concurrency: number;
+    /** 実行枠を待てるクエリの全体上限。 */
+    maxQueued: number;
+    /** 同一 principal が実行枠を待てるクエリの上限。 */
+    maxQueuedPerPrincipal: number;
+    /** 終端済みを含め、registry が保持する QueryExecution の上限。 */
+    maxTracked: number;
     /** Minutes a finished query is retained before sweep. */
     /** 日本語: `QUERY_TTL_MINUTES`（既定 30）。完了済みクエリをレジストリに保持する分数。
      * 経過後は sweep（削除）される。 */
@@ -209,6 +222,8 @@ export interface ServerConfig {
     /** Max schedules running concurrently across the scheduler. */
     /** 日本語: `SCHEDULER_MAX_CONCURRENT`（既定 2）。スケジューラー全体で同時実行できる
      * スケジュール数の上限。 */
+    /** 日本語: `SCHEDULER_MAX_CONCURRENT`（既定 2）。schedule、workflow step、alert が
+     * 共有する statement 同時実行数の上限。 */
     maxConcurrent: number;
     /** Per-schedule cap on retained `schedule_runs` rows (older are pruned). */
     /** 日本語: `SCHEDULER_RUNS_RETENTION`（既定 50）。スケジュールごとに保持する
@@ -549,6 +564,10 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
   const smtpPasswordEnv = envOptional(env, 'NOTIFY_SMTP_PASSWORD_ENV');
   return {
     port: envPositiveInt(env, 'PORT', 8080),
+    shutdownTimeoutMs: envPositiveInt(env, 'SHUTDOWN_TIMEOUT_MS', 60_000),
+    http: {
+      maxBodyBytes: envPositiveInt(env, 'HTTP_MAX_BODY_BYTES', 2_097_152),
+    },
     database: resolveDatabaseConfig(env),
     staticDir: envOptional(env, 'STATIC_DIR'),
     auth: {
@@ -578,6 +597,9 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
     query: {
       maxRows: envPositiveInt(env, 'QUERY_MAX_ROWS', 100_000),
       concurrency: envPositiveInt(env, 'QUERY_CONCURRENCY', 5),
+      maxQueued: envPositiveInt(env, 'QUERY_MAX_QUEUED', 100),
+      maxQueuedPerPrincipal: envPositiveInt(env, 'QUERY_MAX_QUEUED_PER_PRINCIPAL', 20),
+      maxTracked: envPositiveInt(env, 'QUERY_MAX_TRACKED', 10_000),
       ttlMinutes: envPositiveInt(env, 'QUERY_TTL_MINUTES', 30),
       overflowMode: envEnum(
         env,

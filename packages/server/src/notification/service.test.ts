@@ -5,6 +5,7 @@ import { AuditLogger, type AuditEventInput } from '../audit';
 import type { ScheduleRecord } from '../store/schedules';
 import type { AlertRecord } from '../store/alerts';
 import type { ServerConfig } from '../config';
+import type { SafeFetch } from './safeFetch';
 import { NotificationService } from './service';
 
 const PUBLIC_LOOKUP = async () => [{ address: '93.184.216.34', family: 4 }];
@@ -85,6 +86,10 @@ function alert(webhookUrl: string): AlertRecord {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };
+}
+
+function serviceSafeFetch(service: NotificationService): SafeFetch {
+  return (service as unknown as { fetchImpl: SafeFetch }).fetchImpl;
 }
 
 describe('NotificationService', () => {
@@ -236,6 +241,86 @@ describe('NotificationService', () => {
     expect(typeof nodemailer.createTransport).toBe('function');
     const transport = nodemailer.createTransport({ streamTransport: true });
     expect(typeof transport.sendMail).toBe('function');
+  });
+
+  it('closes SafeFetch but leaves an injected mail sender owned by its caller', async () => {
+    const sendMail = vi.fn(async () => ({}));
+    const closeMail = vi.fn();
+    const service = new NotificationService(
+      notificationConfig({
+        smtp: {
+          host: 'smtp.example.com',
+          port: 587,
+          from: 'hubble@example.com',
+        },
+      }),
+      { mailSender: { sendMail, close: closeMail } },
+    );
+    await service.sendFailure(
+      input({
+        notifications: {
+          onFailure: true,
+          channels: ['email'],
+          emailTo: ['ops@example.com'],
+        },
+      }),
+    );
+    const closeSafeFetch = vi.spyOn(serviceSafeFetch(service), 'close');
+
+    await service.close();
+    await service.close();
+
+    expect(closeSafeFetch).toHaveBeenCalledOnce();
+    expect(closeMail).not.toHaveBeenCalled();
+  });
+
+  it('attempts both owned resource closes and reports their failures together', async () => {
+    const sendMail = vi.fn(async () => ({}));
+    const closeMail = vi.fn(() => {
+      throw new Error('smtp close failed');
+    });
+    const createTransport = vi
+      .spyOn(nodemailer, 'createTransport')
+      .mockReturnValue({ sendMail, close: closeMail } as never);
+    const service = new NotificationService(
+      notificationConfig({
+        smtp: {
+          host: 'smtp.example.com',
+          port: 587,
+          from: 'hubble@example.com',
+        },
+      }),
+    );
+    await service.sendFailure(
+      input({
+        notifications: {
+          onFailure: true,
+          channels: ['email'],
+          emailTo: ['ops@example.com'],
+        },
+      }),
+    );
+    const safeFetch = serviceSafeFetch(service);
+    const originalClose = safeFetch.close.bind(safeFetch);
+    const closeSafeFetch = vi
+      .spyOn(safeFetch, 'close')
+      .mockRejectedValue(new Error('safe fetch close failed'));
+
+    try {
+      const closing = service.close();
+      await expect(closing).rejects.toMatchObject({
+        errors: [
+          expect.objectContaining({ message: 'safe fetch close failed' }),
+          expect.objectContaining({ message: 'smtp close failed' }),
+        ],
+      });
+      await expect(service.close()).rejects.toThrow('Notification service resource close failed');
+      expect(closeSafeFetch).toHaveBeenCalledOnce();
+      expect(closeMail).toHaveBeenCalledOnce();
+    } finally {
+      createTransport.mockRestore();
+      await originalClose();
+    }
   });
 
   it('rejects a single email channel when the Hubble deadline expires', async () => {

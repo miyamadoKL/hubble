@@ -14,6 +14,25 @@ describe('loadServerConfig integer bounds', () => {
     expect(() => loadServerConfig({ QUERY_MAX_ROWS: '-100' })).toThrow(/minimum: 1/);
   });
 
+  it('loads bounded HTTP body and query queue defaults', () => {
+    const config = loadServerConfig({});
+    expect(config.shutdownTimeoutMs).toBe(60_000);
+    expect(config.http.maxBodyBytes).toBe(2_097_152);
+    expect(config.query).toMatchObject({
+      maxQueued: 100,
+      maxQueuedPerPrincipal: 20,
+      maxTracked: 10_000,
+    });
+  });
+
+  it('rejects non-positive HTTP and query queue limits', () => {
+    expect(() => loadServerConfig({ SHUTDOWN_TIMEOUT_MS: '0' })).toThrow(/minimum: 1/);
+    expect(() => loadServerConfig({ HTTP_MAX_BODY_BYTES: '0' })).toThrow(/minimum: 1/);
+    expect(() => loadServerConfig({ QUERY_MAX_QUEUED: '0' })).toThrow(/minimum: 1/);
+    expect(() => loadServerConfig({ QUERY_MAX_QUEUED_PER_PRINCIPAL: '0' })).toThrow(/minimum: 1/);
+    expect(() => loadServerConfig({ QUERY_MAX_TRACKED: '0' })).toThrow(/minimum: 1/);
+  });
+
   it('accepts QUERY_GUARD_MAX_SCAN_BYTES=0', () => {
     const config = loadServerConfig({ QUERY_GUARD_MAX_SCAN_BYTES: '0' });
     expect(config.guard.maxScanBytes).toBe(0);

@@ -6,7 +6,11 @@ import type { SqlDatabase } from '../db/sqlDatabase';
 import { workflowDefinitionSchema } from '@hubble/contracts';
 import { dbBackends } from '../test/dbBackends';
 import { DEFAULT_DATASOURCE_ID } from '../test/testEngine';
-import { WorkflowRepository, WorkflowRunRepository } from './workflows';
+import {
+  WorkflowRepository,
+  WorkflowRunClaimConflictError,
+  WorkflowRunRepository,
+} from './workflows';
 
 const ds = { datasourceId: DEFAULT_DATASOURCE_ID };
 
@@ -120,6 +124,27 @@ for (const backend of dbBackends) {
     });
 
     describe('WorkflowRunRepository', () => {
+      it('atomically claims one running row for concurrent requests', async () => {
+        const db2 = await open();
+        const workflows = new WorkflowRepository(db2);
+        const runs = new WorkflowRunRepository(db2, 50);
+        const workflow = await workflows.create('alice', {
+          name: 'claim',
+          stages: sampleStages,
+          ...ds,
+        });
+        const start = () =>
+          runs.startRun(workflow, 'manual', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+
+        const claims = await Promise.allSettled([start(), start()]);
+        expect(claims.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+        expect(claims.filter((result) => result.status === 'rejected')).toHaveLength(1);
+        expect(claims.find((result) => result.status === 'rejected')).toMatchObject({
+          reason: expect.any(WorkflowRunClaimConflictError),
+        });
+        expect(await runs.listRuns(workflow.id, 10)).toHaveLength(1);
+      });
+
       it('expands steps on startRun and finishes run', async () => {
         const db2 = await open();
         const repo = new WorkflowRepository(db2);

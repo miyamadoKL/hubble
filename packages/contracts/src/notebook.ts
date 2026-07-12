@@ -1,7 +1,16 @@
 import { z } from 'zod';
-import { chartConfigSchema } from './chart';
+import { chartConfigInputSchema, chartConfigSchema } from './chart';
 import { isoTimestamp } from './common';
 import { myPermissionSchema } from './share';
+import {
+  MAX_DESCRIPTION_LENGTH,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_NOTEBOOK_CELLS,
+  MAX_NOTEBOOK_VARIABLES,
+  MAX_SQL_LENGTH,
+  MAX_VARIABLE_OPTIONS,
+} from './limits';
 
 /**
  * Notebook model. Hue's `Notebook { snippets[] }` simplified to a
@@ -168,17 +177,49 @@ export const notebookListItemSchema = z.object({
 /** ノートブック一覧項目の推論型。 */
 export type NotebookListItem = z.infer<typeof notebookListItemSchema>;
 
+// API 入力だけに適用する有界版。既存の保存データを読む response schema は
+// 互換性のため変更せず、新規または更新リクエストの増大だけを止める。
+const variableOptionInputSchema = variableOptionSchema.extend({
+  label: z.string().max(MAX_NAME_LENGTH),
+  value: z.string().max(MAX_DESCRIPTION_LENGTH),
+});
+const variableInputSchema = variableSchema.extend({
+  name: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  value: z.string().max(MAX_DESCRIPTION_LENGTH),
+  meta: variableMetaSchema.extend({
+    options: z.array(variableOptionInputSchema).max(MAX_VARIABLE_OPTIONS).optional(),
+    placeholder: z.string().max(MAX_NAME_LENGTH).optional(),
+  }),
+});
+const cellInputSchema = cellSchema.extend({
+  id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  source: z.string().max(MAX_SQL_LENGTH),
+  name: z.string().max(MAX_NAME_LENGTH).optional(),
+  resultMeta: cellResultMetaSchema
+    .extend({
+      trinoQueryId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+      state: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+      errorMessage: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+    })
+    .optional(),
+  chart: chartConfigInputSchema.optional(),
+});
+const notebookContextInputSchema = notebookContextSchema.extend({
+  catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+});
+
 /**
  * Request body for `POST /api/notebooks`.
  * `POST /api/notebooks`（新規作成）のリクエストボディ。cells / variables / context は
  * 省略可能で、省略時は空のノートブックとして作成される。
  */
 export const createNotebookRequestSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  cells: z.array(cellSchema).optional(),
-  variables: z.array(variableSchema).optional(),
-  context: notebookContextSchema.optional(),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+  cells: z.array(cellInputSchema).max(MAX_NOTEBOOK_CELLS).optional(),
+  variables: z.array(variableInputSchema).max(MAX_NOTEBOOK_VARIABLES).optional(),
+  context: notebookContextInputSchema.optional(),
 });
 /** ノートブック作成リクエストの推論型。 */
 export type CreateNotebookRequest = z.infer<typeof createNotebookRequestSchema>;
@@ -190,11 +231,11 @@ export type CreateNotebookRequest = z.infer<typeof createNotebookRequestSchema>;
  */
 export const updateNotebookRequestSchema = z.object({
   revision: z.number().int().nonnegative(),
-  name: z.string().min(1),
-  description: z.string(),
-  cells: z.array(cellSchema),
-  variables: z.array(variableSchema),
-  context: notebookContextSchema,
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH),
+  cells: z.array(cellInputSchema).max(MAX_NOTEBOOK_CELLS),
+  variables: z.array(variableInputSchema).max(MAX_NOTEBOOK_VARIABLES),
+  context: notebookContextInputSchema,
 });
 /** ノートブック更新リクエストの推論型。 */
 export type UpdateNotebookRequest = z.infer<typeof updateNotebookRequestSchema>;

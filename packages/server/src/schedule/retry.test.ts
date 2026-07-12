@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AppError, TrinoQueryError, TrinoTransportError } from '../errors';
 import { defaultRetryPolicy, retryPolicySchema } from '@hubble/contracts';
-import { backoffMs, classifyFailure, shouldRetry } from './retry';
+import { backoffMs, classifyFailure, retryPolicyForStatement, shouldRetry } from './retry';
 
 function userError(): TrinoQueryError {
   return new TrinoQueryError({ message: 'bad sql', errorType: 'USER_ERROR' });
@@ -30,6 +30,26 @@ describe('failure classification', () => {
 
   it('treats unknown errors as transient', () => {
     expect(classifyFailure(new Error('???'))).toBe('transient');
+  });
+});
+
+describe('statement retry safety', () => {
+  const configured = retryPolicySchema.parse({
+    maxAttempts: 5,
+    backoffSeconds: 10,
+    backoffMultiplier: 2,
+  });
+
+  it('keeps the configured retry policy for read statements', () => {
+    expect(retryPolicyForStatement(configured, 'SELECT * FROM orders')).toBe(configured);
+  });
+
+  it('limits write and unclassified statements to one attempt', () => {
+    expect(retryPolicyForStatement(configured, 'INSERT INTO audit VALUES (1)').maxAttempts).toBe(1);
+    expect(
+      retryPolicyForStatement(configured, 'WITH source AS (SELECT 1) SELECT * FROM source')
+        .maxAttempts,
+    ).toBe(1);
   });
 });
 

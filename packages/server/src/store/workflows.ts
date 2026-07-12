@@ -388,6 +388,14 @@ export interface ExpiredWorkflowStepResult {
   resultObjectKey: string;
 }
 
+/** 同一ワークフローの running claim が既に存在する。 */
+export class WorkflowRunClaimConflictError extends Error {
+  constructor(readonly workflowId: string) {
+    super(`A run is already in progress for workflow ${workflowId}`);
+    this.name = 'WorkflowRunClaimConflictError';
+  }
+}
+
 function rowToStepRun(row: WorkflowStepRunRow): WorkflowStepRun {
   return workflowStepRunSchema.parse({
     id: row.id,
@@ -447,12 +455,17 @@ export class WorkflowRunRepository {
   ): Promise<string> {
     const runId = newId('wfr_');
     await this.db.transaction(async (tx) => {
-      await tx.run(
+      const inserted = await tx.query<{ id: string }>(
         `INSERT INTO workflow_runs
            (id, workflow_id, owner, status, trigger, scheduled_for, started_at)
-         VALUES (?, ?, ?, 'running', ?, ?, ?)`,
+         VALUES (?, ?, ?, 'running', ?, ?, ?)
+         ON CONFLICT (workflow_id) WHERE status = 'running' DO NOTHING
+         RETURNING id`,
         [runId, workflow.id, workflow.owner, trigger, scheduledFor, startedAt],
       );
+      if (inserted.length === 0) {
+        throw new WorkflowRunClaimConflictError(workflow.id);
+      }
       const stepParams: SqlParam[] = [];
       const placeholders: string[] = [];
       for (let stageIndex = 0; stageIndex < workflow.stages.length; stageIndex += 1) {

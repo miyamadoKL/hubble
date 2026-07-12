@@ -21,6 +21,9 @@ function makeRegistry(
   fake: FakeTrino,
   overrides: Partial<{
     concurrency: number;
+    maxQueued: number;
+    maxQueuedPerPrincipal: number;
+    maxTracked: number;
     ttlMs: number;
     now: () => number;
   }> = {},
@@ -31,6 +34,9 @@ function makeRegistry(
     defaultDatasourceId,
     defaultMaxRows: 1000,
     concurrency: overrides.concurrency ?? 5,
+    maxQueued: overrides.maxQueued ?? 100,
+    maxQueuedPerPrincipal: overrides.maxQueuedPerPrincipal ?? 20,
+    maxTracked: overrides.maxTracked ?? 10_000,
     ttlMs: overrides.ttlMs ?? 60_000,
     defaultOverflowMode: 'truncate',
     sweepIntervalMs: 0,
@@ -47,6 +53,9 @@ function makeRegistryForEngines(
     defaultDatasourceId: DEFAULT_DATASOURCE_ID,
     defaultMaxRows: 1000,
     concurrency,
+    maxQueued: 100,
+    maxQueuedPerPrincipal: 20,
+    maxTracked: 10_000,
     ttlMs: 60_000,
     defaultOverflowMode: 'truncate',
     sweepIntervalMs: 0,
@@ -111,6 +120,9 @@ describe('QueryRegistry concurrency', () => {
       defaultDatasourceId: DEFAULT_DATASOURCE_ID,
       defaultMaxRows: 1000,
       concurrency: 1,
+      maxQueued: 100,
+      maxQueuedPerPrincipal: 20,
+      maxTracked: 10_000,
       ttlMs: 60_000,
       defaultOverflowMode: 'truncate',
       sweepIntervalMs: 0,
@@ -153,6 +165,102 @@ describe('QueryRegistry concurrency', () => {
     await vi.waitFor(() => expect(closeInner).toHaveBeenCalledOnce());
     expect(second.state).toBe('canceled');
   });
+
+  it('bounds the global and per-principal wait queues', async () => {
+    const fake = new FakeTrino([fast]);
+    const gate = deferred();
+    fake.holdAdvance = gate.promise;
+    const registry = makeRegistry(fake, {
+      concurrency: 1,
+      maxQueued: 2,
+      maxQueuedPerPrincipal: 1,
+    });
+    const first = registry.submit({ statement: 'SELECT first', ctx: { user: 'alice' } });
+    await vi.waitFor(() => expect(fake.activeCount).toBe(1));
+    const second = registry.submit({ statement: 'SELECT second', ctx: { user: 'alice' } });
+
+    expect(() =>
+      registry.submit({ statement: 'SELECT third', ctx: { user: 'alice' } }),
+    ).toThrowError(
+      expect.objectContaining({
+        status: 429,
+        detail: expect.objectContaining({ code: 'QUERY_PRINCIPAL_QUEUE_FULL' }),
+      }),
+    );
+    const third = registry.submit({ statement: 'SELECT third', ctx: { user: 'bob' } });
+    expect(registry.queuedCount()).toBe(2);
+    expect(() =>
+      registry.submit({ statement: 'SELECT fourth', ctx: { user: 'charlie' } }),
+    ).toThrowError(
+      expect.objectContaining({
+        status: 429,
+        detail: expect.objectContaining({ code: 'QUERY_QUEUE_FULL' }),
+      }),
+    );
+
+    gate.resolve();
+    await Promise.all([first.settled, second.settled, third.settled]);
+  });
+
+  it('releases queue admission and skips result capture when a queued query is canceled', async () => {
+    const fake = new FakeTrino([fast]);
+    const gate = deferred();
+    fake.holdAdvance = gate.promise;
+    const registry = makeRegistry(fake, {
+      concurrency: 1,
+      maxQueued: 1,
+      maxQueuedPerPrincipal: 1,
+    });
+    const first = registry.submit({ statement: 'SELECT first', ctx: { user: 'alice' } });
+    await vi.waitFor(() => expect(fake.activeCount).toBe(1));
+    const makeResultObserver = vi.fn(() => undefined);
+    const queued = registry.submit({
+      statement: 'SELECT queued',
+      ctx: { user: 'alice' },
+      makeResultObserver,
+    });
+    expect(makeResultObserver).not.toHaveBeenCalled();
+
+    await queued.requestCancel();
+    await queued.settled;
+    await vi.waitFor(() => expect(registry.queuedCount()).toBe(0));
+    expect(makeResultObserver).not.toHaveBeenCalled();
+    const replacement = registry.submit({
+      statement: 'SELECT replacement',
+      ctx: { user: 'alice' },
+    });
+
+    gate.resolve();
+    await Promise.all([first.settled, replacement.settled]);
+  });
+
+  it('bounds tracked executions and rejects admission after stopAccepting', async () => {
+    const fake = new FakeTrino([fast]);
+    const gate = deferred();
+    fake.holdAdvance = gate.promise;
+    const registry = makeRegistry(fake, { concurrency: 1, maxTracked: 1 });
+    const first = registry.submit({ statement: 'SELECT first', ctx: { user: 'alice' } });
+    await vi.waitFor(() => expect(fake.activeCount).toBe(1));
+
+    expect(() =>
+      registry.submit({ statement: 'SELECT second', ctx: { user: 'bob' } }),
+    ).toThrowError(
+      expect.objectContaining({
+        status: 429,
+        detail: expect.objectContaining({ code: 'QUERY_REGISTRY_FULL' }),
+      }),
+    );
+    registry.stopAccepting();
+    expect(() => registry.submit({ statement: 'SELECT third', ctx: { user: 'bob' } })).toThrowError(
+      expect.objectContaining({
+        status: 503,
+        detail: expect.objectContaining({ code: 'QUERY_SHUTTING_DOWN' }),
+      }),
+    );
+
+    gate.resolve();
+    await first.settled;
+  });
 });
 
 describe('QueryRegistry TTL sweep', () => {
@@ -179,5 +287,44 @@ describe('QueryRegistry not found', () => {
     const fake = new FakeTrino([fast]);
     const registry = makeRegistry(fake);
     expect(() => registry.getOrThrow('nope')).toThrow(/not found/);
+  });
+});
+
+describe('QueryRegistry shutdown', () => {
+  it('is single-flight and returns at the deadline when cancellation does not settle', async () => {
+    const fake = new FakeTrino([fast]);
+    const gate = deferred();
+    fake.holdAdvance = gate.promise;
+    const registry = makeRegistry(fake, { concurrency: 1 });
+    const exec = registry.submit({ statement: 'SELECT blocked', ctx: { user: 'alice' } });
+    await vi.waitFor(() => expect(fake.activeCount).toBe(1));
+    const cancel = vi.spyOn(exec, 'requestCancel').mockImplementation(() => new Promise(() => {}));
+
+    const first = registry.shutdown({ deadlineAt: Date.now() + 20 });
+    const second = registry.shutdown({ deadlineAt: Date.now() + 1_000 });
+    expect(first).toBe(second);
+    await expect(first).resolves.toEqual({ timedOut: true });
+    expect(cancel).toHaveBeenCalledOnce();
+
+    cancel.mockRestore();
+    gate.resolve();
+    await exec.settled;
+  });
+
+  it('cancels queued and running executions and waits for both terminal states', async () => {
+    const fake = new FakeTrino([fast]);
+    const gate = deferred();
+    fake.holdAdvance = gate.promise;
+    const registry = makeRegistry(fake, { concurrency: 1 });
+    const running = registry.submit({ statement: 'SELECT running', ctx: { user: 'alice' } });
+    await vi.waitFor(() => expect(fake.activeCount).toBe(1));
+    const queued = registry.submit({ statement: 'SELECT queued', ctx: { user: 'bob' } });
+
+    const shuttingDown = registry.shutdown({ deadlineAt: Date.now() + 1_000 });
+    gate.resolve();
+    await expect(shuttingDown).resolves.toEqual({ timedOut: false });
+    expect(running.state).toBe('canceled');
+    expect(queued.state).toBe('canceled');
+    expect(registry.queuedCount()).toBe(0);
   });
 });

@@ -129,6 +129,7 @@ export async function createTestContext(
   const config: ServerConfig = {
     ...baseConfig,
     ...options.configOverrides,
+    http: { ...baseConfig.http, ...options.configOverrides?.http },
     trino: { ...baseConfig.trino, ...options.configOverrides?.trino },
     query: { ...baseConfig.query, ...options.configOverrides?.query },
     metadata: { ...baseConfig.metadata, ...options.configOverrides?.metadata },

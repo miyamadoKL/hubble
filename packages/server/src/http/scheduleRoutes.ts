@@ -30,6 +30,7 @@ import type { ScheduleRecord, ScheduleRunRecord } from '../store/schedules';
 import { nextRunIso } from '../schedule/cron';
 import type { ValidationResult } from '../schedule/validator';
 import { intParam, parseJsonBody } from './validate';
+import { JobAdmissionRejectedError } from '../schedule/admission';
 
 type App = Hono<{ Variables: AuthVariables }>;
 
@@ -292,10 +293,24 @@ export function scheduleRoutes(services: Services): App {
     try {
       const { runId } = await services.scheduler.runManual(record);
       return c.json({ runId }, 202);
-    } catch {
+    } catch (err) {
       // 同一スケジュールの実行が既に進行中の場合、scheduler.runManual は例外を投げる。
       // それを 409 CONFLICT に変換して、クライアントに衝突を明示する。
-      throw AppError.conflict(`A run is already in progress for schedule ${id}`);
+      // admission の重複と全体上限は409、shutdown中の受付終了は503へ変換する。
+      if (err instanceof JobAdmissionRejectedError) {
+        if (err.reason === 'closed') {
+          throw new AppError(503, {
+            code: 'SERVER_SHUTTING_DOWN',
+            message: 'Scheduled job admission is closed',
+          });
+        }
+        const message =
+          err.reason === 'duplicate'
+            ? `A run is already in progress for schedule ${id}`
+            : 'The scheduled job concurrency limit has been reached';
+        throw AppError.conflict(message);
+      }
+      throw err;
     }
   });
 

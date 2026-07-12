@@ -295,6 +295,8 @@ MySQL/PostgreSQL の `roleCredentials` は RBAC role 単位の credential 切り
 | `RBAC_PATH`                       | —                    | RBAC 定義 YAML のパス。未設定時は `./rbac.yaml` を探し、無ければ `unrestricted` ロールで後方互換                                             |
 | `CONFIG_RELOAD_INTERVAL_SECONDS`  | `30`                 | `datasources.yaml` / `rbac.yaml` のホットリロードのポーリング間隔（秒）。`0` で SIGHUP のみ                                                  |
 | `PORT`                            | `8080`               | BFF が待ち受ける HTTP ポート                                                                                                                 |
+| `HTTP_MAX_BODY_BYTES`             | `2097152`            | API request body 全体の最大 byte 数。超過時は HTTP 413 で拒否                                                                                |
+| `SHUTDOWN_TIMEOUT_MS`             | `60000`              | 受付停止から強制 close へ移るまでの期限（ミリ秒）                                                                                            |
 | `DATABASE_URL`                    | —                    | `postgres://` / `postgresql://` 形式の接続文字列（1st/production 推奨）。設定すると永続化バックエンドが PostgreSQL になり `DB_PATH` より優先 |
 | `DB_PATH`                         | `./data/hubble.db`   | SQLite データベースファイル（non-production 向け。`DATABASE_URL` 未設定時のみ使われる）                                                      |
 | `STATIC_DIR`                      | —                    | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う                                               |
@@ -304,6 +306,9 @@ MySQL/PostgreSQL の `roleCredentials` は RBAC role 単位の credential 切り
 | `DEFAULT_LIMIT`                   | `5000`               | `LIMIT` のない `SELECT` に自動付与する `LIMIT`                                                                                               |
 | `QUERY_MAX_ROWS`                  | `100000`             | クエリごとに server 側でバッファする行数の上限                                                                                               |
 | `QUERY_CONCURRENCY`               | `5`                  | 同時に追跡するクエリ数の上限                                                                                                                 |
+| `QUERY_MAX_QUEUED`                | `100`                | 実行枠を待てるクエリの全体上限。超過時は HTTP 429 で拒否                                                                                     |
+| `QUERY_MAX_QUEUED_PER_PRINCIPAL`  | `20`                 | 同一 principal が実行枠を待てるクエリの上限。超過時は HTTP 429 で拒否                                                                        |
+| `QUERY_MAX_TRACKED`               | `10000`              | 終端済みを含めて registry が保持するクエリの上限。期限切れを掃除しても上限なら HTTP 429 で拒否                                               |
 | `QUERY_TTL_MINUTES`               | `30`                 | 完了したクエリを掃除するまでの保持時間                                                                                                       |
 | `QUERY_OVERFLOW_MODE`             | `truncate`           | `QUERY_MAX_ROWS` 超過時の挙動（`truncate` または `cancel`）                                                                                  |
 | `METADATA_TTL_SECONDS`            | `300`                | メタデータキャッシュの TTL                                                                                                                   |
@@ -322,7 +327,7 @@ MySQL/PostgreSQL の `roleCredentials` は RBAC role 単位の credential 切り
 | `QUERY_GUARD_BYTES_PER_SECOND`    | `0`（目安なし）      | クラスタースループット目安（バイト/秒）。0 より大きい値を設定すると UI に所要時間の目安を表示                                                |
 | `SCHEDULER_ENABLED`               | `true`               | `false` にするとスケジューラーの tick ループを停止（API は生きたまま）                                                                       |
 | `SCHEDULER_TICK_SECONDS`          | `15`                 | due なスケジュールをスキャンする間隔（秒）                                                                                                   |
-| `SCHEDULER_MAX_CONCURRENT`        | `2`                  | スケジューラー全体で同時実行できる数の上限                                                                                                   |
+| `SCHEDULER_MAX_CONCURRENT`        | `2`                  | schedule、workflow step、alert で共有する statement 同時実行上限                                                                             |
 | `SCHEDULER_RUNS_RETENTION`        | `50`                 | スケジュールごとに保持する実行履歴の上限件数（古い行は自動プルーン）                                                                         |
 | `NOTIFY_SLACK_WEBHOOK_URL`        | —                    | スケジュール確定失敗通知で使う Slack incoming webhook URL                                                                                    |
 | `NOTIFY_SMTP_HOST`                | —                    | スケジュール確定失敗通知で使う SMTP ホスト                                                                                                   |

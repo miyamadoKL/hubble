@@ -10,6 +10,8 @@
  */
 // 共通プリミティブ（ISO タイムスタンプ、ID など）
 export * from './common';
+// API 入力として受け付ける文字列長と配列数の共通上限
+export * from './limits';
 // API エラーレスポンスの共通形状
 export * from './error';
 // 認証モードと `GET /api/me` の契約

@@ -51,6 +51,11 @@ export interface FakeScenario {
     errorType?: string;
     errorLocation?: { lineNumber: number; columnNumber: number };
   };
+  /** POST 受理後の最初の追走で返す、構造化 Trino error を持たない HTTP 障害。 */
+  transportError?: {
+    status: number;
+    message: string;
+  };
   /** Sequence of pages after the initial QUEUED POST response. */
   // 日本語: nextUri を追走するたびに順番に返されるページ列。最後のページで
   // nextUri を付けない (=FINISHED) ことで progression が終わる。
@@ -213,6 +218,14 @@ export class FakeTrino {
       }
 
       const scenario = q.scenario;
+      // POST 受理後に応答経路だけが失敗する状況を再現する。
+      // TrinoClient は構造化 error のない HTTP エラーを TrinoTransportError に変換する。
+      if (scenario.transportError) {
+        this.running.delete(id);
+        return new Response(scenario.transportError.message, {
+          status: scenario.transportError.status,
+        });
+      }
       // Error scenarios fail on first advance.
       // 日本語: エラーシナリオが指定されていれば、ページ内容に関わらず
       // 最初の advance で即座に FAILED + 指定エラーを返す。

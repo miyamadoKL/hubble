@@ -15,6 +15,7 @@ import type { QueryEngine } from '../engine/types';
 import { Scheduler, type SchedulerConfig } from './scheduler';
 import { AuditLogger, AuditRepository } from '../audit';
 import type { FailureNotificationInput, FailureNotificationSender } from '../notification/service';
+import { JobAdmissionController } from './admission';
 
 const DEFAULT_GUARD_CONFIG = {
   mode: 'warn' as const,
@@ -41,6 +42,22 @@ const VALIDATE_OK: FakeScenario = {
   pages: [{ columns: [{ name: 'result', type: 'boolean' }], data: [[true]] }],
 };
 
+/** SQL の接頭辞を手書きせず、marker 一致で validation 失敗を作る。 */
+function validationFailure(marker: string, message: string): FakeScenario {
+  return {
+    match: marker,
+    error: { message, errorName: 'VALIDATION_ERROR', errorType: 'USER_ERROR' },
+  };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 /** An EXPLAIN IO plan cell whose single input table scans `rows` rows. */
 function ioPlan(rows: number): string {
   return JSON.stringify({
@@ -61,6 +78,7 @@ interface Harness {
   schedules: ScheduleRepository;
   runs: ScheduleRunRepository;
   scheduler: Scheduler;
+  admission: JobAdmissionController;
   audit: AuditLogger;
   notifications: FailureNotificationInput[];
   sleeps: number[];
@@ -72,7 +90,7 @@ async function makeHarness(
   scenarios: FakeScenario[],
   configOverrides: Partial<SchedulerConfig> = {},
   /** Invoked on each retry backoff sleep (e.g. to swap scenarios mid-run). */
-  onSleep?: (callIndex: number, ms: number) => void,
+  onSleep?: (callIndex: number, ms: number) => void | Promise<void>,
   getRbac?: () => LoadedRbac,
   notificationSender?: FailureNotificationSender,
 ): Promise<Harness> {
@@ -110,6 +128,7 @@ async function makeHarness(
     guardMode: 'warn',
     ...configOverrides,
   };
+  const admission = new JobAdmissionController(config.maxConcurrent);
   const scheduler = new Scheduler({
     schedules,
     runs,
@@ -123,12 +142,13 @@ async function makeHarness(
     },
     audit,
     notifications: notifier,
+    admission,
     config,
     now,
-    sleep: (ms) => {
-      onSleep?.(sleeps.length, ms);
+    sleep: async (ms) => {
+      const sleepResult = onSleep?.(sleeps.length, ms);
       sleeps.push(ms);
-      return Promise.resolve();
+      await sleepResult;
     },
   });
   return {
@@ -138,6 +158,7 @@ async function makeHarness(
     schedules,
     runs,
     scheduler,
+    admission,
     audit,
     notifications,
     sleeps,
@@ -261,6 +282,77 @@ describe('Scheduler run matrix', () => {
     expect(h.notifications).toHaveLength(0);
   });
 
+  it('waits for an in-flight failure notification during stop', async () => {
+    let notificationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      notificationStarted = resolve;
+    });
+    let releaseNotification!: () => void;
+    const notificationGate = new Promise<void>((resolve) => {
+      releaseNotification = resolve;
+    });
+    h = await makeHarness([validationFailure('NOTIFY_FAIL', 'invalid')], {}, undefined, undefined, {
+      sendFailure: async () => {
+        notificationStarted();
+        await notificationGate;
+      },
+    });
+    const schedule = await h.schedules.create('alice', {
+      name: 'notify fail',
+      statement: 'SELECT 1 /* NOTIFY_FAIL */',
+      cron: '* * * * *',
+      retry: { maxAttempts: 1, backoffSeconds: 1, backoffMultiplier: 1 },
+      notifications: { onFailure: true, channels: ['slack'] },
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    await h.scheduler.runManual(schedule);
+    await started;
+
+    let stopped = false;
+    const stopping = h.scheduler.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    releaseNotification();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
+  it('waits for a manual run that is still creating its DB claim', async () => {
+    h = await makeHarness([VALIDATE_OK]);
+    const schedule = await h.schedules.create('alice', {
+      name: 'claim pending',
+      statement: 'SELECT 1',
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const gate = deferred();
+    const startReached = deferred();
+    const originalStart = h.runs.start.bind(h.runs);
+    const start = vi.spyOn(h.runs, 'start').mockImplementation(async (input) => {
+      startReached.resolve();
+      await gate.promise;
+      return originalStart(input);
+    });
+
+    const manual = h.scheduler.runManual(schedule);
+    await startReached.promise;
+    let stopped = false;
+    const stopping = h.scheduler.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    gate.resolve();
+    const { runId } = await manual;
+    await stopping;
+    const run = (await h.runs.list(schedule.id, 10)).find((item) => item.id === runId);
+    expect(run?.status).toBe('aborted');
+    start.mockRestore();
+  });
+
   it('fails immediately on a USER_ERROR (validation) with no retry', async () => {
     h = await makeHarness([
       {
@@ -326,7 +418,7 @@ describe('Scheduler run matrix', () => {
     holder.fake = h.fake;
     const s = await h.schedules.create('alice', {
       name: 'flaky',
-      statement: 'SELECT_FLAKY',
+      statement: 'SELECT 1 /* SELECT_FLAKY */',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       notifications: { onFailure: true, channels: ['slack'] },
@@ -344,6 +436,74 @@ describe('Scheduler run matrix', () => {
     expect(h.notifications).toHaveLength(0);
   });
 
+  it('records an aborted run when shutdown interrupts retry backoff', async () => {
+    let releaseSleep!: () => void;
+    const sleepGate = new Promise<void>((resolve) => {
+      releaseSleep = resolve;
+    });
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'BACKOFF_ABORT',
+          error: { message: 'temporary failure', errorType: 'INTERNAL_ERROR' },
+        },
+      ],
+      {},
+      () => sleepGate,
+    );
+    const schedule = await h.schedules.create('alice', {
+      name: 'backoff abort',
+      statement: 'SELECT 1 /* BACKOFF_ABORT */',
+      cron: '* * * * *',
+      retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const { runId } = await h.scheduler.runManual(schedule);
+    await vi.waitFor(() => expect(h.sleeps).toEqual([30_000]));
+
+    await h.scheduler.stop();
+    const run = (await h.runs.list(schedule.id, 10)).find((item) => item.id === runId);
+    expect(run?.status).toBe('aborted');
+    expect(run?.errorType).toBe('SERVER_SHUTDOWN');
+    releaseSleep();
+  });
+
+  it('does not retry a write after the engine accepts it and loses the response', async () => {
+    h = await makeHarness([
+      VALIDATE_OK,
+      {
+        match: 'WRITE_RESPONSE_LOST',
+        transportError: {
+          message: 'response lost after commit',
+          status: 503,
+        },
+      },
+    ]);
+    const schedule = await h.schedules.create('alice', {
+      name: 'write once',
+      statement: 'INSERT INTO audit_log VALUES (1) /* WRITE_RESPONSE_LOST */',
+      cron: '* * * * *',
+      retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+
+    await h.scheduler.runManual(schedule);
+    await h.scheduler.whenIdle();
+
+    const acceptedWrites = h.fake.requests.filter(
+      (request) =>
+        request.method === 'POST' &&
+        request.body?.includes('WRITE_RESPONSE_LOST') &&
+        !request.body.startsWith('EXPLAIN'),
+    );
+    const run = (await h.runs.list(schedule.id, 10))[0]!;
+    expect(acceptedWrites).toHaveLength(1);
+    expect(run.status).toBe('failed');
+    expect(run.attempt).toBe(1);
+    expect(h.sleeps).toEqual([]);
+  });
+
   it('fails after exhausting maxAttempts on a persistent transient fault', async () => {
     h = await makeHarness([
       VALIDATE_OK,
@@ -358,7 +518,7 @@ describe('Scheduler run matrix', () => {
     ]);
     const s = await h.schedules.create('alice', {
       name: 'down',
-      statement: 'SELECT_DOWN',
+      statement: 'SELECT 1 /* SELECT_DOWN */',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       notifications: { onFailure: true, channels: ['slack'] },
@@ -493,6 +653,43 @@ describe('Scheduler overlap and concurrency', () => {
     await expect(h.scheduler.runManual(s)).rejects.toThrow(/in progress/);
     expect(h.scheduler.activeRuns).toBe(1);
   });
+
+  it('rejects a different manual run when the shared capacity is one', async () => {
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'SELECT_HOLD',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      { maxConcurrent: 1 },
+    );
+    let releaseAdvance!: () => void;
+    h.fake.holdAdvance = new Promise<void>((resolve) => {
+      releaseAdvance = resolve;
+    });
+    const first = await h.schedules.create('alice', {
+      name: 'first',
+      statement: 'SELECT 1 /* SELECT_HOLD first */',
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    const second = await h.schedules.create('alice', {
+      name: 'second',
+      statement: 'SELECT 2 /* SELECT_HOLD second */',
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+
+    await h.scheduler.runManual(first);
+    await vi.waitFor(() => expect(h.fake.activeCount).toBe(1));
+    await expect(h.scheduler.runManual(second)).rejects.toMatchObject({ reason: 'capacity' });
+
+    releaseAdvance();
+    await h.scheduler.whenIdle();
+    expect(h.scheduler.activeRuns).toBe(0);
+  });
 });
 
 describe('Scheduler tick + lifecycle', () => {
@@ -529,6 +726,34 @@ describe('Scheduler tick + lifecycle', () => {
     const runs = await h.runs.list(s.id, 10);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.status).toBe('success');
+  });
+
+  it('does not fire cron while another job kind holds the shared slot', async () => {
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'SELECT_TICK_BLOCKED',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      { maxConcurrent: 1 },
+    );
+    const schedule = await h.schedules.create('alice', {
+      name: 'tick blocked',
+      statement: 'SELECT 1 /* SELECT_TICK_BLOCKED */',
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+    });
+    await h.scheduler.tick();
+    const blocker = h.admission.tryAcquire('workflow', 'workflow-holder');
+
+    h.setNow(h.now() + 61_000);
+    await h.scheduler.tick();
+    await h.scheduler.whenIdle();
+    expect(await h.runs.list(schedule.id, 10)).toEqual([]);
+
+    blocker.release();
   });
 
   it('aborts orphaned running rows on start (crash recovery)', async () => {

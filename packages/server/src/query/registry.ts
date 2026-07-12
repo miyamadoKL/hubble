@@ -31,6 +31,12 @@ export interface QueryRegistryOptions {
   /** Maximum concurrently-running queries. */
   // 同時に実行できるクエリの最大数（セマフォの容量）。
   concurrency: number;
+  /** 実行枠を待つクエリの全体上限。 */
+  maxQueued: number;
+  /** 同一 principal が実行枠を待つクエリの上限。 */
+  maxQueuedPerPrincipal: number;
+  /** 終端済みを含む registry 保持件数の上限。 */
+  maxTracked: number;
   /** Retention for finished queries, in ms. */
   // 終了済みクエリをメモリ上に保持しておく期間（ミリ秒）。これを過ぎると
   // sweep() の対象になる。
@@ -64,6 +70,25 @@ export interface SubmitParams {
   overflowMode?: OverflowMode;
   /** queryId 採番後に結果 observer を生成する。 */
   makeResultObserver?: (queryId: string) => QueryResultObserver | undefined;
+  /** queue 上限を数える principal。省略時は ctx.user を使う。 */
+  queuePrincipal?: string;
+}
+
+interface QueryWaiter {
+  exec: QueryExecution;
+  principal: string;
+  active: boolean;
+  resolve: (acquired: boolean) => void;
+}
+
+/** QueryRegistry shutdown の入力。 */
+export interface QueryRegistryShutdownOptions {
+  deadlineAt?: number;
+}
+
+/** deadline までに全 execution が終端したかを返す。 */
+export interface QueryRegistryShutdownResult {
+  timedOut: boolean;
 }
 
 /**
@@ -82,6 +107,9 @@ export class QueryRegistry {
   private defaultDatasourceId: string;
   private readonly defaultMaxRows: number;
   private readonly concurrency: number;
+  private readonly maxQueued: number;
+  private readonly maxQueuedPerPrincipal: number;
+  private readonly maxTracked: number;
   private readonly ttlMs: number;
   private readonly defaultOverflowMode: OverflowMode;
   private readonly now: () => number;
@@ -90,15 +118,22 @@ export class QueryRegistry {
   // 現在実行中（スロットを保持中）のクエリ数。
   private running = 0;
   // 実行スロットの空きを待っているクエリの resolve コールバック一覧（FIFO）。
-  private readonly waiters: Array<() => void> = [];
+  // 実行スロットの空きを待つクエリと principal を保持する FIFO。
+  private readonly waiters: QueryWaiter[] = [];
+  private readonly queuedByPrincipal = new Map<string, number>();
+  private accepting = true;
   // 終了済みクエリを定期的に掃除するタイマー。
   private sweepTimer?: ReturnType<typeof setInterval>;
+  private shutdownPromise?: Promise<QueryRegistryShutdownResult>;
 
   constructor(options: QueryRegistryOptions) {
     this.engines = options.engines;
     this.defaultDatasourceId = options.defaultDatasourceId;
     this.defaultMaxRows = options.defaultMaxRows;
     this.concurrency = options.concurrency;
+    this.maxQueued = options.maxQueued;
+    this.maxQueuedPerPrincipal = options.maxQueuedPerPrincipal;
+    this.maxTracked = options.maxTracked;
     this.ttlMs = options.ttlMs;
     this.defaultOverflowMode = options.defaultOverflowMode;
     this.now = options.now ?? Date.now;
@@ -120,15 +155,23 @@ export class QueryRegistry {
   // 返し、実際の実行開始（run()）はセマフォの空きを待ってから非同期に行う
   // （scheduleRun を待たずに返るため、呼び出しはノンブロッキング）。
   submit(params: SubmitParams): QueryExecution {
+    if (!this.accepting) {
+      throw new AppError(503, {
+        code: 'QUERY_SHUTTING_DOWN',
+        message: 'Query admission is closed',
+      });
+    }
     const datasourceId = params.datasourceId ?? this.defaultDatasourceId;
     const engine = this.engines.get(datasourceId);
     if (!engine) {
       throw AppError.notFound(`Datasource ${datasourceId} not found`);
     }
+    this.assertTrackedCapacity();
+    const principal = params.queuePrincipal ?? params.ctx.user ?? 'technical';
+    if (this.running >= this.concurrency) this.assertQueueCapacity(principal);
 
     const queryId = newId('q_');
     const execSource = params.executionSource ?? 'user';
-    const resultObserver = params.makeResultObserver?.(queryId);
     const releaseLease = engine.lease?.() ?? (() => {});
     this.engineLeaseReleases.set(queryId, releaseLease);
     let exec: QueryExecution;
@@ -150,7 +193,9 @@ export class QueryRegistry {
         client,
         engine,
         now: this.now,
-        resultObserver,
+        makeResultObserver: params.makeResultObserver
+          ? () => params.makeResultObserver?.(queryId)
+          : undefined,
         onSettled: (e) => {
           this.releaseEngineLease(queryId);
           this.onSettled?.(e);
@@ -164,14 +209,18 @@ export class QueryRegistry {
     // Schedule the run respecting the concurrency semaphore.
     // 同時実行数の制約を守りながら実行をスケジューリングする
     // （このメソッド自体は submit() の完了を待たせないよう fire-and-forget）。
-    void this.scheduleRun(exec);
+    void this.scheduleRun(exec, principal);
     return exec;
   }
 
   // 実行スロットを獲得してから exec.run() を実行し、完了後（成功したか失敗
   // したかを問わず）必ずスロットを解放する。
-  private async scheduleRun(exec: QueryExecution): Promise<void> {
-    await this.acquireSlot();
+  private async scheduleRun(exec: QueryExecution, principal: string): Promise<void> {
+    const acquired = await this.acquireSlot(exec, principal);
+    if (!acquired) {
+      this.releaseEngineLease(exec.queryId);
+      return;
+    }
     try {
       // If it was canceled while queued, run() short-circuits to canceled.
       // スロット待ちの間にキャンセルされていた場合、run() は Trino への
@@ -194,16 +243,16 @@ export class QueryRegistry {
   // 実行スロットを獲得する。空きがあれば同期的にカウントを増やして即解決、
   // 満杯であれば waiters キューに resolve コールバックを積んで待機する
   // （releaseSlot() が呼ばれた際に FIFO で解決される）。
-  private acquireSlot(): Promise<void> {
+  private acquireSlot(exec: QueryExecution, principal: string): Promise<boolean> {
     if (this.running < this.concurrency) {
       this.running += 1;
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
     return new Promise((resolve) => {
-      this.waiters.push(() => {
-        this.running += 1;
-        resolve();
-      });
+      const waiter: QueryWaiter = { exec, principal, active: true, resolve };
+      this.waiters.push(waiter);
+      this.incrementPrincipalQueue(principal);
+      void exec.settled.then(() => this.cancelWaiter(waiter));
     });
   }
 
@@ -212,7 +261,56 @@ export class QueryRegistry {
   private releaseSlot(): void {
     this.running -= 1;
     const next = this.waiters.shift();
-    if (next) next();
+    if (!next) return;
+    next.active = false;
+    this.decrementPrincipalQueue(next.principal);
+    this.running += 1;
+    next.resolve(true);
+  }
+
+  private cancelWaiter(waiter: QueryWaiter): void {
+    if (!waiter.active) return;
+    waiter.active = false;
+    const index = this.waiters.indexOf(waiter);
+    if (index >= 0) this.waiters.splice(index, 1);
+    this.decrementPrincipalQueue(waiter.principal);
+    waiter.resolve(false);
+  }
+
+  private incrementPrincipalQueue(principal: string): void {
+    this.queuedByPrincipal.set(principal, (this.queuedByPrincipal.get(principal) ?? 0) + 1);
+  }
+
+  private decrementPrincipalQueue(principal: string): void {
+    const count = this.queuedByPrincipal.get(principal) ?? 0;
+    if (count <= 1) this.queuedByPrincipal.delete(principal);
+    else this.queuedByPrincipal.set(principal, count - 1);
+  }
+
+  private assertQueueCapacity(principal: string): void {
+    if (this.waiters.length >= this.maxQueued) {
+      throw new AppError(429, {
+        code: 'QUERY_QUEUE_FULL',
+        message: 'The query queue is full',
+      });
+    }
+    if ((this.queuedByPrincipal.get(principal) ?? 0) >= this.maxQueuedPerPrincipal) {
+      throw new AppError(429, {
+        code: 'QUERY_PRINCIPAL_QUEUE_FULL',
+        message: 'The query queue limit for this principal has been reached',
+      });
+    }
+  }
+
+  private assertTrackedCapacity(): void {
+    if (this.executions.size < this.maxTracked) return;
+    this.sweep();
+    if (this.executions.size >= this.maxTracked) {
+      throw new AppError(429, {
+        code: 'QUERY_REGISTRY_FULL',
+        message: 'The query registry is full',
+      });
+    }
   }
 
   // queryId から QueryExecution を取得する（見つからなければ undefined）。
@@ -251,6 +349,16 @@ export class QueryRegistry {
     return this.executions.size;
   }
 
+  /** 実行枠待ちの件数。 */
+  queuedCount(): number {
+    return this.waiters.length;
+  }
+
+  /** 新しい query submit を同期的に拒否する。 */
+  stopAccepting(): void {
+    this.accepting = false;
+  }
+
   setDefaultDatasourceId(id: string): void {
     this.defaultDatasourceId = id;
   }
@@ -263,10 +371,42 @@ export class QueryRegistry {
   /** Cancel all running queries and stop the sweep timer (shutdown). */
   // サーバーシャットダウン時の後始末: スイープタイマーを止め、まだ終端状態に
   // 達していない全クエリに対してキャンセルを要求し、全て完了するのを待つ。
-  async shutdown(): Promise<void> {
+  // 達していない全クエリへキャンセルを要求し、deadline まで終端を待つ。
+  shutdown(options: QueryRegistryShutdownOptions = {}): Promise<QueryRegistryShutdownResult> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.shutdownPromise = this.runShutdown(options.deadlineAt ?? Number.POSITIVE_INFINITY);
+    return this.shutdownPromise;
+  }
+
+  private async runShutdown(deadlineAt: number): Promise<QueryRegistryShutdownResult> {
+    this.stopAccepting();
     if (this.sweepTimer) clearInterval(this.sweepTimer);
-    await Promise.all(
-      [...this.executions.values()].filter((e) => !e.isTerminal).map((e) => e.requestCancel()),
-    );
+    this.sweepTimer = undefined;
+    const active = [...this.executions.values()].filter((execution) => !execution.isTerminal);
+    const canceled = Promise.allSettled(active.map((execution) => execution.requestCancel()));
+    if (!(await settleBefore(canceled, deadlineAt))) return { timedOut: true };
+    const settled = Promise.allSettled(active.map((execution) => execution.settled));
+    return { timedOut: !(await settleBefore(settled, deadlineAt)) };
+  }
+}
+
+async function settleBefore(promise: Promise<unknown>, deadlineAt: number): Promise<boolean> {
+  if (!Number.isFinite(deadlineAt)) {
+    await promise;
+    return true;
+  }
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), remainingMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

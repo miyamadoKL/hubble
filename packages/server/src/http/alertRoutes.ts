@@ -20,6 +20,7 @@ import { requireDatasourceAccess } from '../rbac/check';
 import type { AlertRecord } from '../store/alerts';
 import { nextRunIso } from '../schedule/cron';
 import { parseJsonBody } from './validate';
+import { JobAdmissionRejectedError } from '../schedule/admission';
 
 type App = Hono<{ Variables: AuthVariables }>;
 
@@ -131,8 +132,21 @@ export function alertRoutes(services: Services): App {
     try {
       const outcome = await services.alertEvaluator.evalManual(record);
       return c.json(alertEvalResponseSchema.parse(outcome));
-    } catch {
-      throw AppError.conflict(`An evaluation is already in progress for alert ${id}`);
+    } catch (err) {
+      if (err instanceof JobAdmissionRejectedError) {
+        if (err.reason === 'closed') {
+          throw new AppError(503, {
+            code: 'SERVER_SHUTTING_DOWN',
+            message: 'Scheduled job admission is closed',
+          });
+        }
+        const message =
+          err.reason === 'duplicate'
+            ? `An evaluation is already in progress for alert ${id}`
+            : 'The scheduled job concurrency limit has been reached';
+        throw AppError.conflict(message);
+      }
+      throw err;
     }
   });
 

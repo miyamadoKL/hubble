@@ -25,6 +25,12 @@ import { AlertDeliveryRepository } from '../store/alertDeliveries';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { columnIndex, fetchStatementRows } from './execute';
 import { compareThreshold, nextAlertState, selectObservedValue, shouldNotify } from './state';
+import {
+  JobAdmissionRejectedError,
+  type JobAdmissionController,
+  type JobAdmissionLease,
+} from '../schedule/admission';
+import { PeriodicRunner } from '../util/periodicRunner';
 
 export interface AlertEvaluatorConfig {
   enabled: boolean;
@@ -43,6 +49,8 @@ export interface AlertEvaluatorDeps {
   getRbac: () => LoadedRbac;
   guardConfig: ServerConfig['guard'];
   audit?: AuditLogger;
+  /** schedule、workflow、alert で共有する実行枠。 */
+  admission: JobAdmissionController;
   config: AlertEvaluatorConfig;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => { clear: () => void };
@@ -50,11 +58,7 @@ export interface AlertEvaluatorDeps {
 
 export type AlertEvalOutcome = AlertEvalResponse;
 
-function defaultSetTimer(fn: () => void, ms: number): { clear: () => void } {
-  const handle = setTimeout(fn, ms);
-  if (typeof handle === 'object' && 'unref' in handle) (handle as { unref: () => void }).unref();
-  return { clear: () => clearTimeout(handle) };
-}
+// 省略時の setTimeout と unref は PeriodicRunner が共通実装する。
 
 function stringifyObserved(value: unknown): string | null {
   if (value === undefined) return null;
@@ -77,17 +81,24 @@ function errorTypeOf(err: unknown): string | null {
  */
 export class AlertEvaluator {
   private readonly now: () => number;
-  private readonly setTimer: (fn: () => void, ms: number) => { clear: () => void };
+  private readonly periodic: PeriodicRunner;
+  private readonly shutdownAbort = new AbortController();
   private readonly nextEval = new Map<string, number>();
   private readonly inFlight = new Set<string>();
   private readonly running = new Map<string, Promise<void>>();
-  private tickHandle?: { clear: () => void };
+  // tick timer と進行中の走査は PeriodicRunner が所有する。
   private started = false;
   private stopping = false;
 
   constructor(private deps: AlertEvaluatorDeps) {
     this.now = deps.now ?? Date.now;
-    this.setTimer = deps.setTimer ?? defaultSetTimer;
+    this.periodic = new PeriodicRunner({
+      intervalMs: deps.config.tickSeconds * 1_000,
+      task: () => this.tick(),
+      logError: (message, error) => console.error(message, error),
+      errorMessage: 'alert evaluator: periodic tick failed',
+      ...(deps.setTimer ? { setTimer: deps.setTimer } : {}),
+    });
   }
 
   setDefaultDatasourceId(id: string): void {
@@ -99,13 +110,13 @@ export class AlertEvaluator {
     this.started = true;
     if (!this.deps.config.enabled) return;
     await this.seedNextEvals();
-    this.scheduleTick();
+    this.periodic.start();
   }
 
   async stop(): Promise<void> {
     this.stopping = true;
-    this.tickHandle?.clear();
-    this.tickHandle = undefined;
+    this.shutdownAbort.abort();
+    await this.periodic.stop();
     await Promise.allSettled([...this.running.values()]);
   }
 
@@ -119,14 +130,13 @@ export class AlertEvaluator {
 
   /** 手動評価（`POST /api/alerts/:id/eval`）。 */
   async evalManual(alert: AlertRecord): Promise<AlertEvalOutcome> {
-    if (this.inFlight.has(alert.id)) {
-      throw new Error('An evaluation is already in progress for this alert');
-    }
+    const admissionLease = this.deps.admission.tryAcquire('alert', alert.id);
     this.inFlight.add(alert.id);
     try {
       return await this.evaluateAlert(alert);
     } finally {
       this.inFlight.delete(alert.id);
+      admissionLease.release();
     }
   }
 
@@ -141,12 +151,7 @@ export class AlertEvaluator {
     }
   }
 
-  private scheduleTick(): void {
-    if (this.stopping) return;
-    this.tickHandle = this.setTimer(() => {
-      void this.tick().finally(() => this.scheduleTick());
-    }, this.deps.config.tickSeconds * 1000);
-  }
+  // PeriodicRunner は tick の失敗をログへ隔離してから次の単発 timer を予約する。
 
   async tick(): Promise<void> {
     if (this.stopping) return;
@@ -170,14 +175,19 @@ export class AlertEvaluator {
       if (next !== null) this.nextEval.set(alert.id, next);
       else this.nextEval.delete(alert.id);
 
-      if (this.inFlight.has(alert.id)) continue;
-      if (this.inFlight.size >= this.deps.config.maxConcurrent) continue;
+      let lease: JobAdmissionLease;
+      try {
+        lease = this.deps.admission.tryAcquire('alert', alert.id);
+      } catch (err) {
+        if (err instanceof JobAdmissionRejectedError) continue;
+        throw err;
+      }
 
-      this.launch(alert);
+      this.launch(alert, lease);
     }
   }
 
-  private launch(alert: AlertRecord): void {
+  private launch(alert: AlertRecord, admissionLease: JobAdmissionLease): void {
     this.inFlight.add(alert.id);
     const p = this.evaluateAlert(alert)
       .catch((err: unknown) => {
@@ -195,6 +205,7 @@ export class AlertEvaluator {
       .finally(() => {
         this.inFlight.delete(alert.id);
         this.running.delete(alert.id);
+        admissionLease.release();
       });
     this.running.set(
       alert.id,
@@ -336,7 +347,13 @@ export class AlertEvaluator {
           schema: savedQuery.schema ?? undefined,
           user: alert.owner,
         };
-        const fetched = await fetchStatementRows(client, savedQuery.statement, ctx);
+        const fetched = await fetchStatementRows(
+          client,
+          savedQuery.statement,
+          ctx,
+          undefined,
+          this.shutdownAbort.signal,
+        );
         if (fetched.truncated) {
           return this.persistOutcome(alert, previousState, {
             conditionMet: false,

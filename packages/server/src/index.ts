@@ -20,6 +20,7 @@ import { parseReloadIntervalSeconds, startFileReload } from './config/fileReload
 import { resolveDatasourcesPath } from './datasource/loader';
 import { resolveRbacPath } from './rbac/loader';
 import { staticDirExists } from './http/staticRoutes';
+import { ShutdownCoordinator } from './shutdown/coordinator';
 
 // 起動時に一度だけ環境変数から設定を読み込む（以後は不変な設定値として使い回す）。
 const config = loadServerConfig();
@@ -101,13 +102,67 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 
 // Graceful shutdown: スケジューラー停止と Trino/DB クローズ（services.shutdown）を
 // 待ってから HTTP サーバーを閉じ、プロセスを正常終了させる。
+// 日本語: 現在は先にHTTP受付とadmissionを止め、drainとHTTP closeの完了後に所有資源を閉じる。
+let httpClosePromise: Promise<void> | undefined;
+const beginHttpClose = (): Promise<void> => {
+  if (httpClosePromise) return httpClosePromise;
+  httpClosePromise = new Promise<void>((resolve, reject) => {
+    server.close((error?: Error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+  return httpClosePromise;
+};
+
+const coordinator = new ShutdownCoordinator({
+  timeoutMs: config.shutdownTimeoutMs,
+  beginHttpClose,
+  stopAdmission: services.stopAdmission,
+  drain: async (context) => {
+    const results = await Promise.allSettled([fileReload.stop(), services.drain(context)]);
+    const errors = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : [],
+    );
+    if (errors.length > 0) throw new AggregateError(errors, 'Shutdown drain failed');
+  },
+  forceCloseHttp: () => {
+    const closable = server as unknown as { closeAllConnections?: () => void };
+    closable.closeAllConnections?.();
+  },
+  closeResources: services.closeResources,
+});
+
+let shutdownPromise: Promise<void> | undefined;
 async function shutdown(): Promise<void> {
-  fileReload?.stop();
-  await services.shutdown();
-  server.close();
-  process.exit(0);
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    const result = await coordinator.shutdown();
+    for (const failure of result.errors) {
+      console.error(`shutdown phase '${failure.phase}' failed`, failure.error);
+    }
+    if (result.timedOut) {
+      console.error(`shutdown exceeded ${config.shutdownTimeoutMs}ms; forcing process exit`);
+      process.exit(1);
+    }
+    if (result.errors.length > 0) process.exitCode = 1;
+  })();
+  return shutdownPromise;
 }
 
 // コンテナ環境 (Docker/k8s) からの終了シグナルを拾い、リソースを解放してから終了する。
-process.on('SIGINT', () => void shutdown());
-process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT', () => {
+  void shutdown().catch((error: unknown) => {
+    console.error('shutdown failed unexpectedly', error);
+    process.exit(1);
+  });
+});
+process.on('SIGTERM', () => {
+  void shutdown().catch((error: unknown) => {
+    console.error('shutdown failed unexpectedly', error);
+    process.exit(1);
+  });
+});

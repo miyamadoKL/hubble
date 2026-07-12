@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { isoTimestamp } from './common';
 import { myPermissionSchema } from './share';
+import {
+  MAX_DESCRIPTION_LENGTH,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_NAME_LENGTH,
+  MAX_SQL_LENGTH,
+} from './limits';
 
 /**
  * SavedQuery model.
@@ -45,12 +51,12 @@ export type SavedQuery = z.infer<typeof savedQuerySchema>;
  * `POST /api/saved-queries`（新規保存）のリクエストボディ。
  */
 export const createSavedQueryRequestSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  statement: z.string().min(1),
-  catalog: z.string().optional(),
-  schema: z.string().optional(),
-  datasourceId: z.string().optional(),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
+  statement: z.string().min(1).max(MAX_SQL_LENGTH),
+  catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   isFavorite: z.boolean().optional(),
 });
 /** 保存済みクエリ作成リクエストの推論型。 */
@@ -61,12 +67,12 @@ export type CreateSavedQueryRequest = z.infer<typeof createSavedQueryRequestSche
  * `PUT /api/saved-queries/:id`（全置換更新）のリクエストボディ。
  */
 export const updateSavedQueryRequestSchema = z.object({
-  name: z.string().min(1),
-  description: z.string(),
-  statement: z.string().min(1),
-  catalog: z.string().optional(),
-  schema: z.string().optional(),
-  datasourceId: z.string().optional(),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH),
+  statement: z.string().min(1).max(MAX_SQL_LENGTH),
+  catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
+  datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   isFavorite: z.boolean(),
 });
 /** 保存済みクエリ更新リクエストの推論型。 */

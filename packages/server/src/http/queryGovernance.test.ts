@@ -32,6 +32,8 @@ class MemoryResultStore implements ResultStore {
     for (const object of objects) this.objects.delete(object.key);
     return { deleted: objects.map((o) => o.key), failed: [] };
   }
+
+  async close(): Promise<void> {}
 }
 
 const APPROVED_SCENARIO: FakeScenario = {

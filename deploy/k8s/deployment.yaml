@@ -22,6 +22,8 @@ spec:
       labels:
         app.kubernetes.io/name: hubble
     spec:
+      # engine lease の既定 drain 55秒と所有資源closeの猶予を確保する。
+      terminationGracePeriodSeconds: 70
       securityContext:
         # Match the image's non-root `node` user (uid/gid 1000)。SQLite 構成
         # (non-production、下記コメント参照) では /data ボリュームへの書き込みに

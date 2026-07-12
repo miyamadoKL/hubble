@@ -73,6 +73,8 @@ export interface QueryExecutionInit {
   onSettled?: (exec: QueryExecution) => void;
   /** 受信した結果ページを外部へ渡す observer。 */
   resultObserver?: QueryResultObserver;
+  /** 実行枠を取得した時点で observer を遅延生成する。 */
+  makeResultObserver?: () => QueryResultObserver | undefined;
 }
 
 // SSE 配信などに使うイベントリスナーの型。emit() から同期的に呼び出される。
@@ -102,7 +104,9 @@ export class QueryExecution {
   readonly engine: QueryEngine;
   private readonly now: () => number;
   private readonly onSettled?: (exec: QueryExecution) => void;
-  private readonly resultObserver?: QueryResultObserver;
+  private resultObserver?: QueryResultObserver;
+  private readonly makeResultObserver?: () => QueryResultObserver | undefined;
+  private resultObserverInitialized = false;
 
   // 可変のライフサイクル状態。state はステートマシンの現在地。
   state: QueryState = 'queued';
@@ -135,6 +139,8 @@ export class QueryExecution {
   private currentNextUri?: string;
   // requestCancel() が呼ばれたことを示すフラグ。run() のループ各所でチェックされる。
   private cancelRequested = false;
+  // registry の slot を取得して run() に入ったか。state='queued' とは別に管理する。
+  private runStarted = false;
   /** Resolves when the execution reaches a terminal state. */
   // settled Promise を解決するための resolve 関数（コンストラクタ内で束縛）。
   private settledResolve!: () => void;
@@ -152,6 +158,8 @@ export class QueryExecution {
     this.now = init.now ?? Date.now;
     this.onSettled = init.onSettled;
     this.resultObserver = init.resultObserver;
+    this.makeResultObserver = init.makeResultObserver;
+    this.resultObserverInitialized = init.resultObserver !== undefined;
     this.submittedAt = this.now();
     // settled は run() が終端状態に到達した時点で resolve される。
     // 呼び出し元（service.ts など）は `await exec.settled` で完了を待てる。
@@ -309,6 +317,32 @@ export class QueryExecution {
     if (this.currentNextUri) {
       await this.client.cancel(this.currentNextUri, this.ctx);
     }
+    // run() に入る前の実行枠待ちだけは、driver が未取得なので直ちに terminal にする。
+    // run() 開始後は H6 の AbortSignal と page 後確認が driver cleanup まで担当する。
+    if (!this.runStarted) {
+      this.settle('canceled', { code: 'CANCELED', message: 'Query canceled before start' });
+    }
+  }
+
+  /** 実行開始時にだけ result observer を生成する。生成失敗はクエリへ伝播させない。 */
+  private initializeResultObserver(): void {
+    if (this.resultObserverInitialized) return;
+    this.resultObserverInitialized = true;
+    try {
+      this.resultObserver = this.makeResultObserver?.();
+    } catch {
+      // 結果永続化は best-effort のため、初期化失敗でも対象クエリを実行する。
+    }
+  }
+
+  /** ページ待機中のキャンセル要求を結果適用前に確定する。 */
+  private async settleCanceledAfterPage(
+    page: Awaited<ReturnType<StatementClient['start']>>,
+  ): Promise<boolean> {
+    if (!this.cancelRequested) return false;
+    if (page.nextUri) await this.client.cancel(page.nextUri, this.ctx);
+    this.settle('canceled', { code: 'CANCELED', message: 'Query canceled' });
+    return true;
   }
 
   /**
@@ -321,20 +355,26 @@ export class QueryExecution {
    * error フィールドと state='failed' として記録される。
    */
   async run(): Promise<void> {
+    this.runStarted = true;
     try {
+      if (this.isTerminal) return;
       // キューイング中にキャンセルされていた場合は Trino へリクエストすら
       // 送らずに即座に canceled として終了する。
       if (this.cancelRequested) {
         this.settle('canceled', { code: 'CANCELED', message: 'Query canceled before start' });
         return;
       }
+      this.initializeResultObserver();
       const signal = this.abort.signal;
       // クエリを開始（POST /v1/statement 相当）。最初のページを受け取る。
       let page = await this.client.start(this.statement, this.ctx, this.mutations, signal);
+      // start が AbortSignal を無視する実装でも、待機中の Stop を完了扱いにしない。
+      if (await this.settleCanceledAfterPage(page)) return;
       this.trinoQueryId = page.id;
       if (page.infoUri) this.infoUri = page.infoUri;
       this.setState('running');
       await this.applyPage(page);
+      if (await this.settleCanceledAfterPage(page)) return;
 
       // Backoff discipline (Trino client protocol): when a page carries data,
       // fetch the next page with zero delay and reset the counter. Only escalate
@@ -380,7 +420,9 @@ export class QueryExecution {
         }
         // 次ページを取得（GET nextUri 相当）し、結果をバッファへ適用する。
         page = await this.client.advance(page.nextUri, this.ctx, this.mutations, signal);
+        if (await this.settleCanceledAfterPage(page)) return;
         await this.applyPage(page);
+        if (await this.settleCanceledAfterPage(page)) return;
       }
       // nextUri が無くなった = Trino 側でクエリが完了した、という合図。
       this.currentNextUri = undefined;
