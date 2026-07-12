@@ -1,7 +1,7 @@
 // Dashboard の CRUD 操作を行うための API クライアントファイル。
 // 各関数は apiFetch の薄いラッパーであり、レスポンスを @hubble/contracts の
 // zod スキーマで検証する。パネルのデータ取得はここでは扱わない
-// (widget が既存のクエリ実行 API を呼ぶ。useWidgetData.ts 参照)。
+// (widget が共有 coordinator から既存のクエリ実行 API を呼ぶ。DashboardWidgetData.tsx 参照)。
 
 import { z } from 'zod';
 import {

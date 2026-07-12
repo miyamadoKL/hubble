@@ -1,7 +1,7 @@
 /**
  * QueryWidgetBody.tsx
  *
- * query widget の本文表示。useWidgetData で取得した結果を viz 設定
+ * query widget の本文表示。dashboard の共有 query 実行で取得した結果を viz 設定
  * (table / chart / counter) に応じて描画する。参照先クエリの消失や
  * 実行エラーはパネル単位のエラー表示に閉じ、ダッシュボード全体は壊さない
  * (Redash の RestrictedWidget と同じ発想)。

@@ -32,6 +32,7 @@ import { listDashboardShares, updateDashboardShares } from '../../api/dashboards
 import { isDocumentOwner } from '../../utils/documentShare';
 import { AddWidgetModal } from './AddWidgetModal';
 import { WidgetCard } from './WidgetCard';
+import { DashboardWidgetDataProvider } from './DashboardWidgetData';
 import {
   useDocumentNavigationGuard,
   useDocumentNavigationOwner,
@@ -86,7 +87,11 @@ export function DashboardView() {
   const query = useDashboard(id);
 
   if (view?.kind === 'new-dashboard') {
-    return <DashboardEditor key="new" dashboard={null} onClose={close} />;
+    return (
+      <DashboardWidgetDataProvider key="new">
+        <DashboardEditor dashboard={null} onClose={close} />
+      </DashboardWidgetDataProvider>
+    );
   }
   if (query.isPending) {
     return (
@@ -106,15 +111,14 @@ export function DashboardView() {
       </div>
     );
   }
+  // id または updatedAt が変わったら、別 dashboard の選択や GitHub pull による
+  // server 側更新として DashboardEditor の name/widgets と共有 query coordinator を
+  // 再生成する。WorkflowView と同じ再マウント方針である。
+  const editorKey = `${query.data.id}:${query.data.updatedAt}`;
   return (
-    <DashboardEditor
-      // id または updatedAt が変わったら (別ダッシュボードを開いた、GitHub pull など
-      // サーバー側で内容が更新された) 再マウントして name/widgets を初期化し直す
-      // (WorkflowView と同じ構成)。
-      key={`${query.data.id}:${query.data.updatedAt}`}
-      dashboard={query.data}
-      onClose={close}
-    />
+    <DashboardWidgetDataProvider key={editorKey}>
+      <DashboardEditor key={editorKey} dashboard={query.data} onClose={close} />
+    </DashboardWidgetDataProvider>
   );
 }
 

@@ -146,7 +146,7 @@ docker compose down -v        # ボリューム（SQLite データ）も削除
 | `configmap.yaml`  | 非機密の環境変数 + `datasources.yaml` 本体（ConfigMap のキーとしてマウント）                                                        |
 | `secret.yaml`     | `TRINO_PASSWORD`（`datasources.yaml` の `passwordEnv` 参照先）と `DATABASE_URL`（**いずれもプレースホルダ**。実値に差し替えること） |
 | `pvc.yaml`        | SQLite 用 PVC（`ReadWriteOnce`、`/data` にマウント）。**non-production 向け、既定の `kustomization.yaml` には含まれない**           |
-| `deployment.yaml` | Deployment（**replicas=1**、`Recreate`、`/api/healthz` で liveness/readiness）                                                      |
+| `deployment.yaml` | Deployment（**replicas=1**、`Recreate`、`/api/healthz` で liveness、`/api/readyz` で readiness）                                    |
 | `service.yaml`    | Service（`ClusterIP`、`:80` → コンテナ `:8080`）                                                                                    |
 
 既定は PostgreSQL（`DATABASE_URL`、`secret.yaml`）が永続化バックエンドです。

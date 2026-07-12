@@ -9,7 +9,11 @@ import {
   type ContextValue,
 } from './recentContexts';
 
-const ctx = (catalog: string, schema: string): ContextValue => ({ catalog, schema });
+const ctx = (catalog: string, schema: string, datasourceId = 'ds-a'): ContextValue => ({
+  datasourceId,
+  catalog,
+  schema,
+});
 
 beforeEach(() => localStorage.clear());
 afterEach(() => localStorage.clear());
@@ -19,6 +23,7 @@ describe('sameContext', () => {
     expect(sameContext(ctx('a', 'b'), ctx('a', 'b'))).toBe(true);
     expect(sameContext(ctx('a', 'b'), ctx('a', 'c'))).toBe(false);
     expect(sameContext(ctx('a', 'b'), ctx('x', 'b'))).toBe(false);
+    expect(sameContext(ctx('a', 'b', 'ds-a'), ctx('a', 'b', 'ds-b'))).toBe(false);
   });
 });
 
@@ -43,6 +48,20 @@ describe('pushRecent', () => {
     expect(list[0]).toEqual(ctx('c', String(MAX_RECENT_CONTEXTS + 2)));
   });
 
+  test('caps and orders recent contexts independently for each datasource', () => {
+    let list: ContextValue[] = [ctx('catalog-b', 'schema-b', 'ds-b')];
+    for (let i = 0; i < MAX_RECENT_CONTEXTS + 2; i += 1) {
+      list = pushRecent(list, ctx('catalog-a', String(i), 'ds-a'));
+    }
+
+    expect(list.filter((context) => context.datasourceId === 'ds-a')).toHaveLength(
+      MAX_RECENT_CONTEXTS,
+    );
+    expect(list.filter((context) => context.datasourceId === 'ds-b')).toEqual([
+      ctx('catalog-b', 'schema-b', 'ds-b'),
+    ]);
+  });
+
   test('ignores blank contexts', () => {
     expect(pushRecent([ctx('a', '1')], ctx('', ''))).toEqual([ctx('a', '1')]);
     expect(pushRecent([ctx('a', '1')], ctx('b', ''))).toEqual([ctx('a', '1')]);
@@ -53,7 +72,7 @@ describe('read / record (localStorage)', () => {
   test('reads back what was recorded, most-recent first', () => {
     recordRecentContext(ctx('tpch', 'sf1'));
     recordRecentContext(ctx('tpch', 'sf10'));
-    expect(readRecentContexts()).toEqual([ctx('tpch', 'sf10'), ctx('tpch', 'sf1')]);
+    expect(readRecentContexts('ds-a')).toEqual([ctx('tpch', 'sf10'), ctx('tpch', 'sf1')]);
   });
 
   test('record returns the updated trimmed list', () => {

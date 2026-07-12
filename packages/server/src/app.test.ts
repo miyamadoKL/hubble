@@ -6,7 +6,7 @@
  * 未知ルートの 404 エラーエンベロープ）が期待通り機能することを確認する。
  * 各ドメインルーター自体の詳細な挙動は http/*.test.ts 側の責務。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { appConfigSchema, apiRoutes } from '@hubble/contracts';
 import { createTestContext } from './test/harness';
 
@@ -34,6 +34,29 @@ describe('GET /api/healthz', () => {
     const res = await app.request(apiRoutes.healthz());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'ok' });
+  });
+});
+
+describe('GET /api/readyz', () => {
+  it('DBと既定エンジンが利用可能なら200を返す', async () => {
+    const { app } = await createTestContext();
+    const res = await app.request(apiRoutes.readyz());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      status: 'ok',
+      checks: { database: 'ok', defaultEngine: 'ok' },
+    });
+  });
+
+  it('依存障害時は503を返してもlivenessは成功する', async () => {
+    const { app, services } = await createTestContext();
+    vi.spyOn(services.readiness, 'check').mockResolvedValue({
+      ready: false,
+      checks: { database: 'failed', defaultEngine: 'ok' },
+    });
+
+    expect((await app.request(apiRoutes.readyz())).status).toBe(503);
+    expect((await app.request(apiRoutes.healthz())).status).toBe(200);
   });
 });
 
@@ -83,7 +106,7 @@ describe('API request body limit', () => {
 });
 
 describe('response security headers', () => {
-  it.each([apiRoutes.healthz(), apiRoutes.config(), '/api/does-not-exist'])(
+  it.each([apiRoutes.healthz(), apiRoutes.readyz(), apiRoutes.config(), '/api/does-not-exist'])(
     'sets low-risk headers on %s',
     async (path) => {
       const { app } = await createTestContext();

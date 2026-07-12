@@ -122,6 +122,42 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
     await db.close();
   });
 
+  it('binds approved notebook statements to the saved execution context', async () => {
+    const db = await open();
+    const { service, notebooks, links } = await buildGovernance(db);
+    const accessor = { user: 'alice', groups: [] as string[], role: 'admin' };
+    const notebook = await notebooks.create('alice', {
+      name: 'Context NB',
+      context: { datasourceId: 'warehouse-b', catalog: 'sales', schema: 'production' },
+      cells: [{ id: 'cell1', kind: 'sql', source: 'SELECT * FROM orders' }],
+    });
+    const document = (await notebooks.get(accessor, notebook.id))!;
+    await links.upsert('notebook', notebook.id, {
+      path: `notebooks/${notebook.id}.yaml`,
+      approvedHash: contentHash(notebookToContent(document)),
+    });
+
+    expect(
+      await service.isStatementApproved(
+        approvalContext('SELECT * FROM orders', {
+          datasourceId: 'warehouse-b',
+          catalog: 'sales',
+          schema: 'production',
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await service.isStatementApproved(
+        approvalContext('SELECT * FROM orders', {
+          datasourceId: DEFAULT_DATASOURCE_ID,
+          catalog: 'sales',
+          schema: 'production',
+        }),
+      ),
+    ).toBe(false);
+    await db.close();
+  });
+
   it('rejects statements after local document modification (once TTL expires)', async () => {
     const db = await open();
     let now = Date.parse('2026-01-01T00:00:00.000Z');

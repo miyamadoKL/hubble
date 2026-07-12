@@ -49,8 +49,8 @@ export function listSavedQueries(query?: string): Promise<SavedQuery[]> {
  * @returns 保存済みクエリ。
  * @throws {ApiClientError} 存在しない ID (共有されていない場合を含む) やリクエスト失敗時。
  */
-export function getSavedQuery(id: string): Promise<SavedQuery> {
-  return apiFetch(savedQuerySchema, apiRoutes.savedQuery(id));
+export function getSavedQuery(id: string, signal?: AbortSignal): Promise<SavedQuery> {
+  return apiFetch(savedQuerySchema, apiRoutes.savedQuery(id), { signal });
 }
 
 /**

@@ -42,9 +42,9 @@ describe('auth — none mode (default)', () => {
     expect((await ctx.app.request('/api/notebooks')).status).toBe(200);
   });
 
-  it('GET /api/healthz is public', async () => {
+  it.each(['/api/healthz', '/api/readyz'])('GET %s is public', async (path) => {
     const ctx = await createTestContext();
-    expect((await ctx.app.request('/api/healthz')).status).toBe(200);
+    expect((await ctx.app.request(path)).status).toBe(200);
   });
 });
 
@@ -282,10 +282,13 @@ describe('auth — proxy mode', () => {
     expect(res.status).toBe(401);
   });
 
-  it('healthz stays public even in proxy mode from an untrusted peer', async () => {
-    const ctx = await proxyCtx('203.0.113.10');
-    expect((await ctx.app.request('/api/healthz')).status).toBe(200);
-  });
+  it.each(['/api/healthz', '/api/readyz'])(
+    '%s stays public even in proxy mode from an untrusted peer',
+    async (path) => {
+      const ctx = await proxyCtx('203.0.113.10');
+      expect((await ctx.app.request(path)).status).toBe(200);
+    },
+  );
 
   it('config requires auth (401 without headers)', async () => {
     const ctx = await proxyCtx();

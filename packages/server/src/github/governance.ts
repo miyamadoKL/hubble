@@ -175,6 +175,7 @@ export class GithubGovernanceService {
         return notebook.cells
           .filter((cell) => cell.kind === 'sql')
           .map((cell) => ({
+            datasourceId: notebook.context.datasourceId,
             catalog: notebook.context.catalog,
             schema: notebook.context.schema,
             statement: cell.source,

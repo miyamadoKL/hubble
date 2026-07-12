@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { parseStatement, collectCompletions } from './analyzer';
 import { SchemaCache } from './sql/SchemaCache';
 import TableReference from './schema/TableReference';
@@ -25,14 +25,25 @@ const CUSTOMER: MetadataTable = {
   ],
 };
 
+const LINEITEM: MetadataTable = {
+  catalog: 'tpch',
+  schema: 'tiny',
+  name: 'lineitem',
+  columns: [
+    { name: 'partkey', type: 'bigint' },
+    { name: 'quantity', type: 'double' },
+  ],
+};
+
 function mockSource(): MetadataSource {
   return {
     listCatalogs: async () => ['tpch'],
     listSchemas: async () => ['tiny'],
-    listTables: async () => ['orders', 'customer'],
+    listTables: async () => ['orders', 'customer', 'lineitem'],
     getTable: async (_c, _s, t) => {
       if (t === 'orders') return ORDERS;
       if (t === 'customer') return CUSTOMER;
+      if (t === 'lineitem') return LINEITEM;
       return undefined;
     },
   };
@@ -45,6 +56,7 @@ async function warmedCache(): Promise<SchemaCache> {
   cache.warmTables('tpch', 'tiny');
   await cache.resolveTable(new TableReference('tpch', 'tiny', 'orders'));
   await cache.resolveTable(new TableReference('tpch', 'tiny', 'customer'));
+  await cache.resolveTable(new TableReference('tpch', 'tiny', 'lineitem'));
   // Let the fire-and-forget warmers settle.
   await new Promise((r) => setTimeout(r, 10));
   return cache;
@@ -179,6 +191,55 @@ describe('collectCompletions', () => {
     const columns = items.filter((item) => item.kind === 'column').map((item) => item.label);
 
     expect(columns).toEqual(expect.arrayContaining(['orderkey', 'customer_name', 'nationkey']));
+  });
+
+  test('外側JOINの補完とwarmingへ内側queryだけのrelationを漏らさない', async () => {
+    const cache = await warmedCache();
+    const warmTable = vi.spyOn(cache, 'warmTable');
+    const sql = [
+      'SELECT  FROM tpch.tiny.orders o',
+      'JOIN tpch.tiny.customer c ON o.custkey = c.custkey',
+      'WHERE EXISTS (SELECT 1 FROM tpch.tiny.lineitem l)',
+    ].join(' ');
+    const items = collectCompletions({
+      sql,
+      offset: 'SELECT '.length,
+      cache,
+      catalog: 'tpch',
+      schema: 'tiny',
+    });
+    const columns = items.filter((item) => item.kind === 'column').map((item) => item.label);
+
+    expect(columns).toEqual(expect.arrayContaining(['orderkey', 'customer_name']));
+    expect(columns).not.toContain('partkey');
+    expect(warmTable.mock.calls.map(([reference]) => reference.tableName)).toEqual(
+      expect.arrayContaining(['orders', 'customer']),
+    );
+    expect(warmTable.mock.calls.map(([reference]) => reference.tableName)).not.toContain(
+      'lineitem',
+    );
+  });
+
+  test('内側queryの補完では自身とancestorのJOIN relationだけを使う', async () => {
+    const cache = await warmedCache();
+    const sql = [
+      'SELECT 1 FROM tpch.tiny.orders o',
+      'JOIN tpch.tiny.customer c ON o.custkey = c.custkey',
+      'WHERE EXISTS (SELECT  FROM tpch.tiny.lineitem l)',
+    ].join(' ');
+    const innerSelect = sql.lastIndexOf('SELECT ') + 'SELECT '.length;
+    const items = collectCompletions({
+      sql,
+      offset: innerSelect,
+      cache,
+      catalog: 'tpch',
+      schema: 'tiny',
+    });
+    const columns = items.filter((item) => item.kind === 'column').map((item) => item.label);
+
+    expect(columns).toEqual(
+      expect.arrayContaining(['orderkey', 'customer_name', 'partkey', 'quantity']),
+    );
   });
 
   test('never throws on malformed input', () => {

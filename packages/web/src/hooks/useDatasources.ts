@@ -41,11 +41,14 @@ export function useDatasources(): {
     // ウィンドウ/タブへのフォーカス復帰時に再取得する。バックグラウンドタブで
     // 放置されている間に allowlist が変わっても、ユーザーが戻ってきた時点で
     // 一覧を追従させるため。
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: 'always',
+    refetchOnReconnect: 'always',
+    refetchInterval: DATASOURCES_STALE_MS,
     retry: 1,
   });
 
   const selectedId = useDatasourceStore((s) => s.selectedId);
+  const executionDatasourceId = useDatasourceStore((s) => s.executionContext.datasourceId);
   const setSelectedId = useDatasourceStore((s) => s.setSelectedId);
 
   const datasources = useMemo(() => query.data?.datasources ?? [], [query.data?.datasources]);
@@ -54,10 +57,11 @@ export function useDatasources(): {
   useEffect(() => {
     if (datasources.length === 0) return;
     const ids = new Set(datasources.map((d) => d.id));
-    if (!selectedId || !ids.has(selectedId)) {
-      setSelectedId(datasources[0]!.id);
+    const effectiveSelectedId = selectedId && ids.has(selectedId) ? selectedId : datasources[0]!.id;
+    if (selectedId !== effectiveSelectedId || executionDatasourceId !== effectiveSelectedId) {
+      setSelectedId(effectiveSelectedId);
     }
-  }, [datasources, selectedId, setSelectedId]);
+  }, [datasources, executionDatasourceId, selectedId, setSelectedId]);
 
   const effectiveId =
     selectedId && datasources.some((d) => d.id === selectedId) ? selectedId : datasources[0]?.id;

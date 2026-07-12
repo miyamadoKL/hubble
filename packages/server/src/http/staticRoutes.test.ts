@@ -19,6 +19,8 @@ describe('STATIC_DIR serving', () => {
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Hubble</title>');
     mkdirSync(join(dir, 'assets'));
     writeFileSync(join(dir, 'assets', 'app-abc123.js'), 'console.log("hi")');
+    writeFileSync(join(dir, 'assets', 'styles-abc12345.css'), 'body{color:red}'.repeat(200));
+    writeFileSync(join(dir, 'favicon.svg'), '<svg></svg>');
   });
 
   afterEach(() => {
@@ -49,6 +51,21 @@ describe('STATIC_DIR serving', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
     expect(await res.text()).toContain('console.log');
+  });
+
+  it('非fingerprint assetを再検証しtext assetをgzip圧縮する', async () => {
+    const { app } = await ctx();
+    const favicon = await app.request('/favicon.svg');
+    expect(favicon.headers.get('cache-control')).toBe('no-cache');
+
+    const compressed = await app.request('/assets/styles-abc12345.css', {
+      headers: { 'Accept-Encoding': 'gzip' },
+    });
+    expect(compressed.headers.get('content-encoding')).toBe('gzip');
+    const decoded = await new Response(
+      compressed.body!.pipeThrough(new DecompressionStream('gzip')),
+    ).text();
+    expect(decoded).toContain('body{color:red}');
   });
 
   it('falls back to index.html for an unknown (deep-link) path', async () => {
@@ -84,9 +101,10 @@ describe('STATIC_DIR serving', () => {
 });
 
 describe('cacheControlFor', () => {
-  it('marks index.html no-cache and everything else immutable', () => {
+  it('fingerprint付きassetだけをimmutableにする', () => {
     expect(cacheControlFor('/srv/web/dist/index.html')).toBe('no-cache');
     expect(cacheControlFor('C:\\web\\dist\\index.html')).toBe('no-cache');
+    expect(cacheControlFor('/srv/web/dist/favicon.svg')).toBe('no-cache');
     expect(cacheControlFor('/srv/web/dist/assets/app-abc123.js')).toBe(
       'public, max-age=31536000, immutable',
     );

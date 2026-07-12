@@ -131,14 +131,15 @@ describe('metadata fetchers hit datasource-scoped routes', () => {
     ]);
   });
 
-  test('refreshMetadata POSTs an empty scope by default', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true }));
-    const res = await refreshMetadata();
+  test('refreshMetadata POSTs an empty scope to the selected datasource', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, datasourceId: DS }));
+    const res = await refreshMetadata(DS);
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('/api/metadata/refresh');
+    expect(url).toBe(`/api/datasources/${DS}/metadata/refresh`);
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual({});
     expect(res.ok).toBe(true);
+    expect(res.datasourceId).toBe(DS);
   });
 });
 

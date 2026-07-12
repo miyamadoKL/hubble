@@ -63,6 +63,7 @@ import { AiService } from './ai/service';
 import { AiRateLimiter } from './ai/rateLimiter';
 import { JobAdmissionController } from './schedule/admission';
 import type { ShutdownDrainContext } from './shutdown/coordinator';
+import { ReadinessService } from './health/readiness';
 
 export interface Services {
   config: ServerConfig;
@@ -102,6 +103,8 @@ export interface Services {
   ai?: AiService;
   /** AI アシスタントのプロセス共有利用枠。provider が off のときは undefined。 */
   aiRateLimiter?: AiRateLimiter;
+  /** DB と既定エンジンの受付可能状態を確認する。 */
+  readiness: ReadinessService;
   /** GitHub OAuth state 生成用の now 注入 (テスト用)。 */
   githubNow?: () => number;
   reloadDatasources: () => Promise<void>;
@@ -175,6 +178,11 @@ export async function buildServices(
   const built = buildEngines(datasources, buildEngineOptions);
   const { engines } = built;
   const runtime = { defaultDatasourceId: built.defaultDatasourceId };
+  const readiness = new ReadinessService({
+    db,
+    getDefaultEngine: () => engines.get(runtime.defaultDatasourceId),
+    now: options.now,
+  });
 
   const metadata = new MetadataService(
     engines,
@@ -624,6 +632,7 @@ export async function buildServices(
     githubGovernance,
     ai,
     aiRateLimiter,
+    readiness,
     githubNow,
     reloadDatasources,
     reloadRbac,

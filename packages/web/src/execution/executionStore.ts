@@ -151,6 +151,9 @@ interface CellRuntime {
   cancelRequested?: boolean;
 }
 
+/** 保存済み結果の復元が UI へ通知する判定結果。 */
+export type RestoreCellOutcome = 'restored' | 'unavailable' | 'superseded';
+
 // ストアが公開する state + action の型。cells が唯一の reactive state で、
 // あとはすべて cells を操作するための action。
 interface ExecutionStoreState {
@@ -184,7 +187,7 @@ interface ExecutionStoreState {
    * Re-subscribe to a known query (reload/reconnect restore).
    * 既知のクエリ ID へ再購読する（リロード/再接続時の復元用）。
    */
-  restoreCell: (cellId: string, queryId: string) => Promise<void>;
+  restoreCell: (cellId: string, queryId: string) => Promise<RestoreCellOutcome>;
 }
 
 // Per-cell runtime (subscriptions, generation) is kept outside the reactive
@@ -595,9 +598,9 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
       try {
         snapshot = await fetchQuerySnapshot(queryId);
       } catch {
-        return; // query gone (TTL-swept) — nothing to restore
+        return 'unavailable'; // query gone (TTL-swept) — nothing to restore
       }
-      if (runtimeFor(cellId).generation !== generation) return;
+      if (runtimeFor(cellId).generation !== generation) return 'superseded';
 
       const rows: ResultRow[] = [];
       try {
@@ -608,7 +611,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
       } catch {
         // ignore — rows may still arrive over SSE
       }
-      if (runtimeFor(cellId).generation !== generation) return;
+      if (runtimeFor(cellId).generation !== generation) return 'superseded';
 
       const record: CellExecution = {
         queryId,
@@ -636,6 +639,7 @@ export const useExecutionStore = create<ExecutionStoreState>((set, get) => {
       if (!TERMINAL.has(snapshot.state)) {
         subscribe(cellId, queryId, generation);
       }
+      return 'restored';
     },
   };
 });

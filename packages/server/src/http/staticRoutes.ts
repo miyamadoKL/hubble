@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { Context, Hono, MiddlewareHandler } from 'hono';
 import { serveStatic } from '@hono/node-server/serve-static';
+import { compress } from 'hono/compress';
 import type { AuthVariables } from '../auth/middleware';
 
 /** Cache-Control for fingerprinted assets (Vite emits hashed file names). */
@@ -23,6 +24,9 @@ const IMMUTABLE = 'public, max-age=31536000, immutable';
 /** Cache-Control for the SPA entrypoint — always revalidate. */
 // index.html はデプロイのたびに指すアセットが変わるため、常にサーバーへ再検証させる。
 const NO_CACHE = 'no-cache';
+
+// Vite の fingerprint を持つ assets 配下のファイルだけを恒久キャッシュ対象にする。
+const FINGERPRINTED_ASSET = /(?:^|[/\\])assets[/\\][^/\\]+-[A-Za-z0-9_-]{6,}\.[^/\\]+$/;
 
 /**
  * Decide the Cache-Control for a resolved file path. The SPA shell
@@ -34,7 +38,7 @@ const NO_CACHE = 'no-cache';
  * @returns `index.html` なら `no-cache`、それ以外（ハッシュ付きアセット想定）なら `immutable`。
  */
 export function cacheControlFor(resolvedPath: string): string {
-  return /(?:^|[/\\])index\.html$/.test(resolvedPath) ? NO_CACHE : IMMUTABLE;
+  return FINGERPRINTED_ASSET.test(resolvedPath) ? IMMUTABLE : NO_CACHE;
 }
 
 /**
@@ -114,6 +118,9 @@ export function registerStaticServing(
 ): void {
   const root = toServeStaticRoot(staticDir);
   const indexPath = join(root, 'index.html');
+
+  // standalone server でも text asset を圧縮し、reverse proxy の有無で転送量を変えない。
+  app.use('*', compress());
 
   // Real files first: serveStatic resolves the request path under `root`.
   // 実在するファイル（JS/CSS/画像など）へのリクエストは、まずここでそのまま返す。

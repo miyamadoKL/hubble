@@ -10,6 +10,7 @@ import {
   catalogSchema,
   sampleRowsResponseSchema,
   metadataRefreshRequestSchema,
+  metadataRefreshResponseSchema,
   createQueryRequestSchema,
   queryStateSchema,
   queryStatsSchema,
@@ -275,6 +276,13 @@ describe('metadata', () => {
 
   it('parses an empty metadata refresh request', () => {
     expect(metadataRefreshRequestSchema.parse({})).toEqual({});
+  });
+
+  it('parses the datasource-scoped metadata refresh outcome', () => {
+    expect(metadataRefreshResponseSchema.parse({ ok: true, datasourceId: 'warehouse' })).toEqual({
+      ok: true,
+      datasourceId: 'warehouse',
+    });
   });
 });
 

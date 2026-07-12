@@ -3,7 +3,7 @@
  * 見た目のバリエーションとして、下線でアクティブタブを示す
  * "underline" と、コンパクトなピル型の "segmented" の2種類を持つ。
  */
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
@@ -62,18 +62,54 @@ export function Tabs<T extends string>({
   className,
   variant = 'underline',
 }: TabsProps<T>) {
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const selectedIndex = items.findIndex((item) => item.id === value && !item.disabled);
+  const fallbackIndex = items.findIndex((item) => !item.disabled);
+  const tabStopIndex = selectedIndex >= 0 ? selectedIndex : fallbackIndex;
+
+  /** 有効な次のタブへ focus と選択を移す。 */
+  const moveTo = (index: number) => {
+    const item = items[index];
+    if (!item || item.disabled) return;
+    onChange(item.id);
+    tabRefs.current[index]?.focus();
+  };
+
+  /** WAI-ARIA の水平 tablist キー操作を処理する。 */
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const enabled = items
+      .map((item, itemIndex) => ({ item, itemIndex }))
+      .filter((x) => !x.item.disabled);
+    if (enabled.length === 0) return;
+    const position = enabled.findIndex((entry) => entry.itemIndex === index);
+    let destination: number | undefined;
+    if (event.key === 'ArrowRight') {
+      destination = enabled[(position + 1) % enabled.length]!.itemIndex;
+    } else if (event.key === 'ArrowLeft') {
+      destination = enabled[(position - 1 + enabled.length) % enabled.length]!.itemIndex;
+    } else if (event.key === 'Home') {
+      destination = enabled[0]!.itemIndex;
+    } else if (event.key === 'End') {
+      destination = enabled[enabled.length - 1]!.itemIndex;
+    }
+    if (destination === undefined) return;
+    event.preventDefault();
+    moveTo(destination);
+  };
+
   // segmented バリアント: 枠付きコンテナ内にピル型のボタンを並べるコンパクトな見た目
   if (variant === 'segmented') {
     return (
       <div
         role="tablist"
+        aria-orientation="horizontal"
         className={cn(
           'inline-flex items-center gap-0.5 rounded-md border border-border-base bg-surface-inset p-0.5',
           className,
         )}
       >
         {/* items 配列を1つずつボタンとして描画し、value と一致する id をアクティブ表示する */}
-        {items.map((item) => {
+        {items.map((item, index) => {
           const active = item.id === value;
           const Icon = item.icon;
           return (
@@ -82,8 +118,13 @@ export function Tabs<T extends string>({
               type="button"
               role="tab"
               aria-selected={active}
+              tabIndex={index === tabStopIndex ? 0 : -1}
+              ref={(element) => {
+                tabRefs.current[index] = element;
+              }}
               disabled={item.disabled}
               onClick={() => onChange(item.id)}
+              onKeyDown={(event) => onTabKeyDown(event, index)}
               className={cn(
                 'inline-flex h-6 items-center gap-1.5 rounded-sm px-2 text-xs font-medium transition-colors duration-100',
                 'disabled:cursor-not-allowed disabled:opacity-40',
@@ -107,10 +148,11 @@ export function Tabs<T extends string>({
   return (
     <div
       role="tablist"
+      aria-orientation="horizontal"
       className={cn('flex items-stretch gap-0.5 border-b border-border-base', className)}
     >
       {/* items 配列を1つずつボタンとして描画し、アクティブなタブにはアクセントカラーの下線を付与する */}
-      {items.map((item) => {
+      {items.map((item, index) => {
         const active = item.id === value;
         const Icon = item.icon;
         return (
@@ -119,8 +161,13 @@ export function Tabs<T extends string>({
             type="button"
             role="tab"
             aria-selected={active}
+            tabIndex={index === tabStopIndex ? 0 : -1}
+            ref={(element) => {
+              tabRefs.current[index] = element;
+            }}
             disabled={item.disabled}
             onClick={() => onChange(item.id)}
+            onKeyDown={(event) => onTabKeyDown(event, index)}
             className={cn(
               'relative inline-flex h-8 items-center gap-1.5 px-3 text-xs font-medium transition-colors duration-100',
               '-mb-px border-b-2 disabled:cursor-not-allowed disabled:opacity-40',

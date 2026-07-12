@@ -15,6 +15,8 @@ const enc = encodeURIComponent;
 export const apiRoutes = {
   // ヘルスチェック用エンドポイント。
   healthz: () => '/api/healthz',
+  // DB と既定エンジンの受付可能状態を確認するエンドポイント。
+  readyz: () => '/api/readyz',
   // アプリ設定取得エンドポイント。
   config: () => '/api/config',
   // 宣言的に設定されたデータソース一覧取得。
@@ -49,6 +51,9 @@ export const apiRoutes = {
     `/api/datasources/${enc(datasourceId)}/catalogs/${enc(catalog)}/schemas/${enc(schema)}/tables/${enc(table)}`,
   datasourceTableSample: (datasourceId: string, catalog: string, schema: string, table: string) =>
     `/api/datasources/${enc(datasourceId)}/catalogs/${enc(catalog)}/schemas/${enc(schema)}/tables/${enc(table)}/sample`,
+  // 指定データソースのメタデータキャッシュを強制再取得。
+  datasourceMetadataRefresh: (datasourceId: string) =>
+    `/api/datasources/${enc(datasourceId)}/metadata/refresh`,
 
   // Queries
   // クエリ実行の開始（POST）/ 一覧などの基点パス。

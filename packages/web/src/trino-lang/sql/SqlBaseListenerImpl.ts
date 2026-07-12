@@ -188,6 +188,17 @@ class SqlBaseListenerImpl extends SqlBaseListener {
     const named = this.getNamedQueryNames();
     return this.specialHighlights.map((h) => h.getDescriptor(named));
   }
+
+  /**
+   * 指定トークンを範囲に含む query scope の relation を返す。
+   * querySpecification は入れ子になるため、結果は最内 scope と ancestor だけになる。
+   */
+  getStatementsVisibleAt(tokenIndex: number): StatementDescriptor[] {
+    return this.statements.filter(
+      (statement) =>
+        statement.start.tokenIndex <= tokenIndex && tokenIndex <= statement.end.tokenIndex,
+    );
+  }
 }
 
 export default SqlBaseListenerImpl;

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { AppError, TrinoQueryError, TrinoTransportError } from '../errors';
 import { defaultRetryPolicy, retryPolicySchema } from '@hubble/contracts';
-import { backoffMs, classifyFailure, retryPolicyForStatement, shouldRetry } from './retry';
+import {
+  backoffMs,
+  classifyFailure,
+  MAX_TIMER_DELAY_MS,
+  retryPolicyForStatement,
+  shouldRetry,
+} from './retry';
 
 function userError(): TrinoQueryError {
   return new TrinoQueryError({ message: 'bad sql', errorType: 'USER_ERROR' });
@@ -73,6 +79,16 @@ describe('backoff', () => {
       backoffMultiplier: 2,
     });
     expect(backoffMs(defaultRetryPolicy, 1)).toBe(60_000);
+  });
+
+  it('Node.jsの安全範囲を超える待機時間を最大値へ制限する', () => {
+    const large = retryPolicySchema.parse({
+      maxAttempts: 10,
+      backoffSeconds: 3_600,
+      backoffMultiplier: 10,
+    });
+
+    expect(backoffMs(large, 4)).toBe(MAX_TIMER_DELAY_MS);
   });
 });
 
