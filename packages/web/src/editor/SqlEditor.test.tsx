@@ -92,6 +92,14 @@ function Harness({ trinoLanguage }: { trinoLanguage: boolean }) {
   return <SqlEditor value="SELECT 1" trinoLanguage={trinoLanguage} />;
 }
 
+function deferredValue<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('SqlEditor datasource language switch', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -139,5 +147,47 @@ describe('SqlEditor datasource language switch', () => {
     expect(setModelMarkers).toHaveBeenCalledWith(model, TRINO_MARKER_OWNER, []);
     expect(setModelLanguage).toHaveBeenLastCalledWith(model, 'sql');
     expect(attachDiagnostics).toHaveBeenCalledTimes(1);
+  });
+
+  test('uses the latest controlled value when Monaco resolves after a prop update', async () => {
+    const pending = deferredValue<typeof import('monaco-editor')>();
+    let currentValue = '';
+    const setValue = vi.fn((next: string) => {
+      currentValue = next;
+    });
+    const delayedEditor = {
+      ...editor,
+      getValue: () => currentValue,
+      setValue,
+    };
+    const create = vi.fn((_host: HTMLElement, options: { value?: string }) => {
+      currentValue = options.value ?? '';
+      return delayedEditor;
+    });
+    const delayedMonaco = {
+      editor: {
+        create,
+        setModelLanguage,
+        setModelMarkers,
+      },
+    };
+    vi.mocked(loadMonaco).mockReturnValue(pending.promise);
+
+    act(() => {
+      root.render(<SqlEditor value="initial" trinoLanguage={false} />);
+    });
+    act(() => {
+      root.render(<SqlEditor value="latest" trinoLanguage={false} />);
+    });
+    expect(create).not.toHaveBeenCalled();
+
+    await act(async () => {
+      pending.resolve(delayedMonaco as unknown as typeof import('monaco-editor'));
+      await pending.promise;
+    });
+
+    expect(create.mock.calls[0]?.[1].value).toBe('latest');
+    expect(currentValue).toBe('latest');
+    expect(setValue).not.toHaveBeenCalled();
   });
 });

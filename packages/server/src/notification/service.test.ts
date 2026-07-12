@@ -1,10 +1,13 @@
 import nodemailer from 'nodemailer';
+import http from 'node:http';
+import type { Socket } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultRetryPolicy } from '@hubble/contracts';
 import { AuditLogger, type AuditEventInput } from '../audit';
 import type { ScheduleRecord } from '../store/schedules';
 import type { AlertRecord } from '../store/alerts';
 import type { ServerConfig } from '../config';
+import { parseCidrList } from '../auth/cidr';
 import type { SafeFetch } from './safeFetch';
 import { NotificationService } from './service';
 
@@ -88,13 +91,34 @@ function alert(webhookUrl: string): AlertRecord {
   };
 }
 
+function alertInput(webhookUrl: string) {
+  return {
+    alert: alert(webhookUrl),
+    outcome: {
+      state: 'triggered' as const,
+      previousState: 'ok' as const,
+      conditionMet: true,
+      observedValue: '101',
+      notified: true,
+      errorType: null,
+      errorMessage: null,
+    },
+    savedQueryName: 'row count',
+    datasourceId: 'trino-default',
+    evaluatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
 function serviceSafeFetch(service: NotificationService): SafeFetch {
   return (service as unknown as { fetchImpl: SafeFetch }).fetchImpl;
 }
 
 describe('NotificationService', () => {
   it('sends Slack via fetch and records a success audit row', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => ({ ok: true, status: 200 }) as Response);
+    const cancel = vi.fn(async () => undefined);
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => ({ ok: true, status: 200, body: { cancel } }) as unknown as Response,
+    );
     const { audit, records } = auditRecorder();
     const service = new NotificationService(
       notificationConfig({
@@ -128,6 +152,7 @@ describe('NotificationService', () => {
         outcome: 'sent',
       },
     });
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it('truncates the failure reason by code point', async () => {
@@ -146,6 +171,38 @@ describe('NotificationService', () => {
     const reason = body.text.split('Reason: ')[1] ?? '';
     expect(Array.from(reason)).toHaveLength(500);
     expect(reason).not.toContain('�');
+  });
+
+  it('Slack非2xxでもbodyを解放し、元のHTTP errorを監査する', async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error('cancel failed');
+    });
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => ({ ok: false, status: 503, body: { cancel } }) as unknown as Response,
+    );
+    const logWarn = vi.fn();
+    const { audit, records } = auditRecorder();
+    const service = new NotificationService(
+      notificationConfig({ slackWebhookUrl: 'https://hooks.slack.test/services/T' }),
+      { fetchImpl, audit, logWarn, webhookLookup: PUBLIC_LOOKUP },
+    );
+
+    await service.sendFailure(input());
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(logWarn).toHaveBeenCalledWith(
+      'notification send skipped or failed: channel=slack',
+      expect.objectContaining({ message: 'Slack webhook returned 503' }),
+    );
+    expect(records[0]).toMatchObject({
+      action: 'notification.send',
+      detail: {
+        channel: 'slack',
+        success: false,
+        outcome: 'failed',
+        error: 'Slack webhook returned 503',
+      },
+    });
   });
 
   it('sends email through an injected transport only when email is selected', async () => {
@@ -209,21 +266,7 @@ describe('NotificationService', () => {
     const { audit, records } = auditRecorder();
     const service = new NotificationService(notificationConfig(), { fetchImpl, audit });
 
-    await service.sendAlertTriggered({
-      alert: alert('https://127.0.0.1/hook'),
-      outcome: {
-        state: 'triggered',
-        previousState: 'ok',
-        conditionMet: true,
-        observedValue: '101',
-        notified: true,
-        errorType: null,
-        errorMessage: null,
-      },
-      savedQueryName: 'row count',
-      datasourceId: 'trino-default',
-      evaluatedAt: '2026-01-01T00:00:00.000Z',
-    });
+    await service.sendAlertTriggered(alertInput('https://127.0.0.1/hook'));
 
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(records[0]).toMatchObject({
@@ -235,6 +278,77 @@ describe('NotificationService', () => {
         error: 'Webhook destination is not allowed',
       },
     });
+  });
+
+  it('body cancel失敗でwebhookの元の成功またはHTTP errorを覆さない', async () => {
+    const cancelSuccess = vi.fn(async () => {
+      throw new Error('success cancel failed');
+    });
+    const cancelFailure = vi.fn(async () => {
+      throw new Error('failure cancel failed');
+    });
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: { cancel: cancelSuccess },
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        body: { cancel: cancelFailure },
+      } as unknown as Response);
+    const service = new NotificationService(notificationConfig(), {
+      fetchImpl,
+      webhookLookup: PUBLIC_LOOKUP,
+    });
+    const input = alertInput('https://hooks.example.com/alert');
+
+    await expect(service.sendChannel('webhook', input)).resolves.toBeUndefined();
+    await expect(service.sendChannel('webhook', input)).rejects.toThrow('Webhook returned 503');
+    expect(cancelSuccess).toHaveBeenCalledOnce();
+    expect(cancelFailure).toHaveBeenCalledOnce();
+  });
+
+  it('遅いchunked webhookを複数送信してもsocket数が通知件数に比例しない', async () => {
+    const sockets = new Set<Socket>();
+    let maxSockets = 0;
+    const server = http.createServer((request, response) => {
+      request.resume();
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.write('accepted');
+    });
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      maxSockets = Math.max(maxSockets, sockets.size);
+      socket.once('close', () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server did not start');
+    const url = `http://127.0.0.1:${address.port}/hook`;
+    const service = new NotificationService(
+      notificationConfig({
+        webhookAllowedCidrs: parseCidrList('127.0.0.0/8'),
+        webhookAllowHttp: true,
+        webhookTimeoutMs: 2_000,
+      }),
+    );
+
+    try {
+      for (let index = 0; index < 12; index += 1) {
+        await service.sendChannel('webhook', alertInput(url));
+      }
+      await vi.waitFor(() => expect(sockets.size).toBe(0));
+      expect(maxSockets).toBeLessThanOrEqual(2);
+    } finally {
+      await service.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 
   it('imports nodemailer and creates a transport without sending mail', () => {

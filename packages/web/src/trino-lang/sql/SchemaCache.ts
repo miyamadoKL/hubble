@@ -39,8 +39,8 @@ export class SchemaCache {
   private readonly schemas = new Map<string, string[]>(); // catalog -> schema names
 
   // In-flight de-dup guards so warmers don't stampede the source.
-  // 同じキーへのウォーマーが同時に何度も走らないようにするための実行中フラグ集合。
-  private readonly inflight = new Set<string>();
+  // 同じキーへのウォーマーを重複させず、完了時にrequest所有者を照合するためのMap。
+  private readonly inflight = new Map<string, symbol>();
   private readonly revisions = new Map<string, number>();
 
   constructor(source: MetadataSource, getDatasourceId: () => string = () => 'default') {
@@ -184,14 +184,16 @@ export class SchemaCache {
     key = `${datasourceId}\0${key}`;
     if (this.inflight.has(key)) return;
     const revision = this.revision(datasourceId);
-    this.inflight.add(key);
+    const requestToken = Symbol(key);
+    this.inflight.set(key, requestToken);
     run(() => revision === this.revision(datasourceId))
       .catch(() => {
         // Swallow: metadata is best-effort for completion/highlight. Errors
         // surface elsewhere (the schema tree / API client).
       })
       .finally(() => {
-        this.inflight.delete(key);
+        // invalidate後に同じkeyを取得した新requestの所有権は、旧requestから削除させない。
+        if (this.inflight.get(key) === requestToken) this.inflight.delete(key);
       });
   }
 

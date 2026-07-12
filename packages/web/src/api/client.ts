@@ -162,6 +162,22 @@ export async function apiFetch<T>(
 }
 
 /**
+ * 同一 origin のダウンロード API を取得し、成功本文を Blob として返す。
+ * 非 2xx 応答は JSON API と同じ `ApiClientError` に変換する。
+ * 呼び出し側が object URL を作るため、成功本文はブラウザーのメモリーへ全量保持される。
+ * @param path ダウンロード API のパス。
+ * @returns 応答本文の Blob。
+ * @throws {ApiClientError} HTTP 応答が非 2xx の場合。
+ */
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  const res = await fetch(path);
+  if (!res.ok) {
+    throw new ApiClientError(res.status, await parseErrorBody(res));
+  }
+  return res.blob();
+}
+
+/**
  * Fetch the public app config.
  * `GET /api/config` を呼び出し、認証不要で公開されているアプリ設定を取得する。
  * @returns アプリ設定（AppConfig）。

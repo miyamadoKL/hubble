@@ -9,7 +9,12 @@ import type { ScheduleRecord } from '../store/schedules';
 import type { AlertRecord } from '../store/alerts';
 import type { AlertEvalResponse } from '@hubble/contracts';
 import type { AuditJson, AuditLogger } from '../audit';
-import { createSafeFetch, type SafeFetch, type SafeFetchOptions } from './safeFetch';
+import {
+  cancelResponseBodyBestEffort,
+  createSafeFetch,
+  type SafeFetch,
+  type SafeFetchOptions,
+} from './safeFetch';
 
 interface MailSender {
   sendMail(message: {
@@ -195,8 +200,12 @@ export class NotificationService
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-    if (!res.ok) {
-      throw new Error(`Slack webhook returned ${res.status}`);
+    try {
+      if (!res.ok) {
+        throw new Error(`Slack webhook returned ${res.status}`);
+      }
+    } finally {
+      await cancelResponseBodyBestEffort(res);
     }
   }
 
@@ -233,8 +242,12 @@ export class NotificationService
         },
       }),
     });
-    if (!res.ok) {
-      throw new Error(`Webhook returned ${res.status}`);
+    try {
+      if (!res.ok) {
+        throw new Error(`Webhook returned ${res.status}`);
+      }
+    } finally {
+      await cancelResponseBodyBestEffort(res);
     }
   }
 

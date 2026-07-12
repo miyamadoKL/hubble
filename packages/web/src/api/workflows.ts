@@ -20,7 +20,7 @@ import {
   type WorkflowRunSummary,
   type WorkflowStepResultPage,
 } from '@hubble/contracts';
-import { apiFetch } from './client';
+import { apiFetch, apiFetchBlob } from './client';
 
 // 一覧取得レスポンス用のスキーマ。サーバー (workflowRoutes) は配列をそのまま返す。
 const workflowListSchema = z.array(workflowSchema);
@@ -152,6 +152,16 @@ export function workflowRunZipUrl(runId: string): string {
 /** run の xlsx 一括ダウンロード URL (a[href] で直接開く)。 */
 export function workflowRunXlsxUrl(runId: string): string {
   return apiRoutes.workflowRunDownloadXlsx(runId);
+}
+
+/** run の CSV zip を取得し、非 2xx 応答を API エラーとして扱う。 */
+export function downloadWorkflowRunZip(runId: string): Promise<Blob> {
+  return apiFetchBlob(workflowRunZipUrl(runId));
+}
+
+/** run の xlsx を取得し、非 2xx 応答を API エラーとして扱う。 */
+export function downloadWorkflowRunXlsx(runId: string): Promise<Blob> {
+  return apiFetchBlob(workflowRunXlsxUrl(runId));
 }
 
 export function getWorkflowStepResult(
