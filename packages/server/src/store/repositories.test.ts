@@ -153,6 +153,28 @@ for (const backend of dbBackends) {
         expect(await repo.list(accessor('bob'))).toHaveLength(1);
         expect(await repo.get(accessor('carol'), created.id)).toBeUndefined();
       });
+
+      it('does not expose a notebook through an unknown share permission', async () => {
+        const { repo } = await openNotebookRepo();
+        const created = await repo.create('alice', { name: 'Private nb' });
+        await db.run(
+          `INSERT INTO document_shares
+             (id, document_type, document_id, subject_type, subject_value, permission, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            'shr_invalid_permission',
+            'notebook',
+            created.id,
+            'user',
+            'bob',
+            'future-permission',
+            'alice',
+            new Date().toISOString(),
+          ],
+        );
+
+        expect(await repo.list(accessor('bob'))).toEqual([]);
+      });
     });
 
     describe('SavedQueryRepository', () => {

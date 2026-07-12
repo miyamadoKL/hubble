@@ -7,6 +7,7 @@ import { newId } from '../util/id';
 
 export const auditActionSchema = z.enum([
   'query.execute',
+  'query.cancel',
   'query.kill',
   'query.result.persist',
   'csv.download',
@@ -23,6 +24,8 @@ export const auditActionSchema = z.enum([
   'github.pr.create',
   'github.pull',
   'ai.assist',
+  'authz.denied',
+  'config.reload',
 ]);
 
 export type AuditAction = z.infer<typeof auditActionSchema>;
@@ -65,6 +68,23 @@ export interface AuditLogRow {
   datasource: string | null;
   detail: AuditJson;
   createdAt: string;
+}
+
+/** 監査ログのカーソル検索条件。 */
+export interface AuditSearchInput {
+  actor?: string;
+  action?: AuditAction;
+  datasource?: string;
+  from?: string;
+  to?: string;
+  cursor?: { createdAt: string; id: string };
+  limit: number;
+}
+
+/** 監査ログのカーソル検索結果。 */
+export interface AuditSearchResult {
+  items: AuditLogRow[];
+  nextCursor?: { createdAt: string; id: string };
 }
 
 interface AuditLogDbRow {
@@ -125,11 +145,57 @@ export class AuditRepository {
     );
     return rows.map(rowToAuditLog);
   }
+
+  /** 新しい順の複合カーソルで監査ログを検索する。 */
+  async search(input: AuditSearchInput): Promise<AuditSearchResult> {
+    const conditions: string[] = [];
+    const params: Array<string | number> = [];
+    if (input.actor !== undefined) {
+      conditions.push('actor = ?');
+      params.push(input.actor);
+    }
+    if (input.action !== undefined) {
+      conditions.push('action = ?');
+      params.push(input.action);
+    }
+    if (input.datasource !== undefined) {
+      conditions.push('datasource = ?');
+      params.push(input.datasource);
+    }
+    if (input.from !== undefined) {
+      conditions.push('created_at >= ?');
+      params.push(input.from);
+    }
+    if (input.to !== undefined) {
+      conditions.push('created_at <= ?');
+      params.push(input.to);
+    }
+    if (input.cursor !== undefined) {
+      conditions.push('(created_at < ? OR (created_at = ? AND id < ?))');
+      params.push(input.cursor.createdAt, input.cursor.createdAt, input.cursor.id);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = await this.db.query<AuditLogDbRow>(
+      `SELECT * FROM audit_log ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+      [...params, input.limit + 1],
+    );
+    const page = rows.slice(0, input.limit).map(rowToAuditLog);
+    const last = page.at(-1);
+    return {
+      items: page,
+      ...(rows.length > input.limit && last
+        ? { nextCursor: { createdAt: last.createdAt, id: last.id } }
+        : {}),
+    };
+  }
 }
 
 interface AuditWriter {
   record(input: AuditEventInput): Promise<string>;
   listForTest(): Promise<AuditLogRow[]>;
+  search?(input: AuditSearchInput): Promise<AuditSearchResult>;
 }
 
 export class AuditLogger {
@@ -149,6 +215,14 @@ export class AuditLogger {
 
   async listForTest(): Promise<AuditLogRow[]> {
     return this.repository.listForTest();
+  }
+
+  /** 監査ログを検索する。読み取り失敗は呼び出し側へ返す。 */
+  async search(input: AuditSearchInput): Promise<AuditSearchResult> {
+    if (this.repository.search === undefined) {
+      throw new Error('audit search is not supported by this writer');
+    }
+    return this.repository.search(input);
   }
 }
 

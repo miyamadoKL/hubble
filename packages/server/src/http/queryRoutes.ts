@@ -558,6 +558,13 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
   app.delete('/:id', async (c) => {
     const exec = ownedExec(c);
     await exec.requestCancel();
+    await services.audit.record({
+      actor: c.var.principal.user,
+      action: 'query.cancel',
+      target: exec.queryId,
+      datasource: exec.datasourceId,
+      detail: { targetOwner: c.var.principal.user },
+    });
     return c.json(exec.snapshot());
   });
 

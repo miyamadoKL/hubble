@@ -249,7 +249,11 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo u
 （`query.write` のみ）が全員に割り当てられ、従来どおり全ユーザーが書き込み可能です。
 `query.write` 権限の有無で書き込み文の実行を拒否し、ロールごとに Query Guard 上限を
 上書きできます。割り当てキーは `email` / `user` / `emailDomain` / `group` のいずれか
-1 つです。`group` は oauth2-proxy 等が付与する `X-Forwarded-Groups` ヘッダー
+1 つです。任意の `priority` は大きい値から評価され、未指定は `0`、同値は記述順です。
+同じ照合キーと値を同じ優先順位で重複させると、設定の読み込みに失敗します。
+すべての割り当て値は大文字と小文字を区別せずに照合します。
+従来 `user` の大文字と小文字を使い分けていた設定は、値を一意にしてから更新してください。
+`group` は oauth2-proxy 等が付与する `X-Forwarded-Groups` ヘッダー
 （`AUTH_SSO_HEADER_GROUPS`、既定 `x-forwarded-groups`）のメンバーシップと照合します。
 Google Workspace のグループを使う場合は、oauth2-proxy の Google provider で
 グループ解決を有効にする必要があります。
@@ -272,6 +276,8 @@ owner、データソース、statement 先頭、state、経過時間を 5 秒間
 `query.killAny` 権限を持つユーザーは、確認ダイアログ経由で任意ユーザーのクエリを
 kill できます。kill 操作はサーバーログに 1 行（実行者、対象 owner、queryId）を残します。
 `rbac.yaml` が無い `unrestricted` 運用ではこれらの権限は付与されず、従来どおりの UI です。
+監査ログ検索 API (`GET /api/admin/audit-logs`) は独立した `audit.view` 権限を要求します。
+検索条件には actor、action、datasource、期間を指定でき、応答の cursor で次ページを取得できます。
 
 #### datasource 露出の制限（`role.datasources`）
 

@@ -14,6 +14,7 @@ import { batchSize, buildPage, nextQueryId } from '../sql/response';
 import { RowStreamReader } from '../sql/streamReader';
 import { acquireSqlResource, createSqlAbortError, raceSqlAbort } from '../sql/abort';
 import type { MysqlPool } from './pool';
+import { noSqlBackoff, SqlStatementLifecycle } from '../sql/statementLifecycle';
 
 export interface MysqlStatementClientOptions {
   /** データソース既定の readOnly（プール返却時に戻す値）。 */
@@ -74,8 +75,6 @@ export function createMysqlStatementClient(
   pool: MysqlPool,
   options: MysqlStatementClientOptions,
 ): StatementClient {
-  const executions = new Map<string, MysqlExecution>();
-
   const restoreAndReleaseConnection = async (
     conn: PoolConnection,
     sessionReadOnlyApplied: boolean,
@@ -106,7 +105,7 @@ export function createMysqlStatementClient(
       }
       if (exec.released) return;
       exec.released = true;
-      executions.delete(exec.queryId);
+      lifecycle.remove(exec.queryId);
       exec.conn.release();
     } catch (err) {
       if (!exec.released) destroyExecution(exec);
@@ -118,7 +117,7 @@ export function createMysqlStatementClient(
   const destroyExecution = (exec: MysqlExecution): void => {
     if (exec.released) return;
     exec.released = true;
-    executions.delete(exec.queryId);
+    lifecycle.remove(exec.queryId);
     exec.reader.dispose();
     exec.conn.destroy();
   };
@@ -147,6 +146,18 @@ export function createMysqlStatementClient(
       throw err;
     }
   };
+
+  const lifecycle = new SqlStatementLifecycle<MysqlExecution>({
+    read: async (exec, signal) => {
+      const result = await raceSqlAbort(exec.reader.readBatch(batchSize()), signal, () => {
+        destroyExecution(exec);
+      });
+      return result;
+    },
+    release: releaseExecution,
+    destroy: destroyExecution,
+    throwDriverError: throwMysqlDriverError,
+  });
 
   return {
     async start(
@@ -202,7 +213,7 @@ export function createMysqlStatementClient(
           released: false,
           sessionReadOnlyApplied,
         };
-        executions.set(queryId, exec);
+        lifecycle.register(exec);
         ownsConnection = false;
         conn = undefined;
 
@@ -225,47 +236,17 @@ export function createMysqlStatementClient(
       _mutations: TrinoSessionMutations,
       signal?: AbortSignal,
     ) {
-      const exec = executions.get(nextUri);
-      if (!exec) {
-        return buildPage(nextUri, undefined, [], undefined, 0);
-      }
-      if (signal?.aborted) {
-        destroyExecution(exec);
-        throw createSqlAbortError();
-      }
-      try {
-        const { rows, done } = await raceSqlAbort(
-          exec.reader.readBatch(batchSize()),
-          signal,
-          () => {
-            destroyExecution(exec);
-          },
-        );
-        exec.rowCount += rows.length;
-        const next = done ? undefined : nextUri;
-        if (done) await releaseExecution(exec, signal);
-        return buildPage(exec.queryId, undefined, rows, next, exec.rowCount);
-      } catch (err) {
-        if (!exec.released) await releaseExecution(exec);
-        if (signal?.aborted) throw createSqlAbortError();
-        throwMysqlDriverError(err);
-      }
+      return lifecycle.advance(nextUri, signal);
     },
 
     async cancel(nextUri: string, ctx: TrinoRequestContext): Promise<void> {
       void ctx;
-      const exec = executions.get(nextUri);
-      if (!exec) return;
       // 旧実装の別接続KILLは次の扱いだった。
       // ベストエフォート。
       // 現在は実行接続を同期的に破棄する。
-      destroyExecution(exec);
+      lifecycle.cancel(nextUri);
     },
 
-    async waitBackoff(attempt: number, signal?: AbortSignal): Promise<void> {
-      void attempt;
-      void signal;
-      // HTTP ポーリングではないため待機不要。
-    },
+    waitBackoff: noSqlBackoff,
   };
 }

@@ -33,6 +33,8 @@ function writeRbac(dir: string): void {
     permissions: [queries.viewAll]
   killer:
     permissions: [queries.viewAll, query.killAny]
+  auditor:
+    permissions: [audit.view]
   runner:
     permissions: [query.write]
 assignments:
@@ -42,6 +44,8 @@ assignments:
     role: killer
   - user: alice
     role: runner
+  - user: auditor
+    role: auditor
   - user: bob
     role: runner
 defaultRole: runner
@@ -79,6 +83,46 @@ async function adminCtx() {
 }
 
 describe('admin queries API', () => {
+  it('requires audit.view and returns cursor-paged audit logs', async () => {
+    const ctx = await adminCtx();
+    await ctx.services.audit.record({
+      actor: 'alice',
+      action: 'query.execute',
+      datasource: 'trino-default',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    await ctx.services.audit.record({
+      actor: 'bob',
+      action: 'query.kill',
+      datasource: 'trino-default',
+      createdAt: '2026-01-02T00:00:00.000Z',
+    });
+
+    const denied = await ctx.app.request(apiRoutes.adminAuditLogs(), {
+      headers: proxyHeaders('viewer'),
+    });
+    expect(denied.status).toBe(403);
+
+    const first = await ctx.app.request(`${apiRoutes.adminAuditLogs()}?limit=1`, {
+      headers: proxyHeaders('auditor'),
+    });
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as {
+      items: Array<{ actor: string }>;
+      nextCursor: string;
+    };
+    expect(firstBody.items).toHaveLength(1);
+    expect(firstBody.nextCursor).toBeTruthy();
+    const second = await ctx.app.request(
+      `${apiRoutes.adminAuditLogs()}?limit=10&cursor=${encodeURIComponent(firstBody.nextCursor)}`,
+      { headers: proxyHeaders('auditor') },
+    );
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as { items: Array<{ actor: string }> };
+    expect(secondBody.items.length).toBeGreaterThan(0);
+    await ctx.services.shutdown();
+  });
+
   it('returns 403 without queries.viewAll', async () => {
     const ctx = await adminCtx();
     const res = await ctx.app.request(apiRoutes.adminQueries(), {

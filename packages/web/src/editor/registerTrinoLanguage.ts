@@ -31,6 +31,7 @@ import {
   type CompletionCandidate,
 } from '../trino-lang';
 import type { SchemaCache } from '../trino-lang';
+import { startDiagnostics, type DiagnosticsTask } from '../trino-lang/diagnosticsWorkerClient';
 import { applyFableTheme } from './theme';
 
 /** Monaco に登録する Trino SQL 言語の ID（言語登録や補完/ホバープロバイダーの紐付けに使う）。 */
@@ -275,19 +276,41 @@ export function attachDiagnostics(
   // 最新世代かどうかを確認して古い結果を捨てる。
   let generation = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let task: DiagnosticsTask | undefined;
   const decorations = editor.createDecorationsCollection([]);
 
   // 構文解析を実行し、エラーマーカーとテーブル参照の装飾を更新する本体処理。
-  const run = () => {
+  const run = async () => {
     const model = editor.getModel();
     if (!model) return;
     const gen = ++generation;
     const { catalog, schema } = deps.getContext();
-    const { markers, descriptors, tableReferences } = parseStatement(
-      model.getValue(),
-      catalog,
-      schema,
-    );
+    task?.cancel();
+    task = startDiagnostics({
+      sql: model.getValue(),
+      ...(catalog !== undefined ? { catalog } : {}),
+      ...(schema !== undefined ? { schema } : {}),
+    });
+    let result;
+    try {
+      result = await task.promise;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      if (gen !== generation) return;
+      monacoNs.editor.setModelMarkers(model, MARKER_OWNER, [
+        {
+          severity: monacoNs.MarkerSeverity.Error,
+          message: error instanceof Error ? error.message : 'SQL diagnostics failed',
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 2,
+        },
+      ]);
+      decorations.clear();
+      return;
+    }
+    const { markers, descriptors, tableReferences } = result;
     // Drop stale results.
     // このタイマー発火中にさらに新しい入力があれば generation が進んでいるため、
     // 古い結果は破棄して何もしない。
@@ -329,8 +352,10 @@ export function attachDiagnostics(
   // 入力のたびに呼ばれ、直前のタイマーをキャンセルしてから再スケジュールする
   // （PARSE_DEBOUNCE_MS の間、入力が止まったら実際にパースする）。
   const schedule = () => {
+    generation += 1;
+    task?.cancel();
     if (timer) clearTimeout(timer);
-    timer = setTimeout(run, PARSE_DEBOUNCE_MS);
+    timer = setTimeout(() => void run(), PARSE_DEBOUNCE_MS);
   };
 
   const changeSub = editor.onDidChangeModelContent(schedule);
@@ -359,10 +384,12 @@ export function attachDiagnostics(
 
   // Initial pass.
   // アタッチ直後に一度パースしておき、初期表示からマーカー/装飾が反映された状態にする。
-  run();
+  void run();
 
   return {
     dispose: () => {
+      generation += 1;
+      task?.cancel();
       if (timer) clearTimeout(timer);
       changeSub.dispose();
       decorations.clear();

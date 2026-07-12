@@ -8,7 +8,7 @@
  * 画面上はタブで開いたノートブックのメインコンテンツ領域（中央カラム）に相当し、
  * 個々のセルの見た目や編集ロジック自体は SqlCell / MarkdownCell / CellToolbar に委譲する。
  */
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Cell } from '@hubble/contracts';
 import { CellFrame, type CellStatus } from './CellFrame';
 import { CellToolbar } from './CellToolbar';
@@ -256,40 +256,46 @@ export function NotebookView({
             }}
             className={dragOverIndex === index ? 'rounded-lg ring-2 ring-accent/50' : undefined}
           >
-            {/* セル本体：ステータス枠 + ツールバー + SQL エディタ／Markdown 本文 */}
-            <CellRow
+            <ViewportCell
               cell={cell}
-              index={index}
-              total={cells.length}
-              context={cellContext}
-              defaultLimit={defaultLimit}
-              costEstimateEnabled={costEstimateEnabled}
-              trinoLanguage={trinoLanguage}
-              resolveUnit={resolveUnit}
-              variableValues={variableValues}
-              editingMarkdown={editingMarkdownId === cell.id}
-              onStartEditMarkdown={() => setEditingMarkdownId(cell.id)}
-              onCommitMarkdown={() => setEditingMarkdownId(null)}
-              onFocus={() => setActiveCellId(cell.id)}
-              onSourceChange={(src) => store.getState().setCellSource(notebookId, cell.id, src)}
-              onRename={(name) => store.getState().setCellName(notebookId, cell.id, name)}
-              onToggleCollapse={() => store.getState().toggleCellCollapsed(notebookId, cell.id)}
-              onMoveUp={() => store.getState().moveCell(notebookId, index, index - 1)}
-              onMoveDown={() => store.getState().moveCell(notebookId, index, index + 1)}
-              onDelete={() => confirmDelete(cell)}
-              onDragStart={() => {
-                dragIndex.current = index;
-              }}
-              onDragEnd={() => {
-                dragIndex.current = null;
-                setDragOverIndex(null);
-              }}
-            />
-            {/* このセルの直後に新規セルを挿入するバー */}
-            <CellInsert
-              onAddSql={() => handleAdd('sql', { relativeTo: cell.id, where: 'below' })}
-              onAddMarkdown={() => handleAdd('markdown', { relativeTo: cell.id, where: 'below' })}
-            />
+              initiallyVisible={index < 6}
+              forceVisible={activeCellId === cell.id || editingMarkdownId === cell.id}
+            >
+              {/* セル本体：ステータス枠 + ツールバー + SQL エディタ／Markdown 本文 */}
+              <CellRow
+                cell={cell}
+                index={index}
+                total={cells.length}
+                context={cellContext}
+                defaultLimit={defaultLimit}
+                costEstimateEnabled={costEstimateEnabled}
+                trinoLanguage={trinoLanguage}
+                resolveUnit={resolveUnit}
+                variableValues={variableValues}
+                editingMarkdown={editingMarkdownId === cell.id}
+                onStartEditMarkdown={() => setEditingMarkdownId(cell.id)}
+                onCommitMarkdown={() => setEditingMarkdownId(null)}
+                onFocus={() => setActiveCellId(cell.id)}
+                onSourceChange={(src) => store.getState().setCellSource(notebookId, cell.id, src)}
+                onRename={(name) => store.getState().setCellName(notebookId, cell.id, name)}
+                onToggleCollapse={() => store.getState().toggleCellCollapsed(notebookId, cell.id)}
+                onMoveUp={() => store.getState().moveCell(notebookId, index, index - 1)}
+                onMoveDown={() => store.getState().moveCell(notebookId, index, index + 1)}
+                onDelete={() => confirmDelete(cell)}
+                onDragStart={() => {
+                  dragIndex.current = index;
+                }}
+                onDragEnd={() => {
+                  dragIndex.current = null;
+                  setDragOverIndex(null);
+                }}
+              />
+              {/* このセルの直後に新規セルを挿入するバー */}
+              <CellInsert
+                onAddSql={() => handleAdd('sql', { relativeTo: cell.id, where: 'below' })}
+                onAddMarkdown={() => handleAdd('markdown', { relativeTo: cell.id, where: 'below' })}
+              />
+            </ViewportCell>
           </div>
         ))}
       </div>
@@ -329,6 +335,64 @@ export function NotebookView({
           fetchShares={() => listNotebookShares(notebookId)}
           updateShares={(shares) => updateNotebookShares(notebookId, shares)}
         />
+      )}
+    </div>
+  );
+}
+
+/** viewport 周辺だけ重いセル本体を mountし、領域外では高さを保った概要を表示する。 */
+export function ViewportCell({
+  cell,
+  initiallyVisible,
+  forceVisible,
+  children,
+}: {
+  cell: Cell;
+  initiallyVisible: boolean;
+  forceVisible: boolean;
+  children: ReactNode;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const execution = useCellExecution(cell.id);
+  const [visible, setVisible] = useState(
+    () => initiallyVisible || typeof IntersectionObserver === 'undefined',
+  );
+  const [measuredHeight, setMeasuredHeight] = useState(160);
+
+  useEffect(() => {
+    const element = rootRef.current;
+    if (!element || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry) return;
+        if (!entry.isIntersecting) {
+          const height = element.getBoundingClientRect().height;
+          if (height > 0) setMeasuredHeight(height);
+        }
+        setVisible(entry.isIntersecting);
+      },
+      { rootMargin: '800px 0px' },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const shouldRender =
+    visible || forceVisible || (execution !== undefined && isCellRunning(execution));
+
+  return (
+    <div ref={rootRef} style={shouldRender ? undefined : { minHeight: measuredHeight }}>
+      {shouldRender ? (
+        children
+      ) : (
+        <div className="my-2 rounded-md border border-border bg-surface px-4 py-3 text-sm text-muted">
+          <div className="font-medium text-foreground">
+            {cell.name || `${cell.kind.toUpperCase()} cell`}
+          </div>
+          <div className="mt-1 truncate font-mono">
+            {cell.source.trim().split('\n')[0] || 'Empty cell'}
+          </div>
+        </div>
       )}
     </div>
   );

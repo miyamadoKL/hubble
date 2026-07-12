@@ -8,8 +8,45 @@ import type { AuthVariables } from '../auth/middleware';
 import { AppError } from '../errors';
 import { requirePermission } from '../rbac/check';
 import type { QueryExecution } from '../query/execution';
+import { auditActionSchema } from '../audit';
 
 const STATEMENT_PREVIEW_MAX = 200;
+const AUDIT_PAGE_MAX = 200;
+
+interface AuditCursor {
+  createdAt: string;
+  id: string;
+}
+
+function decodeAuditCursor(value: string): AuditCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown;
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      typeof (parsed as AuditCursor).createdAt === 'string' &&
+      !Number.isNaN(Date.parse((parsed as AuditCursor).createdAt)) &&
+      typeof (parsed as AuditCursor).id === 'string'
+    ) {
+      return parsed as AuditCursor;
+    }
+  } catch {
+    // 不正なカーソルは下の共通エラーへ変換する。
+  }
+  throw AppError.badRequest('Invalid audit cursor', 'VALIDATION_ERROR');
+}
+
+function encodeAuditCursor(cursor: AuditCursor): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function optionalIso(value: string | undefined, name: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (Number.isNaN(Date.parse(value))) {
+    throw AppError.badRequest(`Invalid ${name} timestamp`, 'VALIDATION_ERROR');
+  }
+  return new Date(value).toISOString();
+}
 
 function truncateStatement(statement: string): string {
   if (statement.length <= STATEMENT_PREVIEW_MAX) return statement;
@@ -47,6 +84,36 @@ export function adminRoutes(services: Services): Hono<{ Variables: AuthVariables
       .sort((a, b) => b.submittedAt - a.submittedAt)
       .map((exec) => toAdminItem(exec, now));
     return c.json({ items });
+  });
+
+  // GET /api/admin/audit-logs — 権限を分離した監査ログのカーソル検索。
+  app.get('/audit-logs', async (c) => {
+    requirePermission(c.var.principal.role, 'audit.view');
+    const rawLimit = c.req.query('limit');
+    const limit = rawLimit === undefined ? 100 : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > AUDIT_PAGE_MAX) {
+      throw AppError.badRequest(`limit must be an integer from 1 to ${AUDIT_PAGE_MAX}`);
+    }
+    const rawAction = c.req.query('action');
+    const action = rawAction === undefined ? undefined : auditActionSchema.safeParse(rawAction);
+    if (action !== undefined && !action.success) {
+      throw AppError.badRequest('Invalid audit action', 'VALIDATION_ERROR');
+    }
+    const from = optionalIso(c.req.query('from'), 'from');
+    const to = optionalIso(c.req.query('to'), 'to');
+    const result = await services.audit.search({
+      limit,
+      ...(c.req.query('actor') ? { actor: c.req.query('actor') } : {}),
+      ...(action?.success ? { action: action.data } : {}),
+      ...(c.req.query('datasource') ? { datasource: c.req.query('datasource') } : {}),
+      ...(from ? { from } : {}),
+      ...(to ? { to } : {}),
+      ...(c.req.query('cursor') ? { cursor: decodeAuditCursor(c.req.query('cursor')!) } : {}),
+    });
+    return c.json({
+      items: result.items,
+      ...(result.nextCursor ? { nextCursor: encodeAuditCursor(result.nextCursor) } : {}),
+    });
   });
 
   // DELETE /api/admin/queries/:id — 任意ユーザーのクエリを kill。

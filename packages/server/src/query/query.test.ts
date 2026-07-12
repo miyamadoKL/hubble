@@ -241,6 +241,13 @@ describe('cancellation', () => {
 
     expect(ctx.services.registry.get(queryId)!.state).toBe('canceled');
     expect(ctx.fake.requests.some((r) => r.method === 'DELETE')).toBe(true);
+    expect(await ctx.services.audit.listForTest()).toContainEqual(
+      expect.objectContaining({
+        action: 'query.cancel',
+        target: queryId,
+        detail: expect.objectContaining({ targetOwner: 'admin' }),
+      }),
+    );
   });
 });
 

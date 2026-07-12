@@ -114,6 +114,65 @@ defaultRole: admin
     );
   });
 
+  it('preserves file order for equal priorities', () => {
+    const path = writeRbac(
+      tempDir,
+      `roles:
+  admin:
+    permissions: [query.write]
+assignments:
+  - user: first
+    role: admin
+  - user: second
+    priority: 0
+    role: admin
+defaultRole: admin
+`,
+    );
+    const rbac = loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir });
+    expect(rbac.assignments.map((assignment) => assignment.user)).toEqual(['first', 'second']);
+  });
+
+  it('rejects duplicate normalized matchers at the same priority', () => {
+    const path = writeRbac(
+      tempDir,
+      `roles:
+  admin:
+    permissions: [query.write]
+assignments:
+  - user: Alice
+    role: admin
+  - user: alice
+    priority: 0
+    role: admin
+defaultRole: admin
+`,
+    );
+    expect(() => loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir })).toThrow(
+      /duplicates assignments\[0\] at the same priority/,
+    );
+  });
+
+  it('allows the same matcher at different priorities', () => {
+    const path = writeRbac(
+      tempDir,
+      `roles:
+  admin:
+    permissions: [query.write]
+assignments:
+  - user: Alice
+    priority: 1
+    role: admin
+  - user: alice
+    priority: 0
+    role: admin
+defaultRole: admin
+`,
+    );
+    const rbac = loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir });
+    expect(rbac.assignments.map((assignment) => assignment.priority)).toEqual([1, 0]);
+  });
+
   it('rejects invalid role names', () => {
     const path = writeRbac(
       tempDir,

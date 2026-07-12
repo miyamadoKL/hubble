@@ -115,7 +115,7 @@ export class DocumentShareRepository {
     type: DocumentType,
     accessor: ShareAccessor,
   ): Promise<Map<string, SharePermission>> {
-    const { sql, params } = this.accessorMatchClause(accessor);
+    const { sql, params } = documentShareAccessorMatchClause(accessor);
     const rows = await this.db.query<{ document_id: string; permission: string }>(
       `SELECT document_id, permission
        FROM document_shares
@@ -145,7 +145,7 @@ export class DocumentShareRepository {
     documentId: string,
     accessor: ShareAccessor,
   ): Promise<Array<{ permission: string }>> {
-    const { sql, params } = this.accessorMatchClause(accessor);
+    const { sql, params } = documentShareAccessorMatchClause(accessor);
     return this.db.query<{ permission: string }>(
       `SELECT permission
        FROM document_shares
@@ -153,23 +153,27 @@ export class DocumentShareRepository {
       [type, documentId, ...params],
     );
   }
+}
 
-  private accessorMatchClause(accessor: ShareAccessor): { sql: string; params: SqlParam[] } {
-    const parts: string[] = ["(subject_type = 'user' AND subject_value = ?)"];
-    const params: SqlParam[] = [accessor.user];
+/** accessor に一致する document_shares の SQL 条件とパラメーターを組み立てる。 */
+export function documentShareAccessorMatchClause(accessor: ShareAccessor): {
+  sql: string;
+  params: SqlParam[];
+} {
+  const parts: string[] = ["(subject_type = 'user' AND subject_value = ?)"];
+  const params: SqlParam[] = [accessor.user];
 
-    const groups = accessor.groups.filter((group) => group.length > 0);
-    if (groups.length > 0) {
-      const placeholders = groups.map(() => 'LOWER(?)').join(', ');
-      parts.push(`(subject_type = 'group' AND LOWER(subject_value) IN (${placeholders}))`);
-      params.push(...groups.map((group) => group.toLowerCase()));
-    }
-
-    parts.push("(subject_type = 'role' AND LOWER(subject_value) = LOWER(?))");
-    params.push(accessor.role);
-
-    return { sql: parts.join(' OR '), params };
+  const groups = accessor.groups.filter((group) => group.length > 0);
+  if (groups.length > 0) {
+    const placeholders = groups.map(() => 'LOWER(?)').join(', ');
+    parts.push(`(subject_type = 'group' AND LOWER(subject_value) IN (${placeholders}))`);
+    params.push(...groups.map((group) => group.toLowerCase()));
   }
+
+  parts.push("(subject_type = 'role' AND LOWER(subject_value) = LOWER(?))");
+  params.push(accessor.role);
+
+  return { sql: parts.join(' OR '), params };
 }
 
 function rowToDocumentShare(
