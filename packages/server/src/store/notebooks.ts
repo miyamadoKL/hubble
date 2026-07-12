@@ -15,9 +15,14 @@ import type {
   UpdateNotebookRequest,
 } from '@hubble/contracts';
 import { notebookSchema } from '@hubble/contracts';
-import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
+import type { SqlDatabase } from '../db/sqlDatabase';
 import { newId } from '../util/id';
-import { DocumentShareRepository, type ShareAccessor, type StoreForbidden } from './documentShares';
+import {
+  documentShareAccessorMatchClause,
+  DocumentShareRepository,
+  type ShareAccessor,
+  type StoreForbidden,
+} from './documentShares';
 
 export type StoreConflict = 'conflict';
 
@@ -41,6 +46,10 @@ type NotebookListRow = Pick<
   NotebookRow,
   'id' | 'name' | 'description' | 'created_at' | 'updated_at' | 'owner'
 >;
+
+interface AccessibleNotebookListRow extends NotebookListRow {
+  permission_rank: number;
+}
 
 /**
  * CRUD for notebooks. The full `Notebook` (cells/variables/context) is stored
@@ -66,19 +75,32 @@ export class NotebookRepository {
    * 絞り込む（共有分にも適用される）。
    */
   async list(accessor: ShareAccessor, query?: string): Promise<NotebookListItem[]> {
-    const ownedRows = await this.listOwnedRows(accessor.user, query);
-    const ownedIds = new Set(ownedRows.map((row) => row.id));
-    const sharedIds = await this.shares.listAccessibleDocumentIds('notebook', accessor);
-    const sharedOnlyIds = [...sharedIds.keys()].filter((id) => !ownedIds.has(id));
-    const sharedRows =
-      sharedOnlyIds.length > 0 ? await this.fetchListRowsByIds(sharedOnlyIds, query) : [];
-
-    const items: NotebookListItem[] = [
-      ...ownedRows.map((row) => rowToListItem(row, row.owner, 'owner')),
-      ...sharedRows.map((row) => rowToListItem(row, row.owner, sharedIds.get(row.id)!)),
-    ];
-    items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return items;
+    const { sql: accessorSql, params: accessorParams } = documentShareAccessorMatchClause(accessor);
+    const searchSql =
+      query && query.trim() !== ''
+        ? ` AND (n.name LIKE ? ESCAPE '\\' OR n.description LIKE ? ESCAPE '\\')`
+        : '';
+    const searchParams = query && query.trim() !== '' ? [likeParam(query), likeParam(query)] : [];
+    const rows = await this.db.query<AccessibleNotebookListRow>(
+      `SELECT n.id, n.name, n.description, n.owner, n.created_at, n.updated_at,
+              MAX(CASE WHEN ds.permission = 'edit' THEN 2
+                       WHEN ds.permission = 'view' THEN 1 ELSE 0 END) AS permission_rank
+       FROM notebooks n
+       LEFT JOIN document_shares ds
+         ON ds.document_type = 'notebook' AND ds.document_id = n.id
+        AND ds.permission IN ('view', 'edit') AND (${accessorSql})
+       WHERE (n.owner = ? OR ds.id IS NOT NULL)${searchSql}
+       GROUP BY n.id, n.name, n.description, n.owner, n.created_at, n.updated_at
+       ORDER BY n.updated_at DESC`,
+      [...accessorParams, accessor.user, ...searchParams],
+    );
+    return rows.map((row) =>
+      rowToListItem(
+        row,
+        row.owner,
+        row.owner === accessor.user ? 'owner' : row.permission_rank === 2 ? 'edit' : 'view',
+      ),
+    );
   }
 
   /**
@@ -191,37 +213,6 @@ export class NotebookRepository {
       [id],
     );
     return rows[0]?.owner;
-  }
-
-  private async listOwnedRows(owner: string, query?: string): Promise<NotebookListRow[]> {
-    if (query && query.trim() !== '') {
-      return this.db.query<NotebookListRow>(
-        `SELECT id, name, description, owner, created_at, updated_at FROM notebooks
-         WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
-         ORDER BY updated_at DESC`,
-        [owner, likeParam(query), likeParam(query)],
-      );
-    }
-    return this.db.query<NotebookListRow>(
-      `SELECT id, name, description, owner, created_at, updated_at FROM notebooks
-       WHERE owner = ? ORDER BY updated_at DESC`,
-      [owner],
-    );
-  }
-
-  private async fetchListRowsByIds(
-    ids: readonly string[],
-    query?: string,
-  ): Promise<NotebookListRow[]> {
-    if (ids.length === 0) return [];
-    const placeholders = ids.map(() => '?').join(', ');
-    const params: SqlParam[] = [...ids];
-    let sql = `SELECT id, name, description, owner, created_at, updated_at FROM notebooks WHERE id IN (${placeholders})`;
-    if (query && query.trim() !== '') {
-      sql += ` AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')`;
-      params.push(likeParam(query), likeParam(query));
-    }
-    return this.db.query<NotebookListRow>(sql, params);
   }
 
   private async getOwnedRow(id: string, owner: string): Promise<NotebookRow | undefined> {

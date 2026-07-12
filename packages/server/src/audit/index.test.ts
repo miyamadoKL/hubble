@@ -58,4 +58,39 @@ describe('AuditLogger', () => {
       await db.close();
     }
   });
+
+  it('searches with filters and a stable compound cursor', async () => {
+    const db = await openMemoryDatabase();
+    try {
+      const repo = new AuditRepository(db);
+      await repo.record({
+        actor: 'alice',
+        action: 'query.execute',
+        datasource: 'trino-default',
+        createdAt: '2026-01-03T00:00:00.000Z',
+      });
+      await repo.record({
+        actor: 'alice',
+        action: 'query.kill',
+        datasource: 'trino-default',
+        createdAt: '2026-01-02T00:00:00.000Z',
+      });
+      await repo.record({
+        actor: 'bob',
+        action: 'query.execute',
+        datasource: 'mysql',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      const first = await repo.search({ actor: 'alice', limit: 1 });
+      expect(first.items).toHaveLength(1);
+      expect(first.items[0]?.action).toBe('query.execute');
+      expect(first.nextCursor).toBeDefined();
+      const second = await repo.search({ actor: 'alice', limit: 1, cursor: first.nextCursor });
+      expect(second.items.map((row) => row.action)).toEqual(['query.kill']);
+      expect(second.nextCursor).toBeUndefined();
+    } finally {
+      await db.close();
+    }
+  });
 });

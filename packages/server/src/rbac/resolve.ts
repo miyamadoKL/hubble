@@ -28,7 +28,7 @@ function assignmentMatches(
     return principal.email.toLowerCase() === assignment.email.toLowerCase();
   }
   if (assignment.user !== undefined) {
-    return principal.user === assignment.user;
+    return principal.user.toLowerCase() === assignment.user.toLowerCase();
   }
   if (assignment.emailDomain !== undefined) {
     if (principal.email === undefined) return false;

@@ -13,7 +13,8 @@ roles:
     # ai.use: SQL Workbench の AI アシスタント機能を利用可能にする
     # query.killAny: Operations ビューから任意ユーザーのクエリを kill
     # queries.viewAll: Operations ビューで全ユーザーの実行中クエリを閲覧
-    permissions: [query.write, ai.use, query.killAny, queries.viewAll]
+    # audit.view: 管理 API から監査ログを検索
+    permissions: [query.write, ai.use, query.killAny, queries.viewAll, audit.view]
     # datasources: ロールが利用できる datasource id の allowlist(任意)
     # - 未指定: 全 datasource 許可(後方互換)
     # - ['*']: 明示的に全許可
@@ -35,7 +36,9 @@ roles:
     datasources: [trino-prod]
 
 assignments:
+  # priority は大きい値から評価される。未指定は 0、同値は記述順になる
   - email: alice@example.com
+    priority: 100
     role: admin
   - user: local-dev
     role: admin

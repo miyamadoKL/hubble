@@ -37,7 +37,7 @@ import {
   parseWorkflowContent,
   type ParsedNotebookContent,
 } from './parse';
-import { decryptToken, encryptToken } from './crypto';
+import { decryptToken, encryptToken, tokenNeedsRewrap } from './crypto';
 import { GithubPullRequestExistsError, type GithubClient } from './client';
 import {
   DocumentGitLinkRepository,
@@ -81,7 +81,6 @@ export interface GithubSyncServiceDeps {
   workflows: WorkflowRepository;
   alerts: AlertRepository;
   audit: AuditLogger;
-  encryptionKey: Buffer;
   /** Alert owner の現在ロールを pull 適用時に解決するための RBAC getter。 */
   getRbac: () => LoadedRbac;
   now?: () => number;
@@ -114,12 +113,11 @@ export class GithubSyncService {
   async connect(owner: string, code: string): Promise<void> {
     const token = await this.deps.client.exchangeCode(code);
     const user = await this.deps.client.getAuthenticatedUser(token.accessToken);
+    const tokenKeys = this.tokenKeys();
     await this.deps.connections.upsert(owner, {
       githubLogin: user.login,
-      accessTokenEnc: encryptToken(this.deps.encryptionKey, token.accessToken),
-      refreshTokenEnc: token.refreshToken
-        ? encryptToken(this.deps.encryptionKey, token.refreshToken)
-        : null,
+      accessTokenEnc: encryptToken(tokenKeys, token.accessToken),
+      refreshTokenEnc: token.refreshToken ? encryptToken(tokenKeys, token.refreshToken) : null,
       tokenExpiresAt: token.expiresAt ?? null,
     });
     await this.deps.audit.record({
@@ -770,11 +768,13 @@ export class GithubSyncService {
     const row = await this.deps.connections.get(owner);
     if (!row) return undefined;
 
-    let accessToken = decryptToken(this.deps.encryptionKey, row.accessTokenEnc);
-    let refreshToken = row.refreshTokenEnc
-      ? decryptToken(this.deps.encryptionKey, row.refreshTokenEnc)
-      : null;
+    const tokenKeys = this.tokenKeys();
+    let accessToken = decryptToken(tokenKeys, row.accessTokenEnc);
+    let refreshToken = row.refreshTokenEnc ? decryptToken(tokenKeys, row.refreshTokenEnc) : null;
     let tokenExpiresAt = row.tokenExpiresAt;
+    let shouldPersist =
+      tokenNeedsRewrap(tokenKeys, row.accessTokenEnc) ||
+      (row.refreshTokenEnc !== null && tokenNeedsRewrap(tokenKeys, row.refreshTokenEnc));
 
     if (this.isExpired(tokenExpiresAt) && refreshToken) {
       try {
@@ -782,14 +782,7 @@ export class GithubSyncService {
         accessToken = refreshed.accessToken;
         refreshToken = refreshed.refreshToken ?? refreshToken;
         tokenExpiresAt = refreshed.expiresAt ?? null;
-        await this.deps.connections.upsert(owner, {
-          githubLogin: row.githubLogin,
-          accessTokenEnc: encryptToken(this.deps.encryptionKey, accessToken),
-          refreshTokenEnc: refreshToken
-            ? encryptToken(this.deps.encryptionKey, refreshToken)
-            : null,
-          tokenExpiresAt,
-        });
+        shouldPersist = true;
       } catch (err) {
         if (err instanceof AppError && err.detail.code === 'GITHUB_TOKEN_INVALID') {
           throw err;
@@ -801,12 +794,27 @@ export class GithubSyncService {
       }
     }
 
+    if (shouldPersist) {
+      await this.deps.connections.upsert(owner, {
+        githubLogin: row.githubLogin,
+        accessTokenEnc: encryptToken(tokenKeys, accessToken),
+        refreshTokenEnc: refreshToken ? encryptToken(tokenKeys, refreshToken) : null,
+        tokenExpiresAt,
+      });
+    }
+
     return {
       login: row.githubLogin,
       accessToken,
       refreshToken,
       tokenExpiresAt,
     };
+  }
+
+  private tokenKeys() {
+    const tokenKeys = this.deps.config.tokenEncryptionKeys;
+    if (!tokenKeys) throw new Error('GitHub token encryption keyring is not configured');
+    return tokenKeys;
   }
 
   private isExpired(tokenExpiresAt: string | null | undefined): boolean {

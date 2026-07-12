@@ -101,6 +101,7 @@ export const apiRoutes = {
   // Admin (RBAC operations view)
   adminQueries: () => '/api/admin/queries',
   adminQuery: (id: string) => `/api/admin/queries/${enc(id)}`,
+  adminAuditLogs: () => '/api/admin/audit-logs',
 
   // Schedules (Query Scheduling feature)
   // スケジュール一覧取得 / 新規作成の基点パス。

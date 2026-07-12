@@ -34,6 +34,7 @@ export interface RbacAssignment {
   user?: string;
   emailDomain?: string;
   group?: string;
+  priority?: number;
   role: string;
 }
 

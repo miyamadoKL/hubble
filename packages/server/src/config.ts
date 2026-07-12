@@ -22,6 +22,7 @@ import type { ResolvedDatasource } from './datasource/types';
 import { parseCidrList, type ParsedCidr } from './auth/cidr';
 import { isValidCron } from './schedule/cron';
 import { DEFAULT_POSTGRES_TIMEOUTS, type PostgresTimeouts } from './db/postgresTimeouts';
+import type { TokenEncryptionKeyring } from './github/crypto';
 
 /** How a proxy-supplied principal is derived from SSO headers. */
 /** 日本語: `AUTH_USER_MAPPING` で選択する、SSO ヘッダから principal（実行ユーザー名）を
@@ -313,6 +314,8 @@ export interface GithubConfig {
   clientSecret?: string;
   /** AES-256-GCM 用 32 バイト鍵。enabled 時のみ設定される。 */
   tokenEncryptionKey?: Buffer;
+  /** Token envelopeのactive key IDと旧鍵を含む復号用keyring。 */
+  tokenEncryptionKeys?: TokenEncryptionKeyring;
   /** ガバナンスモード (config 載せのみ)。 */
   governance: GithubGovernance;
   /** 承認状態キャッシュの TTL (秒)。 */
@@ -522,16 +525,35 @@ export function resolveGithubConfig(env: Env): GithubConfig {
   if (keyRaw === undefined) {
     throw new Error('GITHUB_TOKEN_ENCRYPTION_KEY is required when GITHUB_REPO is set');
   }
-  let tokenEncryptionKey: Buffer;
-  try {
-    tokenEncryptionKey = Buffer.from(keyRaw, 'base64');
-  } catch {
-    throw new Error('Invalid GITHUB_TOKEN_ENCRYPTION_KEY: not valid base64');
-  }
-  if (tokenEncryptionKey.length !== 32) {
-    throw new Error(
-      `Invalid GITHUB_TOKEN_ENCRYPTION_KEY: decoded length is ${tokenEncryptionKey.length}, expected 32 bytes`,
-    );
+  const tokenEncryptionKey = parseGithubTokenKey(keyRaw, 'GITHUB_TOKEN_ENCRYPTION_KEY');
+  const activeKeyId = envStr(env, 'GITHUB_TOKEN_ENCRYPTION_KEY_ID', 'default').trim();
+  assertGithubKeyId(activeKeyId, 'GITHUB_TOKEN_ENCRYPTION_KEY_ID');
+  const tokenKeys = new Map<string, Buffer>([[activeKeyId, tokenEncryptionKey]]);
+  const keyringRaw = envOptional(env, 'GITHUB_TOKEN_ENCRYPTION_KEYRING');
+  if (keyringRaw !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(keyringRaw);
+    } catch {
+      throw new Error('Invalid GITHUB_TOKEN_ENCRYPTION_KEYRING: expected a JSON object');
+    }
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+      throw new Error('Invalid GITHUB_TOKEN_ENCRYPTION_KEYRING: expected a JSON object');
+    }
+    for (const [keyId, raw] of Object.entries(parsed)) {
+      assertGithubKeyId(keyId, 'GITHUB_TOKEN_ENCRYPTION_KEYRING');
+      if (typeof raw !== 'string') {
+        throw new Error(`Invalid GITHUB_TOKEN_ENCRYPTION_KEYRING key '${keyId}': expected base64`);
+      }
+      const key = parseGithubTokenKey(raw, `GITHUB_TOKEN_ENCRYPTION_KEYRING key '${keyId}'`);
+      const existing = tokenKeys.get(keyId);
+      if (existing && !existing.equals(key)) {
+        throw new Error(
+          `Invalid GITHUB_TOKEN_ENCRYPTION_KEYRING: active key ID '${keyId}' has a different key`,
+        );
+      }
+      tokenKeys.set(keyId, key);
+    }
   }
 
   const syncCronRaw = envStr(env, 'GITHUB_SYNC_CRON', '0 3 * * *').trim();
@@ -554,11 +576,26 @@ export function resolveGithubConfig(env: Env): GithubConfig {
     clientId,
     clientSecret,
     tokenEncryptionKey,
+    tokenEncryptionKeys: { activeKeyId, keys: tokenKeys },
     governance,
     statusTtlSeconds,
     syncCron,
     ...(syncToken !== undefined ? { syncToken } : {}),
   };
+}
+
+function parseGithubTokenKey(raw: string, label: string): Buffer {
+  const key = Buffer.from(raw, 'base64');
+  if (key.length !== 32) {
+    throw new Error(`Invalid ${label}: decoded length is ${key.length}, expected 32 bytes`);
+  }
+  return key;
+}
+
+function assertGithubKeyId(keyId: string, label: string): void {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(keyId)) {
+    throw new Error(`Invalid ${label}: key ID must match [A-Za-z0-9_-]{1,64}`);
+  }
 }
 
 /** AI_* 関連の環境変数を解決する。 */

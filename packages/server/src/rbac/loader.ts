@@ -64,7 +64,14 @@ function toLoadedRbac(file: RbacFile): LoadedRbac {
   }
   return {
     roles,
-    assignments: file.assignments,
+    assignments: file.assignments
+      .map((assignment, index) => ({ assignment, index }))
+      .sort(
+        (left, right) =>
+          (right.assignment.priority ?? 0) - (left.assignment.priority ?? 0) ||
+          left.index - right.index,
+      )
+      .map(({ assignment }) => assignment),
     defaultRole: file.defaultRole,
   };
 }

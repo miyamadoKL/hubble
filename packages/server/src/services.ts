@@ -414,7 +414,6 @@ export async function buildServices(
       workflows,
       alerts,
       audit,
-      encryptionKey: config.github.tokenEncryptionKey!,
       getRbac: () => rbacState.current,
       now: githubNow,
     });
@@ -467,7 +466,19 @@ export async function buildServices(
       });
       rbacState.current = next;
       if (defaultFileExists || existsSync(rbacPath)) rbacFileRequired = true;
+      await audit.record({
+        actor: 'system',
+        action: 'config.reload',
+        target: 'rbac',
+        detail: { outcome: 'applied' },
+      });
     } catch (err) {
+      await audit.record({
+        actor: 'system',
+        action: 'config.reload',
+        target: 'rbac',
+        detail: { outcome: 'rejected', error: err instanceof Error ? err.message : String(err) },
+      });
       reloadLogError('rbac reload failed; keeping current config', err);
     } finally {
       rbacReloadInFlight = false;
@@ -485,8 +496,20 @@ export async function buildServices(
       applyDatasourcePlan(plan);
       datasourceDependencyFiles = nextDependencyFiles;
       plan = undefined;
+      await audit.record({
+        actor: 'system',
+        action: 'config.reload',
+        target: 'datasources',
+        detail: { outcome: 'applied' },
+      });
     } catch (err) {
       if (plan) closeCandidateEngines(plan, reloadLogWarn);
+      await audit.record({
+        actor: 'system',
+        action: 'config.reload',
+        target: 'datasources',
+        detail: { outcome: 'rejected', error: err instanceof Error ? err.message : String(err) },
+      });
       reloadLogError('datasource reload failed; keeping current config', err);
     } finally {
       reloadInFlight = false;
@@ -521,8 +544,20 @@ export async function buildServices(
       rbacFileRequired = requireRbacFile;
       datasourceDependencyFiles = nextDependencyFiles;
       plan = undefined;
+      await audit.record({
+        actor: 'system',
+        action: 'config.reload',
+        target: 'rbac+datasources',
+        detail: { outcome: 'applied' },
+      });
     } catch (err) {
       if (plan) closeCandidateEngines(plan, reloadLogWarn);
+      await audit.record({
+        actor: 'system',
+        action: 'config.reload',
+        target: 'rbac+datasources',
+        detail: { outcome: 'rejected', error: err instanceof Error ? err.message : String(err) },
+      });
       reloadLogError('config reload failed; keeping current config', err);
     } finally {
       configReloadInFlight = false;

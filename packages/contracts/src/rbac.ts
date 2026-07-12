@@ -7,6 +7,7 @@ export const permissionSchema = z.enum([
   'query.write',
   'query.killAny',
   'queries.viewAll',
+  'audit.view',
   // AI アシスタント（/api/ai/*）の利用権限。
   'ai.use',
 ]);

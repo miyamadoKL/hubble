@@ -70,6 +70,7 @@ const assignmentSchema = z
     user: z.string().min(1).optional(),
     emailDomain: z.string().min(1).optional(),
     group: z.string().min(1).optional(),
+    priority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
     role: roleNameSchema,
   })
   .strict()
@@ -114,6 +115,26 @@ export const rbacFileSchema = z
           message: `assignments[${index}].role '${assignment.role}' is not defined in roles`,
           path: ['assignments', index, 'role'],
         });
+      }
+    }
+
+    const assignmentKeys = new Map<string, number>();
+    for (const [index, assignment] of value.assignments.entries()) {
+      const matcher = ['email', 'user', 'emailDomain', 'group'].find(
+        (key) => assignment[key as keyof typeof assignment] !== undefined,
+      );
+      if (matcher === undefined) continue;
+      const matchValue = String(assignment[matcher as keyof typeof assignment]).toLowerCase();
+      const key = `${assignment.priority ?? 0}\0${matcher}\0${matchValue}`;
+      const previous = assignmentKeys.get(key);
+      if (previous !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `duplicates assignments[${previous}] at the same priority`,
+          path: ['assignments', index],
+        });
+      } else {
+        assignmentKeys.set(key, index);
       }
     }
   });

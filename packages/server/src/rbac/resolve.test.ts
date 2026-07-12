@@ -62,9 +62,31 @@ defaultRole: a
     expect(role.name).toBe('a');
   });
 
-  it('matches user key exactly', () => {
-    const role = resolveRoleForPrincipal(rbac, { user: 'svc-bot' });
+  it('matches user key case-insensitively', () => {
+    const role = resolveRoleForPrincipal(rbac, { user: 'SVC-BOT' });
     expect(role.name).toBe('admin');
+  });
+
+  it('evaluates assignments from higher to lower priority', () => {
+    const prioritized = loadedFromYaml(`roles:
+  broad:
+    permissions: []
+  specific:
+    permissions: [query.write]
+assignments:
+  - emailDomain: corp.com
+    priority: 0
+    role: broad
+  - user: alice
+    priority: 10
+    role: specific
+defaultRole: broad
+`);
+    const role = resolveRoleForPrincipal(prioritized, {
+      user: 'alice',
+      email: 'alice@corp.com',
+    });
+    expect(role.name).toBe('specific');
   });
 
   it('matches emailDomain case-insensitively', () => {

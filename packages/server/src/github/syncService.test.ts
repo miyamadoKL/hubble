@@ -21,6 +21,7 @@ import {
 import { GithubPullRequestExistsError, type GithubClient } from './client';
 import { DocumentGitLinkRepository, GithubConnectionRepository } from './store';
 import { GithubSyncService } from './syncService';
+import { encryptToken } from './crypto';
 
 const KEY = Buffer.alloc(32, 2);
 const REPO = 'acme/hubble-docs';
@@ -150,7 +151,6 @@ function buildService(
     workflows,
     alerts,
     audit,
-    encryptionKey: KEY,
     getRbac: () => TEST_RBAC,
     now,
   });
@@ -162,6 +162,7 @@ function buildService(
     workflows,
     alerts,
     links,
+    connections,
     shares,
     audit,
     config,
@@ -210,6 +211,32 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
     expect((await service.getGlobalStatus('alice')).connected).toBe(true);
     await service.disconnect('alice');
     expect((await service.getGlobalStatus('alice')).connected).toBe(false);
+    await db.close();
+  });
+
+  it('rewraps a token encrypted by an old key without refreshing it', async () => {
+    const db = await open();
+    const client = new FakeGithubClient();
+    const oldKey = Buffer.alloc(32, 4);
+    const keys = new Map([
+      ['current', KEY],
+      ['old', oldKey],
+    ]);
+    const { service, connections } = buildService(db, client, undefined, {
+      tokenEncryptionKey: KEY,
+      tokenEncryptionKeys: { activeKeyId: 'current', keys },
+    });
+    await connections.upsert('alice', {
+      githubLogin: 'octo-user',
+      accessTokenEnc: encryptToken({ activeKeyId: 'old', keys }, 'access-token'),
+      refreshTokenEnc: null,
+      tokenExpiresAt: null,
+    });
+
+    await expect(service.getConnection('alice')).resolves.toMatchObject({
+      accessToken: 'access-token',
+    });
+    expect((await connections.get('alice'))?.accessTokenEnc).toMatch(/^v1\.current\./);
     await db.close();
   });
 

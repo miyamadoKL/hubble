@@ -263,10 +263,56 @@ describe('loadServerConfig integer bounds', () => {
       clientId: 'cid',
       clientSecret: 'sec',
       tokenEncryptionKey: Buffer.from(key, 'base64'),
+      tokenEncryptionKeys: {
+        activeKeyId: 'default',
+        keys: new Map([['default', Buffer.from(key, 'base64')]]),
+      },
       governance: 'on',
       statusTtlSeconds: 60,
       syncCron: '0 3 * * *',
     });
+  });
+
+  it('loads an active GitHub token key ID and previous decryption keys', () => {
+    const current = Buffer.alloc(32, 9).toString('base64');
+    const previous = Buffer.alloc(32, 8).toString('base64');
+    const github = loadServerConfig({
+      GITHUB_REPO: 'acme/docs',
+      GITHUB_APP_CLIENT_ID: 'cid',
+      GITHUB_APP_CLIENT_SECRET: 'sec',
+      GITHUB_TOKEN_ENCRYPTION_KEY: current,
+      GITHUB_TOKEN_ENCRYPTION_KEY_ID: 'current',
+      GITHUB_TOKEN_ENCRYPTION_KEYRING: JSON.stringify({ previous }),
+    }).github;
+
+    expect(github.tokenEncryptionKeys?.activeKeyId).toBe('current');
+    expect(github.tokenEncryptionKeys?.keys).toEqual(
+      new Map([
+        ['current', Buffer.from(current, 'base64')],
+        ['previous', Buffer.from(previous, 'base64')],
+      ]),
+    );
+  });
+
+  it('rejects malformed GitHub token keyring settings', () => {
+    const base = {
+      GITHUB_REPO: 'acme/docs',
+      GITHUB_APP_CLIENT_ID: 'cid',
+      GITHUB_APP_CLIENT_SECRET: 'sec',
+      GITHUB_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
+    };
+    expect(() =>
+      loadServerConfig({ ...base, GITHUB_TOKEN_ENCRYPTION_KEY_ID: 'invalid.id' }),
+    ).toThrow(/GITHUB_TOKEN_ENCRYPTION_KEY_ID/);
+    expect(() => loadServerConfig({ ...base, GITHUB_TOKEN_ENCRYPTION_KEYRING: '[]' })).toThrow(
+      /expected a JSON object/,
+    );
+    expect(() =>
+      loadServerConfig({
+        ...base,
+        GITHUB_TOKEN_ENCRYPTION_KEYRING: JSON.stringify({ old: 'short' }),
+      }),
+    ).toThrow(/expected 32 bytes/);
   });
 
   it('disables scheduled sync when GITHUB_SYNC_CRON=off', () => {

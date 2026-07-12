@@ -21,3 +21,22 @@ export const adminQueriesResponseSchema = z.object({
   items: z.array(adminQueryItemSchema),
 });
 export type AdminQueriesResponse = z.infer<typeof adminQueriesResponseSchema>;
+
+/** 管理 API が返す監査ログ。 */
+export const adminAuditLogSchema = z.object({
+  id: z.string(),
+  actor: z.string(),
+  action: z.string(),
+  target: z.string().nullable(),
+  datasource: z.string().nullable(),
+  detail: z.unknown(),
+  createdAt: z.string().datetime(),
+});
+export type AdminAuditLog = z.infer<typeof adminAuditLogSchema>;
+
+/** カーソル付き監査ログ検索の応答。 */
+export const adminAuditLogsResponseSchema = z.object({
+  items: z.array(adminAuditLogSchema),
+  nextCursor: z.string().optional(),
+});
+export type AdminAuditLogsResponse = z.infer<typeof adminAuditLogsResponseSchema>;

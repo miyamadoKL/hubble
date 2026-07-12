@@ -244,8 +244,19 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
   // Uniform error envelope.
   // 日本語: ルートハンドラ内で throw された全エラー（AppError / 想定外の例外）を
   // ここで一括捕捉し、`{ error: { code, message, ... } }` の統一フォーマットに変換する。
-  app.onError((err, c) => {
+  app.onError(async (err, c) => {
     const { status, detail } = toErrorResponse(err);
+    if (status === 403 && c.req.path.startsWith('/api/')) {
+      const principal = c.var.principal;
+      if (principal !== undefined) {
+        await services.audit.record({
+          actor: principal.user,
+          action: 'authz.denied',
+          target: c.req.path,
+          detail: { method: c.req.method, errorCode: detail.code },
+        });
+      }
+    }
     return c.json({ error: detail }, status as 400);
   });
 

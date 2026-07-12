@@ -9,6 +9,7 @@ import { throwPgDriverError } from '../sql/errors';
 import { batchSize, buildPage, nextQueryId } from '../sql/response';
 import { acquireSqlResource, createSqlAbortError, raceSqlAbort } from '../sql/abort';
 import type { PgPool } from './pool';
+import { noSqlBackoff, SqlStatementLifecycle } from '../sql/statementLifecycle';
 
 const PG_OID_TYPES: Record<number, string> = {
   16: 'boolean',
@@ -69,8 +70,6 @@ export function createPgStatementClient(
   pool: PgPool,
   options: PgStatementClientOptions,
 ): StatementClient {
-  const executions = new Map<string, PgExecution>();
-
   const releaseExecution = async (exec: PgExecution, signal?: AbortSignal): Promise<void> => {
     if (exec.released) return;
     try {
@@ -89,7 +88,7 @@ export function createPgStatementClient(
       }
       if (exec.released) return;
       exec.released = true;
-      executions.delete(exec.queryId);
+      lifecycle.remove(exec.queryId);
       exec.client.release();
     } catch (err) {
       if (!exec.released) {
@@ -104,7 +103,7 @@ export function createPgStatementClient(
   const destroyExecution = (exec: PgExecution, reason?: Error): void => {
     if (exec.released) return;
     exec.released = true;
-    executions.delete(exec.queryId);
+    lifecycle.remove(exec.queryId);
     void exec.cursor.close().catch(() => undefined);
     exec.client.release(reason ?? new Error('Query cancelled'));
   };
@@ -151,6 +150,18 @@ export function createPgStatementClient(
     }
   };
 
+  const lifecycle = new SqlStatementLifecycle<PgExecution>({
+    read: async (exec, signal) => {
+      const rows = (await raceSqlAbort(exec.cursor.read(batchSize()), signal, () => {
+        destroyExecution(exec, createSqlAbortError());
+      })) as unknown[][];
+      return { rows, done: rows.length < batchSize() };
+    },
+    release: releaseExecution,
+    destroy: destroyExecution,
+    throwDriverError: throwPgDriverError,
+  });
+
   return {
     async start(
       statement: string,
@@ -192,7 +203,7 @@ export function createPgStatementClient(
           released: false,
           sessionReadOnlyApplied,
         };
-        executions.set(queryId, exec);
+        lifecycle.register(exec);
         ownsClient = false;
         client = undefined;
 
@@ -219,41 +230,14 @@ export function createPgStatementClient(
       _mutations: TrinoSessionMutations,
       signal?: AbortSignal,
     ) {
-      const exec = executions.get(nextUri);
-      if (!exec) {
-        return buildPage(nextUri, undefined, [], undefined, 0);
-      }
-      if (signal?.aborted) {
-        destroyExecution(exec, createSqlAbortError());
-        throw createSqlAbortError();
-      }
-      try {
-        const rows = (await raceSqlAbort(exec.cursor.read(batchSize()), signal, () => {
-          destroyExecution(exec, createSqlAbortError());
-        })) as unknown[][];
-        exec.rowCount += rows.length;
-        const done = rows.length < batchSize();
-        const next = done ? undefined : nextUri;
-        if (done) await releaseExecution(exec, signal);
-        return buildPage(exec.queryId, undefined, rows, next, exec.rowCount);
-      } catch (err) {
-        if (!exec.released) await releaseExecution(exec);
-        if (signal?.aborted) throw createSqlAbortError();
-        throwPgDriverError(err);
-      }
+      return lifecycle.advance(nextUri, signal);
     },
 
     async cancel(nextUri: string, ctx: TrinoRequestContext): Promise<void> {
       void ctx;
-      const exec = executions.get(nextUri);
-      if (!exec) return;
-      destroyExecution(exec);
+      lifecycle.cancel(nextUri);
     },
 
-    async waitBackoff(attempt: number, signal?: AbortSignal): Promise<void> {
-      void attempt;
-      void signal;
-      // HTTP ポーリングではないため待機不要。
-    },
+    waitBackoff: noSqlBackoff,
   };
 }
