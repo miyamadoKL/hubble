@@ -54,8 +54,8 @@ export function createQuery(request: CreateQueryRequest): Promise<CreateQueryRes
  * 復元するために使う（executionStore.restoreCell から呼ばれる）。
  */
 /** `GET /api/queries/:id` snapshot (for reconnect/restore). */
-export function fetchQuerySnapshot(queryId: string): Promise<QuerySnapshot> {
-  return apiFetch(querySnapshotSchema, apiRoutes.query(queryId));
+export function fetchQuerySnapshot(queryId: string, signal?: AbortSignal): Promise<QuerySnapshot> {
+  return apiFetch(querySnapshotSchema, apiRoutes.query(queryId), { signal });
 }
 
 /**
@@ -67,9 +67,11 @@ export function fetchQueryRows(
   queryId: string,
   offset: number,
   limit: number,
+  signal?: AbortSignal,
 ): Promise<QueryRowsPage> {
   return apiFetch(queryRowsPageSchema, apiRoutes.queryRows(queryId), {
     query: { offset, limit },
+    signal,
   });
 }
 

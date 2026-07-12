@@ -570,11 +570,11 @@ export function SchemaTree({
   // ヘッダーの更新ボタン用ミューテーション: サーバー側の TTL キャッシュを強制更新させ、
   // 成功したらクライアント側の 'metadata' クエリを全て無効化してツリーを最新化する。
   const refresh = useMutation({
-    mutationFn: () => refreshMetadata(),
-    onSuccess: () => {
-      invalidateEditorSchemaCache(datasourceId);
-      void queryClient.invalidateQueries({ queryKey: ['metadata', datasourceId] });
-      toast.info('Metadata refreshed', 'Schema cache reloaded.');
+    mutationFn: () => refreshMetadata(datasourceId),
+    onSuccess: (outcome) => {
+      invalidateEditorSchemaCache(outcome.datasourceId);
+      void queryClient.invalidateQueries({ queryKey: ['metadata', outcome.datasourceId] });
+      toast.info('Metadata refreshed', `Datasource ${outcome.datasourceId} schema cache reloaded.`);
     },
     onError: () => toast.error('Refresh failed', 'Could not reach the server.'),
   });

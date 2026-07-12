@@ -23,7 +23,7 @@
 //     各 notebook の dirty（未保存変更あり）/ draft（未保存 notebook）/ saving
 //     （保存 API 実行中）状態を一元管理する。
 //   - セルの追加、削除、並べ替え、ソース編集、notebook のタイトル/説明/実行
-//     context（catalog/schema）の変更、変数値の更新は、すべてこのストアの
+//     context（datasource/catalog/schema）の変更、変数値の更新は、すべてこのストアの
 //     action を通す。
 //   - 永続化方針: 保存済み notebook（サーバー上に id がある = draft: false）は
 //     編集のたびに 2 秒デバウンスで PUT オートセーブされる。draft notebook（まだ
@@ -57,6 +57,7 @@ import { readRecentContexts } from './recentContexts';
 import { canPersistNotebookToServer } from '../utils/documentShare';
 import { ApiClientError } from '../api/client';
 import { principalStorageKey } from '../storage/principalStorage';
+import { useDatasourceStore } from '../stores/datasourceStore';
 
 // ---- Persistence injection --------------------------------------------------
 
@@ -960,11 +961,18 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     createBlankNotebook: () => {
       // Seed the new notebook's context from the active notebook, falling back to
       // the most-recently-used context.
-      // アクティブな notebook が catalog/schema を持っていればそれを引き継ぎ、
-      // 持っていなければ直近使用した context（recentContexts）の先頭を使う。
+      // アクティブな notebook が実行contextを持っていればそれを引き継ぎ、
+      // 持っていなければ現在のデータソースに対応する直近contextを使う。
       const active = get().activeId ? get().open[get().activeId!]?.notebook.context : undefined;
-      const ctx =
-        active && (active.catalog || active.schema) ? active : (readRecentContexts()[0] ?? {});
+      const selected = useDatasourceStore.getState().executionContext;
+      const activeWithDatasource =
+        active && (active.datasourceId || active.catalog || active.schema)
+          ? { ...active, datasourceId: active.datasourceId ?? selected.datasourceId }
+          : undefined;
+      const recent = selected.datasourceId
+        ? readRecentContexts(selected.datasourceId)[0]
+        : undefined;
+      const ctx = activeWithDatasource ?? recent ?? selected;
       const nb = blankNotebook(ctx);
       get().openNotebook(nb, { draft: true, activate: true });
       const contentPersisted = writeDraft(nb);

@@ -31,7 +31,7 @@ import { cn } from '../../utils/cn';
 import { isDocumentOwner } from '../../utils/documentShare';
 import { useDatasources } from '../../hooks/useDatasources';
 import { DatasourceBadge } from '../common/DatasourceBadge';
-import { trySelectDatasource } from '../../utils/applyDatasource';
+import { toastDatasourceMissing, tryApplyExecutionContext } from '../../utils/applyDatasource';
 import { Share2 } from 'lucide-react';
 
 /**
@@ -178,10 +178,18 @@ export function SavedQueriesPanel({ search }: { search: string }) {
   const queryClient = useQueryClient();
   const { datasources } = useDatasources();
 
-  const applySavedDatasource = (query: SavedQuery) => {
-    if (query.datasourceId) {
-      trySelectDatasource(datasources, query.datasourceId);
+  const applySavedContext = (query: SavedQuery): boolean => {
+    if (
+      tryApplyExecutionContext(datasources, {
+        datasourceId: query.datasourceId,
+        catalog: query.catalog,
+        schema: query.schema,
+      })
+    ) {
+      return true;
     }
+    toastDatasourceMissing(query.datasourceId ?? 'unknown');
+    return false;
   };
   // 検索語を 300ms デバウンスし、入力のたびに API を叩かないようにする。
   const debounced = useDebouncedValue(search.trim(), 300);
@@ -284,11 +292,11 @@ export function SavedQueriesPanel({ search }: { search: string }) {
             onToggleExpand={() => setExpandedId((id) => (id === query.id ? null : query.id))}
             onToggleFavorite={() => favorite.mutate(query)}
             onInsert={() => {
-              applySavedDatasource(query);
+              if (!applySavedContext(query)) return;
               insertAtActiveCursor(query.statement);
             }}
             onNewCell={() => {
-              applySavedDatasource(query);
+              if (!applySavedContext(query)) return;
               if (addSqlCellWithSource(query.statement)) {
                 toast.success('New SQL cell', `“${query.name}” added.`);
               }

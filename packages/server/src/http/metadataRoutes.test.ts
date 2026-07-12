@@ -145,16 +145,18 @@ describe('metadata endpoints', () => {
     await ctx.services.shutdown();
   });
 
-  it('POST /api/metadata/refresh re-fetches catalogs', async () => {
+  it('POST /api/datasources/:id/metadata/refresh re-fetches the selected datasource', async () => {
     const ctx = await createTestContext({ scenarios });
     await ctx.app.request('/api/catalogs');
     const before = ctx.fake.requests.filter((r) => r.method === 'POST').length;
-    const res = await ctx.app.request('/api/metadata/refresh', {
+    const datasourceId = ctx.services.defaultDatasourceId;
+    const res = await ctx.app.request(`/api/datasources/${datasourceId}/metadata/refresh`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, datasourceId });
     const after = ctx.fake.requests.filter((r) => r.method === 'POST').length;
     expect(after).toBeGreaterThan(before);
   });

@@ -137,15 +137,25 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
     }),
   );
 
-  // healthz is always public: it must answer before auth.
-  // 日本語: ヘルスチェックは認証ミドルウェアより前に登録し、常に認証不要で応答させる
-  // （ロードバランサ等の死活監視が認証設定に左右されないようにするため）。
+  // healthz and readyz are always public: they must answer before auth.
+  // 日本語: liveness と readiness は認証ミドルウェアより前に登録し、常に認証不要で
+  // 応答させる（ロードバランサ等の監視が認証設定に左右されないようにするため）。
   app.get(apiRoutes.healthz(), (c) => c.json({ status: 'ok' }));
+
+  // readiness は DB と既定エンジンを短い期限で確認し、受付不能なら 503 を返す。
+  app.get(apiRoutes.readyz(), async (c) => {
+    const result = await services.readiness.check();
+    const body = {
+      status: result.ready ? ('ok' as const) : ('unavailable' as const),
+      checks: result.checks,
+    };
+    return result.ready ? c.json(body) : c.json(body, 503);
+  });
 
   // Authentication gate for every other /api route. In `none`
   // mode it transparently sets the technical principal; in `proxy` mode it
   // resolves the SSO principal or returns 401 UNAUTHENTICATED.
-  // 日本語: healthz 以外の全 /api ルートに適用される認証ゲート。AUTH_MODE=none
+  // 日本語: healthz と readyz 以外の全 /api ルートに適用される認証ゲート。AUTH_MODE=none
   // （既定）では設定済みの技術アカウント (TRINO_USER) をそのまま principal として
   // 設定し、AUTH_MODE=proxy では oauth2-proxy が付与する SSO ヘッダから principal を
   // 解決する（信頼できない場合は 401 UNAUTHENTICATED を返す）。

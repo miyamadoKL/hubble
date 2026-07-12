@@ -9,7 +9,6 @@ import { useEffect } from 'react';
 import { useUiStore } from '../stores/uiStore';
 import { saveActiveNotebook, runActiveSqlCell } from '../notebook';
 import { getActiveEditor } from '../editor/activeEditor';
-import { formatEditor } from '../editor/formatter';
 import { saveActiveDocument } from '../navigation/documentNavigation';
 import { matchShortcut, type FocusContext, type KeyChord } from './shortcuts';
 
@@ -121,8 +120,8 @@ export function useGlobalShortcuts(): void {
           const editor = getActiveEditor()?.editor;
           if (editor) {
             editor.focus();
-            // formatEditor（../editor/formatter）で SQL 文の整形処理を実行する。
-            formatEditor(editor);
+            // formatEditor は整形操作時だけ読み込み、通常の shell graph から外す。
+            void import('../editor/formatter').then(({ formatEditor }) => formatEditor(editor));
           }
           break;
         }

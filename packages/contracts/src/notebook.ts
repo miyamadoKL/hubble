@@ -123,8 +123,9 @@ export const cellSchema = z.object({
 /** セルの推論型。 */
 export type Cell = z.infer<typeof cellSchema>;
 
-// ノートブックの既定実行コンテキスト（どのカタログ/スキーマを対象にするか）。
+// ノートブックの既定実行コンテキスト（どのデータソース、カタログ、スキーマを対象にするか）。
 export const notebookContextSchema = z.object({
+  datasourceId: z.string().optional(),
   catalog: z.string().optional(),
   schema: z.string().optional(),
 });

@@ -113,7 +113,7 @@ export function ContextSelector({
 
   /** Open the popover, seeding its transient state from current props. */
   const openPopover = () => {
-    setRecents(readRecentContexts());
+    setRecents(datasourceId ? readRecentContexts(datasourceId) : []);
     setPickCatalog(catalog);
     setSearch('');
     setOpen(true);

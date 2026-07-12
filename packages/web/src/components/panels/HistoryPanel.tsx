@@ -28,7 +28,11 @@ import { useDatasourceStore } from '../../stores/datasourceStore';
 import { useUiStore } from '../../stores/uiStore';
 import { executionActions } from '../../execution';
 
-import { trySelectDatasource, toastDatasourceMissing } from '../../utils/applyDatasource';
+import {
+  tryApplyExecutionContext,
+  trySelectDatasource,
+  toastDatasourceMissing,
+} from '../../utils/applyDatasource';
 
 /**
  * History panel (offset ページング 50 件, state フィルタチップ, 各行
@@ -235,23 +239,21 @@ export function HistoryPanel() {
   const total = query.data?.pages.at(-1)?.total ?? 0;
 
   const rerunFromHistory = (entry: QueryHistoryEntry) => {
-    if (entry.datasourceId && !trySelectDatasource(datasources, entry.datasourceId)) {
-      toastDatasourceMissing(entry.datasourceId);
+    const shell = useUiStore.getState().shellContext;
+    if (
+      !tryApplyExecutionContext(datasources, {
+        datasourceId: entry.datasourceId,
+        catalog: entry.catalog ?? shell.catalog,
+        schema: entry.schema ?? shell.schema,
+      })
+    ) {
+      toastDatasourceMissing(entry.datasourceId ?? 'unknown');
       return;
     }
     const cellId = addSqlCellWithSource(entry.statement);
     if (cellId) {
-      const shell = useUiStore.getState().shellContext;
-      const started = runSqlCell(
-        cellId,
-        entry.statement,
-        {
-          catalog: entry.catalog ?? shell.catalog,
-          schema: entry.schema ?? shell.schema,
-          datasourceId: entry.datasourceId ?? useDatasourceStore.getState().selectedId ?? undefined,
-        },
-        defaultLimit,
-      );
+      const applied = useDatasourceStore.getState().executionContext;
+      const started = runSqlCell(cellId, entry.statement, applied, defaultLimit);
       if (!started) return;
       toast.success('Re-running query');
     }
@@ -267,7 +269,16 @@ export function HistoryPanel() {
     if (!cellId) return;
     void executionActions()
       .restoreCell(cellId, entry.id)
-      .then(() => toast.success('Opened saved result'));
+      .then((outcome) => {
+        if (outcome === 'restored') {
+          toast.success('Opened saved result');
+        } else if (outcome === 'unavailable') {
+          toast.error('Saved result unavailable', 'The stored query result could not be loaded.');
+        }
+      })
+      .catch(() =>
+        toast.error('Saved result unavailable', 'The stored query result could not be loaded.'),
+      );
   };
 
   return (

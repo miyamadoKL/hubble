@@ -6,7 +6,11 @@
  * レガシールートは Phase 4 で web 移行後に削除予定。
  */
 import { Hono } from 'hono';
-import { metadataRefreshRequestSchema, tableDetailSchema } from '@hubble/contracts';
+import {
+  metadataRefreshRequestSchema,
+  metadataRefreshResponseSchema,
+  tableDetailSchema,
+} from '@hubble/contracts';
 import type { AuthVariables } from '../auth/middleware';
 import type { Services } from '../services';
 import { resolveEngine } from '../engine/resolve';
@@ -96,7 +100,7 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
       defaultId,
       c.var.principal.role.name,
     );
-    return c.json({ ok: true });
+    return c.json(metadataRefreshResponseSchema.parse({ ok: true, datasourceId: defaultId }));
   });
 
   return app;
@@ -107,6 +111,22 @@ export function metadataRoutes(services: Services): Hono<{ Variables: AuthVariab
  */
 export function datasourceMetadataRoutes(services: Services): Hono<{ Variables: AuthVariables }> {
   const app = new Hono<{ Variables: AuthVariables }>();
+
+  app.post('/:datasourceId/metadata/refresh', async (c) => {
+    const principal = c.var.principal.user;
+    const datasourceId = c.req.param('datasourceId');
+    requireDatasourceAccess(c.var.principal.role, datasourceId);
+    resolveEngine(services.engines, datasourceId, services.defaultDatasourceId);
+    const body = await parseJsonBody(c, metadataRefreshRequestSchema);
+    await services.metadata.refresh(
+      principal,
+      body.catalog,
+      body.schema,
+      datasourceId,
+      c.var.principal.role.name,
+    );
+    return c.json(metadataRefreshResponseSchema.parse({ ok: true, datasourceId }));
+  });
 
   app.get('/:datasourceId/catalogs', async (c) => {
     const principal = c.var.principal.user;

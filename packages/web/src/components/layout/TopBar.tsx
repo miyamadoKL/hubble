@@ -32,6 +32,7 @@ import { isCellRunning } from '../../execution';
 import { useConfig } from '../../hooks/useConfig';
 import { useMe } from '../../hooks/useMe';
 import { hasPermission } from '../../permissions';
+import type { ExecutionContext } from '../../stores/datasourceStore';
 
 /**
  * TopBar: logo · notebook tabs (open/close/new/rename) ·
@@ -46,15 +47,18 @@ import { hasPermission } from '../../permissions';
  * 受け取り、変更や実行のたびに親へコールバックまたはグローバル操作関数で通知する。
  *
  * @param context - 現在の catalog / schema コンテキスト。ContextSelector の表示値になる。
+ * @param onDatasourceChange - データソースとその MRU コンテキストを同時に切り替えるコールバック。
  * @param onContextChange - コンテキストが変更されたときに呼ばれるコールバック（親が保存する）。
  * @param defaultLimit - 全セル実行時に適用するデフォルトの行数上限。
  */
 export function TopBar({
   context,
+  onDatasourceChange,
   onContextChange,
   defaultLimit,
 }: {
-  context: { catalog: string; schema: string };
+  context: ExecutionContext;
+  onDatasourceChange: (datasourceId: string) => void;
   onContextChange: (next: { catalog: string; schema: string }) => void;
   defaultLimit: number;
 }) {
@@ -87,12 +91,7 @@ export function TopBar({
   const execCells = useExecutionStore((s) => s.cells);
   const running = activeCellIds.some((id) => isCellRunning(execCells[id]));
 
-  const {
-    datasources,
-    selectedId,
-    setSelectedId,
-    isLoading: datasourcesLoading,
-  } = useDatasources();
+  const { datasources, isLoading: datasourcesLoading } = useDatasources();
 
   // 「未保存のノートブックを閉じようとしている」ときに表示する確認モーダルの対象
   // （id と表示名）。null なら確認モーダルは非表示。
@@ -121,7 +120,7 @@ export function TopBar({
       cancelActiveNotebook();
       return;
     }
-    void runAllCells({ ...context, datasourceId: selectedId }, defaultLimit);
+    void runAllCells(context, defaultLimit);
   };
 
   // Save ボタンのクリック処理。まだ名前が付いていない（新規未保存）ノートブックの
@@ -153,13 +152,13 @@ export function TopBar({
         <div className="ml-auto flex items-center gap-2">
           <DatasourceSelector
             datasources={datasources}
-            selectedId={selectedId}
-            onChange={setSelectedId}
+            selectedId={context.datasourceId}
+            onChange={onDatasourceChange}
             loading={datasourcesLoading}
           />
           {/* catalog.schema コンテキストの選択 UI。 */}
           <ContextSelector
-            datasourceId={selectedId}
+            datasourceId={context.datasourceId}
             catalog={context.catalog}
             schema={context.schema}
             onChange={onContextChange}

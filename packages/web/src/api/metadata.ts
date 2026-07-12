@@ -13,19 +13,20 @@
 //      queryClient.fetchQuery にキャッシュを委譲することで、補完やホバーの
 //      たびに同じメタデータを何度も取得しないようにしている。
 
-import { z } from 'zod';
 import {
   catalogsResponseSchema,
   schemasResponseSchema,
   tablesResponseSchema,
   tableDetailSchema,
   sampleRowsResponseSchema,
+  metadataRefreshResponseSchema,
   apiRoutes,
   type CatalogsResponse,
   type SchemasResponse,
   type TablesResponse,
   type TableDetail,
   type SampleRowsResponse,
+  type MetadataRefreshResponse,
 } from '@hubble/contracts';
 import type { QueryClient } from '@tanstack/react-query';
 import { apiFetch } from './client';
@@ -104,21 +105,21 @@ export function fetchTableSample(
   );
 }
 
-const refreshResponseSchema = z.object({ ok: z.boolean() });
-
 /**
- * サーバー側のメタデータ TTL キャッシュを強制再取得させる。
- *
- * 現状の API は既定データソース向けの `/api/metadata/refresh` のみ。
- * 非 default データソースではクライアント側キャッシュの無効化に留まる。
+ * 指定データソースのメタデータ TTL キャッシュを強制再取得させる。
  */
-export function refreshMetadata(scope?: { catalog?: string; schema?: string }): Promise<{
-  ok: boolean;
-}> {
-  return apiFetch(refreshResponseSchema, apiRoutes.metadataRefresh(), {
-    method: 'POST',
-    body: scope ?? {},
-  });
+export function refreshMetadata(
+  datasourceId: string,
+  scope?: { catalog?: string; schema?: string },
+): Promise<MetadataRefreshResponse> {
+  return apiFetch(
+    metadataRefreshResponseSchema,
+    apiRoutes.datasourceMetadataRefresh(datasourceId),
+    {
+      method: 'POST',
+      body: scope ?? {},
+    },
+  );
 }
 
 /**

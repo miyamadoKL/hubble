@@ -4,11 +4,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 // to a deterministic queryId; the others are inert.
 const createQuery = vi.fn();
 const cancelQuery = vi.fn();
+const fetchQuerySnapshot = vi.fn();
+const fetchQueryRows = vi.fn();
 vi.mock('./api', () => ({
   createQuery: (...args: unknown[]) => createQuery(...args),
   cancelQuery: (...args: unknown[]) => cancelQuery(...args),
-  fetchQuerySnapshot: vi.fn(),
-  fetchQueryRows: vi.fn(),
+  fetchQuerySnapshot: (...args: unknown[]) => fetchQuerySnapshot(...args),
+  fetchQueryRows: (...args: unknown[]) => fetchQueryRows(...args),
   downloadCsvUrl: vi.fn(),
 }));
 
@@ -27,6 +29,8 @@ beforeEach(() => {
   MockEventSource.instances = [];
   createQuery.mockReset();
   cancelQuery.mockReset().mockResolvedValue(undefined);
+  fetchQuerySnapshot.mockReset();
+  fetchQueryRows.mockReset();
   __setEventSourceFactory((url) => new MockEventSource(url));
   __setCellSettledSink(undefined);
   // Reset store state between tests.
@@ -591,6 +595,55 @@ describe('executionStore cell-settled sink (resultMeta write-back)', () => {
     await useExecutionStore.getState().cancel('cell-cancel-sink');
 
     expect(seen.some((s) => s.state === 'canceled')).toBe(true);
+  });
+});
+
+describe('executionStore.restoreCell', () => {
+  const snapshot = {
+    id: 'history-1',
+    state: 'finished',
+    stats: {},
+    columns: [{ name: 'n', type: 'bigint' }],
+    rowCount: 1,
+    truncated: false,
+    submittedAt: '2026-07-12T00:00:00.000Z',
+    finishedAt: '2026-07-12T00:00:01.000Z',
+  };
+
+  test('snapshotを取得できた場合だけrestoredを返す', async () => {
+    fetchQuerySnapshot.mockResolvedValue(snapshot);
+    fetchQueryRows.mockResolvedValue({ rows: [[1]] });
+
+    await expect(
+      useExecutionStore.getState().restoreCell('restored-cell', 'history-1'),
+    ).resolves.toBe('restored');
+    expect(useExecutionStore.getState().cells['restored-cell']?.rows).toEqual([[1]]);
+  });
+
+  test('snapshot取得失敗をunavailableとして呼び出し元へ返す', async () => {
+    fetchQuerySnapshot.mockRejectedValue(new Error('network down'));
+
+    await expect(
+      useExecutionStore.getState().restoreCell('missing-cell', 'history-missing'),
+    ).resolves.toBe('unavailable');
+    expect(useExecutionStore.getState().cells['missing-cell']).toBeUndefined();
+  });
+
+  test('復元中に世代が変わった場合は古いsnapshotを適用しない', async () => {
+    let resolveSnapshot!: (value: typeof snapshot) => void;
+    fetchQuerySnapshot.mockImplementation(
+      () =>
+        new Promise<typeof snapshot>((resolve) => {
+          resolveSnapshot = resolve;
+        }),
+    );
+
+    const restoring = useExecutionStore.getState().restoreCell('superseded-cell', 'history-old');
+    useExecutionStore.getState().clear('superseded-cell');
+    resolveSnapshot(snapshot);
+
+    await expect(restoring).resolves.toBe('superseded');
+    expect(useExecutionStore.getState().cells['superseded-cell']).toBeUndefined();
   });
 });
 

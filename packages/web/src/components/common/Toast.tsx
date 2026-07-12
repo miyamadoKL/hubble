@@ -109,15 +109,18 @@ function ToastRow({ item }: { item: ToastItem }) {
   const dismiss = useToastStore((s) => s.dismiss);
   const Icon = VARIANT_ICON[item.variant];
 
-  // マウント時に自動消去用のタイマーをセットし、アンマウント時（または item 変化時）にクリアする
+  // error は確認前に消さず、success と info だけに自動消去タイマーを設定する。
   useEffect(() => {
+    if (item.variant === 'error') return;
     const timer = window.setTimeout(() => dismiss(item.id), AUTO_DISMISS_MS);
     return () => window.clearTimeout(timer);
-  }, [item.id, dismiss]);
+  }, [item.id, item.variant, dismiss]);
 
   return (
     <div
-      role="status"
+      role={item.variant === 'error' ? 'alert' : 'status'}
+      aria-live={item.variant === 'error' ? 'assertive' : 'polite'}
+      aria-atomic="true"
       className={cn(
         'pointer-events-auto relative flex w-80 items-start gap-3 overflow-hidden rounded-md border border-border-strong',
         'bg-surface-overlay py-2.5 pr-2.5 pl-3 shadow-lg',
@@ -156,7 +159,10 @@ function ToastRow({ item }: { item: ToastItem }) {
 export function ToastViewport() {
   const toasts = useToastStore((s) => s.toasts);
   return (
-    <div className="pointer-events-none fixed right-4 bottom-4 z-[100] flex flex-col gap-2">
+    <div
+      data-modal-live-region=""
+      className="pointer-events-none fixed right-4 bottom-4 z-[100] flex flex-col gap-2"
+    >
       {/* 現在表示中のトーストを1件ずつ ToastRow として描画する */}
       {toasts.map((item) => (
         <div key={item.id} className="relative">

@@ -2,16 +2,17 @@
  * WidgetCard.tsx
  *
  * ダッシュボードグリッドの 1 パネル分のカード。query widget は
- * useWidgetData で参照先クエリを実行して QueryWidgetBody へ渡し、
+ * dashboard 共通 coordinator で参照先クエリを共有実行して QueryWidgetBody へ渡し、
  * text widget は Markdown をそのまま描画する。ヘッダーにはタイトルと、
  * リフレッシュ (query のみ) と編集モード時の削除ボタンを表示する。
  */
+import { useEffect, useRef, useState } from 'react';
 import { RefreshCw, Trash2 } from 'lucide-react';
 import type { DashboardWidget, QueryWidget } from '@hubble/contracts';
 import { Markdown } from '../notebook/Markdown';
 import { Tooltip } from '../common/Tooltip';
 import { QueryWidgetBody } from './QueryWidgetBody';
-import { useWidgetData } from './useWidgetData';
+import { useDashboardWidgetData } from './DashboardWidgetData';
 import { cn } from '../../utils/cn';
 
 /** query widget のカード本体 (データ取得込み)。 */
@@ -24,40 +25,55 @@ function QueryWidgetCard({
   editing: boolean;
   onRemove: () => void;
 }) {
-  const data = useWidgetData(widget.savedQueryId);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) =>
+        setVisible((wasVisible) => wasVisible || entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: '0px' },
+    );
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, []);
+  const data = useDashboardWidgetData(widget.savedQueryId, visible);
   // タイトルは widget の明示タイトル → 保存クエリ名 → id の順にフォールバックする。
   const title = widget.title?.trim() || data.queryName || widget.savedQueryId;
   return (
-    <WidgetChrome
-      title={title}
-      editing={editing}
-      onRemove={onRemove}
-      actions={
-        <Tooltip label="Refresh" side="bottom">
-          <button
-            type="button"
-            aria-label="Refresh widget"
-            onClick={data.refresh}
-            disabled={data.loading}
-            className="rounded-sm p-1 text-ink-subtle hover:text-ink-strong disabled:opacity-50"
-          >
-            <RefreshCw
-              size={13}
-              strokeWidth={1.75}
-              className={cn(data.loading && 'animate-spin')}
-            />
-          </button>
-        </Tooltip>
-      }
-    >
-      <QueryWidgetBody
-        widget={widget}
-        loading={data.loading}
-        error={data.error}
-        columns={data.columns}
-        rows={data.rows}
-      />
-    </WidgetChrome>
+    <div ref={cardRef} className="h-full">
+      <WidgetChrome
+        title={title}
+        editing={editing}
+        onRemove={onRemove}
+        actions={
+          <Tooltip label="Refresh" side="bottom">
+            <button
+              type="button"
+              aria-label="Refresh widget"
+              onClick={data.refresh}
+              disabled={data.loading}
+              className="rounded-sm p-1 text-ink-subtle hover:text-ink-strong disabled:opacity-50"
+            >
+              <RefreshCw
+                size={13}
+                strokeWidth={1.75}
+                className={cn(data.loading && 'animate-spin')}
+              />
+            </button>
+          </Tooltip>
+        }
+      >
+        <QueryWidgetBody
+          widget={widget}
+          loading={data.loading}
+          error={data.error}
+          columns={data.columns}
+          rows={data.rows}
+        />
+      </WidgetChrome>
+    </div>
   );
 }
 

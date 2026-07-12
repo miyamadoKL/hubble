@@ -5,7 +5,7 @@
  * トリガーボタンと選択肢メニューを描画する。外側クリックと Escape キーでの
  * クローズや、矢印キーによる選択肢のフォーカス移動にも対応する。
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
@@ -71,8 +71,17 @@ export function Dropdown<T extends string>({
   const [activeIndex, setActiveIndex] = useState(0);
   // 外側クリック判定に使うルート要素への参照。
   const rootRef = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
   // 現在の value に対応する選択肢オブジェクト（表示ラベルの取得に使用）。
   const selected = options.find((o) => o.value === value);
+
+  // active option がキーボード操作で変わったら、listbox の表示領域へ収める。
+  useEffect(() => {
+    if (!open || options.length === 0) return;
+    document
+      .getElementById(`${listboxId}-option-${activeIndex}`)
+      ?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeIndex, listboxId, open, options.length]);
 
   // メニューが開いている間だけ、外側クリックを検知してメニューを閉じるリスナーを登録する。
   useEffect(() => {
@@ -112,26 +121,37 @@ export function Dropdown<T extends string>({
   // トリガー/メニューに対するキーボード操作のハンドラー。
   function onKeyDown(e: React.KeyboardEvent) {
     if (!open) {
-      // メニューが閉じている状態で Enter、Space、下矢印が押された場合はメニューを開く。
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+      // メニューが閉じている状態で Enter、Space、上下矢印が押された場合はメニューを開く。
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         openMenu();
       }
       return;
     }
     // メニューが開いている場合の各キー操作を処理する。
-    if (e.key === 'Escape') setOpen(false);
-    else if (e.key === 'ArrowDown') {
-      // アクティブな選択肢を1つ下に移動する（末尾を超えない）。
+    if (e.key === 'Escape') {
       e.preventDefault();
-      setActiveIndex((i) => Math.min(options.length - 1, i + 1));
+      e.stopPropagation();
+      setOpen(false);
+    } else if (e.key === 'ArrowDown') {
+      // アクティブな選択肢を1つ下に移動する。
+      e.preventDefault();
+      setActiveIndex((i) => (options.length === 0 ? 0 : Math.min(options.length - 1, i + 1)));
     } else if (e.key === 'ArrowUp') {
-      // アクティブな選択肢を1つ上に移動する（先頭を下回らない）。
+      // アクティブな選択肢を1つ上に移動する。
       e.preventDefault();
       setActiveIndex((i) => Math.max(0, i - 1));
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setActiveIndex(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setActiveIndex(Math.max(0, options.length - 1));
+    } else if (e.key === 'Enter' || e.key === ' ') {
       // アクティブな選択肢を確定する。
       e.preventDefault();
+      commit(activeIndex);
+    } else if (e.key === 'Tab') {
       commit(activeIndex);
     }
   }
@@ -141,9 +161,15 @@ export function Dropdown<T extends string>({
       {/* トリガーボタン: クリックまたはキーボード操作でメニューの開閉を切り替える */}
       <button
         type="button"
+        role="combobox"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
+        aria-autocomplete="none"
         aria-expanded={open}
+        aria-controls={listboxId}
+        aria-activedescendant={
+          open && options.length > 0 ? `${listboxId}-option-${activeIndex}` : undefined
+        }
         onClick={() => (open ? setOpen(false) : openMenu())}
         onKeyDown={onKeyDown}
         className={cn(
@@ -168,6 +194,7 @@ export function Dropdown<T extends string>({
       {/* メニューが開いている場合のみ、選択肢一覧を表示する */}
       {open && (
         <ul
+          id={listboxId}
           role="listbox"
           className={cn(
             'absolute top-full z-50 mt-1 max-h-72 min-w-full overflow-auto rounded-md border border-border-strong',
@@ -182,30 +209,30 @@ export function Dropdown<T extends string>({
             const isSelected = opt.value === value;
             const isActive = i === activeIndex;
             return (
-              <li key={opt.value}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  onMouseEnter={() => setActiveIndex(i)}
-                  onClick={() => commit(i)}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
-                    isActive ? 'bg-accent-soft text-accent' : 'text-ink-base',
-                  )}
-                >
-                  {/* 選択中の項目にのみチェックマークを表示する（未選択時は透明にして幅だけ確保） */}
-                  <Check
-                    size={14}
-                    strokeWidth={2}
-                    className={cn('shrink-0', isSelected ? 'opacity-100' : 'opacity-0')}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{opt.label}</span>
-                  {/* hint が指定されている場合のみ、補足テキストを右側に表示する */}
-                  {opt.hint && (
-                    <span className="shrink-0 font-mono text-2xs text-ink-subtle">{opt.hint}</span>
-                  )}
-                </button>
+              <li
+                key={opt.value}
+                id={`${listboxId}-option-${i}`}
+                role="option"
+                aria-selected={isActive}
+                onMouseEnter={() => setActiveIndex(i)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => commit(i)}
+                className={cn(
+                  'flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
+                  isActive ? 'bg-accent-soft text-accent' : 'text-ink-base',
+                )}
+              >
+                {/* 選択中の項目にのみチェックマークを表示する（未選択時は透明にして幅だけ確保） */}
+                <Check
+                  size={14}
+                  strokeWidth={2}
+                  className={cn('shrink-0', isSelected ? 'opacity-100' : 'opacity-0')}
+                />
+                <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                {/* hint が指定されている場合のみ、補足テキストを右側に表示する */}
+                {opt.hint && (
+                  <span className="shrink-0 font-mono text-2xs text-ink-subtle">{opt.hint}</span>
+                )}
               </li>
             );
           })}

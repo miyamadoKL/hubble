@@ -13,6 +13,8 @@ vi.mock('../editor/activeEditor', () => ({ getActiveEditor: vi.fn(() => null) })
 vi.mock('../editor/formatter', () => ({ formatEditor: vi.fn() }));
 
 import { saveActiveNotebook } from '../notebook';
+import { getActiveEditor } from '../editor/activeEditor';
+import { formatEditor } from '../editor/formatter';
 import {
   createDocumentNavigationOwner,
   registerDocumentNavigation,
@@ -72,5 +74,27 @@ describe('useGlobalShortcuts save', () => {
     });
 
     expect(saveActiveNotebook).toHaveBeenCalledOnce();
+  });
+});
+
+describe('useGlobalShortcuts format', () => {
+  it('整形ショートカットで対象editorへ遅延読込したformatterを適用する', async () => {
+    const editor = { focus: vi.fn() };
+    vi.mocked(getActiveEditor).mockReturnValue({ editor } as never);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'f',
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await vi.waitFor(() => expect(formatEditor).toHaveBeenCalledWith(editor));
+    });
+
+    expect(editor.focus).toHaveBeenCalledOnce();
   });
 });

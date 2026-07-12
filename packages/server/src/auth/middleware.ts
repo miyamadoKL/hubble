@@ -98,16 +98,17 @@ function unauthenticated(reason: string): never {
  * - `proxy` mode: the principal is resolved from trusted SSO headers; requests
  *   from untrusted peers or without identity headers get 401.
  *
- * `/api/healthz` is always exempt. Static assets are served outside the API and
- * never reach this middleware (it is mounted under `/api`).
+ * `/api/healthz` and `/api/readyz` are always exempt. Static assets are served
+ * outside the API and never reach this middleware (it is mounted under `/api`).
  *
  * 認証ミドルウェア。`Principal` を解決し `c.set('principal', …)` で公開する。
  * - `none` モード: すべてのリクエストを技術ユーザーとして認証済み扱いにする。
  * - `proxy` モード: 信頼済み SSO ヘッダーから principal を解決する。信頼できないピアからの
  *   リクエストや、識別ヘッダーが欠落しているリクエストは 401 になる。
  *
- * `/api/healthz` は常に例外（このミドルウェアの対象外）。静的アセットは API の外側で
- * 配信されるため、このミドルウェア（`/api` 配下にマウント）を通過しない。
+ * `/api/healthz` と `/api/readyz` は常に例外（このミドルウェアの対象外）。
+ * 静的アセットは API の外側で配信されるため、このミドルウェア（`/api` 配下にマウント）を
+ * 通過しない。
  * @param options - 認証設定、技術ユーザー名、リモートアドレス取得元（差し替え可）。
  * @returns Hono の `MiddlewareHandler`。認証失敗時は例外（401）を送出する。
  */

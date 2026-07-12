@@ -32,7 +32,6 @@ import {
 } from '../trino-lang';
 import type { SchemaCache } from '../trino-lang';
 import { applyFableTheme } from './theme';
-import { formatEditor } from './formatter';
 
 /** Monaco に登録する Trino SQL 言語の ID（言語登録や補完/ホバープロバイダーの紐付けに使う）。 */
 export const TRINO_LANGUAGE_ID = 'trino-sql';
@@ -60,17 +59,21 @@ export interface TrinoLanguageDeps {
   onExecute?: (editor: monaco.editor.ICodeEditor) => void;
 }
 
-let registered = false;
+interface TrinoLanguageRegistration {
+  deps: TrinoLanguageDeps;
+}
+
+/** Monaco 名前空間ごとに登録済み provider が読む最新依存を保持する。 */
+const registrations = new WeakMap<typeof monaco, TrinoLanguageRegistration>();
 
 /**
  * Register the Trino language, its tokenizer, completion + hover providers and
  * the editor theme. Safe to call repeatedly; only the first call per namespace
- * does the work. The returned deps reference is captured by the providers, so
- * callers should keep `getContext` reading live state.
+ * does the work.
  *
  * Monaco へ Trino 言語本体、tokenizer、補完/ホバープロバイダー、エディターテーマを登録する。
- * 何度呼んでも安全（名前空間ごとに最初の 1 回だけ実処理を行う）。プロバイダーは deps の参照を
- * クロージャで捕捉するため、呼び出し側は `getContext` が常に最新の状態を返すようにしておくこと。
+ * 何度呼んでも安全で、名前空間ごとに最初の 1 回だけ provider を登録する。
+ * 2 回目以降は provider が読む依存を差し替え、再 mount 後の cache と context を反映する。
  */
 export function registerTrinoLanguage(monacoNs: typeof monaco, deps: TrinoLanguageDeps): void {
   // Always (re)apply the theme so token changes propagate even if the language
@@ -78,8 +81,13 @@ export function registerTrinoLanguage(monacoNs: typeof monaco, deps: TrinoLangua
   // 言語が登録済みでもテーマは毎回再適用する（デザイントークンの変更を反映させるため）。
   applyFableTheme(monacoNs, deps.getTheme?.() ?? 'light');
 
-  if (registered) return;
-  registered = true;
+  const existing = registrations.get(monacoNs);
+  if (existing) {
+    existing.deps = deps;
+    return;
+  }
+  const registration: TrinoLanguageRegistration = { deps };
+  registrations.set(monacoNs, registration);
 
   // 言語 ID とエイリアスを登録。
   monacoNs.languages.register({ id: TRINO_LANGUAGE_ID, aliases: ['Trino SQL', 'trinosql'] });
@@ -100,8 +108,8 @@ export function registerTrinoLanguage(monacoNs: typeof monaco, deps: TrinoLangua
 
   // tokenizer / 補完プロバイダー / ホバープロバイダーをそれぞれ独立した関数で登録する。
   registerTokenizer(monacoNs);
-  registerCompletionProvider(monacoNs, deps);
-  registerHoverProvider(monacoNs, deps);
+  registerCompletionProvider(monacoNs, () => registration.deps);
+  registerHoverProvider(monacoNs, () => registration.deps);
 }
 
 /** Per-line ANTLR tokenizer mapping token types → TokenMap highlight scopes. */
@@ -172,10 +180,14 @@ function toMonacoItem(
 
 // 補完プロバイダー本体を登録する。'.'（テーブル修飾後のカラム展開）と ' '
 // （キーワード直後の候補表示）をトリガー文字とする。
-function registerCompletionProvider(monacoNs: typeof monaco, deps: TrinoLanguageDeps): void {
+function registerCompletionProvider(
+  monacoNs: typeof monaco,
+  getDeps: () => TrinoLanguageDeps,
+): void {
   monacoNs.languages.registerCompletionItemProvider(TRINO_LANGUAGE_ID, {
     triggerCharacters: ['.', ' '],
     provideCompletionItems: (model, position) => {
+      const deps = getDeps();
       const sql = model.getValue();
       const offset = model.getOffsetAt(position);
       const { catalog, schema } = deps.getContext();
@@ -205,9 +217,10 @@ function registerCompletionProvider(monacoNs: typeof monaco, deps: TrinoLanguage
 
 // ホバープロバイダーを登録する。カーソル位置がテーブル参照の範囲に重なっていれば、
 // スキーマキャッシュから解決したカラム一覧を Markdown で表示する。
-function registerHoverProvider(monacoNs: typeof monaco, deps: TrinoLanguageDeps): void {
+function registerHoverProvider(monacoNs: typeof monaco, getDeps: () => TrinoLanguageDeps): void {
   monacoNs.languages.registerHoverProvider(TRINO_LANGUAGE_ID, {
     provideHover: async (model, position) => {
+      const deps = getDeps();
       const { catalog, schema } = deps.getContext();
       const { descriptors } = parseStatement(model.getValue(), catalog, schema);
       // ステートメント記述子（テーブル参照の位置情報など）の中から、
@@ -337,7 +350,11 @@ export function attachDiagnostics(
     ],
     contextMenuGroupId: 'modification',
     contextMenuOrder: 1.5,
-    run: (ed) => formatEditor(ed),
+    run: async (ed) => {
+      // 整形操作を選んだ時点でだけ sql-formatter の大きな chunk を取得する。
+      const { formatEditor } = await import('./formatter');
+      formatEditor(ed);
+    },
   });
 
   // Initial pass.

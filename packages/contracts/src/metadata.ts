@@ -148,5 +148,13 @@ export const metadataRefreshRequestSchema = z.object({
   schema: z.string().optional(),
 });
 
+/** `POST .../metadata/refresh` が実際に更新したデータソースを示す応答。 */
+export const metadataRefreshResponseSchema = z.object({
+  ok: z.literal(true),
+  datasourceId: z.string().min(1),
+});
+
 /** メタデータ再取得リクエストの推論型。 */
 export type MetadataRefreshRequest = z.infer<typeof metadataRefreshRequestSchema>;
+/** メタデータ再取得応答の推論型。 */
+export type MetadataRefreshResponse = z.infer<typeof metadataRefreshResponseSchema>;

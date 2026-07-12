@@ -22,7 +22,7 @@ test('workspace、draft、context、datasource、UIを同じprincipalへ束縛�
     ]);
 
   const draftId = useNotebookStore.getState().createBlankNotebook();
-  recordRecentContext({ catalog: 'sales', schema: 'private' });
+  recordRecentContext({ datasourceId: 'warehouse', catalog: 'sales', schema: 'private' });
   useDatasourceStore.getState().setSelectedId('warehouse');
   useUiStore.getState().setTheme('dark');
 

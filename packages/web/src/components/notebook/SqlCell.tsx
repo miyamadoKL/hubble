@@ -43,8 +43,9 @@ import {
   type ExecutionUnit,
 } from '../../execution';
 import { cancelQuery, createQuery, fetchQueryRows } from '../../execution/api';
-import { SseProtocolError, subscribeQueryEvents } from '../../execution/sse';
+import { subscribeQueryEvents } from '../../execution/sse';
 import { setActiveEditor, clearActiveEditor } from '../../editor/activeEditor';
+import { ExplainQueryLifecycle } from './explainLifecycle';
 
 const SqlEditor = lazy(() =>
   import('../../editor/SqlEditor').then((module) => ({ default: module.SqlEditor })),
@@ -199,8 +200,23 @@ export function SqlCell({
   const [explainText, setExplainText] = useState<string | undefined>(undefined);
   // EXPLAINクエリが実行中かどうか。
   const [explainRunning, setExplainRunning] = useState(false);
-  // EXPLAIN用のSSE購読を保持し、クリーンアップ時にcloseできるようにするref。
-  const explainSubRef = useRef<{ close: () => void } | null>(null);
+  // EXPLAIN副問い合わせのqueryId、世代、購読、終端を所有するコントローラー。
+  const explainLifecycleRef = useRef<ExplainQueryLifecycle | null>(null);
+  if (explainLifecycleRef.current === null) {
+    explainLifecycleRef.current = new ExplainQueryLifecycle({
+      createQuery,
+      cancelQuery,
+      fetchQueryRows,
+      subscribeQueryEvents,
+    });
+  }
+
+  /** 現在のEXPLAINを停止し、表示状態を未実行へ戻す。 */
+  const resetExplain = useCallback(() => {
+    explainLifecycleRef.current?.cancelCurrent();
+    setExplainRunning(false);
+    setExplainText(undefined);
+  }, []);
 
   // Monacoエディタのインスタンス本体への参照。
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -261,8 +277,14 @@ export function SqlCell({
     else clearExecutionMarkers(monacoNs, model);
   }, [exec?.error, exec?.unitStart]);
 
-  // アンマウント時にEXPLAIN用のSSE購読をクローズするクリーンアップ。
-  useEffect(() => () => explainSubRef.current?.close(), []);
+  // アンマウント時にEXPLAINの購読とサーバー側queryを停止するクリーンアップ。
+  useEffect(
+    () => () => {
+      explainLifecycleRef.current?.dispose();
+      explainLifecycleRef.current = null;
+    },
+    [],
+  );
 
   // Stop being the Data browser's insert target once this cell unmounts.
   // アンマウント時、このセルがData browserの挿入先ターゲットだった場合は解除する。
@@ -276,11 +298,9 @@ export function SqlCell({
   const handleChange = useCallback(
     (next: string) => {
       onSourceChange(next);
-      setExplainText(undefined);
-      explainSubRef.current?.close();
-      explainSubRef.current = null;
+      resetExplain();
     },
-    [onSourceChange],
+    [onSourceChange, resetExplain],
   );
 
   // 実行時に渡すオプション（自動LIMITのオン/オフとLIMIT値）をまとめたオブジェクト。
@@ -384,6 +404,7 @@ export function SqlCell({
   const runOne = (unit: ExecutionUnit, cfg = runConfigRef.current) => {
     const resolved = cfg.resolveUnit(unit);
     if (!resolved) return;
+    resetExplain();
     executionActions().runUnit(cellId, resolved, cfg.context, cfg.runOpts);
   };
 
@@ -395,6 +416,7 @@ export function SqlCell({
   const runMany = (units: ExecutionUnit[], cfg = runConfigRef.current) => {
     const resolved = resolveAllExecutionUnits(units, cfg.resolveUnit);
     if (!resolved || resolved.length === 0) return;
+    resetExplain();
     if (resolved.length === 1)
       executionActions().runUnit(cellId, resolved[0]!, cfg.context, cfg.runOpts);
     else void executionActions().runUnits(cellId, resolved, cfg.context, cfg.runOpts);
@@ -526,49 +548,23 @@ export function SqlCell({
     // 対象が既にEXPLAIN文の場合は二重にEXPLAINしない。
     const statement = kind === 'explain' ? unit.text : `EXPLAIN ${unit.text}`;
 
-    // EXPLAIN実行開始: 状態をリセットして「実行中」にし、前回の購読を閉じる。
-    setExplainRunning(true);
-    setExplainText(undefined);
-    explainSubRef.current?.close();
-
-    // EXPLAINクエリをサーバーに投げ、返ってきたqueryIdでSSEイベントを購読する。
-    createQuery({
-      statement,
-      catalog: context.catalog,
-      schema: context.schema,
-      datasourceId: context.datasourceId,
-    })
-      .then(({ queryId }) => {
-        explainSubRef.current = subscribeQueryEvents(queryId, {
-          onEvent: (event) => {
-            if (event.type === 'done') {
-              // クエリ完了: 結果行（プラン本文）を取得し、1列目を改行連結してテキスト化する。
-              fetchQueryRows(queryId, 0, 10_000)
-                .then((page) => {
-                  setExplainText(page.rows.map((r) => String(r[0] ?? '')).join('\n'));
-                  setExplainRunning(false);
-                })
-                .catch(() => setExplainRunning(false));
-            } else if (event.type === 'error') {
-              // クエリ失敗: エラーメッセージをコメント形式でプラン欄に表示する。
-              setExplainText(`-- ${event.error.message}`);
-              setExplainRunning(false);
-            }
-          },
-          onError: (error) => {
-            if (!(error instanceof SseProtocolError)) return;
-            void cancelQuery(queryId).catch(() => undefined);
-            setExplainText(`-- ${error.message}`);
-            setExplainRunning(false);
-          },
-        });
-      })
-      .catch((err: unknown) => {
-        // クエリ発行自体が失敗した場合も同様にエラーメッセージを表示する。
-        setExplainText(`-- ${err instanceof Error ? err.message : 'EXPLAIN failed'}`);
-        setExplainRunning(false);
-      });
+    // コントローラーが旧世代を停止し、遅延応答を現在世代だけへ反映する。
+    explainLifecycleRef.current?.start(
+      {
+        statement,
+        catalog: context.catalog,
+        schema: context.schema,
+        datasourceId: context.datasourceId,
+      },
+      { setText: setExplainText, setRunning: setExplainRunning },
+    );
   }, [source, caretOffset, context.catalog, context.schema, context.datasourceId]);
+
+  /** セル削除前にEXPLAIN副問い合わせの所有権を解放する。 */
+  const deleteCell = () => {
+    resetExplain();
+    chrome.onDelete();
+  };
 
   return (
     <div>
@@ -592,7 +588,7 @@ export function SqlCell({
         onLimitChange={setLimit}
         onMoveUp={chrome.onMoveUp}
         onMoveDown={chrome.onMoveDown}
-        onDelete={chrome.onDelete}
+        onDelete={deleteCell}
         dragHandleProps={chrome.dragHandleProps}
       />
       {/* 折りたたまれていない場合のみ、エディタ本体と結果表示エリアをレンダリングする。 */}

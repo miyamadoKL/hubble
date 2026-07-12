@@ -4,7 +4,7 @@
  * 背景クリックのいずれでも閉じられるようにする。
  * タイトル、説明文、本文(children)、フッターをそれぞれ差し込める汎用的な構造を持つ。
  */
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { IconButton } from './IconButton';
@@ -27,6 +27,79 @@ interface ModalProps {
   footer?: ReactNode;
   /** モーダル本体(カード部分)に追加で当てる Tailwind クラス名。 */
   className?: string;
+}
+
+const FOCUSABLE_SELECTOR = [
+  'button:not([disabled])',
+  'a[href]',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+interface ModalStackEntry {
+  token: symbol;
+  overlay: HTMLElement;
+  panel: HTMLElement;
+  previousFocus: HTMLElement | null;
+}
+
+// 複数 dialog が重なった場合に、最上位だけが keyboard event を処理するための stack。
+const modalStack: ModalStackEntry[] = [];
+
+interface ManagedBackgroundState {
+  inert: boolean;
+  ariaHidden: string | null;
+}
+
+// 現在の最上位 dialog が背景化した要素と、変更前の属性を保持する。
+const managedBackground = new Map<HTMLElement, ManagedBackgroundState>();
+
+/** dialog 内で Tab 移動できる表示要素を DOM 順に返す。 */
+function focusableElements(container: HTMLElement): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
+    (element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true',
+  );
+}
+
+/** 前回の背景化をすべて解除する。 */
+function restoreManagedBackground(): void {
+  for (const [element, previous] of managedBackground) {
+    element.inert = previous.inert;
+    if (previous.ariaHidden === null) element.removeAttribute('aria-hidden');
+    else element.setAttribute('aria-hidden', previous.ariaHidden);
+  }
+  managedBackground.clear();
+}
+
+/** 最上位 dialog 以外を背景化し、通知 live region は読み上げ可能なまま残す。 */
+function recomputeModalBackground(): void {
+  restoreManagedBackground();
+  const top = modalStack.at(-1);
+  if (!top) return;
+
+  let current: HTMLElement = top.overlay;
+  while (current.parentElement) {
+    const parent = current.parentElement;
+    for (const sibling of parent.children) {
+      if (
+        sibling === current ||
+        !(sibling instanceof HTMLElement) ||
+        sibling.matches('[data-modal-live-region]')
+      ) {
+        continue;
+      }
+      managedBackground.set(sibling, {
+        inert: sibling.inert,
+        ariaHidden: sibling.getAttribute('aria-hidden'),
+      });
+      sibling.inert = true;
+      sibling.setAttribute('aria-hidden', 'true');
+    }
+    if (parent === document.body) break;
+    current = parent;
+  }
 }
 
 /** Centered modal dialog with scrim. Closes on Escape and backdrop click. */
@@ -52,17 +125,87 @@ export function Modal({
   footer,
   className,
 }: ModalProps) {
-  // Escape キーでモーダルを閉じるためのグローバルキーイベントを登録する。
-  // open が false のときは何もせず、開いている間だけリスナーを張る。
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  const titleId = useId();
+  const descriptionId = useId();
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // 表示中だけ focus trap と背景 inert を有効にし、閉じたら開始位置へ focus を戻す。
   useEffect(() => {
     if (!open) return;
+    const overlay = overlayRef.current;
+    const panel = panelRef.current;
+    if (!overlay || !panel) return;
+    const modalToken = Symbol('modal');
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const stackEntry: ModalStackEntry = { token: modalToken, overlay, panel, previousFocus };
+    modalStack.push(stackEntry);
+    recomputeModalBackground();
+    const initial = focusableElements(panel)[0] ?? panel;
+    initial.focus();
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (modalStack.at(-1)?.token !== modalToken) return;
+      if (e.defaultPrevented) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const focusable = focusableElements(panel);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !panel.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !panel.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
-    // クリーンアップ: モーダルが閉じられる、または再レンダリング時にリスナーを解除する
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      const stackIndex = modalStack.findIndex((entry) => entry.token === modalToken);
+      const wasTop = stackIndex === modalStack.length - 1;
+      if (stackIndex >= 0) {
+        // 下位 dialog が先に消えた場合、上位 dialog の focus 復元先をその外側へ引き継ぐ。
+        for (const higher of modalStack.slice(stackIndex + 1)) {
+          if (higher.previousFocus && overlay.contains(higher.previousFocus)) {
+            higher.previousFocus = stackEntry.previousFocus;
+          }
+        }
+        modalStack.splice(stackIndex, 1);
+      }
+      recomputeModalBackground();
+      if (wasTop) {
+        const nextTop = modalStack.at(-1);
+        if (nextTop) {
+          const target =
+            stackEntry.previousFocus && nextTop.overlay.contains(stackEntry.previousFocus)
+              ? stackEntry.previousFocus
+              : (focusableElements(nextTop.panel)[0] ?? nextTop.panel);
+          target.focus();
+        } else if (stackEntry.previousFocus?.isConnected) {
+          stackEntry.previousFocus.focus();
+        }
+      }
+    };
+  }, [open]);
 
   // 非表示状態の場合は DOM に何も出力しない(早期リターン)
   if (!open) return null;
@@ -70,21 +213,24 @@ export function Modal({
   return (
     // 画面全体を覆い、モーダルを中央揃えで配置するコンテナ
     <div
+      ref={overlayRef}
+      data-modal-overlay=""
       className="fixed inset-0 z-[90] flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
     >
       {/* 背景のスクリム(半透明の暗幕)。クリックすると onClose が呼ばれる */}
-      <button
-        type="button"
-        aria-label="Close dialog"
-        tabIndex={-1}
+      <div
+        aria-hidden="true"
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-ink-strong/40 animate-[fadeIn_150ms_ease-out]"
       />
       {/* モーダル本体のカード部分 */}
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        tabIndex={-1}
         className={cn(
           'relative z-10 w-full max-w-lg rounded-lg border border-border-strong bg-surface-overlay shadow-lg',
           'animate-[fadeIn_150ms_ease-out]',
@@ -94,9 +240,15 @@ export function Modal({
         {/* ヘッダー: タイトル、説明文、閉じるボタンをまとめて表示 */}
         <header className="flex items-start justify-between gap-4 border-b border-border-subtle px-5 py-4">
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-ink-strong">{title}</h2>
+            <h2 id={titleId} className="text-base font-semibold text-ink-strong">
+              {title}
+            </h2>
             {/* description が渡されている場合のみ補足説明を表示する */}
-            {description && <p className="mt-1 text-sm text-ink-muted">{description}</p>}
+            {description && (
+              <p id={descriptionId} className="mt-1 text-sm text-ink-muted">
+                {description}
+              </p>
+            )}
           </div>
           <IconButton icon={X} label="Close" onClick={onClose} tooltip={false} />
         </header>

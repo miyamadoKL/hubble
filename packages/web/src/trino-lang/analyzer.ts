@@ -412,9 +412,9 @@ export function collectCompletions(ctx: CompletionContext): CompletionCandidate[
     // 3. カラム候補: 現在の文脈（カーソルを含むクエリ）が参照しているテーブルの
     //    カラム一覧から。
     if (expectsExpression || candidates.rules.has(SqlBaseParser.RULE_qualifiedName)) {
-      // listener が集めたすべての querySpecification（ステートメント）について、
-      // 参照テーブルを解決し、SchemaCache に問い合わせる。
-      for (const stmt of listener.statements) {
+      // カーソルを含む最内 query scope と ancestor だけを対象にし、内側 query の
+      // relation を外側の補完やキャッシュ warming へ漏らさない。
+      for (const stmt of listener.getStatementsVisibleAt(caretIndex)) {
         const ref = refFor(stmt.tableName, catalog, schema);
         // まだ未取得ならウォーマーを起動（次回呼び出しで反映される）。
         cache.warmTable(ref);

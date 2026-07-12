@@ -1,7 +1,7 @@
 // Dashboard 機能向けの TanStack Query hooks 一式。
 // 一覧/単体取得、作成、更新、削除を ../api/dashboards の API 関数を
 // 呼び出す形でラップする。パネルのデータ取得 (クエリ実行) は
-// components/dashboard/useWidgetData.ts が担当する。
+// components/dashboard/DashboardWidgetData.tsx が共有 coordinator 経由で担当する。
 
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type {

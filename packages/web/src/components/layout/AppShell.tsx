@@ -23,6 +23,7 @@ import { useMe } from '../../hooks/useMe';
 import { hasPermission } from '../../permissions';
 import { EditorRuntimeProvider } from '../../editor/EditorRuntime';
 import { useUiStore } from '../../stores/uiStore';
+import { useDatasourceStore, type ExecutionContext } from '../../stores/datasourceStore';
 import {
   useActiveNotebook,
   useNotebookStore,
@@ -48,16 +49,11 @@ import {
 export function AppShell() {
   const defaultLimit = useDefaultLimit();
   const { data: config } = useConfig();
-  const { selectedId: datasourceId, selected: selectedDatasource } = useDatasources();
-  // Seed the shell context from the most-recently-used context (最近使った値を復元);
-  // config defaults fill any gap once loaded.
-  // シェル全体で共有する catalog.schema コンテキスト。初期値は localStorage の「最近使った
-  // コンテキスト」の先頭要素から復元し、なければ空文字（後続の useEffect が config の
-  // デフォルト値で補う）。
-  const [context, setContext] = useState<{ catalog: string; schema: string }>(() => {
-    const recent = readRecentContexts()[0];
-    return { catalog: recent?.catalog ?? '', schema: recent?.schema ?? '' };
-  });
+  const { datasources, selectedId: datasourceId, selected: selectedDatasource } = useDatasources();
+  // datasource、catalog、schema は単一ストアの1値として更新し、異なる世代の組を描画しない。
+  const executionContext = useDatasourceStore((state) => state.executionContext);
+  const setExecutionContext = useDatasourceStore((state) => state.setExecutionContext);
+  const context = { catalog: executionContext.catalog, schema: executionContext.schema };
   const [search, setSearch] = useState('');
 
   // Restore the previously-open notebooks (or seed a blank one).
@@ -71,11 +67,8 @@ export function AppShell() {
   // 反映しておく。グローバルショートカット側はこの store 経由で同じ実行条件を参照する。
   const setShellRuntime = useUiStore((s) => s.setShellRuntime);
   useEffect(() => {
-    setShellRuntime(
-      { catalog: context.catalog, schema: context.schema, datasourceId },
-      defaultLimit,
-    );
-  }, [context.catalog, context.schema, datasourceId, defaultLimit, setShellRuntime]);
+    setShellRuntime(executionContext, defaultLimit);
+  }, [executionContext, defaultLimit, setShellRuntime]);
 
   const activeId = useNotebookStore((s) => s.activeId);
   const activeEntry = useActiveNotebook();
@@ -94,38 +87,86 @@ export function AppShell() {
     // シェルにまだ context がない場合（最近使った履歴もアクティブノートブックの context も
     // ない場合）に限り、サーバー設定のデフォルト値を採用する。ユーザーが既に選択済みの
     // context は絶対に上書きしない。
-    if (config) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setContext((cur) => {
-        if (cur.catalog || cur.schema) return cur;
-        const c = config.defaults.catalog ?? '';
-        const s = config.defaults.schema ?? '';
-        return c || s ? { catalog: c, schema: s } : cur;
-      });
-    }
-  }, [config]);
+    if (!config || !datasourceId || executionContext.catalog || executionContext.schema) return;
+    const catalog = config.defaults.catalog ?? '';
+    const schema = config.defaults.schema ?? '';
+    if (!catalog && !schema) return;
+    setExecutionContext({ datasourceId, catalog, schema });
+  }, [
+    config,
+    datasourceId,
+    executionContext.catalog,
+    executionContext.schema,
+    setExecutionContext,
+  ]);
 
   useEffect(() => {
     // Adopt the active notebook's saved context when switching tabs, so the
     // selector + execution reflect the notebook the user is now editing.
     // タブを切り替えたときに、そのノートブックに保存されている context を採用し、
     // セレクター表示とセル実行が「今編集しているノートブック」と一致するようにする。
-    if (!activeContext || (!activeContext.catalog && !activeContext.schema)) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setContext((cur) => {
-      const next = { catalog: activeContext.catalog ?? '', schema: activeContext.schema ?? '' };
-      return cur.catalog === next.catalog && cur.schema === next.schema ? cur : next;
-    });
-  }, [activeContext?.catalog, activeContext?.schema, activeContext]);
+    if (
+      !activeContext ||
+      (!activeContext.datasourceId && !activeContext.catalog && !activeContext.schema)
+    ) {
+      return;
+    }
+    const nextDatasourceId = activeContext.datasourceId ?? datasourceId;
+    if (!nextDatasourceId) return;
+    if (
+      activeContext.datasourceId &&
+      !datasources.some((datasource) => datasource.id === activeContext.datasourceId)
+    ) {
+      return;
+    }
+    const next: ExecutionContext = {
+      datasourceId: nextDatasourceId,
+      catalog: activeContext.catalog ?? '',
+      schema: activeContext.schema ?? '',
+    };
+    if (
+      executionContext.datasourceId === next.datasourceId &&
+      executionContext.catalog === next.catalog &&
+      executionContext.schema === next.schema
+    ) {
+      return;
+    }
+    setExecutionContext(next);
+  }, [
+    activeContext,
+    activeContext?.catalog,
+    activeContext?.datasourceId,
+    activeContext?.schema,
+    datasourceId,
+    datasources,
+    executionContext.catalog,
+    executionContext.datasourceId,
+    executionContext.schema,
+    setExecutionContext,
+  ]);
 
   // Keep the active notebook's context in sync with the shell selector and record
   // it as most-recently-used (notebook context へ保存 + recent 保持).
   // ContextSelector から呼ばれるハンドラー。シェルの context を更新し、アクティブな
   // ノートブックにも同じ context を書き込み、さらに「最近使った」履歴にも記録する。
   const handleContextChange = (next: { catalog: string; schema: string }) => {
-    setContext(next);
+    if (!datasourceId) return;
+    const resolved = { datasourceId, ...next };
+    setExecutionContext(resolved);
+    if (activeId) useNotebookStore.getState().setContext(activeId, resolved);
+    recordRecentContext(resolved);
+  };
+
+  /** データソース切替時に、そのデータソース固有の直近コンテキストも同時に復元する。 */
+  const handleDatasourceChange = (nextDatasourceId: string) => {
+    const recent = readRecentContexts(nextDatasourceId)[0];
+    const next: ExecutionContext = {
+      datasourceId: nextDatasourceId,
+      catalog: recent?.catalog ?? '',
+      schema: recent?.schema ?? '',
+    };
+    setExecutionContext(next);
     if (activeId) useNotebookStore.getState().setContext(activeId, next);
-    recordRecentContext(next);
   };
 
   // ---- AI アシスタントパネル ----
@@ -202,7 +243,12 @@ export function AppShell() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface-base text-ink-base">
       {/* 最上部の TopBar。context の表示/変更と全セル実行のデフォルト行数上限を渡す。 */}
-      <TopBar context={context} onContextChange={handleContextChange} defaultLimit={defaultLimit} />
+      <TopBar
+        context={executionContext}
+        onDatasourceChange={handleDatasourceChange}
+        onContextChange={handleContextChange}
+        defaultLimit={defaultLimit}
+      />
       {/* Signature hairline under the TopBar (memorable detail). */}
       {/* TopBar 直下の1px の装飾ライン。左端だけアクセントカラーのグラデーションを乗せる。 */}
       <div className="relative h-px shrink-0 bg-border-base">
@@ -216,7 +262,7 @@ export function AppShell() {
           onSearchChange={setSearch}
           activeNotebookId={activeId ?? ''}
           context={context}
-          datasourceId={datasourceId}
+          datasourceId={executionContext.datasourceId ?? datasourceId}
           flattenCatalog={selectedDatasource ? !selectedDatasource.capabilities.catalogs : false}
         />
         <main className="min-w-0 flex-1 overflow-auto bg-surface-base">
@@ -226,14 +272,14 @@ export function AppShell() {
           ) : dashboardView ? (
             <DashboardView />
           ) : (
-            datasourceId && (
+            executionContext.datasourceId && (
               <EditorRuntimeProvider
                 context={context}
-                datasourceId={datasourceId}
+                datasourceId={executionContext.datasourceId}
                 datasourceKind={selectedDatasource?.kind ?? 'trino'}
               >
                 <NotebookView
-                  context={{ ...context, datasourceId }}
+                  context={executionContext}
                   defaultLimit={defaultLimit}
                   costEstimateEnabled={selectedDatasource?.capabilities.costEstimate ?? false}
                   trinoLanguage={selectedDatasource?.kind === 'trino'}
@@ -248,7 +294,7 @@ export function AppShell() {
 
       {/* 画面横断のオーバーレイ群: コマンドパレット、ショートカットヘルプ、
           プレゼンテーションモード（有効時のみ描画）、トースト通知。 */}
-      <CommandPalette context={{ ...context, datasourceId }} defaultLimit={defaultLimit} />
+      <CommandPalette context={executionContext} defaultLimit={defaultLimit} />
       <ShortcutsHelp open={shortcutsHelpOpen} onClose={() => setShortcutsHelpOpen(false)} />
       {presentationMode && <PresentationView />}
       <ToastViewport />

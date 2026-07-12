@@ -19,6 +19,9 @@ import { classifyStatementWrite } from '../rbac/writeCheck';
  */
 export type FailureClass = 'deterministic' | 'transient';
 
+/** Node.js が 1 ms へ短縮せず保持できる最大タイマー時間。 */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 /** A Query Guard block surfaced through the run path (HTTP 422 / QUERY_BLOCKED). */
 // 日本語: EstimateService の見積り結果が block だった場合、scheduler.ts 側は
 // AppError.queryBlocked 相当のエラーコードを持つ AppError として扱う。ここではその
@@ -68,7 +71,8 @@ export function backoffMs(policy: RetryPolicy, retryIndex: number): number {
   // retryIndex は 1 未満にならないようガードする (0 や負値が渡っても 1 回目扱いにする)。
   const idx = Math.max(retryIndex, 1);
   const seconds = policy.backoffSeconds * Math.pow(policy.backoffMultiplier, idx - 1);
-  return Math.round(seconds * 1000);
+  // Node.js は 32 bit 整数を超える delay を 1 ms に短縮するため、安全上限で止める。
+  return Math.min(Math.round(seconds * 1000), MAX_TIMER_DELAY_MS);
 }
 
 /**
