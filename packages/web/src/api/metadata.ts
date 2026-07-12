@@ -80,10 +80,12 @@ export function fetchTableDetail(
   catalog: string,
   schema: string,
   table: string,
+  signal?: AbortSignal,
 ): Promise<TableDetail> {
   return apiFetch(
     tableDetailSchema,
     apiRoutes.datasourceTable(datasourceId, catalog, schema, table),
+    { signal },
   );
 }
 

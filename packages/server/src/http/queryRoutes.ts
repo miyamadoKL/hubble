@@ -45,11 +45,15 @@ import { effectiveGuard, effectiveGuardLimitsSnapshot } from '../rbac/guard';
 import { assertQueryWriteAllowed } from '../rbac/writeCheck';
 import { disabledEstimate } from '../query/guard';
 import { effectiveMaxRows, validateSessionProperties } from './queryRequest';
+import { StrictSseBridge } from './strictSseBridge';
 import { intParam, parseJsonBody } from './validate';
 import {
   buildReplayEvents,
+  DEFAULT_SSE_BACKLOG_BYTES,
   encodeSseEvent,
   flushPendingSseEvents,
+  SerializedSseWriter,
+  SseBacklogOverflowError,
   SSE_KEEPALIVE,
   type EncodedSseEvent,
 } from '../query/sse';
@@ -139,9 +143,9 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       sessionProperties: validateSessionProperties(body.sessionProperties),
     };
 
-    const queryDatasourceId = body.datasourceId ?? services.defaultDatasourceId;
-    requireDatasourceAccess(principal.role, queryDatasourceId);
-    const { engine } = resolveEngine(
+    const requestedDatasourceId = body.datasourceId ?? services.defaultDatasourceId;
+    requireDatasourceAccess(principal.role, requestedDatasourceId);
+    const { datasourceId: queryDatasourceId, engine } = resolveEngine(
       services.engines,
       body.datasourceId,
       services.defaultDatasourceId,
@@ -204,12 +208,35 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         defaultDatasourceId: services.defaultDatasourceId,
       });
     }
+    // 判定後にデータソースが差し替わった場合、旧世代の判定で新世代を実行しない。
+    let currentEngineContext: ReturnType<typeof resolveEngine>;
+    try {
+      currentEngineContext = resolveEngine(
+        services.engines,
+        body.datasourceId,
+        services.defaultDatasourceId,
+      );
+    } catch {
+      throw new AppError(503, {
+        code: 'DATASOURCE_RELOADING',
+        message: 'Datasource changed while validating the query; retry the request',
+      });
+    }
+    if (
+      currentEngineContext.datasourceId !== queryDatasourceId ||
+      currentEngineContext.engine !== engine
+    ) {
+      throw new AppError(503, {
+        code: 'DATASOURCE_RELOADING',
+        message: 'Datasource changed while validating the query; retry the request',
+      });
+    }
     // 実行そのものは services.queries（実行レジストリ）に委譲し、ここでは queryId だけ返す。
     const exec = services.queries.submit({
       statement: body.statement,
       ctx,
       owner: principal.user,
-      datasourceId: body.datasourceId,
+      datasourceId: queryDatasourceId,
       sessionReadOnly: !hasQueryWrite(principal.role),
       roleName: principal.role.name,
       maxRows,
@@ -436,6 +463,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         await services.resultStore.getStream(ref.resultObjectKey),
         Math.max(offset, 0),
         limit,
+        { totalRows: ref.rowCount },
       );
       const page: QueryRowsPage = {
         offset: Math.max(offset, 0),
@@ -542,19 +570,57 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       // Buffer live events that arrive during replay, then flush in order.
       // リプレイ処理中に発生したライブイベントを取りこぼさないよう、いったんバッファに退避する。
       const pending: EncodedSseEvent[] = [];
+      let pendingBytes = 0;
       let replaying = true;
-      let streamTerminated = false;
+      let terminalQueued = false;
+      let terminalWritten = false;
+      let disconnected = false;
+      let completedNormally = false;
       let unsubscribe = () => {};
+      const keepAliveTimer: { current?: ReturnType<typeof setInterval> } = {};
+      let resolveDisconnected!: () => void;
+      const disconnectedPromise = new Promise<void>((resolve) => {
+        resolveDisconnected = resolve;
+      });
+
+      function disconnect(error?: unknown): void {
+        if (disconnected) return;
+        disconnected = true;
+        if (error !== undefined) console.warn('query SSE live writer stopped', error);
+        if (keepAliveTimer.current !== undefined) clearInterval(keepAliveTimer.current);
+        unsubscribe();
+        liveWriter.abort();
+        void bridge.abort(error ?? new Error('SSE connection closed')).catch(() => undefined);
+        resolveDisconnected();
+        if (error !== undefined && !sseStream.aborted && !sseStream.closed) sseStream.abort();
+      }
+
+      const bridge = new StrictSseBridge(sseStream, {
+        onFailure: (error) => disconnect(error),
+      });
+      const liveWriter = new SerializedSseWriter((frame) => bridge.write(frame), {
+        onFailure: (error) => disconnect(error),
+      });
+
       unsubscribe = exec.subscribe((event) => {
-        if (streamTerminated) return;
+        if (terminalQueued || disconnected) return;
         const encoded = encodeSseEvent(event);
         if (encoded === undefined) return;
-        if (encoded.forcedTerminal) streamTerminated = true;
+        if (encoded.forcedTerminal) terminalQueued = true;
         if (replaying) {
+          const frameBytes = Buffer.byteLength(encoded.frame);
+          if (frameBytes > DEFAULT_SSE_BACKLOG_BYTES - pendingBytes) {
+            disconnect(new SseBacklogOverflowError(DEFAULT_SSE_BACKLOG_BYTES));
+            return;
+          }
           pending.push(encoded);
+          pendingBytes += frameBytes;
         } else {
-          void sseStream.write(encoded.frame);
-          if (encoded.forcedTerminal) unsubscribe();
+          if (!liveWriter.enqueue(encoded.frame)) return;
+          if (encoded.forcedTerminal) {
+            liveWriter.seal();
+            unsubscribe();
+          }
         }
       });
 
@@ -565,14 +631,15 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       });
 
       // 中間プロキシ等によるアイドルタイムアウトで接続が切られないよう、定期的に keepalive を送る。
-      const keepAlive = setInterval(() => {
-        void sseStream.write(SSE_KEEPALIVE);
+      keepAliveTimer.current = setInterval(() => {
+        if (!replaying && !terminalQueued && !disconnected) {
+          liveWriter.enqueue(SSE_KEEPALIVE);
+        }
       }, KEEPALIVE_INTERVAL_MS);
 
       // クライアント切断時は keepalive タイマーと購読を確実に解除してリークを防ぐ。
       sseStream.onAbort(() => {
-        clearInterval(keepAlive);
-        unsubscribe();
+        disconnect();
       });
 
       try {
@@ -582,35 +649,61 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         for (const event of buildReplayEvents(exec)) {
           const encoded = encodeSseEvent(event);
           if (encoded === undefined) continue;
-          await sseStream.write(encoded.frame);
+          await bridge.write(encoded.frame);
           if (encoded.forcedTerminal) {
-            streamTerminated = true;
+            terminalQueued = true;
+            terminalWritten = true;
             replayForcedTerminal = true;
             break;
           }
         }
         // Flush events that arrived during replay, then go live.
         // リプレイ中に溜まったイベントを送信してからライブモードへ切り替える。
-        replaying = false;
         if (!replayForcedTerminal) {
-          const terminalAlreadyQueued = pending.some((event) => event.forcedTerminal);
-          await flushPendingSseEvents(
-            pending,
-            terminalAlreadyQueued,
-            () => streamTerminated,
-            (frame) => sseStream.write(frame),
-          );
+          while (pending.length > 0 && !disconnected) {
+            const batch = pending.splice(0);
+            pendingBytes -= batch.reduce((sum, event) => sum + Buffer.byteLength(event.frame), 0);
+            const terminalAlreadyQueued = batch.some((event) => event.forcedTerminal);
+            await flushPendingSseEvents(
+              batch,
+              terminalAlreadyQueued,
+              () => terminalWritten,
+              (frame) => bridge.write(frame),
+            );
+            if (terminalAlreadyQueued) {
+              terminalWritten = true;
+              replayForcedTerminal = true;
+              break;
+            }
+          }
         }
+        replaying = false;
         pending.length = 0;
+        pendingBytes = 0;
 
-        if (streamTerminated) return;
+        if (terminalWritten) {
+          completedNormally = true;
+          return;
+        }
+        if (disconnected) return;
 
         // Wait for the query to settle (live events flow via the subscriber).
-        // 以降のイベントは上の subscribe コールバックが直接 write するので、ここでは完了を待つだけ。
-        await done;
+        // 以降のイベントは単一 writer 列へ追加し、終端または切断後に未送信分の完了を待つ。
+        await Promise.race([done, disconnectedPromise]);
+        if (!disconnected) {
+          liveWriter.seal();
+          await liveWriter.drain();
+        }
+        completedNormally = !disconnected;
       } finally {
-        clearInterval(keepAlive);
+        if (keepAliveTimer.current !== undefined) clearInterval(keepAliveTimer.current);
         unsubscribe();
+        liveWriter.abort();
+        if (completedNormally && !disconnected) {
+          await bridge.close();
+        } else {
+          await bridge.abort();
+        }
       }
     });
   });

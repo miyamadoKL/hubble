@@ -256,4 +256,42 @@ describe('ResultExpiryService periodic execution', () => {
       await db.close();
     }
   });
+
+  it('outbox key が live 行から参照されている場合は object を削除せず job を破棄する', async () => {
+    const key = 'hubble-results/live.jsonl.gz';
+    const complete = vi.fn(async () => undefined);
+    const deleteExpired = vi.fn<ResultStore['deleteExpired']>();
+    const service = new ResultExpiryService({
+      history: {
+        listExpiredResults: vi.fn().mockResolvedValue([]),
+      } as unknown as HistoryRepository,
+      workflowRuns: {
+        listExpiredResults: vi.fn().mockResolvedValue([]),
+      } as unknown as WorkflowRunRepository,
+      deletions: {
+        claimDue: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              key,
+              attempts: 0,
+              nextAttemptAt: '2026-01-01T00:00:00.000Z',
+              lastError: null,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ])
+          .mockResolvedValue([]),
+        isReferenced: vi.fn(async () => true),
+        complete,
+      } as unknown as ResultObjectDeletionRepository,
+      resultStore: { enabled: true, deleteExpired } as unknown as ResultStore,
+      now: () => Date.parse('2026-01-01T00:00:00.000Z'),
+    });
+
+    await service.runOnce();
+
+    expect(deleteExpired).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledWith([key]);
+  });
 });

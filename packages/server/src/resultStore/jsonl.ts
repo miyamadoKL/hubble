@@ -20,6 +20,12 @@ export interface PersistedRowsPage {
   totalRows: number;
 }
 
+/** 保存済み結果ページを読み取るときに DB 由来の既知情報を渡すオプション。 */
+export interface ReadPersistedRowsPageOptions {
+  /** artifact 全体を走査せず返せる、永続化済みの総行数。 */
+  totalRows?: number;
+}
+
 /** 保存済み結果の列メタデータ。 */
 export interface PersistedResultMetadata {
   columns: QueryColumn[];
@@ -134,19 +140,31 @@ export async function readPersistedRowsPage(
   stream: Readable,
   offset: number,
   limit: number,
+  options: ReadPersistedRowsPageOptions = {},
 ): Promise<PersistedRowsPage> {
   const rows: unknown[][] = [];
   let columns: QueryColumn[] = [];
-  let totalRows = 0;
+  let scannedRows = 0;
+  const knownTotalRows =
+    options.totalRows !== undefined &&
+    Number.isSafeInteger(options.totalRows) &&
+    options.totalRows >= 0
+      ? options.totalRows
+      : undefined;
+  const targetEnd =
+    knownTotalRows === undefined ? undefined : Math.min(knownTotalRows, offset + limit);
   for await (const line of readResultLines(stream)) {
     if (line.kind === 'columns') {
       columns = line.columns;
+      if (knownTotalRows !== undefined && (limit === 0 || offset >= knownTotalRows)) break;
       continue;
     }
-    if (totalRows >= offset && rows.length < limit) rows.push(line.row);
-    totalRows += 1;
+    if (targetEnd !== undefined && scannedRows >= targetEnd) break;
+    if (scannedRows >= offset && rows.length < limit) rows.push(line.row);
+    scannedRows += 1;
+    if (targetEnd !== undefined && scannedRows >= targetEnd) break;
   }
-  return { columns, rows, totalRows };
+  return { columns, rows, totalRows: knownTotalRows ?? scannedRows };
 }
 
 /** 保存済み結果のストリーミング読み出しカーソル。 */
@@ -249,9 +267,16 @@ async function* readResultLines(stream: Readable): AsyncGenerator<ResultJsonlLin
     input: stream.pipe(gunzip),
     crlfDelay: Infinity,
   });
-  for await (const raw of lines) {
-    if (raw.trim() === '') continue;
-    yield parseLine(raw);
+  try {
+    for await (const raw of lines) {
+      if (raw.trim() === '') continue;
+      yield parseLine(raw);
+    }
+  } finally {
+    // page window を満たして途中終了した場合も、S3 body と解凍処理を止める。
+    lines.close();
+    gunzip.destroy();
+    stream.destroy();
   }
 }
 

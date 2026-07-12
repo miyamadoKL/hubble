@@ -27,6 +27,7 @@ import type {
 } from '@hubble/contracts';
 import { AppError, toErrorResponse } from '../errors';
 import type { DownloadClientOptions, QueryEngine, StatementClient } from '../engine/types';
+import { driveStatementPages, StatementPageCursor } from '../engine/statementDriver';
 import { classifyStatementWrite } from '../rbac/writeCheck';
 import {
   emptySessionMutations,
@@ -134,9 +135,8 @@ export class QueryExecution {
   private readonly listeners = new Set<Listener>();
   // Trino へのポーリング/開始リクエストを中断させるための AbortController。
   private readonly abort = new AbortController();
-  /** The latest nextUri, used for DELETE cancellation. */
-  // 直近取得した nextUri。キャンセル時にこの URI へ DELETE を投げる。
-  private currentNextUri?: string;
+  /** nextUri の所有権と冪等な DELETE を共通 driver と共有する。 */
+  private readonly pageCursor: StatementPageCursor;
   // requestCancel() が呼ばれたことを示すフラグ。run() のループ各所でチェックされる。
   private cancelRequested = false;
   // registry の slot を取得して run() に入ったか。state='queued' とは別に管理する。
@@ -154,6 +154,7 @@ export class QueryExecution {
     this.maxRows = init.maxRows;
     this.overflowMode = init.overflowMode;
     this.client = init.client;
+    this.pageCursor = new StatementPageCursor(init.client, init.ctx);
     this.engine = init.engine;
     this.now = init.now ?? Date.now;
     this.onSettled = init.onSettled;
@@ -312,11 +313,9 @@ export class QueryExecution {
     this.cancelRequested = true;
     // Trino への開始/ポーリングリクエストを中断させる。
     this.abort.abort();
-    // すでに nextUri を持っている（Trino 側にクエリが存在する）場合は
-    // 明示的に DELETE を送ってサーバー側のクエリも止める。
-    if (this.currentNextUri) {
-      await this.client.cancel(this.currentNextUri, this.ctx);
-    }
+    // 共通 driver が取得済みの nextUri を持つ場合は、ここで DELETE の完了を待つ。
+    // driver の finally と競合しても StatementPageCursor が同じ処理へまとめる。
+    await this.pageCursor.cancel();
     // run() に入る前の実行枠待ちだけは、driver が未取得なので直ちに terminal にする。
     // run() 開始後は H6 の AbortSignal と page 後確認が driver cleanup まで担当する。
     if (!this.runStarted) {
@@ -333,16 +332,6 @@ export class QueryExecution {
     } catch {
       // 結果永続化は best-effort のため、初期化失敗でも対象クエリを実行する。
     }
-  }
-
-  /** ページ待機中のキャンセル要求を結果適用前に確定する。 */
-  private async settleCanceledAfterPage(
-    page: Awaited<ReturnType<StatementClient['start']>>,
-  ): Promise<boolean> {
-    if (!this.cancelRequested) return false;
-    if (page.nextUri) await this.client.cancel(page.nextUri, this.ctx);
-    this.settle('canceled', { code: 'CANCELED', message: 'Query canceled' });
-    return true;
   }
 
   /**
@@ -366,67 +355,38 @@ export class QueryExecution {
       }
       this.initializeResultObserver();
       const signal = this.abort.signal;
-      // クエリを開始（POST /v1/statement 相当）。最初のページを受け取る。
-      let page = await this.client.start(this.statement, this.ctx, this.mutations, signal);
-      // start が AbortSignal を無視する実装でも、待機中の Stop を完了扱いにしない。
-      if (await this.settleCanceledAfterPage(page)) return;
-      this.trinoQueryId = page.id;
-      if (page.infoUri) this.infoUri = page.infoUri;
-      this.setState('running');
-      await this.applyPage(page);
-      if (await this.settleCanceledAfterPage(page)) return;
-
-      // Backoff discipline (Trino client protocol): when a page carries data,
-      // fetch the next page with zero delay and reset the counter. Only escalate
-      // the backoff while data-less pages (queued/planning/empty) repeat, so a
-      // streaming result is never throttled to ~1 page/sec.
-      // バックオフ規律（Trino クライアントプロトコル）: ページにデータが
-      // 含まれていれば待機なしで即座に次ページを取得し、カウンタをリセットする。
-      // データなしページ（queued/planning/空）が連続するときだけバックオフを
-      // 段階的に増やす。これにより、データが流れている間はスループットが
-      // 「1 ページ/秒」程度に絞られてしまうことがない。
-      let idleAttempt = 0;
-      while (page.nextUri) {
-        this.currentNextUri = page.nextUri;
-        // ループ中の各ステップでキャンセル要求をチェックし、要求があれば
-        // Trino 側のクエリを DELETE してから canceled として終了する。
-        if (this.cancelRequested) {
-          await this.client.cancel(page.nextUri, this.ctx);
-          this.settle('canceled', { code: 'CANCELED', message: 'Query canceled' });
-          return;
-        }
-        // overflowMode==='cancel' で既にバッファが truncate 済みなら、
-        // これ以上結果を受け取る必要がないため Trino クエリを止めて
-        // finished として終了する（cancel だが結果としては成功扱い）。
-        if (this.overflowMode === 'cancel' && this.truncated) {
-          await this.client.cancel(page.nextUri, this.ctx);
-          this.settle('finished');
-          return;
-        }
-        const hadData = pageHasData(page);
-        if (hadData) {
-          // データを含むページを受け取った直後は待たずに次を取りに行く。
-          idleAttempt = 0;
-        } else {
-          // データなしページが続く間は、client 側のバックオフ関数に従い
-          // 徐々に待機時間を延ばす（idleAttempt をインクリメント）。
-          await this.client.waitBackoff(idleAttempt, signal);
-          idleAttempt += 1;
-        }
-        if (this.cancelRequested) {
-          await this.client.cancel(page.nextUri, this.ctx);
-          this.settle('canceled', { code: 'CANCELED', message: 'Query canceled' });
-          return;
-        }
-        // 次ページを取得（GET nextUri 相当）し、結果をバッファへ適用する。
-        page = await this.client.advance(page.nextUri, this.ctx, this.mutations, signal);
-        if (await this.settleCanceledAfterPage(page)) return;
-        await this.applyPage(page);
-        if (await this.settleCanceledAfterPage(page)) return;
-      }
-      // nextUri が無くなった = Trino 側でクエリが完了した、という合図。
-      this.currentNextUri = undefined;
-      this.settle('finished');
+      await driveStatementPages({
+        client: this.client,
+        statement: this.statement,
+        ctx: this.ctx,
+        mutations: this.mutations,
+        signal,
+        cursor: this.pageCursor,
+        onPage: async ({ page, first }) => {
+          // AbortSignal を無視する client が応答しても、Stop 後のページは適用しない。
+          if (this.cancelRequested) {
+            this.settle('canceled', { code: 'CANCELED', message: 'Query canceled' });
+            return 'stop';
+          }
+          if (first) {
+            this.trinoQueryId = page.id;
+            if (page.infoUri) this.infoUri = page.infoUri;
+            this.setState('running');
+          }
+          await this.applyPage(page);
+          if (this.cancelRequested) {
+            this.settle('canceled', { code: 'CANCELED', message: 'Query canceled' });
+            return 'stop';
+          }
+          // truncate を契機に停止する設定では、残りページの所有権を driver に返す。
+          if (this.overflowMode === 'cancel' && this.truncated && page.nextUri) {
+            this.settle('finished');
+            return 'stop';
+          }
+          return 'continue';
+        },
+      });
+      if (!this.isTerminal) this.settle('finished');
     } catch (err) {
       // 例外発生時、直前にキャンセルが要求されていればそれを優先して
       // canceled として扱う（Abort による例外を失敗と誤認しないため）。
@@ -478,11 +438,4 @@ export class QueryExecution {
     this.resultObserver?.onSettled?.(this);
     this.onSettled?.(this);
   }
-}
-
-/** True when a Trino page carried result rows. */
-// ページが実際に結果行を含んでいたかどうかを判定するヘルパー。
-// バックオフのリセット/継続判定に使われる。
-function pageHasData(page: { data?: unknown[][] }): boolean {
-  return page.data !== undefined && page.data.length > 0;
 }

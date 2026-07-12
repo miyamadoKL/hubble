@@ -20,6 +20,10 @@ import type { HistoryRepository } from '../store/history';
 import type { AuditLogger } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { ResultJsonlCapture } from '../resultStore/jsonl';
+import {
+  cleanupUnlinkedResultObject,
+  type ResultObjectDeletionQueue,
+} from '../resultStore/objectCleanup';
 import type { OverflowMode, QueryResultObserver } from './execution';
 import { QueryExecution } from './execution';
 import { QueryRegistry } from './registry';
@@ -29,6 +33,8 @@ export interface QueryServiceParams {
   registry: QueryRegistry;
   history: HistoryRepository;
   resultStore?: ResultStore;
+  /** DB 未関連 object の削除を再試行する durable outbox。 */
+  resultObjectDeletions: ResultObjectDeletionQueue;
   resultKeyPrefix?: string;
   resultTtlDays?: number;
   audit?: AuditLogger;
@@ -148,6 +154,7 @@ export class QueryService {
     this.trackBackground(historyUpdated);
 
     if (persistResult) {
+      let resultObjectLinked = false;
       const resultPersisted = Promise.all([inserted, exec.settled])
         .then(async () => {
           // capture は実行枠の獲得時に生成するため、queue 中には undefined のままにする。
@@ -159,6 +166,7 @@ export class QueryService {
           }
           await resultCapture.finish();
           await this.params.history.setResultObject(exec.queryId, resultCapture.key, expiresAt);
+          resultObjectLinked = true;
           await this.params.audit?.record({
             actor: params.owner,
             action: 'query.result.persist',
@@ -172,6 +180,15 @@ export class QueryService {
           });
         })
         .catch(async (err: unknown) => {
+          const resultCapture = capture;
+          if (resultCapture && !resultObjectLinked) {
+            await cleanupUnlinkedResultObject(resultCapture.key, {
+              store: this.params.resultStore!,
+              deletions: this.params.resultObjectDeletions,
+              now: this.params.now,
+              logWarn: this.params.logWarn,
+            });
+          }
           if (this.params.logWarn) {
             this.params.logWarn('failed to persist query result', err);
           } else {

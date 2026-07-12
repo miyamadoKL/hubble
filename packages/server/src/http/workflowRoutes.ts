@@ -362,6 +362,7 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
       await services.resultStore.getStream(stepRun.resultObjectKey),
       offset,
       limit,
+      { ...(stepRun.rowCount !== null ? { totalRows: stepRun.rowCount } : {}) },
     );
     return c.json(
       workflowStepResultPageSchema.parse({

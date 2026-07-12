@@ -24,9 +24,11 @@ describe('GithubModelsProvider', () => {
         expect(String(input)).toBe('https://models.test/chat/completions');
         expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' });
         expect(JSON.parse(String(init?.body))).toMatchObject({ max_tokens: 654 });
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
         return sseResponse([
           'data: {"choices":[{"delta":{"content":"SELECT "}}]}\n\n',
           'data: {"choices":[{"delta":{"content":"1"}}]}\n\n',
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
           'data: [DONE]\n\n',
         ]);
       }) as typeof fetch,
@@ -40,6 +42,54 @@ describe('GithubModelsProvider', () => {
       parts.push(text);
     }
     expect(parts).toEqual(['SELECT ', '1']);
+  });
+
+  it.each([
+    ['終端なし', ['data: {"choices":[{"delta":{"content":"partial"}}]}\n\n']],
+    ['malformed のみ', ['data: not-json\n\n']],
+  ])('%s の EOF を INVALID_RESPONSE として拒否する', async (_name, chunks) => {
+    const provider = new GithubModelsProvider({
+      model: 'openai/gpt-4o-mini',
+      apiKey: 'test-token',
+      maxOutputTokens: 654,
+      fetchImpl: (async () => sseResponse(chunks)) as typeof fetch,
+    });
+
+    await expect(async () => {
+      for await (const part of provider.stream(
+        { system: 'sys', user: 'user' },
+        new AbortController().signal,
+      )) {
+        void part;
+      }
+    }).rejects.toMatchObject({ detail: { code: 'INVALID_RESPONSE' } });
+  });
+
+  it.each([
+    ['finish reason なし', ['data: [DONE]\n\n']],
+    [
+      'token上限',
+      [
+        'data: {"choices":[{"delta":{"content":"SELECT * FR"},"finish_reason":"length"}]}\n\n',
+        'data: [DONE]\n\n',
+      ],
+    ],
+  ])('%s の終端を INVALID_RESPONSE として拒否する', async (_name, chunks) => {
+    const provider = new GithubModelsProvider({
+      model: 'openai/gpt-4o-mini',
+      apiKey: 'test-token',
+      maxOutputTokens: 654,
+      fetchImpl: (async () => sseResponse(chunks)) as typeof fetch,
+    });
+
+    await expect(async () => {
+      for await (const part of provider.stream(
+        { system: 'sys', user: 'user' },
+        new AbortController().signal,
+      )) {
+        void part;
+      }
+    }).rejects.toMatchObject({ detail: { code: 'INVALID_RESPONSE' } });
   });
 
   it('throws AppError(502) on non-2xx responses', async () => {

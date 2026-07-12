@@ -1,7 +1,14 @@
+// @vitest-environment jsdom
 // AI提案の適用先追跡、編集競合とundo後の再適用を検証する。
+// request世代とresize資源の解放も検証対象に含める。
 import { describe, expect, it, vi } from 'vitest';
 import type * as monaco from 'monaco-editor';
-import { applyCapturedSql, type CapturedTarget } from './AiPanel';
+import {
+  AiRequestCoordinator,
+  applyCapturedSql,
+  beginPanelResize,
+  type CapturedTarget,
+} from './AiPanel';
 
 const range = { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 9 };
 
@@ -95,5 +102,70 @@ describe('applyCapturedSql', () => {
     expect(applyCapturedSql(target.target, 'SELECT 2')).toBe(true);
     expect(target.editor.executeEdits).toHaveBeenCalledTimes(2);
     expect(target.tracking.set).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('AiRequestCoordinator', () => {
+  it('metadata待機中を含め同時に一つのrequestだけを許可する', () => {
+    const coordinator = new AiRequestCoordinator();
+    const first = coordinator.claim();
+
+    expect(first).not.toBeNull();
+    expect(coordinator.claim()).toBeNull();
+    expect(coordinator.isCurrent(first!)).toBe(true);
+  });
+
+  it('完了した世代のcallbackを拒否し、新しい世代だけをcurrentにする', () => {
+    const coordinator = new AiRequestCoordinator();
+    const first = coordinator.claim()!;
+    expect(coordinator.finish(first)).toBe(true);
+    const second = coordinator.claim()!;
+
+    expect(second.generation).toBeGreaterThan(first.generation);
+    expect(coordinator.isCurrent(first)).toBe(false);
+    expect(coordinator.isCurrent(second)).toBe(true);
+  });
+
+  it('disposeですべてのrequestを中断し、世代を無効化する', () => {
+    const coordinator = new AiRequestCoordinator();
+    const claim = coordinator.claim()!;
+
+    coordinator.dispose();
+
+    expect(claim.controller.signal.aborted).toBe(true);
+    expect(coordinator.isCurrent(claim)).toBe(false);
+  });
+
+  it('Stopはrequestを同期的に中断して次の世代を許可する', () => {
+    const coordinator = new AiRequestCoordinator();
+    const claim = coordinator.claim()!;
+
+    expect(coordinator.abortCurrent()).toBe(true);
+
+    expect(claim.controller.signal.aborted).toBe(true);
+    expect(coordinator.isCurrent(claim)).toBe(false);
+    expect(coordinator.claim()).not.toBeNull();
+  });
+});
+
+describe('beginPanelResize', () => {
+  it('cleanupでlistenerを外しbody styleを元に戻す', () => {
+    document.body.style.cursor = 'crosshair';
+    document.body.style.userSelect = 'text';
+    const setWidth = vi.fn();
+    const cleanup = beginPanelResize(500, 300, setWidth);
+    const move = new Event('pointermove') as PointerEvent;
+    Object.defineProperty(move, 'clientX', { value: 450 });
+
+    window.dispatchEvent(move);
+    expect(setWidth).toHaveBeenCalledWith(350);
+    expect(document.body.style.cursor).toBe('col-resize');
+    expect(document.body.style.userSelect).toBe('none');
+
+    cleanup();
+    window.dispatchEvent(move);
+    expect(setWidth).toHaveBeenCalledOnce();
+    expect(document.body.style.cursor).toBe('crosshair');
+    expect(document.body.style.userSelect).toBe('text');
   });
 });

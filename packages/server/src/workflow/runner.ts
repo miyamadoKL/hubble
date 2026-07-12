@@ -32,6 +32,10 @@ import {
 import type { AuditJson, AuditLogger } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { ResultJsonlCapture } from '../resultStore/jsonl';
+import {
+  cleanupUnlinkedResultObject,
+  type ResultObjectDeletionQueue,
+} from '../resultStore/objectCleanup';
 import type { SchedulerConfig } from '../schedule/scheduler';
 import type { GithubGovernanceService } from '../github/governance';
 import {
@@ -61,6 +65,8 @@ export interface WorkflowRunnerDeps {
   guardConfig: ServerConfig['guard'];
   audit?: AuditLogger;
   resultStore: ResultStore;
+  /** DB 未関連 object の削除を再試行する durable outbox。 */
+  resultObjectDeletions: ResultObjectDeletionQueue;
   resultKeyPrefix?: string;
   resultTtlDays?: number;
   githubGovernance: GithubGovernanceService;
@@ -486,17 +492,22 @@ export class WorkflowRunner {
     );
     const finishedAt = new Date(this.now()).toISOString();
     const elapsedMs = Math.max(this.now() - stepStartMs, 0);
-    await this.deps.runs.finishStep(stepRunId, {
-      status: outcome.status,
-      attempt: outcome.attempt,
-      rowCount: outcome.rowCount,
-      elapsedMs,
-      errorType: outcome.errorType,
-      errorMessage: outcome.errorMessage,
-      resultObjectKey: outcome.resultObjectKey ?? null,
-      resultExpiresAt: outcome.resultExpiresAt ?? null,
-      finishedAt,
-    });
+    try {
+      await this.deps.runs.finishStep(stepRunId, {
+        status: outcome.status,
+        attempt: outcome.attempt,
+        rowCount: outcome.rowCount,
+        elapsedMs,
+        errorType: outcome.errorType,
+        errorMessage: outcome.errorMessage,
+        resultObjectKey: outcome.resultObjectKey ?? null,
+        resultExpiresAt: outcome.resultExpiresAt ?? null,
+        finishedAt,
+      });
+    } catch (error) {
+      if (outcome.resultObjectKey) await this.cleanupResultObject(outcome.resultObjectKey);
+      throw error;
+    }
     return outcome;
   }
 
@@ -641,19 +652,8 @@ export class WorkflowRunner {
             }
             await capture.finish();
             if (this.shutdownAbort.signal.aborted) {
-              const aborted = this.abortedStepOutcome(attempt);
-              try {
-                await this.deps.resultStore.delete(capture.key);
-                return aborted;
-              } catch (err) {
-                // 削除失敗時は即期限切れ参照をDBへ残し、expiry workerの再試行対象にする。
-                console.warn(`workflow: failed to delete aborted result ${capture.key}`, err);
-                return {
-                  ...aborted,
-                  resultObjectKey: capture.key,
-                  resultExpiresAt: new Date(this.now()).toISOString(),
-                };
-              }
+              await this.cleanupResultObject(capture.key);
+              return this.abortedStepOutcome(attempt);
             }
             const expiresAt = this.resultExpiresAt();
             return {
@@ -744,6 +744,16 @@ export class WorkflowRunner {
     const now = this.deps.now?.() ?? Date.now();
     const ttlDays = this.deps.resultTtlDays ?? 7;
     return new Date(now + ttlDays * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  /** DB へ関連付けられなかった workflow result を削除または再試行登録する。 */
+  private async cleanupResultObject(key: string): Promise<void> {
+    await cleanupUnlinkedResultObject(key, {
+      store: this.deps.resultStore,
+      deletions: this.deps.resultObjectDeletions,
+      now: this.deps.now,
+      logWarn: (message, error) => console.warn(`workflow: ${message}`, error),
+    });
   }
 
   private async recordWorkflowOutcome(

@@ -6,7 +6,7 @@
  */
 import { AppError } from '../errors';
 import type { AiPrompt, AiProvider } from './provider';
-import { parseSseDataLines } from './sse';
+import { invalidResponse, parseSseDataLines } from './sse';
 
 const DEFAULT_BASE_URL = 'https://models.github.ai/inference/chat/completions';
 
@@ -64,20 +64,43 @@ export class GithubModelsProvider implements AiProvider {
       });
     }
 
+    let completedNormally = false;
     for await (const data of parseSseDataLines(response.body)) {
-      if (data.trim() === '[DONE]') return;
+      if (data.trim() === '[DONE]') {
+        if (!completedNormally) {
+          throw invalidResponse('GitHub Models SSE response ended without finish_reason=stop');
+        }
+        return;
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(data);
       } catch {
         continue;
       }
+      const finishReason = extractFinishReason(parsed);
+      if (finishReason !== undefined) {
+        if (finishReason !== 'stop') {
+          throw invalidResponse(`GitHub Models generation stopped with ${finishReason}`);
+        }
+        completedNormally = true;
+      }
       const text = extractDeltaContent(parsed);
       if (text !== undefined && text.length > 0) {
         yield text;
       }
     }
+    throw invalidResponse('GitHub Models SSE response ended before the [DONE] marker');
   }
+}
+
+/** GitHub Models SSE から最初の choice の終了理由を取り出す。 */
+function extractFinishReason(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return undefined;
+  const reason = (choices[0] as { finish_reason?: unknown }).finish_reason;
+  return typeof reason === 'string' && reason.length > 0 ? reason : undefined;
 }
 
 /** GitHub Models SSE ペイロードから delta content を取り出す。 */

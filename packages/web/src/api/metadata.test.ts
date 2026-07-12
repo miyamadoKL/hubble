@@ -90,6 +90,21 @@ describe('metadata fetchers hit datasource-scoped routes', () => {
     expect(res.columns).toEqual([{ name: 'orderkey', type: 'bigint' }]);
   });
 
+  test('fetchTableDetail は AbortSignal を metadata request へ渡す', async () => {
+    const controller = new AbortController();
+    fetchMock.mockImplementationOnce((_url: string, init: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      });
+    });
+
+    const request = fetchTableDetail(DS, 'tpch', 'sf1', 'orders', controller.signal);
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ signal: controller.signal });
+  });
+
   test('fetchTableSample', async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({

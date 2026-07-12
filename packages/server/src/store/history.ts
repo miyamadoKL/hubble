@@ -147,12 +147,16 @@ export class HistoryRepository {
 
   /** result_object_key と result_expires_at を保存する。 */
   async setResultObject(id: string, key: string, expiresAt: string): Promise<void> {
-    await this.db.run(
+    const updated = await this.db.query<{ id: string }>(
       `UPDATE query_history
        SET result_object_key=?, result_expires_at=?
-       WHERE id=?`,
+       WHERE id=?
+       RETURNING id`,
       [key, expiresAt, id],
     );
+    if (updated.length === 0) {
+      throw new Error(`Query history row disappeared before result linking: ${id}`);
+    }
   }
 
   /** 指定 key 群の result 参照を NULL に戻す。 */

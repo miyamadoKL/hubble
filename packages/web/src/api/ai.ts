@@ -16,6 +16,9 @@ import {
 } from '@hubble/contracts';
 import { ApiClientError } from './client';
 
+const MAX_SSE_EVENT_BYTES = 1_048_576;
+const MAX_SSE_STREAM_BYTES = 4_194_304;
+
 /** ストリーミング呼び出しのハンドラ群。 */
 export interface AiAssistHandlers {
   /** 検証済みイベント（delta / done / error）を受け取る。 */
@@ -38,25 +41,80 @@ export interface AiAssistOptions {
 async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
   let buffer = '';
+  let bufferBytes = 0;
+  let pendingCarriageReturn = false;
+  let streamBytes = 0;
+  let reachedEof = false;
+
+  /** チャンク境界をまたぐ CRLF を含め、改行を LF にそろえる。 */
+  const appendNormalized = (chunk: string): void => {
+    let source = pendingCarriageReturn ? `\r${chunk}` : chunk;
+    pendingCarriageReturn = source.endsWith('\r');
+    if (pendingCarriageReturn) source = source.slice(0, -1);
+    const normalized = source.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    buffer += normalized;
+    bufferBytes += encoder.encode(normalized).byteLength;
+  };
+
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      if (done) {
+        reachedEof = true;
+        break;
+      }
+      streamBytes += value.byteLength;
+      if (streamBytes > MAX_SSE_STREAM_BYTES) {
+        throw invalidStreamingResponse('AI assistant stream exceeded the maximum size');
+      }
+      appendNormalized(decoder.decode(value, { stream: true }));
       // 空行区切りでフレームを取り出す（末尾の未完フレームは buffer に残す）。
       let sep = buffer.indexOf('\n\n');
       while (sep >= 0) {
         const frame = buffer.slice(0, sep);
+        const frameBytes = encoder.encode(frame).byteLength;
+        assertFrameSize(frameBytes);
         buffer = buffer.slice(sep + 2);
+        bufferBytes -= frameBytes + 2;
         const data = frameData(frame);
         if (data !== undefined) yield data;
         sep = buffer.indexOf('\n\n');
       }
+      assertFrameSize(bufferBytes);
     }
+
+    appendNormalized(decoder.decode());
+    if (pendingCarriageReturn) {
+      buffer += '\n';
+      bufferBytes += 1;
+      pendingCarriageReturn = false;
+    }
+    if (buffer.trim() !== '') assertFrameSize(bufferBytes);
   } finally {
+    if (!reachedEof) {
+      // 契約違反や利用側の早期終了では、cancel 失敗より元の結果を優先する。
+      try {
+        void reader.cancel().catch(() => undefined);
+      } catch {
+        // cancel の同期例外も元の結果を上書きさせない。
+      }
+    }
     reader.releaseLock();
   }
+}
+
+/** 単一 SSE フレームの byte 上限を検証する。 */
+function assertFrameSize(frameBytes: number): void {
+  if (frameBytes > MAX_SSE_EVENT_BYTES) {
+    throw invalidStreamingResponse('AI assistant SSE event exceeded the maximum size');
+  }
+}
+
+/** AI SSE の契約違反を統一したクライアントエラーにする。 */
+function invalidStreamingResponse(message: string): ApiClientError {
+  return new ApiClientError(200, { code: 'INVALID_RESPONSE', message });
 }
 
 /** SSE フレームから `data:` 行を連結して返す。data 行が無ければ undefined。 */
@@ -75,7 +133,8 @@ function frameData(frame: string): string | undefined {
 
 /**
  * `POST /api/ai/assist` を呼び出し、SSE イベントを逐次ハンドラへ渡す。
- * done または error イベントの受信、ストリーム終端、abort のいずれかで解決する。
+ * done または error イベントの受信、abort のいずれかで解決する。
+ * 終端イベントのない EOF は契約違反として拒否する。
  *
  * HTTP エラー（403 / 501 / 400 など、ストリーム開始前の失敗）は
  * `ApiClientError` として throw する。ストリーム開始後のエラーは
@@ -133,4 +192,5 @@ export async function streamAiAssist(
     // done / error が届いたらストリームは完結扱いにする。
     if (parsed.data.type === 'done' || parsed.data.type === 'error') return;
   }
+  throw invalidStreamingResponse('AI assistant stream ended without a terminal event');
 }

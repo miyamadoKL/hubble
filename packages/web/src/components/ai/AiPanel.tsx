@@ -45,6 +45,92 @@ export interface CapturedTarget {
 
 type TargetSnapshot = Omit<CapturedTarget, 'tracking'>;
 
+/** 単一 AI request が所有する世代と中断 controller。 */
+export interface AiRequestClaim {
+  generation: number;
+  controller: AbortController;
+}
+
+/** AI request の排他所有権と世代判定を同期的に管理する。 */
+export class AiRequestCoordinator {
+  private generation = 0;
+  private active: AiRequestClaim | null = null;
+  private readonly controllers = new Set<AbortController>();
+
+  /** 実行中 request がなければ次の世代を取得する。 */
+  claim(): AiRequestClaim | null {
+    if (this.active !== null) return null;
+    const claim = {
+      generation: ++this.generation,
+      controller: new AbortController(),
+    };
+    this.active = claim;
+    this.controllers.add(claim.controller);
+    return claim;
+  }
+
+  /** callback が現在の request に属するかを確認する。 */
+  isCurrent(claim: AiRequestClaim): boolean {
+    return this.active === claim;
+  }
+
+  /** 現在の request を完了し、次の世代を取得可能にする。 */
+  finish(claim: AiRequestClaim): boolean {
+    if (!this.isCurrent(claim)) return false;
+    this.controllers.delete(claim.controller);
+    this.active = null;
+    return true;
+  }
+
+  /** 現在の request を中断し、その世代を同期的に無効化する。 */
+  abortCurrent(): boolean {
+    const claim = this.active;
+    if (claim === null) return false;
+    claim.controller.abort();
+    this.controllers.delete(claim.controller);
+    this.active = null;
+    this.generation += 1;
+    return true;
+  }
+
+  /** 保持する全 controller を中断し、古い世代を無効化する。 */
+  dispose(): void {
+    for (const controller of this.controllers) controller.abort();
+    this.controllers.clear();
+    this.active = null;
+    this.generation += 1;
+  }
+}
+
+/** AI パネルの resize listener と body style を設定し、解除関数を返す。 */
+export function beginPanelResize(
+  startX: number,
+  startWidth: number,
+  setWidth: (width: number) => void,
+  onEnd: () => void = () => {},
+): () => void {
+  const previousCursor = document.body.style.cursor;
+  const previousUserSelect = document.body.style.userSelect;
+  let active = true;
+  const onMove = (event: PointerEvent) => {
+    if (active) setWidth(startWidth + (startX - event.clientX));
+  };
+  const cleanup = () => {
+    if (!active) return;
+    active = false;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', cleanup);
+    document.body.style.cursor = previousCursor;
+    document.body.style.userSelect = previousUserSelect;
+    onEnd();
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', cleanup);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  return cleanup;
+}
+
 /** AI提案をキャプチャ時点と同じ対象へ適用する。 */
 export function applyCapturedSql(target: CapturedTarget, sql: string): boolean {
   const model = target.editor.getModel();
@@ -140,14 +226,19 @@ export function AiPanel() {
   const [target, setTarget] = useState<CapturedTarget | null>(null);
   const targetRef = useRef<CapturedTarget | null>(null);
   // 実行中リクエストの中断用。
-  const abortRef = useRef<AbortController | null>(null);
+  // request の排他所有権と世代も同期的に管理する。
+  const requestCoordinatorRef = useRef(new AiRequestCoordinator());
   // パネル幅リサイズのドラッグ状態。
-  const draggingRef = useRef(false);
+  // resize の listener と body style を戻す関数で保持する。
+  const dragCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(
     () => () => {
+      requestCoordinatorRef.current.dispose();
       targetRef.current?.tracking.clear();
       targetRef.current = null;
+      dragCleanupRef.current?.();
+      dragCleanupRef.current = null;
     },
     [],
   );
@@ -193,7 +284,6 @@ export function AiPanel() {
 
   /** 指定タスクのリクエストを組み立てて送信する。 */
   const run = async (task: AiTask) => {
-    if (streaming) return;
     const inspected = inspectTarget();
 
     // タスク別の入力検証。契約の superRefine と同じ条件を UI 側でも先に確認する。
@@ -237,55 +327,60 @@ export function AiPanel() {
       }
     }
 
-    const captured = inspected ? trackTarget(inspected) : null;
+    // React state の反映より先に排他的な世代を取得し、metadata 待機中の二重起動を防ぐ。
+    const requestCoordinator = requestCoordinatorRef.current;
+    const claim = requestCoordinator.claim();
+    if (claim === null) return;
+    setStreaming(true);
+
+    let captured: CapturedTarget | null = null;
     let tables: AiTableContext[] | undefined;
-    if (tableNames) {
-      const datasourceId = shellContext.datasourceId!;
-      try {
+    let proposalReceived = false;
+    let resolvingTables = false;
+    try {
+      // 適用先はリクエスト時点のエディターと範囲で固定する（応答中のフォーカス移動に影響されない）。
+      captured = inspected ? trackTarget(inspected) : null;
+      // request 開始時に表示と適用先を同じ世代へ切り替える。
+      replaceTarget(captured);
+      setLastTask(task);
+      setText('');
+      setProposedSql(null);
+      if (tableNames) {
+        const datasourceId = shellContext.datasourceId!;
+        resolvingTables = true;
         const details = await Promise.all(
-          tableNames.map((n) => fetchTableDetail(datasourceId, n.catalog, n.schema, n.table)),
+          tableNames.map((n) =>
+            fetchTableDetail(datasourceId, n.catalog, n.schema, n.table, claim.controller.signal),
+          ),
         );
+        resolvingTables = false;
+        if (!requestCoordinator.isCurrent(claim)) return;
         tables = details.map((d) => ({
           catalog: d.catalog,
           schema: d.schema,
           table: d.name,
           columns: d.columns.map((c) => ({ name: c.name, type: c.type })),
         }));
-      } catch (err) {
-        captured?.tracking.clear();
-        const message = err instanceof Error ? err.message : String(err);
-        toast.error('AI assistant', `Failed to resolve context tables: ${message}`);
-        return;
       }
-    }
 
-    const request: AiAssistRequest = {
-      task,
-      ...(shellContext.datasourceId ? { datasourceId: shellContext.datasourceId } : {}),
-      ...(captured && task !== 'draft' ? { sql: captured.original } : {}),
-      ...(errorMessage !== undefined ? { errorMessage } : {}),
-      ...(instruction.trim() !== '' ? { instruction: instruction.trim() } : {}),
-      ...(tables !== undefined ? { tables } : {}),
-      context: {
-        ...(shellContext.catalog ? { catalog: shellContext.catalog } : {}),
-        ...(shellContext.schema ? { schema: shellContext.schema } : {}),
-      },
-    };
+      const request: AiAssistRequest = {
+        task,
+        ...(shellContext.datasourceId ? { datasourceId: shellContext.datasourceId } : {}),
+        ...(captured && task !== 'draft' ? { sql: captured.original } : {}),
+        ...(errorMessage !== undefined ? { errorMessage } : {}),
+        ...(instruction.trim() !== '' ? { instruction: instruction.trim() } : {}),
+        ...(tables !== undefined ? { tables } : {}),
+        context: {
+          ...(shellContext.catalog ? { catalog: shellContext.catalog } : {}),
+          ...(shellContext.schema ? { schema: shellContext.schema } : {}),
+        },
+      };
 
-    // 適用先はリクエスト時点のエディターと範囲で固定する（応答中のフォーカス移動に影響されない）。
-    replaceTarget(captured);
-    setLastTask(task);
-    setText('');
-    setProposedSql(null);
-    setStreaming(true);
-    const abort = new AbortController();
-    abortRef.current = abort;
-    let proposalReceived = false;
-    try {
       await streamAiAssist(
         request,
         {
           onEvent: (event) => {
+            if (!requestCoordinator.isCurrent(claim)) return;
             if (event.type === 'delta') setText((cur) => cur + event.text);
             if (event.type === 'done') {
               setText(event.text);
@@ -299,20 +394,29 @@ export function AiPanel() {
             }
           },
         },
-        { signal: abort.signal },
+        { signal: claim.controller.signal },
       );
     } catch (err) {
-      if (abort.signal.aborted) {
+      if (!requestCoordinator.isCurrent(claim)) {
+        // unmount 後または古い世代の失敗は UI へ反映しない。
+      } else if (claim.controller.signal.aborted) {
         // ユーザーによる停止は正常系として扱う。
+      } else if (resolvingTables) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error('AI assistant', `Failed to resolve context tables: ${message}`);
       } else if (err instanceof ApiClientError) {
         toast.error('AI assistant', err.detail.message);
       } else {
         toast.error('AI assistant', err instanceof Error ? err.message : String(err));
       }
     } finally {
-      if (!proposalReceived && targetRef.current === captured) replaceTarget(null);
-      setStreaming(false);
-      abortRef.current = null;
+      if (!requestCoordinator.isCurrent(claim)) {
+        captured?.tracking.clear();
+      } else {
+        if (!proposalReceived && targetRef.current === captured) replaceTarget(null);
+        requestCoordinator.finish(claim);
+        setStreaming(false);
+      }
     }
   };
 
@@ -326,26 +430,20 @@ export function AiPanel() {
     toast.error('AI assistant', 'The target changed while waiting. Copy the SQL manually.');
   };
 
+  /** requestを中断し、世代と表示中の適用先を同期的に解放する。 */
+  const stopRequest = () => {
+    if (!requestCoordinatorRef.current.abortCurrent()) return;
+    replaceTarget(null);
+    setStreaming(false);
+  };
+
   // 左端ドラッグでの幅リサイズ（Sidebar と同じ pointer イベント方式）。
   const startDrag = (e: React.PointerEvent) => {
-    draggingRef.current = true;
-    const startX = e.clientX;
-    const startWidth = width;
-    const onMove = (ev: PointerEvent) => {
-      if (!draggingRef.current) return;
-      setWidth(startWidth + (startX - ev.clientX));
-    };
-    const onUp = () => {
-      draggingRef.current = false;
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      document.body.style.removeProperty('cursor');
-      document.body.style.removeProperty('user-select');
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    dragCleanupRef.current?.();
+    const cleanup = beginPanelResize(e.clientX, width, setWidth, () => {
+      if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null;
+    });
+    dragCleanupRef.current = cleanup;
   };
 
   return (
@@ -451,7 +549,7 @@ export function AiPanel() {
       {/* フッター: 停止 / 提案 SQL の確認。 */}
       <div className="flex items-center justify-end gap-2 border-t border-border-subtle px-3 py-2">
         {streaming && (
-          <Button variant="ghost" size="sm" icon={Square} onClick={() => abortRef.current?.abort()}>
+          <Button variant="ghost" size="sm" icon={Square} onClick={stopRequest}>
             Stop
           </Button>
         )}

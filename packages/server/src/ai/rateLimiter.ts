@@ -17,6 +17,7 @@ export class AiRateLimiter {
   private readonly now: () => number;
   private readonly requestTimes = new Map<string, number[]>();
   private inFlight = 0;
+  private nextSweepAt = 0;
 
   constructor(options: AiRateLimiterOptions) {
     this.maxConcurrency = options.maxConcurrency;
@@ -28,6 +29,7 @@ export class AiRateLimiter {
   tryAcquire(principal: string): AiRateLimitResult {
     const now = this.now();
     const cutoff = now - RATE_WINDOW_MS;
+    this.sweepExpired(cutoff, now);
     const activeTimes = (this.requestTimes.get(principal) ?? []).filter(
       (requestedAt) => requestedAt > cutoff,
     );
@@ -55,6 +57,20 @@ export class AiRateLimiter {
         this.inFlight -= 1;
       },
     };
+  }
+
+  /** 期限切れ履歴だけを持つ principal を周期的に削除する。 */
+  private sweepExpired(cutoff: number, now: number): void {
+    if (now < this.nextSweepAt) return;
+    for (const [principal, requestTimes] of this.requestTimes) {
+      const activeTimes = requestTimes.filter((requestedAt) => requestedAt > cutoff);
+      if (activeTimes.length === 0) {
+        this.requestTimes.delete(principal);
+      } else if (activeTimes.length !== requestTimes.length) {
+        this.requestTimes.set(principal, activeTimes);
+      }
+    }
+    this.nextSweepAt = now + RATE_WINDOW_MS;
   }
 }
 

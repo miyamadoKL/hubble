@@ -118,12 +118,22 @@ export class ResultExpiryService {
     while (true) {
       const deletionJobs = await this.options.deletions.claimDue(nowIso, DELETION_CLAIM_LIMIT);
       if (deletionJobs.length === 0) return;
-      await this.deleteBatch(
-        deletionJobs.map((job) => job.key),
-        deletionJobs,
-        nowMs,
-        nowIso,
-      );
+      const deletableJobs: ResultObjectDeletionJob[] = [];
+      const referencedKeys: string[] = [];
+      for (const job of deletionJobs) {
+        if (await this.options.deletions.isReferenced(job.key)) referencedKeys.push(job.key);
+        else deletableJobs.push(job);
+      }
+      // DB link が存在する key は live object なので、誤登録された job だけを破棄する。
+      await this.options.deletions.complete(referencedKeys);
+      if (deletableJobs.length > 0) {
+        await this.deleteBatch(
+          deletableJobs.map((job) => job.key),
+          deletableJobs,
+          nowMs,
+          nowIso,
+        );
+      }
       if (deletionJobs.length < DELETION_CLAIM_LIMIT) return;
     }
   }

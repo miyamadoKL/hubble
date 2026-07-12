@@ -16,6 +16,7 @@ import {
 } from '../trino/types';
 import type { QueryExecution } from './execution';
 import { DOWNLOAD_SOURCE, needsCsvReexec, statementAllowsCsvReexec } from './csv';
+import { statementPages } from '../engine/statementDriver';
 
 /** クエリ結果の列定義または 1 行を表すイベント。 */
 export type QueryResultEvent =
@@ -89,44 +90,26 @@ async function* streamReexecEvents(
   const ctx: TrinoRequestContext = { ...exec.ctx, source: DOWNLOAD_SOURCE };
   const mutations = emptySessionMutations();
 
-  let currentNextUri: string | undefined;
   let columnsWritten = false;
   const writeColumns = async function* (
     columns: TrinoColumn[] | undefined,
   ): AsyncGenerator<QueryResultEvent> {
-    if (columnsWritten) return;
+    if (columnsWritten || columns === undefined) return;
     columnsWritten = true;
     yield { type: 'columns', columns: toQueryColumns(columns) };
   };
 
-  try {
-    let page = await client.start(exec.statement, ctx, mutations, signal);
+  for await (const page of statementPages({
+    client,
+    statement: exec.statement,
+    ctx,
+    mutations,
+    signal,
+  })) {
     yield* writeColumns(page.columns);
     for (const row of page.data ?? []) yield { type: 'row', row };
-
-    let idleAttempt = 0;
-    while (page.nextUri) {
-      currentNextUri = page.nextUri;
-      if (signal?.aborted) break;
-      const hadData = page.data !== undefined && page.data.length > 0;
-      if (hadData) {
-        idleAttempt = 0;
-      } else {
-        await client.waitBackoff(idleAttempt, signal);
-        idleAttempt += 1;
-      }
-      if (signal?.aborted) break;
-      page = await client.advance(page.nextUri, ctx, mutations, signal);
-      yield* writeColumns(page.columns);
-      for (const row of page.data ?? []) yield { type: 'row', row };
-    }
-    if (!page.nextUri) currentNextUri = undefined;
-    if (!columnsWritten) yield { type: 'columns', columns: [] };
-  } finally {
-    if (currentNextUri) {
-      await client.cancel(currentNextUri, ctx).catch(() => {});
-    }
   }
+  if (!columnsWritten) yield { type: 'columns', columns: [] };
 }
 
 function waitForColumnsOrTerminal(exec: QueryExecution): Promise<void> {

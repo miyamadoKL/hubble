@@ -220,6 +220,7 @@ export async function buildServices(
       logWarn: options.notificationLogWarn,
     });
   const history = new HistoryRepository(db);
+  const resultObjectDeletions = new ResultObjectDeletionRepository(db);
   const documentShares = new DocumentShareRepository(db);
   const notebooks = new NotebookRepository(db, documentShares);
   const dashboards = new DashboardRepository(db, documentShares);
@@ -240,6 +241,7 @@ export async function buildServices(
     registry,
     history,
     resultStore,
+    resultObjectDeletions,
     resultKeyPrefix:
       config.resultStore.kind === 's3' ? config.resultStore.prefix : 'hubble-results/',
     resultTtlDays: config.resultStore.ttlDays,
@@ -265,7 +267,6 @@ export async function buildServices(
   const scheduleRuns = new ScheduleRunRepository(db, config.scheduler.runsRetention);
   const alerts = new AlertRepository(db);
   const alertDeliveries = new AlertDeliveryRepository(db);
-  const resultObjectDeletions = new ResultObjectDeletionRepository(db);
   const workflows = new WorkflowRepository(db);
   const workflowRuns = new WorkflowRunRepository(db, config.scheduler.runsRetention);
   const documentGitLinks = new DocumentGitLinkRepository(db);
@@ -339,6 +340,7 @@ export async function buildServices(
     guardConfig: config.guard,
     audit,
     resultStore,
+    resultObjectDeletions,
     resultKeyPrefix:
       config.resultStore.kind === 's3' ? config.resultStore.prefix : 'hubble-results/',
     resultTtlDays: config.resultStore.ttlDays,

@@ -12,7 +12,8 @@ import { parseExplainStatement } from '../query/explainStatement';
 import { computeVerdict, type GuardLimits } from '../query/guardVerdict';
 import type { StatementClient } from './types';
 import type { TrinoRequestContext } from '../trino/types';
-import { emptySessionMutations, type TrinoColumn } from '../trino/types';
+import { emptySessionMutations } from '../trino/types';
+import { driveStatementPages } from './statementDriver';
 
 /** 見積もり実行に必要な設定。 */
 export interface TrinoEstimateOptions {
@@ -153,47 +154,22 @@ async function runExplain(
   client: StatementClient,
   timeoutMs: number,
 ): Promise<string | undefined> {
-  const ac = new AbortController();
-  // estimateTimeoutMs 経過で強制的に abort する安全弁。
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
   const mutations = emptySessionMutations();
-  let currentNextUri: string | undefined;
-  try {
-    // execution.ts の run() と同様のポーリングループ（開始 -> nextUri を
-    // 辿って完了まで進める）。ただし EXPLAIN IO は 1 行 1 列しか返さないため
-    // 行バッファは単純な配列に貯めるだけでよい。
-    let page = await client.start(statement, ctx, mutations, ac.signal);
-    let columns: TrinoColumn[] = page.columns ?? [];
-    const rows: unknown[][] = [];
-    if (page.data) rows.push(...page.data);
-
-    let idleAttempt = 0;
-    while (page.nextUri) {
-      currentNextUri = page.nextUri;
-      if (page.data && page.data.length > 0) {
-        idleAttempt = 0;
-      } else {
-        await client.waitBackoff(idleAttempt, ac.signal);
-        idleAttempt += 1;
-      }
-      page = await client.advance(page.nextUri, ctx, mutations, ac.signal);
-      if (page.columns && columns.length === 0) columns = page.columns;
+  const rows: unknown[][] = [];
+  // estimateTimeoutMs 経過で強制的に abort する安全弁。
+  // Best-effort cancel of the in-flight EXPLAIN on timeout/abort.
+  await driveStatementPages({
+    client,
+    statement,
+    ctx,
+    mutations,
+    timeoutMs,
+    onPage: ({ page }) => {
       if (page.data) rows.push(...page.data);
-    }
-    currentNextUri = undefined;
-    // EXPLAIN IO returns exactly one row, one varchar column.
-    // EXPLAIN IO は必ず 1 行 1 列（varchar）だけを返す仕様。
-    const cell = rows[0]?.[0];
-    return typeof cell === 'string' ? cell : undefined;
-  } catch (err) {
-    // Best-effort cancel of the in-flight EXPLAIN on timeout/abort.
-    // タイムアウト/abort が原因の場合は、実行中の EXPLAIN をベストエフォートで
-    // キャンセルしてから元の例外を再送出する。
-    if (ac.signal.aborted && currentNextUri) {
-      await client.cancel(currentNextUri, ctx);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+    },
+  });
+  // EXPLAIN IO returns exactly one row, one varchar column.
+  // EXPLAIN IO は 1 行 1 列の varchar を返す。
+  const cell = rows[0]?.[0];
+  return typeof cell === 'string' ? cell : undefined;
 }
