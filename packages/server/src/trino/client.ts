@@ -267,14 +267,53 @@ export class TrinoClient {
   }
 }
 
+const JSON_NUMBER_SOURCE = Symbol('jsonNumberSource');
+
+interface JsonNumberToken {
+  [JSON_NUMBER_SOURCE]: string;
+  value: number;
+}
+
 // 日本語: レスポンスボディを JSON.parse し、失敗時は例外を投げずに undefined を
 // 返すユーティリティ (呼び出し側で「JSON でなかった」ことを分岐処理するため)。
+// data 配下で Number へ正確に戻せない数値は token 原文を文字列として残す。
 function safeJson(text: string): unknown {
   try {
-    return JSON.parse(text);
+    let hasLossyNumber = false;
+    const parsed = JSON.parse(
+      text,
+      (_key: string, value: unknown, context?: { source?: string }): unknown => {
+        if (typeof value !== 'number' || context?.source === undefined) return value;
+        if (Number.isSafeInteger(value) && context.source === String(value)) return value;
+        if (!Number.isInteger(value) && context.source === String(value)) return value;
+        hasLossyNumber = true;
+        return { [JSON_NUMBER_SOURCE]: context.source, value } satisfies JsonNumberToken;
+      },
+    );
+    return hasLossyNumber ? restoreJsonNumbers(parsed, false, true) : parsed;
   } catch {
     return undefined;
   }
+}
+
+function restoreJsonNumbers(value: unknown, preserveSource: boolean, root = false): unknown {
+  if (isJsonNumberToken(value)) return preserveSource ? value[JSON_NUMBER_SOURCE] : value.value;
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      value[index] = restoreJsonNumbers(value[index], preserveSource);
+    }
+    return value;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  for (const [key, item] of Object.entries(record)) {
+    record[key] = restoreJsonNumbers(item, preserveSource || (root && key === 'data'));
+  }
+  return record;
+}
+
+function isJsonNumberToken(value: unknown): value is JsonNumberToken {
+  return value !== null && typeof value === 'object' && JSON_NUMBER_SOURCE in value;
 }
 
 // 日本語: エラーメッセージに埋め込む本文プレビューが長くなりすぎないよう、

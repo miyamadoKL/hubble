@@ -107,25 +107,37 @@ export function trinoErrorToDetail(error: TrinoError): ApiErrorDetail {
 }
 
 /**
- * An `AppError` (HTTP 400 — user/query fault) that also retains the raw Trino
- * error so callers that need the `errorType` (e.g. Query Guard, to tell a
- * USER_ERROR apart from an engine fault) can inspect it.
- *
- * 日本語: Trino が返した構造化エラーをラップする `AppError`（HTTP 400 = ユーザー/
- * クエリ側の不備扱い）。レンダリング用の `detail` に加え、生の `TrinoError` を
- * `trino` フィールドとして保持するため、呼び出し元（例えば Query Guard）が
- * `errorType`（USER_ERROR か否か等）を見て挙動を分岐させたいときに参照できる。
+ * Trino が返した構造化エラーをラップし、生の `TrinoError` を保持する。
+ * `USER_ERROR` は呼び出し側で修正できるため HTTP 400 とし、それ以外は上流エンジン側の
+ * 障害として HTTP 502 にする。呼び出し元は `trino.errorType` から再試行可否も判定できる。
  */
 export class TrinoQueryError extends AppError {
   readonly trino: TrinoError;
   constructor(error: TrinoError) {
-    super(400, trinoErrorToDetail(error));
+    super(
+      error.errorType === undefined || error.errorType === 'USER_ERROR' ? 400 : 502,
+      trinoErrorToDetail(error),
+    );
     this.name = 'TrinoQueryError';
     this.trino = error;
   }
 }
 
-/** Build an `AppError` from a Trino error payload (HTTP 400 — user/query fault). */
+/** SQL driver が判定した、同じ statement を再試行する可否。 */
+export type SqlDriverRetryClass = 'deterministic' | 'transient';
+
+/** HTTP 上の責任区分と独立した retry class を保持する SQL driver error。 */
+export class SqlDriverError extends TrinoQueryError {
+  readonly retryClass: SqlDriverRetryClass;
+
+  constructor(error: TrinoError, retryClass: SqlDriverRetryClass) {
+    super(error);
+    this.name = 'SqlDriverError';
+    this.retryClass = retryClass;
+  }
+}
+
+/** Trino の構造化エラーから、種類に対応する HTTP status を持つ `AppError` を作る。 */
 export function trinoError(error: TrinoError): AppError {
   return new TrinoQueryError(error);
 }

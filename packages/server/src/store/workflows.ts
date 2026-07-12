@@ -27,6 +27,8 @@ import { schedulePrincipalSnapshotSchema, type SchedulePrincipalSnapshot } from 
 import { likeParam } from './notebooks';
 import { ResultObjectDeletionRepository } from './resultObjectDeletions';
 
+const SQL_ID_CHUNK_SIZE = 500;
+
 export type { SchedulePrincipalSnapshot };
 
 /** DB に保存されているワークフロー (レスポンス専用フィールドは routes 層で付与)。 */
@@ -398,6 +400,7 @@ export interface FinishWorkflowStepInput {
 export interface ExpiredWorkflowStepResult {
   id: string;
   resultObjectKey: string;
+  resultExpiresAt: string;
 }
 
 /** 同一ワークフローの running claim が既に存在する。 */
@@ -608,24 +611,52 @@ export class WorkflowRunRepository {
        ORDER BY started_at DESC, id DESC LIMIT ?`,
       [workflowId, limit],
     );
-    const results: WorkflowRunRecord[] = [];
-    for (const row of runRows) {
-      const stepRows = await this.db.query<WorkflowStepRunRow>(
-        'SELECT * FROM workflow_step_runs WHERE run_id = ?',
-        [row.id],
-      );
-      results.push({
-        ...rowToRunSummary(row, stepRows),
-        workflowId: row.workflow_id,
-        owner: row.owner,
-      });
-    }
-    return results;
+    const stepRowsByRun = await this.loadStepRowsByRun(runRows.map((row) => row.id));
+    return runRows.map((row) => ({
+      ...rowToRunSummary(row, stepRowsByRun.get(row.id) ?? []),
+      workflowId: row.workflow_id,
+      owner: row.owner,
+    }));
   }
 
   async latest(workflowId: string): Promise<WorkflowRunRecord | undefined> {
     const rows = await this.listRuns(workflowId, 1);
     return rows[0];
+  }
+
+  /** 複数ワークフローの直近 run と step 集計を500 idごとの固定回数で取得する。 */
+  async latestMany(workflowIds: readonly string[]): Promise<Map<string, WorkflowRunRecord>> {
+    if (workflowIds.length === 0) return new Map();
+    const runRows: WorkflowRunRow[] = [];
+    for (let offset = 0; offset < workflowIds.length; offset += SQL_ID_CHUNK_SIZE) {
+      const chunk = workflowIds.slice(offset, offset + SQL_ID_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      runRows.push(
+        ...(await this.db.query<WorkflowRunRow>(
+          `SELECT * FROM (
+             SELECT workflow_runs.*,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY workflow_id ORDER BY started_at DESC, id DESC
+                    ) AS run_rank
+             FROM workflow_runs
+             WHERE workflow_id IN (${placeholders})
+           ) ranked
+           WHERE run_rank = 1`,
+          chunk,
+        )),
+      );
+    }
+    const stepRowsByRun = await this.loadStepRowsByRun(runRows.map((row) => row.id));
+    return new Map(
+      runRows.map((row) => [
+        row.workflow_id,
+        {
+          ...rowToRunSummary(row, stepRowsByRun.get(row.id) ?? []),
+          workflowId: row.workflow_id,
+          owner: row.owner,
+        },
+      ]),
+    );
   }
 
   async hasRunning(workflowId: string): Promise<boolean> {
@@ -657,28 +688,73 @@ export class WorkflowRunRepository {
     return runs.length;
   }
 
-  async listExpiredResults(nowIso: string): Promise<ExpiredWorkflowStepResult[]> {
+  async listExpiredResults(
+    nowIso: string,
+    options: {
+      after?: { resultExpiresAt: string; id: string };
+      limit?: number;
+    } = {},
+  ): Promise<ExpiredWorkflowStepResult[]> {
+    const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
+    const cursorWhere = options.after
+      ? 'AND (result_expires_at > ? OR (result_expires_at = ? AND id > ?))'
+      : '';
+    const params: SqlParam[] = [nowIso];
+    if (options.after) {
+      params.push(options.after.resultExpiresAt, options.after.resultExpiresAt, options.after.id);
+    }
+    params.push(limit);
     const rows = await this.db.query<{
       id: string;
       result_object_key: string;
+      result_expires_at: string;
     }>(
-      `SELECT id, result_object_key FROM workflow_step_runs
-       WHERE result_object_key IS NOT NULL AND result_expires_at IS NOT NULL AND result_expires_at <= ?`,
-      [nowIso],
+      `SELECT id, result_object_key, result_expires_at FROM workflow_step_runs
+       WHERE result_object_key IS NOT NULL AND result_expires_at IS NOT NULL
+         AND result_expires_at <= ? ${cursorWhere}
+       ORDER BY result_expires_at ASC, id ASC
+       LIMIT ?`,
+      params,
     );
-    return rows.map((row) => ({ id: row.id, resultObjectKey: row.result_object_key }));
+    return rows.map((row) => ({
+      id: row.id,
+      resultObjectKey: row.result_object_key,
+      resultExpiresAt: row.result_expires_at,
+    }));
   }
 
   async clearResultObjects(keys: string[]): Promise<void> {
     if (keys.length === 0) return;
-    for (const key of keys) {
-      await this.db.run(
-        `UPDATE workflow_step_runs
-         SET result_object_key = NULL, result_expires_at = NULL
-         WHERE result_object_key = ?`,
-        [key],
+    const placeholders = keys.map(() => '?').join(', ');
+    await this.db.run(
+      `UPDATE workflow_step_runs
+       SET result_object_key = NULL, result_expires_at = NULL
+       WHERE result_object_key IN (${placeholders})`,
+      keys,
+    );
+  }
+
+  private async loadStepRowsByRun(
+    runIds: readonly string[],
+  ): Promise<Map<string, WorkflowStepRunRow[]>> {
+    if (runIds.length === 0) return new Map();
+    const grouped = new Map<string, WorkflowStepRunRow[]>();
+    for (let offset = 0; offset < runIds.length; offset += SQL_ID_CHUNK_SIZE) {
+      const chunk = runIds.slice(offset, offset + SQL_ID_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await this.db.query<WorkflowStepRunRow>(
+        `SELECT * FROM workflow_step_runs
+         WHERE run_id IN (${placeholders})
+         ORDER BY run_id ASC, stage_index ASC, step_id ASC`,
+        chunk,
       );
+      for (const row of rows) {
+        const group = grouped.get(row.run_id);
+        if (group) group.push(row);
+        else grouped.set(row.run_id, [row]);
+      }
     }
+    return grouped;
   }
 
   async getStepRun(

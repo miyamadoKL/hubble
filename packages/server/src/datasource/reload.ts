@@ -96,16 +96,18 @@ export async function closeEngineWithTimeout(
   timeoutMs: number,
   logWarn: (message: string) => void = console.warn,
 ): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('engine close timed out')), timeoutMs);
+    timer.unref?.();
+  });
   try {
-    await Promise.race([
-      engine.close(),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('engine close timed out')), timeoutMs);
-      }),
-    ]);
+    await Promise.race([engine.close(), timeout]);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     logWarn(`engine ${engine.datasourceId} close failed: ${detail}`);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

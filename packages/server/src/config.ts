@@ -263,6 +263,17 @@ export interface ServerConfig {
     /** 指数backoffの基準時間。 */
     backoffMs: number;
   };
+  /** 永続テーブルの保持期限とページ削除設定。 */
+  dataRetention: {
+    /** sent または dead になった Alert 配信ジョブの保持日数。0 は自動削除しない。 */
+    alertDeliveryDays: number;
+    /** S3 object 参照を持たないクエリ履歴の保持日数。0 は自動削除しない。 */
+    queryHistoryDays: number;
+    /** 監査ログの保持日数。0 は自動削除しない。 */
+    auditLogDays: number;
+    /** 1回の DELETE で処理する最大行数。 */
+    batchSize: number;
+  };
   /** GitHub 連携設定。 */
   github: GithubConfig;
   /** AI アシスタント設定（`AI_*` 環境変数群）。 */
@@ -699,6 +710,12 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       intervalMs: envPositiveInt(env, 'ALERT_DELIVERY_INTERVAL_MS', 5_000),
       maxAttempts: envPositiveInt(env, 'ALERT_DELIVERY_MAX_ATTEMPTS', 5),
       backoffMs: envPositiveInt(env, 'ALERT_DELIVERY_BACKOFF_MS', 10_000),
+    },
+    dataRetention: {
+      alertDeliveryDays: envNonNegativeInt(env, 'ALERT_DELIVERY_RETENTION_DAYS', 30),
+      queryHistoryDays: envNonNegativeInt(env, 'QUERY_HISTORY_RETENTION_DAYS', 90),
+      auditLogDays: envNonNegativeInt(env, 'AUDIT_LOG_RETENTION_DAYS', 365),
+      batchSize: envPositiveInt(env, 'DATA_RETENTION_BATCH_SIZE', 500),
     },
     github: resolveGithubConfig(env),
     ai: resolveAiConfig(env),

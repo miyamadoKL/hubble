@@ -46,4 +46,16 @@ describe('createMysqlPool', () => {
 
     expect(createPool.mock.calls[0]![0]).toMatchObject({ connectTimeout: 4321 });
   });
+
+  it('BIGINTを精度損失なく文字列として取得する設定を渡す', () => {
+    const fakePool = { on: vi.fn() };
+    const createPool = vi.spyOn(mysql, 'createPool').mockReturnValue(fakePool as never);
+
+    createMysqlPool(DS);
+
+    expect(createPool.mock.calls[0]![0]).toMatchObject({
+      supportBigNumbers: true,
+      bigNumberStrings: true,
+    });
+  });
 });

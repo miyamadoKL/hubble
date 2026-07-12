@@ -24,7 +24,13 @@ import type { AuditJson, AuditLogger } from '../audit';
 import { AlertDeliveryRepository } from '../store/alertDeliveries';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { columnIndex, fetchStatementRows } from './execute';
-import { compareThreshold, nextAlertState, selectObservedValue, shouldNotify } from './state';
+import {
+  AlertNumericConversionError,
+  compareThreshold,
+  nextAlertState,
+  selectObservedValue,
+  shouldNotify,
+} from './state';
 import {
   JobAdmissionRejectedError,
   type JobAdmissionController,
@@ -68,8 +74,12 @@ function stringifyObserved(value: unknown): string | null {
 }
 
 function errorTypeOf(err: unknown): string | null {
+  if (err instanceof AlertNumericConversionError) return err.code;
   if (err && typeof err === 'object') {
-    const maybeTrino = err as { trino?: { errorType?: string }; detail?: { code?: string } };
+    const maybeTrino = err as {
+      trino?: { errorType?: string };
+      detail?: { code?: string };
+    };
     if (maybeTrino.trino?.errorType) return maybeTrino.trino.errorType;
     if (maybeTrino.detail?.code) return maybeTrino.detail.code;
   }
@@ -373,12 +383,14 @@ export class AlertEvaluator {
             errorMessage: `Column '${alert.columnName}' not found in query result`,
           });
         }
-        const observed = selectObservedValue(fetched.rows, idx, alert.selector);
+        const columnType = fetched.columns[idx]?.type;
+        const observed = selectObservedValue(fetched.rows, idx, alert.selector, columnType);
         const observedStr = stringifyObserved(observed);
         const conditionMet = compareThreshold({
           observed,
           op: alert.op,
           threshold: alert.value,
+          columnType,
         });
         const newState = nextAlertState(previousState, conditionMet);
         const nowMs = this.now();

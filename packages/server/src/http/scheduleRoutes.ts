@@ -59,16 +59,13 @@ function toRunSummary(run: ScheduleRunRecord): ScheduleRunSummary {
 }
 
 /**
- * Enrich a stored schedule into the contract `Schedule` (nextRunAt + lastRun).
- *
  * 永続化されたスケジュールレコードに、リクエスト時点で計算する派生情報
  * （次回実行予定時刻と直近の実行結果）を付加して API コントラクトの `Schedule` を組み立てる。
- * @param services - `scheduleRuns` ストアへアクセスするための DI コンテナ。
  * @param record - 永続化されたスケジュール本体。
- * @returns `nextRunAt` / `lastRun` を含む完全な `Schedule`。
+ * @param latest - 直近の実行結果。未実行の場合は undefined。
+ * @returns `nextRunAt` と `lastRun` を含む完全な `Schedule`。
  */
-async function toSchedule(services: Services, record: ScheduleRecord): Promise<Schedule> {
-  const latest = await services.scheduleRuns.latest(record.id);
+function toSchedule(record: ScheduleRecord, latest?: ScheduleRunRecord): Schedule {
   return {
     id: record.id,
     name: record.name,
@@ -82,10 +79,15 @@ async function toSchedule(services: Services, record: ScheduleRecord): Promise<S
     datasourceId: record.datasourceId,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
-    // Computed from "now": disabled schedules have no next run.
+    // 現在時刻を基準に計算し、無効なスケジュールには次回実行時刻を設定しない。
     nextRunAt: record.enabled ? nextRunIso(record.cron, new Date()) : null,
     lastRun: latest ? toRunSummary(latest) : null,
   };
+}
+
+/** 単一スケジュールの直近 run を読み、API 表現へ変換する。 */
+async function loadSchedule(services: Services, record: ScheduleRecord): Promise<Schedule> {
+  return toSchedule(record, await services.scheduleRuns.latest(record.id));
 }
 
 /**
@@ -160,7 +162,10 @@ export function scheduleRoutes(services: Services): App {
   app.get('/', async (c) => {
     const owner = c.var.principal.user;
     const records = await services.schedules.list(owner);
-    const schedules = await Promise.all(records.map((r) => toSchedule(services, r)));
+    const latestBySchedule = await services.scheduleRuns.latestMany(
+      records.map((record) => record.id),
+    );
+    const schedules = records.map((record) => toSchedule(record, latestBySchedule.get(record.id)));
     return c.json(schedules);
   });
 
@@ -203,7 +208,7 @@ export function scheduleRoutes(services: Services): App {
       datasourceId,
       principalSnapshot: c.var.principal,
     });
-    return c.json(await toSchedule(services, record), 201);
+    return c.json(await loadSchedule(services, record), 201);
   });
 
   // GET /api/schedules/:id: 単一スケジュールを取得する（他ユーザー所有分は 404）。
@@ -211,7 +216,7 @@ export function scheduleRoutes(services: Services): App {
     const owner = c.var.principal.user;
     const record = await services.schedules.get(owner, c.req.param('id'));
     if (!record) throw AppError.notFound(`Schedule ${c.req.param('id')} not found`);
-    return c.json(await toSchedule(services, record));
+    return c.json(await loadSchedule(services, record));
   });
 
   // PATCH /api/schedules/:id: 部分更新。ステートメント/catalog/schema/cron/datasourceId の
@@ -268,7 +273,7 @@ export function scheduleRoutes(services: Services): App {
       principalSnapshot: c.var.principal,
     });
     if (!updated) throw AppError.notFound(`Schedule ${id} not found`);
-    return c.json(await toSchedule(services, updated));
+    return c.json(await loadSchedule(services, updated));
   });
 
   // DELETE /api/schedules/:id: スケジュールを削除する。

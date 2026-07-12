@@ -329,6 +329,10 @@ MySQL/PostgreSQL の `roleCredentials` は RBAC role 単位の credential 切り
 | `SCHEDULER_TICK_SECONDS`          | `15`                 | due なスケジュールをスキャンする間隔（秒）                                                                                                   |
 | `SCHEDULER_MAX_CONCURRENT`        | `2`                  | schedule、workflow step、alert で共有する statement 同時実行上限                                                                             |
 | `SCHEDULER_RUNS_RETENTION`        | `50`                 | スケジュールごとに保持する実行履歴の上限件数（古い行は自動プルーン）                                                                         |
+| `ALERT_DELIVERY_RETENTION_DAYS`   | `30`                 | 配信済みまたは再試行終了となった Alert 通知 outbox の保持日数。`0` は自動削除しない                                                          |
+| `QUERY_HISTORY_RETENTION_DAYS`    | `90`                 | S3 result 参照を持たないクエリ履歴の保持日数。`0` は自動削除しない                                                                           |
+| `AUDIT_LOG_RETENTION_DAYS`        | `365`                | 監査ログの保持日数。`0` は自動削除せず、削除前に必要な期間をエクスポートする                                                                 |
+| `DATA_RETENTION_BATCH_SIZE`       | `500`                | 保持期限 cleanup が1回の DELETE で処理する最大行数                                                                                           |
 | `NOTIFY_SLACK_WEBHOOK_URL`        | —                    | スケジュール確定失敗通知で使う Slack incoming webhook URL                                                                                    |
 | `NOTIFY_SMTP_HOST`                | —                    | スケジュール確定失敗通知で使う SMTP ホスト                                                                                                   |
 | `NOTIFY_SMTP_PORT`                | `587`                | SMTP ポート。`465` は implicit TLS、それ以外は STARTTLS 任意                                                                                 |

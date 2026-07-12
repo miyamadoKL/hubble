@@ -8,6 +8,7 @@ import type { QueryColumn } from '@hubble/contracts';
 import { csvRecord } from '../query/csv';
 import type { QueryResultEvent } from '../query/resultEvents';
 import type { ResultStore } from './store';
+import { createSqlAbortError } from '../engine/sql/abort';
 
 type ResultJsonlLine =
   | { kind: 'columns'; columns: QueryColumn[] }
@@ -242,42 +243,66 @@ export async function* streamPersistedCsv(stream: Readable): AsyncGenerator<stri
 }
 
 /** gzip JSONL を serializer 非依存の結果イベントへ変換する。 */
-export async function* streamPersistedResultEvents(
+export function streamPersistedResultEvents(
   stream: Readable,
+  signal?: AbortSignal,
 ): AsyncGenerator<QueryResultEvent> {
-  let columnsWritten = false;
-  for await (const line of readResultLines(stream)) {
-    if (line.kind === 'columns') {
-      columnsWritten = true;
-      yield { type: 'columns', columns: line.columns };
-      continue;
+  // generator の最初の next より前に中断されても、既に開いた S3 body を閉じる。
+  const abortBeforeStart = (): void => {
+    stream.destroy();
+  };
+  signal?.addEventListener('abort', abortBeforeStart, { once: true });
+  if (signal?.aborted) abortBeforeStart();
+
+  return (async function* (): AsyncGenerator<QueryResultEvent> {
+    signal?.removeEventListener('abort', abortBeforeStart);
+    if (signal?.aborted) throw createSqlAbortError();
+    let columnsWritten = false;
+    for await (const line of readResultLines(stream, signal)) {
+      if (line.kind === 'columns') {
+        columnsWritten = true;
+        yield { type: 'columns', columns: line.columns };
+        continue;
+      }
+      if (!columnsWritten) {
+        columnsWritten = true;
+        yield { type: 'columns', columns: [] };
+      }
+      yield { type: 'row', row: line.row };
     }
-    if (!columnsWritten) {
-      columnsWritten = true;
-      yield { type: 'columns', columns: [] };
-    }
-    yield { type: 'row', row: line.row };
-  }
-  if (!columnsWritten) yield { type: 'columns', columns: [] };
+    if (!columnsWritten) yield { type: 'columns', columns: [] };
+  })();
 }
 
-async function* readResultLines(stream: Readable): AsyncGenerator<ResultJsonlLine> {
+async function* readResultLines(
+  stream: Readable,
+  signal?: AbortSignal,
+): AsyncGenerator<ResultJsonlLine> {
   const gunzip = createGunzip();
   const lines = createInterface({
     input: stream.pipe(gunzip),
     crlfDelay: Infinity,
   });
+  const abort = (): void => {
+    lines.close();
+    gunzip.destroy();
+    stream.destroy();
+  };
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
   try {
     for await (const raw of lines) {
       if (raw.trim() === '') continue;
       yield parseLine(raw);
     }
   } finally {
+    signal?.removeEventListener('abort', abort);
     // page window を満たして途中終了した場合も、S3 body と解凍処理を止める。
     lines.close();
     gunzip.destroy();
     stream.destroy();
   }
+  if (signal?.aborted) throw createSqlAbortError();
 }
 
 function parseLine(line: string): ResultJsonlLine {

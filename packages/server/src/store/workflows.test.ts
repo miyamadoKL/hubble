@@ -1,7 +1,7 @@
 /**
  * WorkflowRepository / WorkflowRunRepository の振る舞いを dbBackends で検証する。
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { workflowDefinitionSchema } from '@hubble/contracts';
 import { dbBackends } from '../test/dbBackends';
@@ -342,6 +342,83 @@ for (const backend of dbBackends) {
         expect(finished?.elapsedMs).toBe(5);
       });
 
+      it('複数 workflow の直近 run と step 集計を固定2クエリで取得する', async () => {
+        const db2 = await open();
+        const workflows = new WorkflowRepository(db2);
+        const runs = new WorkflowRunRepository(db2, 50);
+        const first = await workflows.create('alice', {
+          name: 'first',
+          stages: sampleStages,
+          ...ds,
+        });
+        const second = await workflows.create('alice', {
+          name: 'second',
+          stages: sampleStages,
+          ...ds,
+        });
+        const firstRun = await runs.startRun(
+          first,
+          'manual',
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z',
+        );
+        const secondRun = await runs.startRun(
+          second,
+          'manual',
+          '2026-01-01T00:01:00.000Z',
+          '2026-01-01T00:01:00.000Z',
+        );
+        const query = vi.spyOn(db2, 'query');
+        query.mockClear();
+
+        const latest = await runs.latestMany([first.id, second.id]);
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(latest.get(first.id)).toMatchObject({ id: firstRun, stepCounts: { total: 3 } });
+        expect(latest.get(second.id)).toMatchObject({ id: secondRun, stepCounts: { total: 3 } });
+      });
+
+      it('1000件超の workflow id を500件ずつに分割する', async () => {
+        const db2 = await open();
+        const runs = new WorkflowRunRepository(db2, 50);
+        const query = vi.spyOn(db2, 'query');
+
+        const latest = await runs.latestMany(
+          Array.from({ length: 1_001 }, (_, index) => `wfl_${index}`),
+        );
+
+        expect(latest.size).toBe(0);
+        expect(query).toHaveBeenCalledTimes(3);
+        expect(query.mock.calls.map((call) => call[1]?.length)).toEqual([500, 500, 1]);
+      });
+
+      it('run 一覧の step 集計をrun件数に依存しない2クエリで取得する', async () => {
+        const db2 = await open();
+        const workflows = new WorkflowRepository(db2);
+        const runs = new WorkflowRunRepository(db2, 50);
+        const workflow = await workflows.create('alice', {
+          name: 'list',
+          stages: sampleStages,
+          ...ds,
+        });
+        for (let minute = 0; minute < 2; minute += 1) {
+          const timestamp = `2026-01-01T00:0${minute}:00.000Z`;
+          const runId = await runs.startRun(workflow, 'manual', timestamp, timestamp);
+          await runs.finishRun(runId, workflow.id, {
+            status: 'success',
+            finishedAt: timestamp,
+            elapsedMs: 1,
+          });
+        }
+        const query = vi.spyOn(db2, 'query');
+        query.mockClear();
+
+        const listed = await runs.listRuns(workflow.id, 10);
+
+        expect(listed).toHaveLength(2);
+        expect(query).toHaveBeenCalledTimes(2);
+      });
+
       it('aborts orphan runs and skips pending steps', async () => {
         const db2 = await open();
         const repo = new WorkflowRepository(db2);
@@ -492,7 +569,11 @@ for (const backend of dbBackends) {
         });
         const expired = await runs.listExpiredResults('2026-06-01T00:00:00.000Z');
         expect(expired).toEqual([
-          { id: stepRunId, resultObjectKey: 'hubble-results/workflow/x.jsonl.gz' },
+          {
+            id: stepRunId,
+            resultObjectKey: 'hubble-results/workflow/x.jsonl.gz',
+            resultExpiresAt: '2020-01-01T00:00:00.000Z',
+          },
         ]);
         await runs.clearResultObjects(['hubble-results/workflow/x.jsonl.gz']);
         const step = await runs.getStepRun(runId, stepRunId);

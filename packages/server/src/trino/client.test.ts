@@ -112,6 +112,23 @@ describe('TrinoClient error parsing', () => {
   });
 });
 
+describe('TrinoClient numeric parsing', () => {
+  it('preserves lossy result numbers as their original decimal tokens', async () => {
+    const fetchImpl = (() =>
+      Promise.resolve(
+        new Response(
+          '{"id":"q1","columns":[{"name":"large","type":"bigint"},{"name":"ratio","type":"decimal(38,16)"},{"name":"small","type":"double"}],"data":[[9007199254740993,1.0000000000000001,0.1]],"stats":{"state":"FINISHED","processedRows":9007199254740993}}',
+          { status: 200 },
+        ),
+      )) as unknown as typeof fetch;
+
+    const response = await client(fetchImpl).start('SELECT metrics', {}, emptySessionMutations());
+
+    expect(response.data).toEqual([['9007199254740993', '1.0000000000000001', 0.1]]);
+    expect(response.stats?.processedRows).toBeTypeOf('number');
+  });
+});
+
 describe('TrinoClient session header parsing', () => {
   it('collects x-trino-set-catalog/schema/session and clear-session', async () => {
     const headers = new Headers();

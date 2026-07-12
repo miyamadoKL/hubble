@@ -78,8 +78,17 @@ describe('SheetsExporter', () => {
       async () => client,
     );
 
-    const first = events(1);
-    const second = events(1);
+    let firstConsumed = false;
+    const first = vi.fn(() =>
+      (async function* (): AsyncGenerator<QueryResultEvent> {
+        for await (const event of events(1)) yield event;
+        firstConsumed = true;
+      })(),
+    );
+    const second = vi.fn(() => {
+      expect(firstConsumed).toBe(true);
+      return events(1);
+    });
     const result = await exporter.exportMultiSheet({
       title: 'Hubble workflow',
       email: 'alice@example.com',
@@ -97,6 +106,8 @@ describe('SheetsExporter', () => {
     expect(appendValues.mock.calls[1]?.[2]).toBe("'Step Two'!A1");
     expect(shareWithWriter).toHaveBeenCalledTimes(1);
     expect(deleteSpreadsheet).not.toHaveBeenCalled();
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
 
     const huge = (async function* (): AsyncGenerator<QueryResultEvent> {
       yield {
