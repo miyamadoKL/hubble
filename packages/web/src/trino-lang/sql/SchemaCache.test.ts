@@ -20,6 +20,18 @@ function source(overrides: Partial<MetadataSource> = {}): MetadataSource {
   };
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function settlePromises(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
 describe('SchemaCache', () => {
   test('synchronous getters are empty until warmers resolve', async () => {
     const cache = new SchemaCache(source());
@@ -110,6 +122,41 @@ describe('SchemaCache', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(cache.getCatalogList()).toEqual([]);
+  });
+
+  test('invalidate前のrequest完了時に新requestのin-flight所有権を削除しない', async () => {
+    const requests: Array<ReturnType<typeof deferred<MetadataTable | undefined>>> = [];
+    const getTable = vi.fn(() => {
+      const request = deferred<MetadataTable | undefined>();
+      requests.push(request);
+      return request.promise;
+    });
+    const cache = new SchemaCache(source({ getTable }), () => 'primary');
+    const ref = new TableReference('tpch', 'tiny', 'orders');
+
+    cache.warmTable(ref);
+    cache.invalidate('primary');
+    cache.warmTable(ref);
+    expect(getTable).toHaveBeenCalledTimes(2);
+
+    requests[0]!.resolve({
+      ...ORDERS,
+      columns: [{ name: 'stale_column', type: 'bigint' }],
+    });
+    await settlePromises();
+    expect(cache.getTableIfCached(ref)).toBeUndefined();
+
+    cache.warmTable(ref);
+    expect(getTable).toHaveBeenCalledTimes(2);
+
+    requests[1]!.resolve({
+      ...ORDERS,
+      columns: [{ name: 'fresh_column', type: 'bigint' }],
+    });
+    await settlePromises();
+    expect(cache.getTableIfCached(ref)?.getColumns()[0]?.getName()).toBe('fresh_column');
+    cache.warmTable(ref);
+    expect(getTable).toHaveBeenCalledTimes(2);
   });
 
   test('swallows source errors so completion stays alive', async () => {

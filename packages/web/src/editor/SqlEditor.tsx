@@ -11,7 +11,7 @@
 // 登録される。診断機能（構文エラーマーカー、テーブル参照の装飾、整形/実行コマンド）は
 // エディターインスタンスごとにアタッチする。テーマはアプリのライト/ダーク切り替えに追従する。
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type * as monaco from 'monaco-editor';
 import { loadMonaco } from './monacoLoader';
 import {
@@ -101,6 +101,11 @@ export function SqlEditor({
   const onExecuteRef = useRef(onExecute);
   const onReadyRef = useRef(onReady);
   const themeRef = useRef(theme);
+  // Monaco の遅延ロード中に value が変わっても、生成時には直近の確定値を使う。
+  const valueRef = useRef(value);
+  useLayoutEffect(() => {
+    valueRef.current = value;
+  }, [value]);
   useEffect(() => {
     onChangeRef.current = onChange;
     onExecuteRef.current = onExecute;
@@ -126,7 +131,7 @@ export function SqlEditor({
 
       // Monaco エディター本体を DOM ホストに生成する（各種表示オプションを指定）。
       editor = monacoNs.editor.create(hostRef.current, {
-        value,
+        value: valueRef.current,
         language: useTrino ? TRINO_LANGUAGE_ID : 'sql',
         readOnly,
         automaticLayout: true,

@@ -109,16 +109,34 @@ describe('createSafeFetch', () => {
   });
 
   it('sets redirect error mode and rejects a 3xx response', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(
-      async () =>
-        new Response(null, { status: 302, headers: { location: 'https://example.com/next' } }),
-    );
+    const response = new Response('redirect', {
+      status: 302,
+      headers: { location: 'https://example.com/next' },
+    });
+    const cancel = vi.spyOn(response.body!, 'cancel');
+    const fetchImpl = vi.fn<typeof fetch>(async () => response);
     const guarded = safeFetch({ fetchImpl });
 
     await expect(guarded('https://93.184.216.34/hook')).rejects.toThrow(
       'Webhook redirect is not allowed',
     );
     expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({ redirect: 'error' });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('body cancel失敗時も元のredirect errorを返す', async () => {
+    const cancel = vi.fn(async () => {
+      throw new Error('cancel failed');
+    });
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Promise.resolve({ status: 302, body: { cancel } } as unknown as Response),
+    );
+    const guarded = safeFetch({ fetchImpl });
+
+    await expect(guarded('https://93.184.216.34/hook')).rejects.toThrow(
+      'Webhook redirect is not allowed',
+    );
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it('aborts a webhook after the configured timeout', async () => {

@@ -106,6 +106,15 @@ async function waitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Prom
   });
 }
 
+/** 不要な response body を解放し、解放失敗では元の配送結果を変更しない。 */
+export async function cancelResponseBodyBestEffort(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Webhook は status だけで成否を決めるため、body 解放失敗による再配送は行わない。
+  }
+}
+
 /** Webhook 向け egress ガード付き fetch を生成する。 */
 export function createSafeFetch(options: SafeFetchOptions): SafeFetch {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -175,6 +184,7 @@ export function createSafeFetch(options: SafeFetchOptions): SafeFetch {
       } satisfies RequestInit & { dispatcher: Dispatcher };
       const response = await fetchImpl(input, requestInit);
       if (response.status >= 300 && response.status < 400) {
+        await cancelResponseBodyBestEffort(response);
         throw new WebhookEgressError('Webhook redirect is not allowed');
       }
       return response;

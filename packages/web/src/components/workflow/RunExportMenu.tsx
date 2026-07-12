@@ -9,15 +9,29 @@ import { Download } from 'lucide-react';
 import { Dropdown } from '../common/Dropdown';
 import { toast } from '../common/Toast';
 import {
+  downloadWorkflowRunXlsx,
+  downloadWorkflowRunZip,
   exportWorkflowRunToSheets,
-  workflowRunXlsxUrl,
-  workflowRunZipUrl,
 } from '../../api/workflows';
 import { ApiClientError } from '../../api/client';
 import { cn } from '../../utils/cn';
 
 // メニューに並べるエクスポート形式。
 type RunExportAction = 'csv-zip' | 'xlsx' | 'sheets';
+
+/** Blob を一時 object URL としてブラウザーのダウンロードへ渡す。 */
+function startBlobDownload(blob: Blob, filename: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.hidden = true;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // click のダウンロード処理が object URL を参照した後に解放する。
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
 
 /**
  * 一括エクスポートメニューを描画する。
@@ -32,15 +46,20 @@ export function RunExportMenu({ runId, disabled }: { runId: string; disabled: bo
   const runExport = async (next: RunExportAction) => {
     setAction(next);
     if (disabled || busy) return;
-    if (next === 'csv-zip' || next === 'xlsx') {
-      // ダウンロード系はサーバーのストリーミングレスポンスに任せる
-      // (Content-Disposition: attachment のためページ遷移は起きない)。
-      const url = next === 'csv-zip' ? workflowRunZipUrl(runId) : workflowRunXlsxUrl(runId);
-      window.location.assign(url);
-      return;
-    }
     setBusy(true);
     try {
+      if (next === 'csv-zip' || next === 'xlsx') {
+        // エラー JSON で SPA を置き換えないよう、HTTP 成否を確認してからダウンロードを開始する。
+        const blob =
+          next === 'csv-zip'
+            ? await downloadWorkflowRunZip(runId)
+            : await downloadWorkflowRunXlsx(runId);
+        startBlobDownload(
+          blob,
+          next === 'csv-zip' ? `workflow-run-${runId}.zip` : `workflow-run-${runId}.xlsx`,
+        );
+        return;
+      }
       const response = await exportWorkflowRunToSheets(runId);
       toast.success('Exported to Google Sheets', response.url);
       window.open(response.url, '_blank', 'noopener,noreferrer');
