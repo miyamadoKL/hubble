@@ -3,17 +3,13 @@ kind: Deployment
 metadata:
   name: hubble
 spec:
-  # PostgreSQL (DATABASE_URL、secret.yaml) が既定の永続化バックエンドなので、DB は
-  # 外部の PostgreSQL が一元管理する。よって replicas は 1 に固定する必要がなく、
-  # 複数に増やしても安全 (増やす場合はこの値を変更する)。RollingUpdate も利用できる。
+  # query registry、SSE waiter、各 worker の所有状態はプロセス内にあるため、
+  # 永続化バックエンドにかかわらず単一 Pod で運用する。
   replicas: 1
   strategy:
-    type: RollingUpdate
-  # Non-production 向け: SQLite (DB_PATH + PVC) を使う場合は下記に戻すこと。
-  # SQLite は単一プロセスでしか安全に開けないため必須の制約。
-  #   replicas: 1
-  #   strategy:
-  #     type: Recreate  # 旧 Pod が RWO PVC を解放してから新 Pod が attach するため
+    # 実行中の処理を所有する旧 Pod を停止してから新 Pod を起動する。
+    # SQLite 構成では、旧 Pod が RWO PVC を解放してから新 Pod が attach する役割も持つ。
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: hubble

@@ -44,6 +44,7 @@ const OWNED_TABLES = [
   'workflows',
   'workflow_runs',
   'workflow_step_runs',
+  'result_object_deletions',
   'alerts',
   'github_connections',
   'document_git_links',

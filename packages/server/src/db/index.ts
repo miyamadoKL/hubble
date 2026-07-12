@@ -10,6 +10,7 @@ import { loadMigrations, runMigrations } from './migrate';
 import type { SqlDatabase } from './sqlDatabase';
 import { openSqlite } from './sqliteAdapter';
 import { openPostgres } from './postgresAdapter';
+import type { PostgresTimeouts } from './postgresTimeouts';
 
 // SqlDatabase まわりの型はこのモジュールからも re-export し、呼び出し側が
 // 個々のファイルパスを意識しなくて済むようにする。
@@ -25,9 +26,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const MIGRATIONS_DIR = resolve(here, '../../migrations');
 
 /** Backend selection: a PostgreSQL connection string or a SQLite file path. */
-// バックエンド選択: PostgreSQL の接続文字列、または SQLite のファイルパスの
-// いずれか一方を指定する判別可能ユニオン型（kind で分岐する）。
-export type DatabaseSource = { kind: 'postgres'; url: string } | { kind: 'sqlite'; path: string };
+/**
+ * PostgreSQL の接続文字列と期限設定、または SQLite のファイルパスを指定する
+ * 判別可能ユニオン型。
+ */
+export type DatabaseSource =
+  | { kind: 'postgres'; url: string; timeouts?: PostgresTimeouts }
+  | { kind: 'sqlite'; path: string };
 
 /**
  * Open the database for `source`, run pending migrations, and return the async
@@ -43,7 +48,10 @@ export type DatabaseSource = { kind: 'postgres'; url: string } | { kind: 'sqlite
 export async function openDatabase(source: DatabaseSource): Promise<SqlDatabase> {
   // kind に応じてどちらかのアダプターを使ってコネクション（または接続プール）
   // を確立する。この時点ではまだマイグレーションは実行されていない。
-  const db = source.kind === 'postgres' ? openPostgres(source.url) : openSqlite(source.path);
+  const db =
+    source.kind === 'postgres'
+      ? openPostgres(source.url, source.timeouts)
+      : openSqlite(source.path);
   try {
     // migrations/ 配下の SQL ファイルを読み込み、未適用のものを順に適用する。
     await runMigrations(db, loadMigrations(MIGRATIONS_DIR));

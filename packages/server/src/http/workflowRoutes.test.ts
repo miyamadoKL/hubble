@@ -14,6 +14,7 @@ import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 import type { ResultStore } from '../resultStore';
 import type { SheetsApiClient } from '../query/exportSheets';
+import { WorkflowRunTargetNotFoundError } from '../store/workflows';
 
 const VALIDATE_OK: FakeScenario = {
   match: 'EXPLAIN (TYPE VALIDATE)',
@@ -132,6 +133,28 @@ async function createTwoStepRun(
 }
 
 describe('workflow routes', () => {
+  it('run 開始直前に workflow が削除された場合は 404 を返す', async () => {
+    const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+    try {
+      const createRes = await ctx.app.request('/api/workflows', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ name: 'stale run', stages: sampleStages }),
+      });
+      const workflow = workflowSchema.parse(await createRes.json()) as Workflow;
+      vi.spyOn(ctx.services.workflowRunner, 'runManual').mockRejectedValueOnce(
+        new WorkflowRunTargetNotFoundError(workflow.id),
+      );
+
+      const runRes = await ctx.app.request(`/api/workflows/${workflow.id}/run`, {
+        method: 'POST',
+      });
+      expect(runRes.status).toBe(404);
+    } finally {
+      await ctx.services.shutdown();
+    }
+  });
+
   it('rejects a denied step datasource before validating any step on create', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'hubble-workflow-create-rbac-'));
     writeWorkflowRbacFixtures(dir);

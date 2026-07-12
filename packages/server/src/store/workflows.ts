@@ -25,6 +25,7 @@ import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 import { schedulePrincipalSnapshotSchema, type SchedulePrincipalSnapshot } from './schedules';
 import { likeParam } from './notebooks';
+import { ResultObjectDeletionRepository } from './resultObjectDeletions';
 
 export type { SchedulePrincipalSnapshot };
 
@@ -305,7 +306,7 @@ export class WorkflowRepository {
     return merged;
   }
 
-  /** ワークフロー本体と関連する run/step_runs を 1 トランザクションで削除する。 */
+  /** ワークフロー本体と関連する run/step_runs を 1 transaction で削除し、result 削除 outbox も登録する。 */
   async delete(owner: string, id: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const deleted = await tx.query<{ id: string }>(
@@ -313,7 +314,18 @@ export class WorkflowRepository {
         [id, owner],
       );
       if (deleted.length === 0) return false;
-      await tx.run('DELETE FROM workflow_step_runs WHERE workflow_id = ?', [id]);
+      const resultRows = await tx.query<{ result_object_key: string | null }>(
+        `DELETE FROM workflow_step_runs
+         WHERE workflow_id = ?
+         RETURNING result_object_key`,
+        [id],
+      );
+      await new ResultObjectDeletionRepository(tx).enqueue(
+        resultRows.flatMap((row) =>
+          row.result_object_key === null ? [] : [row.result_object_key],
+        ),
+        new Date().toISOString(),
+      );
       await tx.run('DELETE FROM workflow_runs WHERE workflow_id = ?', [id]);
       return true;
     });
@@ -396,6 +408,14 @@ export class WorkflowRunClaimConflictError extends Error {
   }
 }
 
+/** run 開始前に対象 workflow が削除済みだったことを表す。 */
+export class WorkflowRunTargetNotFoundError extends Error {
+  constructor(readonly workflowId: string) {
+    super(`Workflow ${workflowId} no longer exists`);
+    this.name = 'WorkflowRunTargetNotFoundError';
+  }
+}
+
 function rowToStepRun(row: WorkflowStepRunRow): WorkflowStepRun {
   return workflowStepRunSchema.parse({
     id: row.id,
@@ -455,6 +475,14 @@ export class WorkflowRunRepository {
   ): Promise<string> {
     const runId = newId('wfr_');
     await this.db.transaction(async (tx) => {
+      // delete と同じ workflow row の write lock を取り、古い WorkflowRecord からの再生成を防ぐ。
+      const targets = await tx.query<{ id: string }>(
+        'UPDATE workflows SET id = id WHERE id = ? AND owner = ? RETURNING id',
+        [workflow.id, workflow.owner],
+      );
+      if (targets.length === 0) {
+        throw new WorkflowRunTargetNotFoundError(workflow.id);
+      }
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO workflow_runs
            (id, workflow_id, owner, status, trigger, scheduled_for, started_at)
@@ -507,25 +535,35 @@ export class WorkflowRunRepository {
   }
 
   async finishStep(stepRunId: string, input: FinishWorkflowStepInput): Promise<void> {
-    await this.db.run(
-      `UPDATE workflow_step_runs SET
-         status = ?, attempt = ?, row_count = ?, elapsed_ms = ?,
-         error_type = ?, error_message = ?, result_object_key = ?, result_expires_at = ?,
-         finished_at = ?
-       WHERE id = ?`,
-      [
-        input.status,
-        input.attempt,
-        input.rowCount ?? null,
-        input.elapsedMs ?? null,
-        input.errorType ?? null,
-        input.errorMessage ?? null,
-        input.resultObjectKey ?? null,
-        input.resultExpiresAt ?? null,
-        input.finishedAt,
-        stepRunId,
-      ],
-    );
+    await this.db.transaction(async (tx) => {
+      const updated = await tx.query<{ id: string }>(
+        `UPDATE workflow_step_runs SET
+           status = ?, attempt = ?, row_count = ?, elapsed_ms = ?,
+           error_type = ?, error_message = ?, result_object_key = ?, result_expires_at = ?,
+           finished_at = ?
+         WHERE id = ?
+         RETURNING id`,
+        [
+          input.status,
+          input.attempt,
+          input.rowCount ?? null,
+          input.elapsedMs ?? null,
+          input.errorType ?? null,
+          input.errorMessage ?? null,
+          input.resultObjectKey ?? null,
+          input.resultExpiresAt ?? null,
+          input.finishedAt,
+          stepRunId,
+        ],
+      );
+      if (updated.length === 0 && input.resultObjectKey) {
+        // workflow 削除が先に step row を消した場合も、完成済み object の参照を失わない。
+        await new ResultObjectDeletionRepository(tx).enqueue(
+          [input.resultObjectKey],
+          input.finishedAt,
+        );
+      }
+    });
   }
 
   async skipRemaining(runId: string, fromStageIndex: number, finishedAt: string): Promise<void> {
@@ -673,18 +711,29 @@ export class WorkflowRunRepository {
 
   private async prune(workflowId: string): Promise<void> {
     if (this.retention <= 0) return;
-    const oldRuns = await this.db.query<{ id: string }>(
-      `SELECT id FROM workflow_runs WHERE workflow_id = ?
-         AND id NOT IN (
-           SELECT id FROM workflow_runs WHERE workflow_id = ?
-           ORDER BY started_at DESC, id DESC LIMIT ?
-         )`,
-      [workflowId, workflowId, this.retention],
-    );
-    if (oldRuns.length === 0) return;
-    const ids = oldRuns.map((r) => r.id);
-    const placeholders = ids.map(() => '?').join(', ');
-    await this.db.run(`DELETE FROM workflow_step_runs WHERE run_id IN (${placeholders})`, ids);
-    await this.db.run(`DELETE FROM workflow_runs WHERE id IN (${placeholders})`, ids);
+    await this.db.transaction(async (tx) => {
+      const oldRuns = await tx.query<{ id: string }>(
+        `SELECT id FROM workflow_runs WHERE workflow_id = ?
+           AND id NOT IN (
+             SELECT id FROM workflow_runs WHERE workflow_id = ?
+             ORDER BY started_at DESC, id DESC LIMIT ?
+           )`,
+        [workflowId, workflowId, this.retention],
+      );
+      if (oldRuns.length === 0) return;
+      const ids = oldRuns.map((r) => r.id);
+      const placeholders = ids.map(() => '?').join(', ');
+      const resultRows = await tx.query<{ result_object_key: string }>(
+        `SELECT result_object_key FROM workflow_step_runs
+         WHERE run_id IN (${placeholders}) AND result_object_key IS NOT NULL`,
+        ids,
+      );
+      await new ResultObjectDeletionRepository(tx).enqueue(
+        resultRows.map((row) => row.result_object_key),
+        new Date().toISOString(),
+      );
+      await tx.run(`DELETE FROM workflow_step_runs WHERE run_id IN (${placeholders})`, ids);
+      await tx.run(`DELETE FROM workflow_runs WHERE id IN (${placeholders})`, ids);
+    });
   }
 }
