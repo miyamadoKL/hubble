@@ -5,7 +5,17 @@ import type { ServerConfig } from '../config';
 import { NoneResultStore, type ResultStore } from './store';
 import { S3ResultStore, type S3ResultStoreDeps } from './s3';
 
-export { NoneResultStore, type ResultStore } from './store';
+export {
+  NoneResultStore,
+  RESULT_STORE_MAX_RANGE_BYTES,
+  ResultStoreError,
+  type ResultStore,
+  type ResultStoreErrorCode,
+  type ResultStoreErrorOptions,
+  type ResultStoreOperation,
+  type ResultStoreRequestOptions,
+  type ResultStoreStat,
+} from './store';
 export { S3ResultStore, buildS3ClientConfig } from './s3';
 
 /** ResultStore 生成時の注入ポイント。 */
