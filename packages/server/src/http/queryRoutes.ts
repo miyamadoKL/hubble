@@ -12,6 +12,7 @@
  * `app.ts` から `app.route('/api/queries', queryRoutes(services))` としてマウントされる。
  */
 import { PassThrough, Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
 import { createGzip } from 'node:zlib';
 import { ZipFile } from 'yazl';
 import { Hono } from 'hono';
@@ -87,6 +88,8 @@ import {
 
 // SSE 接続が生きていることをクライアント側の中間プロキシ等に伝えるための keepalive 送信間隔。
 const KEEPALIVE_INTERVAL_MS = 15_000;
+const PERSISTED_RESULT_CACHE_CONTROL = 'private, no-cache';
+const PERSISTED_RESULT_REVALIDATION_VERSION = 'result-revalidation-v1';
 
 /**
  * Query endpoints: submit/snapshot/events(SSE)/rows/cancel/CSV.
@@ -303,11 +306,11 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       if (opts.optional) return undefined;
       throw AppError.notFound(`Query ${id} not found`);
     }
+    requireDatasourceAccess(c.var.principal.role, ref.datasourceId);
     if (new Date(ref.resultExpiresAt).getTime() <= Date.now()) {
       if (opts.optional) return undefined;
       throw AppError.notFound(`Query ${id} not found`);
     }
-    requireDatasourceAccess(c.var.principal.role, ref.datasourceId);
     return ref;
   };
 
@@ -357,6 +360,8 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       return {
         events: streamPersistedResultEvents(
           await services.resultStore.getStream(persisted.resultObjectKey),
+          undefined,
+          { format: persisted.format, key: persisted.resultObjectKey },
         ),
         source: 'resultStore',
         target: persisted.id,
@@ -432,9 +437,14 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     if (exec) return c.json(exec.snapshot());
 
     const ref = await requirePersistedResult(c);
-    const metadata = await readPersistedResultMetadata(
-      await services.resultStore.getStream(ref.resultObjectKey),
-    );
+    const columns =
+      ref.columns ??
+      (
+        await readPersistedResultMetadata(
+          await services.resultStore.getStream(ref.resultObjectKey),
+          { format: ref.format, key: ref.resultObjectKey },
+        )
+      ).columns;
     const snapshot: QuerySnapshot = {
       queryId: ref.id,
       state: ref.state,
@@ -446,7 +456,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     };
     if (ref.trinoQueryId) snapshot.trinoQueryId = ref.trinoQueryId;
     if (ref.errorMessage) snapshot.error = { code: 'QUERY_ERROR', message: ref.errorMessage };
-    if (metadata.columns.length > 0) snapshot.columns = metadata.columns;
+    if (columns.length > 0) snapshot.columns = columns;
     return c.json(snapshot);
   });
 
@@ -459,11 +469,27 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const limit = Math.min(Math.max(intParam(c.req.query('limit'), 100), 1), 10_000);
     if (!exec) {
       const ref = await requirePersistedResult(c);
+      const etag = persistedResultEtag('rows', ref, {
+        offset: Math.max(offset, 0),
+        limit,
+      });
+      c.header('Cache-Control', PERSISTED_RESULT_CACHE_CONTROL);
+      c.header('ETag', etag);
+      // no-store から private, no-cache へ変更したため、SQL 結果本文がブラウザキャッシュに
+      // 入り得る。304 を返す前にも認証、所有者、datasource、期限の確認を必ず済ませる。
+      if (matchesIfNoneMatch(c.req.header('If-None-Match'), etag)) {
+        return c.body(null, 304);
+      }
       const persisted = await readPersistedRowsPage(
         await services.resultStore.getStream(ref.resultObjectKey),
         Math.max(offset, 0),
         limit,
-        { totalRows: ref.rowCount },
+        {
+          totalRows: ref.rowCount,
+          columns: ref.columns,
+          format: ref.format,
+          key: ref.resultObjectKey,
+        },
       );
       const page: QueryRowsPage = {
         offset: Math.max(offset, 0),
@@ -500,6 +526,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       const ref = await requirePersistedResult(c);
       const cursor = await openPersistedResult(
         await services.resultStore.getStream(ref.resultObjectKey),
+        { format: ref.format, key: ref.resultObjectKey },
       );
       assertResultSearchColumnIndices(cursor.columns, body);
       const searched = await searchRowsStream(cursor.columns, cursor.rows, body);
@@ -532,8 +559,17 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const exec = maybeOwnedExec(c.req.param('id'), c);
     if (!exec) {
       const ref = await requirePersistedResult(c);
+      const etag = persistedResultEtag('profile', ref);
+      c.header('Cache-Control', PERSISTED_RESULT_CACHE_CONTROL);
+      c.header('ETag', etag);
+      // no-store から private, no-cache へ変更したため、SQL 結果本文がブラウザキャッシュに
+      // 入り得る。304 を返す前にも認証、所有者、datasource、期限の確認を必ず済ませる。
+      if (matchesIfNoneMatch(c.req.header('If-None-Match'), etag)) {
+        return c.body(null, 304);
+      }
       const cursor = await openPersistedResult(
         await services.resultStore.getStream(ref.resultObjectKey),
+        { format: ref.format, key: ref.resultObjectKey },
       );
       const profiled = await profileRowsStream(cursor.columns, cursor.rows);
       const profile: ResultProfile = {
@@ -750,6 +786,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         rawStream.onAbort(() => ac.abort());
         const csv = streamPersistedCsv(
           await services.resultStore.getStream(persisted.resultObjectKey),
+          { format: persisted.format, key: persisted.resultObjectKey },
         );
         await writeCsvDownload(rawStream, csvName, csv, { zip, gzip, signal: ac.signal });
       });
@@ -986,6 +1023,34 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
   });
 
   return app;
+}
+
+function persistedResultEtag(
+  route: 'rows' | 'profile',
+  ref: HistoryResultRef,
+  params: { offset: number; limit: number } | undefined = undefined,
+): string {
+  const input = JSON.stringify({
+    version: PERSISTED_RESULT_REVALIDATION_VERSION,
+    route,
+    key: ref.resultObjectKey,
+    format: ref.format ?? 'legacy',
+    ...params,
+  });
+  return `W/"${createHash('sha256').update(input).digest('hex')}"`;
+}
+
+function matchesIfNoneMatch(value: string | undefined, etag: string): boolean {
+  if (value === undefined) return false;
+  const normalizedEtag = normalizeEntityTag(etag);
+  return value
+    .split(',')
+    .map((candidate) => candidate.trim())
+    .some((candidate) => candidate === '*' || normalizeEntityTag(candidate) === normalizedEtag);
+}
+
+function normalizeEntityTag(value: string): string {
+  return value.replace(/^W\//i, '');
 }
 
 /**

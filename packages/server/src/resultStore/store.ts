@@ -18,9 +18,9 @@ export interface DeleteExpiredResult {
 export interface ResultStore {
   /** このバックエンドで実際に保存するかどうか。 */
   readonly enabled: boolean;
-  /** gzip JSONL の読み取りストリームを指定 key に保存する。 */
+  /** 圧縮 JSONL の読み取りストリームを指定 key に保存する。 */
   put(key: string, body: Readable): Promise<void>;
-  /** 指定 key の gzip JSONL 読み取りストリームを返す。 */
+  /** 指定 key の圧縮 JSONL 読み取りストリームを返す。 */
   getStream(key: string): Promise<Readable>;
   /** 指定 key のオブジェクトを削除する。 */
   delete(key: string): Promise<void>;

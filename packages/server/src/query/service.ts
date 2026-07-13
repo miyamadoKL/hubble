@@ -106,14 +106,12 @@ export class QueryService {
       },
     });
 
-    // Insert a history row immediately (state at submit time). History
-    // persistence is best-effort and must not block or fail query submission,
-    // so it runs fire-and-forget and the insert/update are ordered by chaining.
     // 提出時点の状態で履歴行を即座に INSERT する。履歴の永続化はあくまで
     // ベストエフォートであり、クエリの提出自体をブロックしたり失敗させたり
-    // してはならないため、await せず fire-and-forget で実行する。
-    // insert と update の実行順序は、update 側が `inserted` Promise を
-    // 待ってから実行することで保証する（チェーンによる順序制御）。
+    // してはならないため、await せず fire-and-forget で実行し、settle 後の処理は
+    // この INSERT の完了を待ってから開始する。
+    // insert と settle 後の履歴処理の順序は、処理側が `inserted` Promise を
+    // 待ってから実行することで保証する。
     const inserted = this.params.history
       .insert({
         id: exec.queryId,
@@ -132,13 +130,10 @@ export class QueryService {
         console.error('failed to record query history (insert)', err);
       });
 
-    // Update on settle (after the insert has been applied).
-    // クエリが終端状態に達した（exec.settled が解決した）タイミングで、
-    // かつ INSERT が完了していることを保証した上で、最終結果を UPDATE する。
-    const historyUpdated = Promise.all([inserted, exec.settled]).then(() => {
+    const updateHistory = async (): Promise<void> => {
       const elapsedMs =
         exec.finishedAt !== undefined ? Math.max(exec.finishedAt - exec.submittedAt, 0) : 0;
-      return this.params.history
+      await this.params.history
         .update(exec.queryId, {
           state: exec.state,
           rowCount: exec.rowCount,
@@ -150,7 +145,9 @@ export class QueryService {
           // UPDATE の失敗もログにのみ残し、呼び出し元には伝播させない。
           console.error('failed to record query history (update)', err);
         });
-    });
+    };
+
+    const historyUpdated = Promise.all([inserted, exec.settled]).then(updateHistory);
     this.trackBackground(historyUpdated);
 
     if (persistResult) {
@@ -159,14 +156,58 @@ export class QueryService {
         .then(async () => {
           // capture は実行枠の獲得時に生成するため、queue 中には undefined のままにする。
           const resultCapture = capture;
-          if (!resultCapture) return;
+          if (!resultCapture) {
+            return;
+          }
           if (exec.state !== 'finished') {
             await resultCapture.abort();
             return;
           }
-          await resultCapture.finish();
-          await this.params.history.setResultObject(exec.queryId, resultCapture.key, expiresAt);
-          resultObjectLinked = true;
+          try {
+            await resultCapture.finish();
+            const elapsedMs =
+              exec.finishedAt !== undefined ? Math.max(exec.finishedAt - exec.submittedAt, 0) : 0;
+            await this.params.history.setResultObject(
+              exec.queryId,
+              resultCapture.key,
+              expiresAt,
+              {
+                state: exec.state,
+                rowCount: exec.rowCount,
+                elapsedMs,
+                trinoQueryId: exec.trinoQueryId,
+                errorMessage: exec.error?.message,
+              },
+              exec.columns,
+              resultCapture.format,
+            );
+            resultObjectLinked = true;
+          } catch (err) {
+            if (resultCapture && !resultObjectLinked) {
+              await cleanupUnlinkedResultObject(resultCapture.key, {
+                store: this.params.resultStore!,
+                deletions: this.params.resultObjectDeletions,
+                now: this.params.now,
+                logWarn: this.params.logWarn,
+              });
+            }
+            if (this.params.logWarn) {
+              this.params.logWarn('failed to persist query result', err);
+            } else {
+              console.warn('failed to persist query result', err);
+            }
+            await this.params.audit?.record({
+              actor: params.owner,
+              action: 'query.result.persist',
+              target: exec.queryId,
+              datasource: exec.datasourceId,
+              detail: {
+                outcome: 'failed',
+                error: err instanceof Error ? err.message : String(err),
+              },
+            });
+            return;
+          }
           await this.params.audit?.record({
             actor: params.owner,
             action: 'query.result.persist',
@@ -179,31 +220,8 @@ export class QueryService {
             },
           });
         })
-        .catch(async (err: unknown) => {
-          const resultCapture = capture;
-          if (resultCapture && !resultObjectLinked) {
-            await cleanupUnlinkedResultObject(resultCapture.key, {
-              store: this.params.resultStore!,
-              deletions: this.params.resultObjectDeletions,
-              now: this.params.now,
-              logWarn: this.params.logWarn,
-            });
-          }
-          if (this.params.logWarn) {
-            this.params.logWarn('failed to persist query result', err);
-          } else {
-            console.warn('failed to persist query result', err);
-          }
-          await this.params.audit?.record({
-            actor: params.owner,
-            action: 'query.result.persist',
-            target: exec.queryId,
-            datasource: exec.datasourceId,
-            detail: {
-              outcome: 'failed',
-              error: err instanceof Error ? err.message : String(err),
-            },
-          });
+        .catch((err: unknown) => {
+          console.error('failed to record query result persistence', err);
         });
       this.trackBackground(resultPersisted);
     }
@@ -231,7 +249,7 @@ export class QueryService {
     const store = this.params.resultStore;
     if (!store?.enabled) return undefined;
     const prefix = this.params.resultKeyPrefix ?? 'hubble-results/';
-    return new ResultJsonlCapture(store, `${prefix}${queryId}.jsonl.gz`);
+    return new ResultJsonlCapture(store, `${prefix}${queryId}.jsonl.zst`);
   }
 
   private createResultObserver(capture: ResultJsonlCapture): QueryResultObserver {

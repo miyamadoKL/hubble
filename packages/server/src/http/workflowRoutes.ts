@@ -370,7 +370,10 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
       await services.resultStore.getStream(stepRun.resultObjectKey),
       offset,
       limit,
-      { ...(stepRun.rowCount !== null ? { totalRows: stepRun.rowCount } : {}) },
+      {
+        ...(stepRun.rowCount !== null ? { totalRows: stepRun.rowCount } : {}),
+        key: stepRun.resultObjectKey,
+      },
     );
     return c.json(
       workflowStepResultPageSchema.parse({
@@ -451,6 +454,7 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
           streamPersistedResultEvents(
             await services.resultStore.getStream(step.resultObjectKey),
             signal,
+            { key: step.resultObjectKey },
           ),
       }));
       const writer = writeXlsxWorkbook(sheets, xlsx, { signal: ac.signal }).catch((err) => {
@@ -474,7 +478,11 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
       name,
       // Sheets API が対象 sheet を処理する直前にだけ ResultStore stream を開く。
       events: async () =>
-        streamPersistedResultEvents(await services.resultStore.getStream(step.resultObjectKey)),
+        streamPersistedResultEvents(
+          await services.resultStore.getStream(step.resultObjectKey),
+          undefined,
+          { key: step.resultObjectKey },
+        ),
     }));
     const response = await exporter.exportMultiSheet({
       title,
@@ -524,6 +532,7 @@ async function pipeWorkflowZip(
   for (const entry of entries) {
     const csv = streamPersistedCsv(
       await services.resultStore.getStream(entry.step.resultObjectKey),
+      { key: entry.step.resultObjectKey },
     );
     const source = Readable.from(csvBytes(csv, signal));
     sources.push(source);

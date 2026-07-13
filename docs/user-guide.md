@@ -498,8 +498,8 @@ Query Guard による block や datasource allowlist 外の datasource は `bloc
 
 ### 12.6 結果の閲覧
 
-運用者が `RESULT_STORE=s3` を有効にしている場合、完了したステップの結果は gzip JSONL として
-保存されます。ステップカードの結果アイコンから、保存済み結果をテーブル表示できます
+運用者が `RESULT_STORE=s3` を有効にしている場合、完了したステップの結果は zstd 圧縮 JSONL として
+保存されます。旧 gzip JSONL も読み取れます。ステップカードの結果アイコンから、保存済み結果をテーブル表示できます
 (owner のみ閲覧可能)。
 
 `RESULT_STORE=none` の場合は行数などのメタデータのみ記録され、結果の行データは閲覧できません。

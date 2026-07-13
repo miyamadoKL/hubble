@@ -2,13 +2,19 @@
  * クエリ実行履歴（Hue の `is_history` 相当）の永続化層。`query_history`
  * テーブルへの挿入、更新、参照を提供する。1件の履歴行は、クエリ投入時に
  * `insert()` で作成され、Trino 側でクエリが完了/失敗/キャンセルされた
- * 「settle」のタイミングで `update()` により結果列（state, row_count,
- * elapsed_ms, trino_query_id, error_message）が上書きされる。
+ * 「settle」のタイミングで `update()` または `setResultObject()` により結果列
+ *（state, row_count, elapsed_ms, trino_query_id, error_message）が上書きされる。
  * 全操作は `owner` principal で絞り込まれ、他ユーザーの履歴は見えない。
  */
-import type { HistoryResponse, QueryHistoryEntry, QueryState } from '@hubble/contracts';
-import { queryHistoryEntrySchema } from '@hubble/contracts';
+import type {
+  HistoryResponse,
+  QueryColumn,
+  QueryHistoryEntry,
+  QueryState,
+} from '@hubble/contracts';
+import { queryColumnSchema, queryHistoryEntrySchema } from '@hubble/contracts';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
+import type { ResultFormat } from '../resultStore/jsonl';
 
 /**
  * `query_history` テーブルの行を SQL ドライバがそのまま返す形。列名は
@@ -30,6 +36,8 @@ interface HistoryRow {
   datasource_id: string;
   result_object_key: string | null;
   result_expires_at: string | null;
+  result_columns_json?: string | null;
+  result_format?: string | null;
   submitted_at: string;
 }
 
@@ -78,6 +86,8 @@ export interface HistoryResultRef {
   submittedAt: string;
   resultObjectKey: string;
   resultExpiresAt: string;
+  columns?: QueryColumn[];
+  format?: ResultFormat;
 }
 
 /** 期限切れ掃除対象の結果オブジェクト。 */
@@ -152,14 +162,33 @@ export class HistoryRepository {
     );
   }
 
-  /** result_object_key と result_expires_at を保存する。 */
-  async setResultObject(id: string, key: string, expiresAt: string): Promise<void> {
+  /** 終端列と結果オブジェクトを1回の UPDATE で原子的に保存する。 */
+  async setResultObject(
+    id: string,
+    key: string,
+    expiresAt: string,
+    update: HistoryUpdate,
+    columns: readonly QueryColumn[],
+    format: ResultFormat,
+  ): Promise<void> {
     const updated = await this.db.query<{ id: string }>(
       `UPDATE query_history
-       SET result_object_key=?, result_expires_at=?
+       SET state=?, row_count=?, elapsed_ms=?, trino_query_id=?, error_message=?,
+           result_object_key=?, result_expires_at=?, result_columns_json=?, result_format=?
        WHERE id=?
        RETURNING id`,
-      [key, expiresAt, id],
+      [
+        update.state,
+        update.rowCount,
+        update.elapsedMs,
+        update.trinoQueryId ?? null,
+        update.errorMessage ?? null,
+        key,
+        expiresAt,
+        JSON.stringify(columns),
+        format,
+        id,
+      ],
     );
     if (updated.length === 0) {
       throw new Error(`Query history row disappeared before result linking: ${id}`);
@@ -172,7 +201,8 @@ export class HistoryRepository {
     const placeholders = keys.map(() => '?').join(', ');
     await this.db.run(
       `UPDATE query_history
-       SET result_object_key=NULL, result_expires_at=NULL
+       SET result_object_key=NULL, result_expires_at=NULL,
+           result_columns_json=NULL, result_format=NULL
        WHERE result_object_key IN (${placeholders})`,
       keys,
     );
@@ -271,7 +301,10 @@ export class HistoryRepository {
     const total = Number(countRows[0]?.c ?? 0);
 
     const rows = await this.db.query<HistoryRow>(
-      `SELECT * FROM query_history ${where}
+      `SELECT id, statement, catalog, schema, trino_query_id, state, row_count,
+              elapsed_ms, error_message, notebook_id, cell_id, datasource_id,
+              result_object_key, result_expires_at, submitted_at
+       FROM query_history ${where}
        ORDER BY submitted_at DESC, id DESC
        LIMIT ? OFFSET ?`,
       [...params, limit, offset],
@@ -329,5 +362,24 @@ function rowToResultRef(row: HistoryRow): HistoryResultRef | undefined {
   if (row.schema) ref.schema = row.schema;
   if (row.trino_query_id) ref.trinoQueryId = row.trino_query_id;
   if (row.error_message) ref.errorMessage = row.error_message;
+  const columns = parseResultColumns(row.result_columns_json);
+  if (columns !== undefined) ref.columns = columns;
+  const format = parseResultFormat(row.result_format);
+  if (format !== undefined) ref.format = format;
   return ref;
+}
+
+function parseResultFormat(value: string | null | undefined): ResultFormat | undefined {
+  return value === 'jsonl.gz' || value === 'jsonl.zst' ? value : undefined;
+}
+
+function parseResultColumns(value: string | null | undefined): QueryColumn[] | undefined {
+  if (value == null) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    const result = queryColumnSchema.array().safeParse(parsed);
+    return result.success ? result.data : undefined;
+  } catch {
+    return undefined;
+  }
 }

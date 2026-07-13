@@ -62,6 +62,9 @@ for (const backend of dbBackends) {
         'qry_old_live',
         'hubble-results/live.jsonl.gz',
         '2027-01-01T00:00:00.000Z',
+        { state: 'finished', rowCount: 0, elapsedMs: 0 },
+        [],
+        'jsonl.gz',
       );
       await audit.record({ actor: 'alice', action: 'query.execute', createdAt: OLD });
       await audit.record({ actor: 'alice', action: 'query.execute', createdAt: RECENT });

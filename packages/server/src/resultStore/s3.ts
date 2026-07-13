@@ -18,15 +18,22 @@ export interface S3ResultStoreOptions {
   endpoint?: string;
 }
 
+/** 結果オブジェクトの S3 Content-Encoding。 */
+export type ResultContentEncoding = 'gzip' | 'zstd';
+
 const DELETE_CONCURRENCY = 8;
 
 /** S3 ResultStore のテスト用注入ポイント。 */
 export interface S3ResultStoreDeps {
   /** 外部所有の client。S3ResultStore はこれを destroy しない。 */
   client?: S3Client;
-  uploadFactory?: (params: { client: S3Client; bucket: string; key: string; body: Readable }) => {
-    done(): Promise<unknown>;
-  };
+  uploadFactory?: (params: {
+    client: S3Client;
+    bucket: string;
+    key: string;
+    body: Readable;
+    contentEncoding: ResultContentEncoding;
+  }) => { done(): Promise<unknown> };
 }
 
 /** S3 client 設定を構築する。 */
@@ -38,7 +45,7 @@ export function buildS3ClientConfig(options: S3ResultStoreOptions): S3ClientConf
   };
 }
 
-/** S3 の object key に対して gzip JSONL を読み書きする ResultStore。 */
+/** S3 の object key に対して圧縮 JSONL を読み書きする ResultStore。 */
 export class S3ResultStore implements ResultStore {
   readonly enabled = true;
   private readonly client: S3Client;
@@ -62,17 +69,19 @@ export class S3ResultStore implements ResultStore {
             Key: params.key,
             Body: params.body,
             ContentType: 'application/x-ndjson',
-            ContentEncoding: 'gzip',
+            ContentEncoding: params.contentEncoding,
           },
         }));
   }
 
   async put(key: string, body: Readable): Promise<void> {
+    const contentEncoding: ResultContentEncoding = key.endsWith('.jsonl.zst') ? 'zstd' : 'gzip';
     await this.uploadFactory({
       client: this.client,
       bucket: this.options.bucket,
       key,
       body,
+      contentEncoding,
     }).done();
   }
 

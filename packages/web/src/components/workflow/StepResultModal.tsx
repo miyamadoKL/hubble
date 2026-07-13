@@ -1,6 +1,6 @@
 /**
  * ワークフローステップの永続化済み結果を表示するモーダル。
- * 結果永続化 (RESULT_STORE) が有効な場合に保存された gzip JSONL の内容を
+ * 結果永続化 (RESULT_STORE) が有効な場合に保存された zstd JSONL（旧 gzip JSONL も読取可）の内容を
  * ページ単位で取得し、シンプルなテーブルとして描画する。
  */
 import { useState } from 'react';
