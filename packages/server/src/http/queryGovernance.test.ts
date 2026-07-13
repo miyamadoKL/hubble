@@ -8,7 +8,7 @@ import {
   readMemoryResultRange,
   validateMemoryResultRequest,
 } from '../test/memoryResultStore';
-import type { ResultStore, ResultStoreRequestOptions } from '../resultStore';
+import type { ResultArtifactFormat, ResultStore, ResultStoreRequestOptions } from '../resultStore';
 import type { QueryEngine } from '../engine/types';
 import { DocumentGitLinkRepository } from '../github/store';
 import { contentHash, savedQueryToContent } from '../github/canonical';
@@ -27,7 +27,8 @@ class MemoryResultStore implements ResultStore {
   readonly enabled = true;
   readonly objects = new Map<string, Buffer>();
 
-  async put(key: string, body: Readable): Promise<void> {
+  async put(key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
+    void _format;
     const chunks: Buffer[] = [];
     for await (const chunk of body) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));

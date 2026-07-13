@@ -1,9 +1,9 @@
 /**
- * DuckDB の server-side Parquet 読み出しと HTTP Range の成立条件を測る bounded PoC。
- * httpfs の cold install は外部 network に依存するため、通常 test から分離し、
- * `test:duckdb-poc` で明示実行する。`@duckdb/node-api` は devDependency なので、通常 CI の
- * dependency install にも native binding の install cost（linux-x64 展開後約70 MB）が乗る。
- * 通常 CI で除外されるのは PoC test 本体と httpfs cold install の network cost であり、Range と pushdown の回帰検知は明示実行時だけ行う。本番 route と S3 credential は検証しない。
+ * DuckDB による server-side Parquet 読み出しと HTTP Range の成立条件を測る bounded PoC。
+ * httpfs の初回 install は外部 network に依存するため、通常の test から分離し、
+ * `test:duckdb-poc` で明示的に実行する。`@duckdb/node-api` は本番依存なので、通常 CI と
+ * production prune の依存関係 install にも native binding の install cost（linux-x64 展開後約70 MB）が発生する。
+ * 通常 CI で除外するのは PoC test 本体と httpfs 初回 install の network cost であり、Range と pushdown の回帰検知は明示実行時だけ行う。本番 route と S3 credential は検証しない。
  */
 import { once } from 'node:events';
 import { createServer } from 'node:http';

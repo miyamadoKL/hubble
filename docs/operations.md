@@ -781,8 +781,18 @@ sqlite3 -header -csv /var/lib/hubble/hubble.db "
 `RESULT_STORE=s3` を有効にすると、クエリが正常終了したあとに全結果を zstd レベル3の JSONL として S3 へストリーミング保存します。
 旧 gzip JSONL は保持期間中も読み取れます。
 JSONL の先頭行は columns メタデータで、以降は 1 行 1 record です。
-JSONL を正規 artifact とし、将来の範囲読み出し用に派生 Parquet artifact を同じ履歴行へ追加できます。
+JSONL を正規 artifact とし、派生 Parquet artifact は同じ履歴行へ追加できます。
 Parquet の object key と期限は JSONL の参照と別に管理され、既存の HTTP 結果 route は JSONL を読みます。
+JSONL の S3 metadata は gzip なら `Content-Encoding: gzip`、zstd なら `Content-Encoding: zstd` です。
+Parquet は `application/vnd.apache.parquet` として保存し、HTTP `Content-Encoding` は設定しません。
+Parquet 内部の ZSTD 圧縮は HTTP の content encoding とは別です。
+Parquet 変換は専用の一時ディレクトリ、DuckDB の `threads=1`、明示的な memory limit と temp size limit、タイムアウトを使います。
+外部 shutdown の AbortSignal は converter error code `aborted`、制限時間超過は `timed_out` として区別します。
+変換 v1 の対象は boolean、tinyint、smallint、integer、bigint、real、float、double、char、varchar、text です。
+bigint は int64 範囲を検証し、安全でない JavaScript number は拒否します。
+date、time、timestamp、timestamptz、interval、decimal、binary、json、array、map、row、uuid、未知の型は v1 では unsupported として扱います。
+列の表示名と論理型は `result_columns_json` を正とし、Parquet の physical name は列順に固定した `c0000` 形式です。
+Docker の本番 smoke gate は現時点で CI の実行環境に合わせて linux/amd64 を対象とし、arm64 のデプロイ対象は宣言していません。
 S3 へのアップロードはクエリ完了処理とは非同期です。
 アップロードに失敗してもクエリ自体は成功のまま扱い、warn ログと `query.result.persist` の監査ログに失敗を記録します。
 保存に成功した履歴は History パネルから再実行なしで開けます。

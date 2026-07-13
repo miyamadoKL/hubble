@@ -21,6 +21,7 @@ import {
   ResultStoreError,
   type DeleteExpiredResult,
   type ExpiredResultObject,
+  type ResultArtifactFormat,
   type ResultStoreRequestOptions,
   type ResultStore,
 } from './store';
@@ -74,7 +75,8 @@ class MemoryResultStore implements ResultStore {
   readonly objects = new Map<string, Buffer>();
   readonly deleted: string[] = [];
 
-  async put(key: string, body: Readable): Promise<void> {
+  async put(key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
+    void _format;
     const chunks: Buffer[] = [];
     for await (const chunk of body) chunks.push(Buffer.from(chunk as Buffer));
     this.objects.set(key, Buffer.concat(chunks));
@@ -176,9 +178,9 @@ describe('ResultStore persistence', () => {
     });
     const store = new MemoryResultStore();
     const originalPut = store.put.bind(store);
-    vi.spyOn(store, 'put').mockImplementation(async (key, body) => {
+    vi.spyOn(store, 'put').mockImplementation(async (key, body, format) => {
       await uploadGate;
-      await originalPut(key, body);
+      await originalPut(key, body, format);
     });
     const ctx = await createTestContext({ scenarios: [manyRows(2)], resultStore: store });
     await submitPersistQuery(ctx);
@@ -244,7 +246,8 @@ describe('ResultStore persistence', () => {
     const objects = new Map<string, Buffer>();
     const store: ResultStore = {
       enabled: true,
-      async put(key, body) {
+      async put(key, body, _format) {
+        void _format;
         await uploadGate;
         const chunks: Buffer[] = [];
         for await (const chunk of body) chunks.push(Buffer.from(chunk as Buffer));
@@ -435,9 +438,9 @@ describe('ResultStore persistence', () => {
     });
     const store = new MemoryResultStore();
     const originalPut = store.put.bind(store);
-    vi.spyOn(store, 'put').mockImplementation(async (key, body) => {
+    vi.spyOn(store, 'put').mockImplementation(async (key, body, format) => {
       await uploadGate;
-      await originalPut(key, body);
+      await originalPut(key, body, format);
     });
     const ctx = await createTestContext({ scenarios: [manyRows(3)], resultStore: store });
 
@@ -778,7 +781,8 @@ defaultRole: allowed
     const persistenceError = new Error('result upload failed');
     const store: ResultStore = {
       enabled: true,
-      async put(_key, body) {
+      async put(_key, body, _format) {
+        void _format;
         for await (const chunk of body) {
           void chunk;
           throw persistenceError;
@@ -861,7 +865,9 @@ describe('S3ResultStore', () => {
       bucket: string;
       key: string;
       body: Readable;
-      contentEncoding: string;
+      format: string;
+      contentType: string;
+      contentEncoding?: string;
     }> = [];
     const store = new S3ResultStore(
       { bucket: 'bucket', region: 'us-east-1' },
@@ -873,6 +879,8 @@ describe('S3ResultStore', () => {
               bucket: params.bucket,
               key: params.key,
               body: params.body,
+              format: params.format,
+              contentType: params.contentType,
               contentEncoding: params.contentEncoding,
             });
           },
@@ -880,8 +888,9 @@ describe('S3ResultStore', () => {
       },
     );
 
-    await store.put('prefix/q.jsonl.gz', Readable.from(Buffer.from('x')));
-    await store.put('prefix/q.jsonl.zst', Readable.from(Buffer.from('x')));
+    await store.put('prefix/q.jsonl.gz', Readable.from(Buffer.from('x')), 'jsonl.gz');
+    await store.put('prefix/q.jsonl.zst', Readable.from(Buffer.from('x')), 'jsonl.zst');
+    await store.put('prefix/q.parquet', Readable.from(Buffer.from('x')), 'parquet');
     await store.getStream('prefix/q.jsonl.gz');
     await store.delete('prefix/q.jsonl.gz');
     await store.close();
@@ -890,12 +899,23 @@ describe('S3ResultStore', () => {
       expect.objectContaining({
         bucket: 'bucket',
         key: 'prefix/q.jsonl.gz',
+        format: 'jsonl.gz',
+        contentType: 'application/x-ndjson',
         contentEncoding: 'gzip',
       }),
       expect.objectContaining({
         bucket: 'bucket',
         key: 'prefix/q.jsonl.zst',
+        format: 'jsonl.zst',
+        contentType: 'application/x-ndjson',
         contentEncoding: 'zstd',
+      }),
+      expect.objectContaining({
+        bucket: 'bucket',
+        key: 'prefix/q.parquet',
+        format: 'parquet',
+        contentType: 'application/vnd.apache.parquet',
+        contentEncoding: undefined,
       }),
     ]);
     expect(commands).toEqual(['GetObjectCommand', 'DeleteObjectCommand']);

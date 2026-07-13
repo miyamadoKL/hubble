@@ -44,6 +44,9 @@ multi-stage の流れ：
 4. **runtime** — server / contracts の **TS ソース**（tsx で直接実行）、web の dist、
    本番 `node_modules` を配置。非 root（`node`）で実行。
 
+Batch 5 の Parquet production smoke gate は linux/amd64 を対象にしています。
+arm64 のデプロイ対象はまだ宣言していないため、arm64 イメージを運用へ投入する場合は、同じ smoke を実行する別の検証を追加してください。
+
 イメージには次が既定で入っています（`docker run -e ...` で上書き可能）。
 
 | 変数         | 既定（イメージ）         |

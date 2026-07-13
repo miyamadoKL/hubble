@@ -6,6 +6,9 @@ import { Readable } from 'node:stream';
 /** 1 回の range 読み取りで許可する最大バイト数。 */
 export const RESULT_STORE_MAX_RANGE_BYTES = 16 * 1024 * 1024;
 
+/** ResultStore に保存する artifact の wire format。 */
+export type ResultArtifactFormat = 'jsonl.gz' | 'jsonl.zst' | 'parquet';
+
 /** 期限切れ掃除の対象になるオブジェクト。 */
 export interface ExpiredResultObject {
   key: string;
@@ -73,8 +76,8 @@ export interface ResultStoreStat {
 export interface ResultStore {
   /** このバックエンドで実際に保存するかどうか。 */
   readonly enabled: boolean;
-  /** 圧縮 JSONL の読み取りストリームを指定 key に保存する。 */
-  put(key: string, body: Readable): Promise<void>;
+  /** 指定 format の artifact を key に保存する。 */
+  put(key: string, body: Readable, format: ResultArtifactFormat): Promise<void>;
   /** 指定 key の圧縮 JSONL 読み取りストリームを返す。 */
   getStream(key: string): Promise<Readable>;
   /** 指定 key の保存済みバイト列のサイズ、validator、利用可能な versionId を返す。 */
@@ -102,7 +105,8 @@ export interface ResultStore {
 export class NoneResultStore implements ResultStore {
   readonly enabled = false;
 
-  async put(_key: string, body: Readable): Promise<void> {
+  async put(_key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
+    void _format;
     body.resume();
   }
 
