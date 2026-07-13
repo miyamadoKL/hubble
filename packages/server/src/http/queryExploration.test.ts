@@ -20,6 +20,7 @@ import type {
   ResultStore,
 } from '../resultStore/store';
 import type { ResultStoreRequestOptions } from '../resultStore/store';
+import { DuckdbProfileError, type DuckdbProfileInput } from '../resultStore';
 
 const NATION_COLUMNS = [
   { name: 'nationkey', type: 'bigint' },
@@ -250,6 +251,78 @@ describe('persisted result exploration (rows beyond QUERY_MAX_ROWS)', () => {
     return { ctx, queryId, store };
   }
 
+  async function persistedDuckdbCtx(
+    reader: (input: DuckdbProfileInput) => Promise<ResultProfile | undefined>,
+    logWarn?: (message: string, err?: unknown) => void,
+    requestOptions: {
+      env?: Record<string, string | undefined>;
+      remoteAddress?: () => string;
+      submitHeaders?: Record<string, string>;
+      owner?: string;
+      duckdbEnabled?: boolean;
+      resultStoreKind?: 'none' | 's3';
+      parquet?: {
+        objectKey?: string;
+        encodingVersion?: string;
+        expiresAt?: string;
+      } | null;
+    } = {},
+  ): Promise<{
+    ctx: Awaited<ReturnType<typeof createTestContext>>;
+    queryId: string;
+    store: MemoryResultStore;
+  }> {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({
+      env: requestOptions.env,
+      remoteAddress: requestOptions.remoteAddress,
+      scenarios: [persistScenario(12)],
+      resultStore: store,
+      duckdbProfile: reader,
+      duckdbProfileLogWarn: logWarn,
+      configOverrides: {
+        query: { maxRows: 3 } as never,
+        resultProfileDuckdbEnabled: requestOptions.duckdbEnabled ?? true,
+        resultStore:
+          requestOptions.resultStoreKind === 'none'
+            ? { kind: 'none', ttlDays: 7 }
+            : {
+                kind: 's3',
+                bucket: 'bucket',
+                prefix: 'results/',
+                region: 'us-east-1',
+                endpoint: 'http://minio.test:9000',
+                ttlDays: 7,
+              },
+      },
+    });
+    const queryId = await submit(
+      ctx.app,
+      { statement: 'SELECT * FROM persist', maxRows: 3 },
+      requestOptions.submitHeaders,
+    );
+    await waitForTerminal(ctx.services, queryId);
+    await waitForResultRef(ctx, queryId, requestOptions.owner);
+    if (requestOptions.parquet === null) {
+      await ctx.db.run(
+        'UPDATE query_history SET parquet_object_key=NULL, parquet_expires_at=NULL, parquet_encoding_version=NULL WHERE id=?',
+        [queryId],
+      );
+    } else {
+      await ctx.db.run(
+        'UPDATE query_history SET parquet_object_key=?, parquet_expires_at=?, parquet_encoding_version=? WHERE id=?',
+        [
+          requestOptions.parquet?.objectKey ?? 'results/' + queryId + '.parquet',
+          requestOptions.parquet?.expiresAt ?? '2099-01-01T00:00:00.000Z',
+          requestOptions.parquet?.encodingVersion ?? '1',
+          queryId,
+        ],
+      );
+    }
+    dropExecution(ctx, queryId);
+    return { ctx, queryId, store };
+  }
+
   it('searches all persisted rows, not just the in-memory truncation', async () => {
     const { ctx, queryId } = await persistedCtx();
     const res = await ctx.app.request(apiRoutes.queryRowsSearch(queryId), {
@@ -323,6 +396,165 @@ describe('persisted result exploration (rows beyond QUERY_MAX_ROWS)', () => {
 
     expect(revalidated.status).toBe(304);
     expect(getStream).not.toHaveBeenCalled();
+  });
+
+  it('profiles a persisted Parquet artifact without reading JSONL and keeps the existing ETag', async () => {
+    const directProfile: ResultProfile = {
+      rowCount: 12,
+      complete: true,
+      columns: [
+        {
+          name: 'nationkey',
+          type: 'bigint',
+          nullCount: 0,
+          distinctCount: 12,
+          distinctOverflow: false,
+          min: '0',
+          max: '11',
+          topValues: [],
+        },
+        {
+          name: 'name',
+          type: 'varchar',
+          nullCount: 0,
+          distinctCount: 12,
+          distinctOverflow: false,
+          topValues: [],
+        },
+      ],
+    };
+    const reader = vi.fn(async () => directProfile);
+    const { ctx, queryId, store } = await persistedDuckdbCtx(reader);
+    const getStream = vi.spyOn(store, 'getStream');
+
+    const first = await ctx.app.request(apiRoutes.queryProfile(queryId));
+    const etag = first.headers.get('etag');
+    const revalidated = await ctx.app.request(apiRoutes.queryProfile(queryId), {
+      headers: { 'if-none-match': etag! },
+    });
+
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual(directProfile);
+    expect(revalidated.status).toBe(304);
+    expect(reader).toHaveBeenCalledOnce();
+    expect(reader).toHaveBeenCalledWith(
+      expect.objectContaining({
+        historyId: queryId,
+        objectKey: 'results/' + queryId + '.parquet',
+        bucket: 'bucket',
+        prefix: 'results/',
+        encodingVersion: '1',
+        columns: NATION_COLUMNS,
+      }),
+    );
+    expect(getStream).not.toHaveBeenCalled();
+    expect(etag).toBe(revalidated.headers.get('etag'));
+  });
+
+  it('falls back to JSONL once for a classified DuckDB failure and records only its reason', async () => {
+    const warnings: string[] = [];
+    const reader = vi.fn(async () => {
+      throw new DuckdbProfileError('auth', 'credential chain failed');
+    });
+    const { ctx, queryId, store } = await persistedDuckdbCtx(reader, (message) => {
+      warnings.push(message);
+    });
+    const getStream = vi.spyOn(store, 'getStream');
+
+    const response = await ctx.app.request(apiRoutes.queryProfile(queryId));
+
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as ResultProfile).rowCount).toBe(12);
+    expect(reader).toHaveBeenCalledOnce();
+    expect(getStream).toHaveBeenCalledOnce();
+    expect(warnings).toEqual(['persisted profile DuckDB fallback: auth']);
+  });
+
+  it('does not invoke the reader when the DuckDB profile flag is disabled', async () => {
+    const reader = vi.fn(async () => undefined);
+    const { ctx, queryId, store } = await persistedDuckdbCtx(reader, undefined, {
+      duckdbEnabled: false,
+    });
+    const getStream = vi.spyOn(store, 'getStream');
+
+    const response = await ctx.app.request(apiRoutes.queryProfile(queryId));
+
+    expect(response.status).toBe(200);
+    expect(reader).not.toHaveBeenCalled();
+    expect(getStream).toHaveBeenCalledOnce();
+  });
+
+  it('uses JSONL when the configured result store is not S3', async () => {
+    const reader = vi.fn(async () => undefined);
+    const { ctx, queryId, store } = await persistedDuckdbCtx(reader, undefined, {
+      resultStoreKind: 'none',
+    });
+    const getStream = vi.spyOn(store, 'getStream');
+
+    const response = await ctx.app.request(apiRoutes.queryProfile(queryId));
+
+    expect(response.status).toBe(200);
+    expect(reader).not.toHaveBeenCalled();
+    expect(getStream).toHaveBeenCalledOnce();
+  });
+
+  it('does not invoke the reader when the Parquet object key is not the generated target', async () => {
+    const reader = vi.fn(async () => undefined);
+    const { ctx, queryId, store } = await persistedDuckdbCtx(reader, undefined, {
+      parquet: { objectKey: 'results/other.parquet' },
+    });
+    const getStream = vi.spyOn(store, 'getStream');
+
+    const response = await ctx.app.request(apiRoutes.queryProfile(queryId));
+
+    expect(response.status).toBe(200);
+    expect(reader).not.toHaveBeenCalled();
+    expect(getStream).toHaveBeenCalledOnce();
+  });
+
+  it('does not fall back to JSONL when the DuckDB reader reports an abort', async () => {
+    const reader = vi.fn(async () => {
+      throw new DuckdbProfileError('aborted', 'request aborted');
+    });
+    const { ctx, queryId, store } = await persistedDuckdbCtx(reader);
+    const getStream = vi.spyOn(store, 'getStream');
+
+    const response = await ctx.app.request(apiRoutes.queryProfile(queryId));
+
+    expect(response.status).toBe(500);
+    expect(reader).toHaveBeenCalledOnce();
+    expect(getStream).not.toHaveBeenCalled();
+  });
+
+  it('checks result expiry before invoking the persisted Parquet reader', async () => {
+    const reader = vi.fn(async () => undefined);
+    const { ctx, queryId } = await persistedDuckdbCtx(reader);
+    await ctx.db.run('UPDATE query_history SET result_expires_at=? WHERE id=?', [
+      '2000-01-01T00:00:00.000Z',
+      queryId,
+    ]);
+
+    const response = await ctx.app.request(apiRoutes.queryProfile(queryId));
+
+    expect(response.status).toBe(404);
+    expect(reader).not.toHaveBeenCalled();
+  });
+
+  it('checks persisted result ownership before invoking the Parquet reader', async () => {
+    const reader = vi.fn(async () => undefined);
+    const { ctx, queryId } = await persistedDuckdbCtx(reader, undefined, {
+      env: { AUTH_MODE: 'proxy' },
+      remoteAddress: () => '127.0.0.1',
+      submitHeaders: alice,
+      owner: 'alice',
+    });
+
+    const response = await ctx.app.request(apiRoutes.queryProfile(queryId), {
+      headers: bob,
+    });
+
+    expect(response.status).toBe(404);
+    expect(reader).not.toHaveBeenCalled();
   });
 
   it('returns the normal body when the persisted rows ETag does not match', async () => {

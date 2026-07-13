@@ -179,6 +179,8 @@ export interface ServerConfig {
   };
   /** 日本語: クエリ結果保存バックエンドの設定（`RESULT_STORE_*`）。 */
   resultStore: ResultStoreConfig;
+  /** 日本語: DuckDB Parquet profile の実験的経路。既定では無効。 */
+  resultProfileDuckdbEnabled: boolean;
   /** 日本語: クエリ結果エクスポート先の設定（`EXPORT_*`）。 */
   export: ExportConfig;
   /** Query Guard configuration (Query Guard feature). */
@@ -481,10 +483,14 @@ export function resolveResultStoreConfig(env: Env): ResultStoreConfig {
   if (bucket === undefined) {
     throw new Error('RESULT_STORE_S3_BUCKET is required when RESULT_STORE=s3');
   }
+  const prefix = envStr(env, 'RESULT_STORE_S3_PREFIX', 'hubble-results/');
+  if (!prefix.endsWith('/')) {
+    throw new Error('RESULT_STORE_S3_PREFIX must end with "/" when RESULT_STORE=s3');
+  }
   return {
     kind,
     bucket,
-    prefix: envStr(env, 'RESULT_STORE_S3_PREFIX', 'hubble-results/'),
+    prefix,
     region: envOptional(env, 'RESULT_STORE_S3_REGION'),
     endpoint: envOptional(env, 'RESULT_STORE_S3_ENDPOINT'),
     ttlDays,
@@ -708,6 +714,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
       ttlSeconds: envPositiveInt(env, 'METADATA_TTL_SECONDS', 300),
     },
     resultStore: resolveResultStoreConfig(env),
+    resultProfileDuckdbEnabled: envBool(env, 'RESULT_PROFILE_DUCKDB_ENABLED', false),
     export: resolveExportConfig(env),
     guard: {
       mode: envEnum(env, 'QUERY_GUARD_MODE', ['off', 'warn', 'enforce'] as const, 'warn'),

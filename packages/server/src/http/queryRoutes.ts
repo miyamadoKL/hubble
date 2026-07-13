@@ -85,6 +85,7 @@ import {
   searchRowsStream,
   RESULT_SEARCH_MAX_WINDOW,
 } from '../query/exploration';
+import { tryDuckdbPersistedProfile } from '../query/persistedProfile';
 
 // SSE 接続が生きていることをクライアント側の中間プロキシ等に伝えるための keepalive 送信間隔。
 const KEEPALIVE_INTERVAL_MS = 15_000;
@@ -567,17 +568,36 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       if (matchesIfNoneMatch(c.req.header('If-None-Match'), etag)) {
         return c.body(null, 304);
       }
-      const cursor = await openPersistedResult(
-        await services.resultStore.getStream(ref.resultObjectKey),
-        { format: ref.format, key: ref.resultObjectKey },
-      );
-      const profiled = await profileRowsStream(cursor.columns, cursor.rows);
-      const profile: ResultProfile = {
-        rowCount: profiled.rowCount,
-        complete: true,
-        columns: profiled.profiles,
-      };
-      return c.json(profile);
+      const duckdbAttempt = await tryDuckdbPersistedProfile({
+        ref,
+        config: services.config,
+        reader: services.duckdbProfile,
+        signal: c.req.raw.signal,
+      });
+      if (duckdbAttempt.kind === 'success') return c.json(duckdbAttempt.profile);
+      if (duckdbAttempt.kind === 'fallback') {
+        services.duckdbProfileLogWarn('persisted profile DuckDB fallback: ' + duckdbAttempt.reason);
+      }
+      try {
+        const cursor = await openPersistedResult(
+          await services.resultStore.getStream(ref.resultObjectKey),
+          { format: ref.format, key: ref.resultObjectKey },
+        );
+        const profiled = await profileRowsStream(cursor.columns, cursor.rows);
+        const profile: ResultProfile = {
+          rowCount: profiled.rowCount,
+          complete: true,
+          columns: profiled.profiles,
+        };
+        return c.json(profile);
+      } catch (error) {
+        if (duckdbAttempt.kind === 'fallback') {
+          services.duckdbProfileLogWarn(
+            'persisted profile DuckDB and JSONL fallback failed: ' + duckdbAttempt.reason,
+          );
+        }
+        throw error;
+      }
     }
     const columns = exec.snapshot().columns ?? [];
     const profiled = await profileRowsStream(columns, exec.getRows(0, exec.bufferedCount));

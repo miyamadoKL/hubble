@@ -45,7 +45,12 @@ import type { MysqlPoolFactory } from './engine/mysql/pool';
 import type { PgPoolFactory } from './engine/postgresql/pool';
 import type { QueryEngine } from './engine/types';
 import { AuditLogger, AuditRepository } from './audit';
-import { createResultStore, type ResultStore } from './resultStore';
+import {
+  createDuckdbPersistedProfileReader,
+  createResultStore,
+  type DuckdbPersistedProfileReader,
+  type ResultStore,
+} from './resultStore';
 import { ResultExpiryService } from './resultStore/cleanup';
 import {
   ParquetConversionWorker,
@@ -98,6 +103,8 @@ export interface Services {
   workflowRunner: WorkflowRunner;
   audit: AuditLogger;
   resultStore: ResultStore;
+  duckdbProfile: DuckdbPersistedProfileReader;
+  duckdbProfileLogWarn: (message: string, err?: unknown) => void;
   parquetConversionJobs: ResultParquetConversionJobRepository;
   parquetConversionWorker: ParquetConversionWorker;
   resultExpiry: ResultExpiryService;
@@ -152,6 +159,8 @@ export interface BuildServicesOptions {
   /** 注入した ResultStore の所有権は Services へ移り、shutdown時にcloseされる。 */
   resultStore?: ResultStore;
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
+  duckdbProfile?: DuckdbPersistedProfileReader;
+  duckdbProfileLogWarn?: (message: string, err?: unknown) => void;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   parquetConversionSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   parquetConversionLogWarn?: (message: string, err?: unknown) => void;
@@ -236,6 +245,11 @@ export async function buildServices(
           now: options.now,
         });
   const resultStore = options.resultStore ?? createResultStore(config.resultStore);
+  const duckdbProfile =
+    options.duckdbProfile ??
+    createDuckdbPersistedProfileReader({ enabled: config.resultProfileDuckdbEnabled });
+  const duckdbProfileLogWarn =
+    options.duckdbProfileLogWarn ?? options.resultStoreLogWarn ?? (() => {});
   const notifications =
     options.notificationSender ??
     new NotificationService(config.notification, {
@@ -702,6 +716,8 @@ export async function buildServices(
     workflowRunner,
     audit,
     resultStore,
+    duckdbProfile,
+    duckdbProfileLogWarn,
     parquetConversionJobs,
     parquetConversionWorker,
     resultExpiry,

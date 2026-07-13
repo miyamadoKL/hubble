@@ -108,6 +108,7 @@ describe('loadServerConfig integer bounds', () => {
 
   it('defaults ResultStore to none with a 7 day TTL', () => {
     expect(loadServerConfig({}).resultStore).toEqual({ kind: 'none', ttlDays: 7 });
+    expect(loadServerConfig({}).resultProfileDuckdbEnabled).toBe(false);
   });
 
   it('requires an S3 bucket when ResultStore is s3', () => {
@@ -132,6 +133,22 @@ describe('loadServerConfig integer bounds', () => {
       endpoint: 'http://localhost:9000',
       ttlDays: 30,
     });
+  });
+
+  it('requires an S3 result prefix to end with a slash', () => {
+    expect(() =>
+      loadServerConfig({
+        RESULT_STORE: 's3',
+        RESULT_STORE_S3_BUCKET: 'bucket',
+        RESULT_STORE_S3_PREFIX: 'prefix',
+      }),
+    ).toThrow(/RESULT_STORE_S3_PREFIX/);
+  });
+
+  it('enables the DuckDB persisted profile route explicitly', () => {
+    expect(
+      loadServerConfig({ RESULT_PROFILE_DUCKDB_ENABLED: 'true' }).resultProfileDuckdbEnabled,
+    ).toBe(true);
   });
 
   it('defaults export destinations to disabled settings', () => {
