@@ -114,6 +114,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Enable corepack (pnpm 11.6.0 via packageManager)
+        run: corepack enable
+
       - name: Setup Node 24
         uses: actions/setup-node@v5
         with:
