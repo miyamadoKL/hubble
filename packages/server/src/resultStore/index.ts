@@ -10,13 +10,22 @@ export {
   RESULT_STORE_MAX_RANGE_BYTES,
   ResultStoreError,
   type ResultStore,
+  type ResultArtifactFormat,
   type ResultStoreErrorCode,
   type ResultStoreErrorOptions,
   type ResultStoreOperation,
   type ResultStoreRequestOptions,
   type ResultStoreStat,
 } from './store';
-export { S3ResultStore, buildS3ClientConfig } from './s3';
+export { S3ResultStore, buildS3ClientConfig, resultArtifactMetadata } from './s3';
+export {
+  convertJsonlToParquet,
+  ParquetConverterError,
+  type ParquetConverterErrorCode,
+  type ParquetConverterInput,
+  type ParquetConverterResourceLimits,
+  type ParquetConverterResult,
+} from './parquetConverter';
 
 /** ResultStore 生成時の注入ポイント。 */
 export interface CreateResultStoreDeps {

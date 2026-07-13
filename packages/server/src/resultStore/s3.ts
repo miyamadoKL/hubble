@@ -16,6 +16,7 @@ import type {
   DeleteExpiredResult,
   ExpiredResultObject,
   ResultStore,
+  ResultArtifactFormat,
   ResultStoreErrorCode,
   ResultStoreRequestOptions,
   ResultStoreStat,
@@ -30,6 +31,21 @@ export interface S3ResultStoreOptions {
 
 /** 結果オブジェクトの S3 Content-Encoding。 */
 export type ResultContentEncoding = 'gzip' | 'zstd';
+
+/** artifact format から S3 の HTTP metadata を解決する。 */
+export function resultArtifactMetadata(format: ResultArtifactFormat): {
+  contentType: string;
+  contentEncoding?: ResultContentEncoding;
+} {
+  switch (format) {
+    case 'jsonl.gz':
+      return { contentType: 'application/x-ndjson', contentEncoding: 'gzip' };
+    case 'jsonl.zst':
+      return { contentType: 'application/x-ndjson', contentEncoding: 'zstd' };
+    case 'parquet':
+      return { contentType: 'application/vnd.apache.parquet' };
+  }
+}
 
 const DELETE_CONCURRENCY = 8;
 
@@ -72,7 +88,9 @@ export interface S3ResultStoreDeps {
     bucket: string;
     key: string;
     body: Readable;
-    contentEncoding: ResultContentEncoding;
+    format: ResultArtifactFormat;
+    contentType: string;
+    contentEncoding?: ResultContentEncoding;
   }) => { done(): Promise<unknown> };
 }
 
@@ -108,8 +126,10 @@ export class S3ResultStore implements ResultStore {
             Bucket: params.bucket,
             Key: params.key,
             Body: params.body,
-            ContentType: 'application/x-ndjson',
-            ContentEncoding: params.contentEncoding,
+            ContentType: params.contentType,
+            ...(params.contentEncoding === undefined
+              ? {}
+              : { ContentEncoding: params.contentEncoding }),
           },
         }));
   }
@@ -140,14 +160,18 @@ export class S3ResultStore implements ResultStore {
     }
   }
 
-  async put(key: string, body: Readable): Promise<void> {
-    const contentEncoding: ResultContentEncoding = key.endsWith('.jsonl.zst') ? 'zstd' : 'gzip';
+  async put(key: string, body: Readable, format: ResultArtifactFormat): Promise<void> {
+    const metadata = resultArtifactMetadata(format);
     await this.uploadFactory({
       client: this.client,
       bucket: this.options.bucket,
       key,
       body,
-      contentEncoding,
+      format,
+      contentType: metadata.contentType,
+      ...(metadata.contentEncoding === undefined
+        ? {}
+        : { contentEncoding: metadata.contentEncoding }),
     }).done();
   }
 

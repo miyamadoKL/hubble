@@ -13,7 +13,12 @@ import {
   readMemoryResultRange,
   validateMemoryResultRequest,
 } from '../test/memoryResultStore';
-import type { DeleteExpiredResult, ExpiredResultObject, ResultStore } from '../resultStore/store';
+import type {
+  DeleteExpiredResult,
+  ExpiredResultObject,
+  ResultArtifactFormat,
+  ResultStore,
+} from '../resultStore/store';
 import type { ResultStoreRequestOptions } from '../resultStore/store';
 
 const NATION_COLUMNS = [
@@ -64,7 +69,8 @@ class MemoryResultStore implements ResultStore {
   readonly enabled = true;
   readonly objects = new Map<string, Buffer>();
 
-  async put(key: string, body: Readable): Promise<void> {
+  async put(key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
+    void _format;
     const chunks: Buffer[] = [];
     for await (const chunk of body) chunks.push(Buffer.from(chunk as Buffer));
     this.objects.set(key, Buffer.concat(chunks));

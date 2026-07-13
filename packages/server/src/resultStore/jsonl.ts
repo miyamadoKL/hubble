@@ -29,6 +29,8 @@ export interface PersistedResultReadOptions {
   format?: string;
   /** 旧履歴行で形式を推測する object key。 */
   key?: string;
+  /** 圧縮ストリームの読み取りを中断するシグナル。 */
+  signal?: AbortSignal;
 }
 
 /** 保存済み結果のページ。 */
@@ -68,7 +70,7 @@ export class ResultJsonlCapture {
     this.format = resultFormatForKey(key);
     this.input = createCompression(this.format);
     this.upload = Promise.resolve()
-      .then(() => this.store.put(this.key, this.input))
+      .then(() => this.store.put(this.key, this.input, this.format))
       .catch((err: unknown) => {
         this.markFailed(err);
       });
@@ -176,7 +178,7 @@ export async function readPersistedRowsPage(
       : undefined;
   const targetEnd =
     knownTotalRows === undefined ? undefined : Math.min(knownTotalRows, offset + limit);
-  for await (const line of readResultLines(stream, undefined, options)) {
+  for await (const line of readResultLines(stream, options.signal, options)) {
     if (line.kind === 'columns') {
       if (options.columns === undefined) columns = line.columns;
       if (knownTotalRows !== undefined && (limit === 0 || offset >= knownTotalRows)) break;
@@ -214,7 +216,7 @@ export async function openPersistedResult(
   stream: Readable,
   options: PersistedResultReadOptions = {},
 ): Promise<PersistedResultCursor> {
-  const lines = readResultLines(stream, undefined, options);
+  const lines = readResultLines(stream, options.signal, options);
   const first = await lines.next();
 
   // 先頭行から列情報を決める。バッファするのは最大 1 行なのでメモリは有界。
@@ -245,7 +247,7 @@ export async function readPersistedResultMetadata(
   stream: Readable,
   options: PersistedResultReadOptions = {},
 ): Promise<PersistedResultMetadata> {
-  for await (const line of readResultLines(stream, undefined, options)) {
+  for await (const line of readResultLines(stream, options.signal, options)) {
     if (line.kind === 'columns') return { columns: line.columns };
   }
   return { columns: [] };
@@ -257,7 +259,7 @@ export async function* streamPersistedCsv(
   options: PersistedResultReadOptions = {},
 ): AsyncGenerator<string> {
   let headerWritten = false;
-  for await (const line of readResultLines(stream, undefined, options)) {
+  for await (const line of readResultLines(stream, options.signal, options)) {
     if (line.kind === 'columns') {
       if (line.columns.length > 0)
         yield `${csvRecord(line.columns.map((column) => column.name))}\r\n`;
