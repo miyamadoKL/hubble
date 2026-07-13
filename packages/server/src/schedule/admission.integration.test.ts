@@ -42,6 +42,8 @@ describe('shared job admission wiring', () => {
       statement: 'SELECT 1 /* SELECT_HOLD_ADMISSION */',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const workflow = await ctx.services.workflows.create('alice', {
       name: 'blocked workflow',
@@ -50,6 +52,8 @@ describe('shared job admission wiring', () => {
         { steps: [{ id: 'step-a', name: 'A', statement: 'SELECT 1' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const alert = await ctx.services.alerts.create('alice', {
       name: 'blocked alert',
@@ -58,6 +62,8 @@ describe('shared job admission wiring', () => {
       op: '>',
       value: '0',
       cron: '* * * * *',
+
+      principalSnapshot: { user: 'alice' },
     });
 
     await ctx.services.workflowRunner.tick();

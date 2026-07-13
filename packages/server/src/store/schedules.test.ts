@@ -58,6 +58,8 @@ for (const backend of dbBackends) {
           catalog: 'tpch',
           schema: 'tiny',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         expect(created.datasourceId).toBe(DEFAULT_DATASOURCE_ID);
         expect(created.id).toMatch(/^sch_/);
@@ -101,19 +103,29 @@ for (const backend of dbBackends) {
       // 返すこと（スケジューラーが使う想定の挙動）を検証する。
       it('lists only enabled schedules across owners for the scheduler', async () => {
         const repo = new ScheduleRepository(await open());
-        await repo.create('alice', { name: 'on', statement: 'SELECT 1', cron: '* * * * *', ...ds });
+        await repo.create('alice', {
+          name: 'on',
+          statement: 'SELECT 1',
+          cron: '* * * * *',
+          ...ds,
+          principalSnapshot: { user: 'alice' },
+        });
         await repo.create('bob', {
           name: 'off',
           statement: 'SELECT 2',
           cron: '* * * * *',
           enabled: false,
           ...ds,
+
+          principalSnapshot: { user: 'bob' },
         });
         await repo.create('carol', {
           name: 'on2',
           statement: 'SELECT 3',
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'carol' },
         });
 
         const enabled = await repo.listAllEnabled();
@@ -131,6 +143,8 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const runId = await runs.start({
           scheduleId: s.id,
@@ -161,6 +175,8 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         await runs.start({
           scheduleId: schedule.id,
@@ -189,6 +205,8 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '0 0 * * *',
           datasourceId: 'custom-trino',
+
+          principalSnapshot: { user: 'alice' },
         });
         expect(created.datasourceId).toBe('custom-trino');
         const fetched = await repo.get('alice', created.id);
@@ -204,6 +222,8 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '0 0 * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         await db2.run('UPDATE schedules SET principal_snapshot = ? WHERE id = ?', [
           '{not-json',
@@ -228,6 +248,8 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '0 0 * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         await db2.run('UPDATE schedules SET principal_snapshot = ? WHERE id = ?', [
           JSON.stringify({ user: '' }),
@@ -254,6 +276,8 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const input = {
           scheduleId: schedule.id,
@@ -283,6 +307,8 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
 
         const r1 = await runs.start({
@@ -336,12 +362,16 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const second = await schedules.create('alice', {
           name: 'second',
           statement: 'SELECT 2',
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const firstRun = await runs.start({
           scheduleId: first.id,
@@ -390,6 +420,8 @@ for (const backend of dbBackends) {
           statement: 'SELECT 1',
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
 
         for (let i = 0; i < 6; i++) {

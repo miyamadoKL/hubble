@@ -147,15 +147,18 @@ describe('openDatabase with the real initial migration', () => {
     expect(migrations[0]!.version).toBe(1);
   });
 
-  it('keeps Parquet schema tombstones and restores the JSONL retention index', async () => {
+  it('removes Parquet compatibility schema and keeps the JSONL retention index', async () => {
     const db = await openMemoryDatabase();
     const columns = await db.query<{ name: string; notnull: number }>(
       'PRAGMA table_info(query_history)',
     );
-    expect(columns.map(({ name, notnull }) => ({ name, notnull }))).toEqual(
+    expect(columns.map(({ name }) => name)).toContain('result_columns_json');
+    expect(columns.map(({ name }) => name)).not.toEqual(
       expect.arrayContaining([
-        { name: 'parquet_object_key', notnull: 0 },
-        { name: 'parquet_expires_at', notnull: 0 },
+        'result_format',
+        'parquet_object_key',
+        'parquet_expires_at',
+        'parquet_encoding_version',
       ]),
     );
     const indexes = await db.query<{ name: string; sql: string }>(
@@ -171,7 +174,7 @@ describe('openDatabase with the real initial migration', () => {
     expect(indexes.find((index) => index.name === 'idx_query_history_retention')?.sql).not.toMatch(
       /parquet_object_key/,
     );
-    expect(await tableNames(db)).toContain('result_parquet_conversion_jobs');
+    expect(await tableNames(db)).not.toContain('result_parquet_conversion_jobs');
     await db.close();
   });
 });

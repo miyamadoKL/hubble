@@ -7,12 +7,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import { useMe, isUnauthenticated } from '../../hooks/useMe';
-import {
-  acknowledgeLegacyDataNotice,
-  activatePrincipalStorage,
-  isLegacyDataNoticeAcknowledged,
-  type LegacyBrowserData,
-} from '../../storage/principalStorage';
+import { activatePrincipalStorage } from '../../storage/principalStorage';
 import { AuthRequired } from './AuthRequired';
 
 /** identity が同じ page lifetime 内で変わった場合に全 client state を破棄する。 */
@@ -29,7 +24,6 @@ interface AuthGateProps {
 interface ReadyIdentity {
   principal: string;
   scope: string;
-  legacyData: LegacyBrowserData;
 }
 
 /**
@@ -60,7 +54,6 @@ export function AuthGate({ children, onIdentityChange = reloadForIdentityChange 
   const [readyIdentity, setReadyIdentity] = useState<ReadyIdentity | null>(null);
   const [failedPrincipal, setFailedPrincipal] = useState<string | null>(null);
   const [activationAttempt, setActivationAttempt] = useState(0);
-  const [acknowledgedLegacyScope, setAcknowledgedLegacyScope] = useState<string | null>(null);
   const principal = data?.user;
   const storageScope = data?.storageScope;
   const authMode = data?.authMode;
@@ -81,11 +74,7 @@ export function AuthGate({ children, onIdentityChange = reloadForIdentityChange 
         setReadyIdentity({
           principal,
           scope: result.scope,
-          legacyData: result.legacyData,
         });
-        if (result.legacyData === 'preserved' && isLegacyDataNoticeAcknowledged()) {
-          setAcknowledgedLegacyScope(result.scope);
-        }
       })
       .catch(() => {
         if (active) setFailedPrincipal(principal);
@@ -120,40 +109,6 @@ export function AuthGate({ children, onIdentityChange = reloadForIdentityChange 
             Retry
           </button>
         )}
-      </div>
-    );
-  }
-
-  if (readyIdentity.legacyData === 'preserved' && acknowledgedLegacyScope !== readyIdentity.scope) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface-base px-6 text-center text-sm text-ink-muted">
-        <strong className="text-ink-base">Previous browser data was not loaded</strong>
-        <p className="max-w-lg">
-          An older workspace is still stored in this browser. Hubble kept it separate instead of
-          replacing this account&apos;s current data. The raw local data has been preserved.
-        </p>
-        <button
-          type="button"
-          className="rounded border border-border-base px-3 py-1.5 text-ink-base"
-          onClick={() => {
-            acknowledgeLegacyDataNotice();
-            setAcknowledgedLegacyScope(readyIdentity.scope);
-          }}
-        >
-          Continue with this account
-        </button>
-      </div>
-    );
-  }
-
-  if (readyIdentity.legacyData === 'migration-failed') {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface-base px-6 text-center text-sm text-ink-muted">
-        <strong className="text-ink-base">Previous browser data could not be migrated</strong>
-        <p className="max-w-lg">
-          The original local data was preserved. Free browser storage if necessary, then reload to
-          retry before opening the workspace.
-        </p>
       </div>
     );
   }

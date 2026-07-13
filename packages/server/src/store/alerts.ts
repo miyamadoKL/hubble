@@ -10,6 +10,7 @@ import { alertNotificationsSchema, defaultAlertNotifications } from '@hubble/con
 import type { PrincipalIdentity } from '../auth/principal';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
+import { AppError } from '../errors';
 
 export const alertPrincipalSnapshotSchema = z.object({
   user: z.string().min(1),
@@ -51,7 +52,7 @@ export interface CreateAlertInput {
   muted?: boolean;
   cron: string;
   notifications?: AlertNotifications;
-  principalSnapshot?: PrincipalIdentity;
+  principalSnapshot: PrincipalIdentity;
 }
 
 export interface UpdateAlertInput {
@@ -219,6 +220,12 @@ export class AlertRepository {
   }
 
   async create(owner: string, input: CreateAlertInput): Promise<AlertRecord> {
+    if (!input.principalSnapshot) {
+      throw AppError.badRequest(
+        'A principal snapshot is required when creating an alert',
+        'PRINCIPAL_SNAPSHOT_REQUIRED',
+      );
+    }
     const nowIso = new Date().toISOString();
     const record: AlertRecord = {
       id: newId('alt_'),
@@ -235,7 +242,7 @@ export class AlertRepository {
       state: 'unknown',
       lastTriggeredAt: null,
       notifications: input.notifications ?? defaultAlertNotifications,
-      principalSnapshot: input.principalSnapshot ?? null,
+      principalSnapshot: input.principalSnapshot,
       createdAt: nowIso,
       updatedAt: nowIso,
     };

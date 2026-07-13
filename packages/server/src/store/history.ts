@@ -14,6 +14,7 @@ import type {
 } from '@hubble/contracts';
 import { queryColumnSchema, queryHistoryEntrySchema } from '@hubble/contracts';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
+import { AppError } from '../errors';
 
 /**
  * `query_history` テーブルの行を SQL ドライバがそのまま返す形。列名は
@@ -84,7 +85,7 @@ export interface HistoryResultRef {
   submittedAt: string;
   resultObjectKey: string;
   resultExpiresAt: string;
-  columns?: QueryColumn[];
+  columns: QueryColumn[];
 }
 
 /** 期限切れ掃除対象の結果オブジェクト。 */
@@ -341,8 +342,17 @@ function rowToEntry(row: HistoryRow): QueryHistoryEntry {
   return queryHistoryEntrySchema.parse(entry);
 }
 
-function rowToResultRef(row: HistoryRow): HistoryResultRef | undefined {
-  if (!row.result_object_key || !row.result_expires_at) return undefined;
+function rowToResultRef(row: HistoryRow): HistoryResultRef {
+  if (!row.result_object_key || !row.result_expires_at) {
+    throw AppError.notFound(`Query ${row.id} has no persisted result`);
+  }
+  const columns = parseResultColumns(row.result_columns_json);
+  if (columns === undefined) {
+    throw new AppError(500, {
+      code: 'PERSISTED_RESULT_METADATA_INVALID',
+      message: `Persisted result metadata is missing or invalid for query ${row.id}`,
+    });
+  }
   const ref: HistoryResultRef = {
     id: row.id,
     statement: row.statement,
@@ -353,13 +363,12 @@ function rowToResultRef(row: HistoryRow): HistoryResultRef | undefined {
     submittedAt: row.submitted_at,
     resultObjectKey: row.result_object_key,
     resultExpiresAt: row.result_expires_at,
+    columns,
   };
   if (row.catalog) ref.catalog = row.catalog;
   if (row.schema) ref.schema = row.schema;
   if (row.trino_query_id) ref.trinoQueryId = row.trino_query_id;
   if (row.error_message) ref.errorMessage = row.error_message;
-  const columns = parseResultColumns(row.result_columns_json);
-  if (columns !== undefined) ref.columns = columns;
   return ref;
 }
 

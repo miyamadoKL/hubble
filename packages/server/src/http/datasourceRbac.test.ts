@@ -346,6 +346,8 @@ defaultRole: none
         cron: '* * * * *',
         enabled: false,
         datasourceId: 'trino-prod',
+
+        principalSnapshot: { user: 'runner' },
       });
       const disableRes = await ctx.app.request(`/api/schedules/${record.id}`, {
         method: 'PATCH',
@@ -394,6 +396,8 @@ defaultRole: none
         statement: 'SELECT 1',
         cron: '* * * * *',
         datasourceId: 'trino-prod',
+
+        principalSnapshot: { user: 'runner' },
       });
       const runRes = await ctx.app.request(`/api/schedules/${record.id}/run`, {
         method: 'POST',

@@ -61,16 +61,20 @@ describe('query lifecycle (happy path)', () => {
     expect(snap.finishedAt).toBeDefined();
   });
 
-  it('ignores client source spoofing and uses engine source tag', async () => {
+  it('rejects client source spoofing before execution', async () => {
     const ctx = await createTestContext({ scenarios: [nationScenario(4)] });
-    const queryId = await submit(ctx.app, {
-      statement: 'SELECT * FROM nation',
-      catalog: 'tpch',
-      source: 'hubble-scheduled',
+    const response = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: 'SELECT * FROM nation',
+        catalog: 'tpch',
+        source: 'hubble-scheduled',
+      }),
     });
-    await ctx.services.registry.get(queryId)!.settled;
-    const post = ctx.fake.requests.find((r) => r.method === 'POST');
-    expect(post?.headers['x-trino-source']).toBe('hubble');
+
+    expect(response.status).toBe(400);
+    expect(ctx.fake.requests.filter((request) => request.method === 'POST')).toHaveLength(0);
   });
 
   it('rejects invalid session property keys with 400', async () => {

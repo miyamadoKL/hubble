@@ -53,17 +53,16 @@ export function filterDatasourcesForRole(
 
 /**
  * スケジュール owner から実行時ロール解決用の principal identity を組み立てる。
- * スナップショットがある新規レコードではそれを優先し、無い旧レコードは従来どおり
- * owner 文字列から復元する。
- * owner に '@' が含まれる場合は email 系 assignment も機能するよう email にも載せる。
+ * 作成時に保存した principal snapshot だけを実行時 identity として使う。
+ * 過去レコードに snapshot が無い場合は、owner 文字列から identity を復元せず明示的に拒否する。
  */
 export function schedulePrincipalIdentity(
   owner: string,
   snapshot?: PrincipalIdentity | null,
 ): PrincipalIdentity {
   if (snapshot) return snapshot;
-  if (owner.includes('@')) {
-    return { user: owner, email: owner };
-  }
-  return { user: owner };
+  throw AppError.badRequest(
+    `Cannot execute principal-scoped record '${owner}' without a principal snapshot`,
+    'PRINCIPAL_SNAPSHOT_REQUIRED',
+  );
 }

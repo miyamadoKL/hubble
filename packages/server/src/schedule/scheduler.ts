@@ -523,6 +523,17 @@ export class Scheduler {
     const policy = retryPolicyForStatement(schedule.retry, schedule.statement);
     let attempt = 0;
 
+    if (!schedule.principalSnapshot) {
+      return {
+        status: 'blocked',
+        attempt: 1,
+        trinoQueryId: null,
+        errorType: 'PRINCIPAL_SNAPSHOT_REQUIRED',
+        errorMessage: `Schedule '${schedule.id}' cannot execute without a principal snapshot`,
+        rowCount: null,
+      };
+    }
+
     const engine = getEngineOrUndefined(this.deps.engines, schedule.datasourceId);
     if (!engine) {
       return {

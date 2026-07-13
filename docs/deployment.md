@@ -48,8 +48,10 @@ multi-stage の流れ：
 本番イメージには結果の変換用 native extension や専用の外部サービスを含めません。
 結果読み取りの認可、ETag、期限切れ掃除は通常の server 経路で実行します。
 
-migration 0021 と 0022 は既存データとの互換性のため変更せず、追加済みの非稼働列とテーブルを残します。
-migration 0023 はデータを削除せず、非稼働経路専用の index を削除して JSONL 用 retention index を再作成します。
+0020 の `result_columns_json` は保持し、同じ migration で追加された `result_format` は 0024 で削除します。
+0021 の `parquet_object_key` と `parquet_expires_at`、0022 の `parquet_encoding_version` と `result_parquet_conversion_jobs` は 0024 で削除します。
+0023 は履歴として変更せず、JSONL 用 retention index を引き継ぎます。
+0024 は現行の JSONL 結果参照、既存の JSONL object、JSONL 用 retention index を保持します。
 
 イメージには次が既定で入っています
 

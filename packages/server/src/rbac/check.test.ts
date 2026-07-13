@@ -6,6 +6,7 @@ import {
   requireDatasourceAccess,
   requirePermission,
   roleAllowsDatasource,
+  schedulePrincipalIdentity,
 } from './check';
 import type { ResolvedRole } from './types';
 
@@ -87,6 +88,14 @@ describe('requireDatasourceAccess', () => {
         detail: { code: 'NOT_FOUND' },
       });
     }
+  });
+});
+
+describe('schedulePrincipalIdentity', () => {
+  it('rejects records without a principal snapshot', () => {
+    expect(() => schedulePrincipalIdentity('legacy@example.com', null)).toThrow(
+      'without a principal snapshot',
+    );
   });
 });
 

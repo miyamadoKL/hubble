@@ -4,7 +4,7 @@
 import { constants as zlibConstants, createZstdCompress, createZstdDecompress } from 'node:zlib';
 import { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
-import type { QueryColumn } from '@hubble/contracts';
+import { queryColumnSchema, type QueryColumn } from '@hubble/contracts';
 import { csvRecord } from '../query/csv';
 import type { QueryResultEvent } from '../query/resultEvents';
 import type { ResultStore } from './store';
@@ -31,13 +31,8 @@ export interface PersistedRowsPage {
 export interface ReadPersistedRowsPageOptions extends PersistedResultReadOptions {
   /** artifact 全体を走査せず返せる、永続化済みの総行数。 */
   totalRows?: number;
-  /** 履歴行に保存された列メタデータ。旧行では未指定で JSONL から読む。 */
+  /** 履歴行に保存された列メタデータ。workflow の結果では未指定になり得る。 */
   columns?: QueryColumn[];
-}
-
-/** 保存済み結果の列メタデータ。 */
-export interface PersistedResultMetadata {
-  columns: QueryColumn[];
 }
 
 /** 実行中の結果を zstd 圧縮 JSONL へ流し込む writer。 */
@@ -155,7 +150,7 @@ export async function readPersistedRowsPage(
   options: ReadPersistedRowsPageOptions = {},
 ): Promise<PersistedRowsPage> {
   const rows: unknown[][] = [];
-  let columns: QueryColumn[] = options.columns ?? [];
+  let columns: QueryColumn[] | undefined = options.columns;
   let scannedRows = 0;
   const knownTotalRows =
     options.totalRows !== undefined &&
@@ -176,12 +171,12 @@ export async function readPersistedRowsPage(
     scannedRows += 1;
     if (targetEnd !== undefined && scannedRows >= targetEnd) break;
   }
-  return { columns, rows, totalRows: knownTotalRows ?? scannedRows };
+  return { columns: columns ?? [], rows, totalRows: knownTotalRows ?? scannedRows };
 }
 
 /** 保存済み結果のストリーミング読み出しカーソル。 */
 export interface PersistedResultCursor {
-  /** 列メタデータ（先頭の columns 行。欠落時は空配列）。 */
+  /** 列メタデータ（必ず先頭の columns 行から得る）。 */
   columns: QueryColumn[];
   /** レコード行を 1 行ずつ yield する非同期イテレーター。 */
   rows: AsyncGenerator<unknown[]>;
@@ -193,8 +188,7 @@ export interface PersistedResultCursor {
  * `readPersistedRowsPage` と違い全行を配列へ materialize せず、行を 1 行ずつ
  * 消費できるカーソルを返す。永続化結果は QUERY_MAX_ROWS で有界ではないため、
  * 全行走査が必要な処理（server-side 探索など）はこちらを使う。
- * writer は常に columns 行を先頭へ書くが、欠落したファイルにも耐えるよう
- * 先頭行がレコードだった場合は columns を空配列とし、その行を行ストリームに含める。
+ * writer が作る契約どおり、先頭の columns 行を要求する。
  *
  * @param stream - ResultStore から取得した圧縮 JSONL の Readable。
  * @returns 列メタデータと行の非同期イテレーター。
@@ -206,22 +200,14 @@ export async function openPersistedResult(
   const lines = readResultLines(stream, options.signal);
   const first = await lines.next();
 
-  // 先頭行から列情報を決める。バッファするのは最大 1 行なのでメモリは有界。
-  let columns: QueryColumn[] = [];
-  let firstRow: unknown[] | undefined;
-  if (!first.done) {
-    if (first.value.kind === 'columns') {
-      columns = first.value.columns;
-    } else {
-      firstRow = first.value.row;
-    }
+  if (first.done) throw new Error('Persisted result JSONL is missing columns line');
+  if (first.value.kind !== 'columns') {
+    throw new Error('Persisted result JSONL must start with a columns line');
   }
+  const columns = first.value.columns;
 
   async function* rows(): AsyncGenerator<unknown[]> {
-    if (firstRow) yield firstRow;
-    if (first.done) return;
     for await (const line of lines) {
-      // 途中の columns 行は（通常は存在しないが）読み飛ばす。
       if (line.kind === 'record') yield line.row;
     }
   }
@@ -229,32 +215,16 @@ export async function openPersistedResult(
   return { columns, rows: rows() };
 }
 
-/** 圧縮 JSONL の先頭メタ行から列情報を読み取る。 */
-export async function readPersistedResultMetadata(
-  stream: Readable,
-  options: PersistedResultReadOptions = {},
-): Promise<PersistedResultMetadata> {
-  for await (const line of readResultLines(stream, options.signal)) {
-    if (line.kind === 'columns') return { columns: line.columns };
-  }
-  return { columns: [] };
-}
-
 /** 圧縮 JSONL を CSV テキストチャンクへ変換する。 */
 export async function* streamPersistedCsv(
   stream: Readable,
   options: PersistedResultReadOptions = {},
 ): AsyncGenerator<string> {
-  let headerWritten = false;
   for await (const line of readResultLines(stream, options.signal)) {
     if (line.kind === 'columns') {
       if (line.columns.length > 0)
         yield `${csvRecord(line.columns.map((column) => column.name))}\r\n`;
-      headerWritten = true;
       continue;
-    }
-    if (!headerWritten) {
-      headerWritten = true;
     }
     yield `${csvRecord(line.row)}\r\n`;
   }
@@ -275,20 +245,13 @@ export function streamPersistedResultEvents(
   return (async function* (): AsyncGenerator<QueryResultEvent> {
     signal?.removeEventListener('abort', abortBeforeStart);
     if (signal?.aborted) throw createSqlAbortError();
-    let columnsWritten = false;
     for await (const line of readResultLines(stream, signal)) {
       if (line.kind === 'columns') {
-        columnsWritten = true;
         yield { type: 'columns', columns: line.columns };
         continue;
       }
-      if (!columnsWritten) {
-        columnsWritten = true;
-        yield { type: 'columns', columns: [] };
-      }
       yield { type: 'row', row: line.row };
     }
-    if (!columnsWritten) yield { type: 'columns', columns: [] };
   })();
 }
 
@@ -308,11 +271,30 @@ async function* readResultLines(
   };
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
+  const throwIfAborted = (): void => {
+    if (signal?.aborted) throw createSqlAbortError();
+  };
+  let sawColumns = false;
   try {
+    throwIfAborted();
     for await (const raw of lines) {
+      throwIfAborted();
       if (raw.trim() === '') continue;
-      yield parseLine(raw);
+      const parsed = parseLine(raw);
+      if (!sawColumns && parsed.kind !== 'columns') {
+        throw new Error('Persisted result JSONL must start with a columns line');
+      }
+      if (sawColumns && parsed.kind === 'columns') {
+        throw new Error('Persisted result JSONL contains duplicate columns line');
+      }
+      sawColumns = true;
+      yield parsed;
     }
+    throwIfAborted();
+    if (!sawColumns) throw new Error('Persisted result JSONL is missing columns line');
+  } catch (error: unknown) {
+    if (signal?.aborted) throw createSqlAbortError();
+    throw error;
   } finally {
     signal?.removeEventListener('abort', abort);
     // page window を満たして途中終了した場合も、S3 body と解凍処理を止める。
@@ -320,12 +302,16 @@ async function* readResultLines(
     decompressor.destroy();
     stream.destroy();
   }
-  if (signal?.aborted) throw createSqlAbortError();
+  throwIfAborted();
 }
 
 function parseLine(line: string): ResultJsonlLine {
   const parsed = JSON.parse(line) as ResultJsonlLine;
-  if (parsed.kind === 'columns') return { kind: 'columns', columns: parsed.columns };
+  if (parsed.kind === 'columns') {
+    const columns = queryColumnSchema.array().safeParse(parsed.columns);
+    if (columns.success) return { kind: 'columns', columns: columns.data };
+    throw new Error('Invalid persisted result JSONL columns line');
+  }
   if (parsed.kind === 'record' && Array.isArray(parsed.row)) {
     return { kind: 'record', row: parsed.row };
   }

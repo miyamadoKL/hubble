@@ -314,12 +314,47 @@ export class WorkflowRunner {
     }
   }
 
+  /** principal snapshot が無い歴史的 workflow を実行せず blocked で確定する。 */
+  private async finishPrincipalSnapshotBlockedRun(
+    workflow: WorkflowRecord,
+    runId: string,
+    trigger: 'manual' | 'cron',
+    scheduledForIso: string,
+    startedAtIso: string,
+  ): Promise<void> {
+    const finishedMs = this.now();
+    const elapsedMs = Math.max(finishedMs - Date.parse(startedAtIso), 0);
+    const finishedAt = new Date(finishedMs).toISOString();
+    await this.deps.runs.skipRemaining(runId, 0, finishedAt);
+    await this.deps.runs.finishRun(runId, workflow.id, {
+      status: 'blocked',
+      finishedAt,
+      elapsedMs,
+    });
+    const finalRun = await this.deps.runs.getRun(runId);
+    if (finalRun) {
+      await this.recordWorkflowOutcome(workflow, runId, trigger, scheduledForIso, finalRun, {
+        principalSnapshot: 'required',
+      });
+    }
+  }
+
   private async executeRun(
     workflow: WorkflowRecord,
     runId: string,
     trigger: 'manual' | 'cron',
     scheduledForIso: string,
   ): Promise<void> {
+    if (!workflow.principalSnapshot) {
+      await this.finishPrincipalSnapshotBlockedRun(
+        workflow,
+        runId,
+        trigger,
+        scheduledForIso,
+        new Date(this.now()).toISOString(),
+      );
+      return;
+    }
     const startMs = this.now();
     const persistStepResults =
       !this.deps.githubGovernance.enabled ||

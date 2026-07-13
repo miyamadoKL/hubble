@@ -39,14 +39,12 @@ export function encryptToken(keyring: TokenEncryptionKeyring, plaintext: string)
 
 /**
  * {@link encryptToken} で生成したペイロードを復号する。
- * 旧3要素形式はkey IDを持たないため、keyring内の全master keyを順に試す。
  * @param keyring - active key IDと復号用の鍵集合。
  * @param payload - ドット区切りの暗号文。
  * @returns 復号された平文トークン。
  */
 export function decryptToken(keyring: TokenEncryptionKeyring, payload: string): string {
   const parts = payload.split('.');
-  if (parts.length === 3) return decryptLegacyToken(keyring, parts);
   if (parts.length !== 5 || parts[0] !== ENVELOPE_VERSION) {
     throw new Error('Invalid encrypted token payload format');
   }
@@ -59,24 +57,6 @@ export function decryptToken(keyring: TokenEncryptionKeyring, payload: string): 
 export function tokenNeedsRewrap(keyring: TokenEncryptionKeyring, payload: string): boolean {
   const parts = payload.split('.');
   return parts.length !== 5 || parts[0] !== ENVELOPE_VERSION || parts[1] !== keyring.activeKeyId;
-}
-
-function decryptLegacyToken(keyring: TokenEncryptionKeyring, parts: string[]): string {
-  const [ivB64, ciphertextB64, tagB64] = parts as [string, string, string];
-  const orderedKeys = [
-    requireKey(keyring, keyring.activeKeyId),
-    ...[...keyring.keys.entries()]
-      .filter(([keyId]) => keyId !== keyring.activeKeyId)
-      .map(([, key]) => key),
-  ];
-  for (const key of orderedKeys) {
-    try {
-      return decryptAesGcm(key, ivB64, ciphertextB64, tagB64);
-    } catch {
-      // 旧形式にはkey IDがないため、次の候補鍵を試す。
-    }
-  }
-  throw new Error('Encrypted token could not be decrypted with the configured keyring');
 }
 
 function decryptAesGcm(

@@ -5,225 +5,221 @@ import { MIGRATIONS_DIR } from './index';
 import { openSqlite } from './sqliteAdapter';
 import { dbBackends } from '../test/dbBackends';
 
+async function assertRetainedJsonlSchema(db: SqlDatabase): Promise<void> {
+  const row = await db.query<{
+    result_object_key: string;
+    result_expires_at: string;
+    result_columns_json: string;
+  }>(
+    `SELECT result_object_key, result_expires_at, result_columns_json
+       FROM query_history WHERE id=?`,
+    ['jsonl-retained'],
+  );
+  expect(row).toEqual([
+    {
+      result_object_key: 'results/jsonl-retained.jsonl.zst',
+      result_expires_at: '2026-02-01T00:00:00.000Z',
+      result_columns_json: '[]',
+    },
+  ]);
+
+  const table =
+    db.dialect === 'sqlite'
+      ? await db.query<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='result_parquet_conversion_jobs'",
+        )
+      : await db.query<{ tablename: string }>(
+          "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename='result_parquet_conversion_jobs'",
+        );
+  expect(table).toHaveLength(0);
+
+  const indexes =
+    db.dialect === 'sqlite'
+      ? await db.query<{ name: string; sql: string | null }>(
+          `SELECT name, sql FROM sqlite_master
+           WHERE type='index' AND name='idx_query_history_retention'`,
+        )
+      : await db.query<{ indexname: string; indexdef: string }>(
+          `SELECT indexname, indexdef FROM pg_indexes
+           WHERE tablename='query_history' AND indexname='idx_query_history_retention'`,
+        );
+  expect(indexes).toHaveLength(1);
+  expect(JSON.stringify(indexes[0])).toMatch(/result_object_key IS NULL/);
+}
+
 for (const backend of dbBackends) {
-  describe(`retired result schema migration on ${backend.name}`, () => {
+  describe(`removed result compatibility schema on ${backend.name}`, () => {
     let db: SqlDatabase;
 
     afterEach(async () => {
       if (db) await db.close();
     });
 
-    it('retains the legacy tombstone schema without its live indexes', async () => {
-      db = await backend.open();
-      if (backend.name === 'sqlite') {
-        const historyColumns = await db.query<{ name: string }>('PRAGMA table_info(query_history)');
-        expect(historyColumns.map((column) => column.name)).toContain('parquet_encoding_version');
-        const jobColumns = await db.query<{ name: string }>(
-          'PRAGMA table_info(result_parquet_conversion_jobs)',
-        );
-        expect(jobColumns.map((column) => column.name)).toEqual([
-          'history_id',
-          'source_object_key',
-          'target_object_key',
-          'encoding_version',
-          'status',
-          'attempts',
-          'next_attempt_at',
-          'last_error_code',
-          'last_error',
-          'created_at',
-          'updated_at',
-        ]);
-        const indexes = await db.query<{ name: string }>(
-          `SELECT name FROM sqlite_master
-           WHERE type='index' AND tbl_name='result_parquet_conversion_jobs'`,
-        );
-        expect(indexes.map((index) => index.name)).toContain(
-          'idx_result_parquet_conversion_jobs_due',
-        );
-        const historyIndexes = await db.query<{ name: string; sql: string | null }>(
-          `SELECT name, sql FROM sqlite_master
-           WHERE type='index' AND name IN
-             ('idx_query_history_retention', 'idx_query_history_parquet_expiry_cursor',
-              'idx_query_history_parquet_object_key')`,
-        );
-        expect(historyIndexes.map((index) => index.name)).toEqual(['idx_query_history_retention']);
-        expect(historyIndexes[0]?.sql).toMatch(/result_object_key IS NULL/);
-        expect(historyIndexes[0]?.sql).not.toMatch(/parquet_object_key/);
-        return;
-      }
-
-      const historyColumns = await db.query<{ column_name: string }>(
-        `SELECT column_name FROM information_schema.columns
-         WHERE table_name='query_history' AND column_name='parquet_encoding_version'`,
-      );
-      expect(historyColumns).toHaveLength(1);
-      const jobColumns = await db.query<{ column_name: string }>(
-        `SELECT column_name FROM information_schema.columns
-         WHERE table_name='result_parquet_conversion_jobs'
-         ORDER BY ordinal_position`,
-      );
-      expect(jobColumns.map((column) => column.column_name)).toEqual([
-        'history_id',
-        'source_object_key',
-        'target_object_key',
-        'encoding_version',
-        'status',
-        'attempts',
-        'next_attempt_at',
-        'last_error_code',
-        'last_error',
-        'created_at',
-        'updated_at',
-      ]);
-      const indexes = await db.query<{ indexname: string }>(
-        `SELECT indexname FROM pg_indexes
-         WHERE tablename='result_parquet_conversion_jobs'`,
-      );
-      expect(indexes.map((index) => index.indexname)).toContain(
-        'idx_result_parquet_conversion_jobs_due',
-      );
-      const historyIndexes = await db.query<{ indexname: string; indexdef: string }>(
-        `SELECT indexname, indexdef FROM pg_indexes
-         WHERE tablename='query_history'
-           AND indexname IN
-             ('idx_query_history_retention', 'idx_query_history_parquet_expiry_cursor',
-              'idx_query_history_parquet_object_key')`,
-      );
-      expect(historyIndexes.map((index) => index.indexname)).toEqual([
-        'idx_query_history_retention',
-      ]);
-      expect(historyIndexes[0]?.indexdef).toMatch(/result_object_key IS NULL/);
-      expect(historyIndexes[0]?.indexdef).not.toMatch(/parquet_object_key/);
-    });
-
-    it('preserves 0022 data when 0023 retires the live indexes', async () => {
+    it('removes Parquet compatibility data while retaining JSONL history', async () => {
       const migrations = loadMigrations(MIGRATIONS_DIR);
-      const retirement = migrations.find((migration) => migration.version === 23);
-      expect(retirement).toBeDefined();
-      if (retirement === undefined) return;
+      const removal = migrations.find((migration) => migration.version === 24);
+      expect(removal).toBeDefined();
+      if (removal === undefined) return;
 
       if (backend.name === 'sqlite') {
         db = openSqlite(':memory:');
         await runMigrations(
           db,
-          migrations.filter((migration) => migration.version <= 22),
+          migrations.filter((migration) => migration.version <= 23),
         );
+        await db.run(
+          `INSERT INTO query_history
+             (id, statement, state, owner, datasource_id, submitted_at,
+              result_object_key, result_expires_at, result_columns_json, result_format,
+              parquet_object_key, parquet_expires_at, parquet_encoding_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            'jsonl-retained',
+            'SELECT 1',
+            'finished',
+            'alice',
+            'trino-default',
+            '2026-01-01T00:00:00.000Z',
+            'results/jsonl-retained.jsonl.zst',
+            '2026-02-01T00:00:00.000Z',
+            '[]',
+            'jsonl.zst',
+            'legacy/jsonl-retained.parquet',
+            '2026-02-01T00:00:00.000Z',
+            '1',
+          ],
+        );
+        await db.run(
+          `INSERT INTO result_parquet_conversion_jobs
+             (history_id, source_object_key, target_object_key, encoding_version,
+              status, attempts, next_attempt_at, last_error_code, last_error,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            'jsonl-retained',
+            'results/jsonl-retained.jsonl.zst',
+            'legacy/jsonl-retained.parquet',
+            '1',
+            'pending',
+            0,
+            '2026-01-01T00:00:00.000Z',
+            null,
+            null,
+            '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z',
+          ],
+        );
+        await runMigrations(db, [removal]);
+        await assertRetainedJsonlSchema(db);
       } else {
-        // PostgreSQL は共有テスト DB の全 migration 適用後に 0022 の index 状態を再現する。
         db = await backend.open();
-      }
+        const rollbackMarker = 'rollback migration transition test';
+        try {
+          await db.transaction(async (tx) => {
+            await tx.exec(`
+              ALTER TABLE query_history ADD COLUMN result_format TEXT;
+              ALTER TABLE query_history ADD COLUMN parquet_object_key TEXT;
+              ALTER TABLE query_history ADD COLUMN parquet_expires_at TEXT;
+              ALTER TABLE query_history ADD COLUMN parquet_encoding_version TEXT;
+              CREATE TABLE result_parquet_conversion_jobs (
+                history_id TEXT PRIMARY KEY,
+                source_object_key TEXT NOT NULL,
+                target_object_key TEXT NOT NULL UNIQUE,
+                encoding_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                next_attempt_at TEXT NOT NULL,
+                last_error_code TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+              );
+              CREATE INDEX idx_result_parquet_conversion_jobs_due
+                ON result_parquet_conversion_jobs (status, next_attempt_at, history_id);
+            `);
+            await tx.run(
+              `INSERT INTO query_history
+                 (id, statement, state, owner, datasource_id, submitted_at,
+                  result_object_key, result_expires_at, result_columns_json,
+                  result_format, parquet_object_key, parquet_expires_at,
+                  parquet_encoding_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                'jsonl-retained',
+                'SELECT 1',
+                'finished',
+                'alice',
+                'trino-default',
+                '2026-01-01T00:00:00.000Z',
+                'results/jsonl-retained.jsonl.zst',
+                '2026-02-01T00:00:00.000Z',
+                '[]',
+                'jsonl.zst',
+                'legacy/jsonl-retained.parquet',
+                '2026-02-01T00:00:00.000Z',
+                '1',
+              ],
+            );
+            await tx.run(
+              `INSERT INTO result_parquet_conversion_jobs
+                 (history_id, source_object_key, target_object_key, encoding_version,
+                  status, attempts, next_attempt_at, last_error_code, last_error,
+                  created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                'jsonl-retained',
+                'results/jsonl-retained.jsonl.zst',
+                'legacy/jsonl-retained.parquet',
+                '1',
+                'pending',
+                0,
+                '2026-01-01T00:00:00.000Z',
+                null,
+                null,
+                '2026-01-01T00:00:00.000Z',
+                '2026-01-01T00:00:00.000Z',
+              ],
+            );
 
-      await db.run('DROP INDEX IF EXISTS idx_query_history_retention');
-      await db.run('DROP INDEX IF EXISTS idx_query_history_parquet_expiry_cursor');
-      await db.run('DROP INDEX IF EXISTS idx_query_history_parquet_object_key');
-      await db.run(
-        `CREATE INDEX idx_query_history_retention
-           ON query_history (submitted_at, id)
-           WHERE result_object_key IS NULL AND parquet_object_key IS NULL`,
-      );
-      await db.run(
-        `CREATE INDEX idx_query_history_parquet_expiry_cursor
-           ON query_history (parquet_expires_at, id)
-           WHERE parquet_object_key IS NOT NULL AND parquet_expires_at IS NOT NULL`,
-      );
-      await db.run(
-        `CREATE INDEX idx_query_history_parquet_object_key
-           ON query_history (parquet_object_key)
-           WHERE parquet_object_key IS NOT NULL`,
-      );
+            await tx.exec(removal.sql);
+            await assertRetainedJsonlSchema(tx);
 
-      const historyId = `migration-preserve-${backend.name}`;
-      const jobKey = `legacy/${historyId}.parquet`;
-      await db.run(
-        `INSERT INTO query_history
-           (id, statement, state, owner, datasource_id, submitted_at,
-            result_object_key, result_expires_at, result_columns_json, result_format,
-            parquet_object_key, parquet_expires_at, parquet_encoding_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          historyId,
-          'SELECT 1',
-          'finished',
-          'alice',
-          'trino-default',
-          '2026-01-01T00:00:00.000Z',
-          `legacy/${historyId}.jsonl.zst`,
-          '2026-02-01T00:00:00.000Z',
-          '[]',
-          'jsonl.zst',
-          jobKey,
-          '2026-02-01T00:00:00.000Z',
-          '1',
-        ],
-      );
-      await db.run(
-        `INSERT INTO result_parquet_conversion_jobs
-           (history_id, source_object_key, target_object_key, encoding_version,
-            status, attempts, next_attempt_at, last_error_code, last_error,
-            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          historyId,
-          `legacy/${historyId}.jsonl.zst`,
-          jobKey,
-          '1',
-          'pending',
-          2,
-          '2026-01-02T00:00:00.000Z',
-          'duckdb_error',
-          'legacy conversion pending',
-          '2026-01-01T00:00:00.000Z',
-          '2026-01-01T00:00:00.000Z',
-        ],
-      );
+            const remainingColumns = await tx.query<{ column_name: string }>(
+              `SELECT column_name
+                 FROM information_schema.columns
+                WHERE table_schema='public'
+                  AND table_name='query_history'
+                  AND column_name IN ('result_format', 'parquet_object_key',
+                                      'parquet_expires_at', 'parquet_encoding_version')`,
+            );
+            expect(remainingColumns).toHaveLength(0);
+            throw new Error(rollbackMarker);
+          });
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== rollbackMarker) throw error;
+        }
 
-      const beforeHistory = await db.query(
-        'SELECT parquet_object_key, parquet_expires_at, parquet_encoding_version FROM query_history WHERE id=?',
-        [historyId],
-      );
-      const beforeJob = await db.query(
-        'SELECT * FROM result_parquet_conversion_jobs WHERE history_id=?',
-        [historyId],
-      );
-
-      await db.transaction(async (tx) => {
-        await tx.exec(retirement.sql);
-      });
-
-      expect(
-        await db.query(
-          'SELECT parquet_object_key, parquet_expires_at, parquet_encoding_version FROM query_history WHERE id=?',
-          [historyId],
-        ),
-      ).toEqual(beforeHistory);
-      expect(
-        await db.query('SELECT * FROM result_parquet_conversion_jobs WHERE history_id=?', [
-          historyId,
-        ]),
-      ).toEqual(beforeJob);
-
-      if (backend.name === 'sqlite') {
-        const indexes = await db.query<{ name: string; sql: string | null }>(
-          `SELECT name, sql FROM sqlite_master
-           WHERE type='index' AND name IN
-             ('idx_query_history_retention', 'idx_query_history_parquet_expiry_cursor',
-              'idx_query_history_parquet_object_key')`,
+        const restoredColumns = await db.query<{ column_name: string }>(
+          `SELECT column_name
+             FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='query_history'
+              AND column_name = 'result_columns_json'`,
         );
-        expect(indexes.map((index) => index.name)).toEqual(['idx_query_history_retention']);
-        expect(indexes[0]?.sql).toMatch(/result_object_key IS NULL/);
-        expect(indexes[0]?.sql).not.toMatch(/parquet_object_key/);
-      } else {
-        const indexes = await db.query<{ indexname: string; indexdef: string }>(
-          `SELECT indexname, indexdef FROM pg_indexes
-           WHERE tablename='query_history'
-             AND indexname IN
-               ('idx_query_history_retention', 'idx_query_history_parquet_expiry_cursor',
-                'idx_query_history_parquet_object_key')`,
+        expect(restoredColumns).toHaveLength(1);
+        const restoredTable = await db.query<{ tablename: string }>(
+          "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename='result_parquet_conversion_jobs'",
         );
-        expect(indexes.map((index) => index.indexname)).toEqual(['idx_query_history_retention']);
-        expect(indexes[0]?.indexdef).toMatch(/result_object_key IS NULL/);
-        expect(indexes[0]?.indexdef).not.toMatch(/parquet_object_key/);
+        expect(restoredTable).toHaveLength(0);
+        const restoredLegacyColumns = await db.query<{ column_name: string }>(
+          `SELECT column_name
+             FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='query_history'
+              AND column_name = ANY(ARRAY['result_format', 'parquet_object_key',
+                                          'parquet_expires_at', 'parquet_encoding_version'])`,
+        );
+        expect(restoredLegacyColumns).toHaveLength(0);
       }
     });
   });

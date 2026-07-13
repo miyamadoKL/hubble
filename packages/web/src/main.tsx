@@ -2,17 +2,9 @@
  * Hubble Web アプリケーションのエントリポイント。
  * ブラウザ上で React アプリを DOM にマウントし、React Query の
  * QueryClientProvider や StrictMode などのグローバルなラッパーをここで設定する。
- * このファイルが最初に読み込まれるモジュールであるため、
- * 他のどのストアよりも先に実行しておく必要がある処理（localStorage の
- * キー移行など）もここでインポート順により制御している。
+ * このファイルが最初に読み込まれるモジュールであるため、React アプリケーションの
+ * 初期化順序もここで管理する。
  */
-
-// Imported first: runs the one-time hue-fable-* -> hubble-* localStorage rename
-// before any store reads the new keys (see migrateLegacyStorage.ts).
-// 最初にインポートすることで、他のストア（zustand の persist など）が
-// 'hubble-*' キーを読み取る前に、旧 'hue-fable-*' キーからの
-// 一度きりのリネーム移行処理を完了させる。
-import './migrateLegacyStorage';
 // React 18 の StrictMode。開発時に副作用の二重実行などを検出し、
 // 潜在的なバグを早期に発見しやすくするためのラッパーコンポーネント。
 import { StrictMode } from 'react';

@@ -68,7 +68,6 @@ import {
 } from '../query/csv';
 import type { HistoryResultRef } from '../store/history';
 import {
-  readPersistedResultMetadata,
   streamPersistedResultEvents,
   readPersistedRowsPage,
   openPersistedResult,
@@ -137,7 +136,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const principal = c.var.principal;
     const catalog = body.catalog ?? services.config.defaults.catalog;
     const schema = body.schema ?? services.config.defaults.schema;
-    // body.source は非推奨。クライアント指定は無視し、エンジンの X-Trino-Source を使う。
     const ctx: TrinoRequestContext = {
       catalog,
       schema,
@@ -435,10 +433,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     if (exec) return c.json(exec.snapshot());
 
     const ref = await requirePersistedResult(c);
-    const columns =
-      ref.columns ??
-      (await readPersistedResultMetadata(await services.resultStore.getStream(ref.resultObjectKey)))
-        .columns;
+    const columns = ref.columns;
     const snapshot: QuerySnapshot = {
       queryId: ref.id,
       state: ref.state,

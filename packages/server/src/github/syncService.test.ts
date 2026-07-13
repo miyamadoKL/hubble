@@ -544,6 +544,8 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
       datasourceId: 'trino-default',
       enabled: false,
       stages: [{ steps: [{ id: 's1', name: 'S', statement: 'SELECT 1', onFailure: 'stop' }] }],
+
+      principalSnapshot: { user: 'alice' },
     });
     const remoteContent = documentToContent('workflow', {
       ...workflow,
@@ -582,6 +584,8 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
         channels: ['webhook'],
         webhookUrl: 'https://secret.example/existing',
       },
+
+      principalSnapshot: { user: 'alice' },
     });
     const remoteContent = alertToContent({
       ...alert,
@@ -634,6 +638,8 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
       op: '>',
       value: '100',
       cron: '0 * * * *',
+
+      principalSnapshot: { user: 'alice' },
     });
     const approvedHash = contentHash(alertToContent(alert));
     await links.upsert('alert', alert.id, {

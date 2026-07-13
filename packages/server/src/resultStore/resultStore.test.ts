@@ -17,7 +17,6 @@ import {
 } from './store';
 import {
   openPersistedResult,
-  readPersistedResultMetadata,
   readPersistedRowsPage,
   ResultJsonlCapture,
   streamPersistedCsv,
@@ -251,7 +250,43 @@ describe('ResultStore persistence', () => {
     expect(page.totalRows).toBe(2);
   });
 
-  it('uses the zstd reader for metadata, cursor, CSV, and result events', async () => {
+  it('rejects record-first, duplicate-columns, and empty JSONL objects', async () => {
+    const compressed = (lines: string): Readable =>
+      Readable.from(zstdCompressSync(Buffer.from(`${lines}\n`)));
+    const columns = JSON.stringify({ kind: 'columns', columns: COLUMNS });
+    const record = JSON.stringify({ kind: 'record', row: [1, 'one'] });
+
+    await expect(readPersistedRowsPage(compressed(record), 0, 10)).rejects.toThrow(
+      'must start with a columns line',
+    );
+    await expect(
+      readPersistedRowsPage(compressed(`${columns}\n${columns}`), 0, 10),
+    ).rejects.toThrow('duplicate columns line');
+    await expect(readPersistedRowsPage(compressed(''), 0, 10)).rejects.toThrow(
+      'missing columns line',
+    );
+  });
+
+  it('prioritizes SQL abort over missing columns before the first JSONL line', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      readPersistedRowsPage(Readable.from(zstdCompressSync(Buffer.from(''))), 0, 10, {
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
+
+    const secondController = new AbortController();
+    secondController.abort();
+    await expect(
+      openPersistedResult(Readable.from(zstdCompressSync(Buffer.from(''))), {
+        signal: secondController.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
+  });
+
+  it('uses the zstd reader for cursor, CSV, and result events', async () => {
     const store = new MemoryResultStore();
     const key = 'hubble-results/dual-reader.jsonl.zst';
     const capture = new ResultJsonlCapture(store, key);
@@ -259,7 +294,6 @@ describe('ResultStore persistence', () => {
     await capture.writeRows([[1, 'one']]);
     await capture.finish();
 
-    const metadata = await readPersistedResultMetadata(await store.getStream(key));
     const cursor = await openPersistedResult(await store.getStream(key));
     const rows: unknown[][] = [];
     for await (const row of cursor.rows) rows.push(row);
@@ -270,7 +304,7 @@ describe('ResultStore persistence', () => {
       events.push(event);
     }
 
-    expect(metadata.columns).toEqual(COLUMNS);
+    expect(cursor.columns).toEqual(COLUMNS);
     expect(rows).toEqual([[1, 'one']]);
     expect(csv.join('')).toBe('id,note\r\n1,one\r\n');
     expect(events).toEqual([
@@ -505,20 +539,29 @@ describe('ResultStore persistence', () => {
     ]);
   });
 
-  it('falls back to JSONL metadata for an old result object without saved columns', async () => {
+  it.each([
+    ['missing', null],
+    ['malformed JSON', 'not-json'],
+    ['schema-invalid JSON', '[{"name":1}]'],
+  ])('rejects a persisted result when history columns are %s', async (_label, columns) => {
     const store = new MemoryResultStore();
     const ctx = await createTestContext({ scenarios: [manyRows(4)], resultStore: store });
     const queryId = await submitPersistQuery(ctx);
     await waitForResultRef(ctx, queryId);
-    await ctx.db.run('UPDATE query_history SET result_columns_json = NULL WHERE id = ?', [queryId]);
+    await ctx.db.run('UPDATE query_history SET result_columns_json = ? WHERE id = ?', [
+      columns,
+      queryId,
+    ]);
     const getStream = vi.spyOn(store, 'getStream');
     dropExecution(ctx, queryId);
 
     const response = await ctx.app.request(`/api/queries/${queryId}`);
 
-    expect(response.status).toBe(200);
-    expect(((await response.json()) as { columns?: unknown }).columns).toEqual(COLUMNS);
-    expect(getStream).toHaveBeenCalledOnce();
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'PERSISTED_RESULT_METADATA_INVALID' },
+    });
+    expect(getStream).not.toHaveBeenCalled();
   });
 
   it('uses an explicit history list projection without result metadata columns', async () => {

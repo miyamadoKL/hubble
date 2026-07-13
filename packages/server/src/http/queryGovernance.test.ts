@@ -86,6 +86,21 @@ function githubConfigOverrides() {
 }
 
 describe('query governance persistence', () => {
+  it('rejects the deprecated source field in the POST query contract', async () => {
+    const ctx = await createTestContext({ scenarios: [APPROVED_SCENARIO] });
+
+    const response = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ statement: 'SELECT approved', source: 'hubble' }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'VALIDATION_ERROR' },
+    });
+  });
+
   it('rejects submission when the engine changes during governance lookup', async () => {
     const ctx = await createTestContext({
       scenarios: [UNAPPROVED_SCENARIO],
