@@ -71,6 +71,8 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
         { steps: [{ id: 'st1', name: 'S', statement: 'SELECT 1' }] },
       ]),
       datasourceId: 'trino-default',
+
+      principalSnapshot: { user: 'alice' },
     });
     expect(await service.isWorkflowApproved(workflow)).toBe(true);
     await db.close();
@@ -107,6 +109,8 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
         { steps: [{ id: 'st1', name: 'S', statement: 'SELECT wf' }] },
       ]),
       datasourceId: 'trino-default',
+
+      principalSnapshot: { user: 'alice' },
     });
     await links.upsert('workflow', workflow.id, {
       path: `workflows/${workflow.id}.yaml`,

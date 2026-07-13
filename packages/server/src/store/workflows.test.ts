@@ -76,6 +76,8 @@ for (const backend of dbBackends) {
           stages: sampleStages,
           cron: '0 0 * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         expect(created.id).toMatch(/^wfl_/);
         expect(created.enabled).toBe(true);
@@ -100,12 +102,16 @@ for (const backend of dbBackends) {
           stages: sampleStages,
           cron: '* * * * *',
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         await repo.create('bob', {
           name: 'manual',
           stages: sampleStages,
           cron: null,
           ...ds,
+
+          principalSnapshot: { user: 'bob' },
         });
         await repo.create('carol', {
           name: 'off',
@@ -113,6 +119,8 @@ for (const backend of dbBackends) {
           cron: '* * * * *',
           enabled: false,
           ...ds,
+
+          principalSnapshot: { user: 'carol' },
         });
         const enabled = await repo.listAllEnabled();
         expect(enabled.map((w) => w.name).sort()).toEqual(['cron']);
@@ -127,6 +135,8 @@ for (const backend of dbBackends) {
           name: 'w',
           stages: sampleStages,
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const runId = await runs.startRun(
           w,
@@ -169,6 +179,8 @@ for (const backend of dbBackends) {
             { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
           ]),
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const runId = await runs.startRun(
           workflow,
@@ -207,6 +219,8 @@ for (const backend of dbBackends) {
             { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
           ]),
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const runId = await runs.startRun(
           workflow,
@@ -243,6 +257,8 @@ for (const backend of dbBackends) {
               { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
             ]),
             ...ds,
+
+            principalSnapshot: { user: 'alice' },
           });
           const runId = await runs.startRun(
             workflow,
@@ -282,6 +298,8 @@ for (const backend of dbBackends) {
           name: 'claim',
           stages: sampleStages,
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const start = () =>
           runs.startRun(workflow, 'manual', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
@@ -303,6 +321,8 @@ for (const backend of dbBackends) {
           name: 'deleted target',
           stages: sampleStages,
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         await workflows.delete('alice', workflow.id);
 
@@ -320,6 +340,8 @@ for (const backend of dbBackends) {
           name: 'w',
           stages: sampleStages,
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const runId = await runs.startRun(
           w,
@@ -350,11 +372,15 @@ for (const backend of dbBackends) {
           name: 'first',
           stages: sampleStages,
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const second = await workflows.create('alice', {
           name: 'second',
           stages: sampleStages,
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const firstRun = await runs.startRun(
           first,
@@ -400,6 +426,8 @@ for (const backend of dbBackends) {
           name: 'list',
           stages: sampleStages,
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         for (let minute = 0; minute < 2; minute += 1) {
           const timestamp = `2026-01-01T00:0${minute}:00.000Z`;
@@ -427,6 +455,8 @@ for (const backend of dbBackends) {
           name: 'w',
           stages: sampleStages,
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const runId = await runs.startRun(
           w,
@@ -456,6 +486,8 @@ for (const backend of dbBackends) {
             { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
           ]),
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         for (let i = 0; i < 4; i++) {
           const ts = `2026-01-01T00:0${i}:00.000Z`;
@@ -494,6 +526,8 @@ for (const backend of dbBackends) {
               { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
             ]),
             ...ds,
+
+            principalSnapshot: { user: 'alice' },
           });
           const firstRunId = await runs.startRun(
             workflow,
@@ -550,6 +584,8 @@ for (const backend of dbBackends) {
             { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
           ]),
           ...ds,
+
+          principalSnapshot: { user: 'alice' },
         });
         const runId = await runs.startRun(
           w,

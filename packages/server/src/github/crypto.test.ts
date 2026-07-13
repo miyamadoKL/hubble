@@ -1,4 +1,3 @@
-import { createCipheriv } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { decryptToken, encryptToken, tokenNeedsRewrap } from './crypto';
 
@@ -38,11 +37,9 @@ describe('github crypto', () => {
     expect(tokenNeedsRewrap(KEYRING, payload)).toBe(true);
   });
 
-  it('decrypts the legacy three-part payload with any configured raw key', () => {
-    const payload = legacyPayload(OLD_KEY, 'gho_legacy_token');
-
-    expect(decryptToken(KEYRING, payload)).toBe('gho_legacy_token');
-    expect(tokenNeedsRewrap(KEYRING, payload)).toBe(true);
+  it('rejects the removed three-part payload', () => {
+    expect(() => decryptToken(KEYRING, 'a.b.c')).toThrow('Invalid encrypted token payload format');
+    expect(tokenNeedsRewrap(KEYRING, 'a.b.c')).toBe(true);
   });
 
   it('rejects an envelope whose key ID is not configured', () => {
@@ -50,10 +47,3 @@ describe('github crypto', () => {
     expect(() => decryptToken(KEYRING, payload)).toThrow("unknown key ID 'missing'");
   });
 });
-
-function legacyPayload(key: Buffer, plaintext: string): string {
-  const iv = Buffer.alloc(12, 3);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [iv, ciphertext, cipher.getAuthTag()].map((part) => part.toString('base64')).join('.');
-}

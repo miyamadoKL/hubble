@@ -329,6 +329,8 @@ describe('schedule datasource persistence', () => {
       statement: 'SELECT 1',
       cron: '* * * * *',
       datasourceId: 'removed-ds',
+
+      principalSnapshot: { user: 'alice' },
     });
 
     const { runId } = await scheduler.runManual(schedule);

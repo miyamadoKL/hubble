@@ -267,6 +267,8 @@ describe('WorkflowRunner', () => {
         { steps: [{ id: 'st_c', name: 'C', statement: 'STAGE1_C' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(w);
     await h.runner.whenIdle();
@@ -308,6 +310,8 @@ describe('WorkflowRunner', () => {
         },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
 
     const { runId } = await h.runner.runManual(workflow);
@@ -328,6 +332,8 @@ describe('WorkflowRunner', () => {
         { steps: [{ id: 'st_pending', name: 'Pending', statement: 'SELECT 1' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const gate = deferred();
     const startReached = deferred();
@@ -379,6 +385,8 @@ describe('WorkflowRunner', () => {
         { steps: [{ id: 'st_next', name: 'Next', statement: 'NEVER_RUN' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(w);
     await h.runner.whenIdle();
@@ -421,6 +429,8 @@ describe('WorkflowRunner', () => {
         { steps: [{ id: 'st_ok', name: 'Ok', statement: 'RUN_AFTER' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(w);
     await h.runner.whenIdle();
@@ -454,6 +464,8 @@ describe('WorkflowRunner', () => {
       ]),
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(w);
     await h.runner.whenIdle();
@@ -487,6 +499,8 @@ describe('WorkflowRunner', () => {
       ]),
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(workflow);
     await vi.waitFor(() => expect(h.sleeps).toEqual([30_000]));
@@ -524,6 +538,8 @@ describe('WorkflowRunner', () => {
       ]),
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
 
     const { runId } = await h.runner.runManual(workflow);
@@ -563,6 +579,8 @@ describe('WorkflowRunner', () => {
         { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_BIG' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(w);
     await h.runner.whenIdle();
@@ -606,6 +624,8 @@ defaultRole: trino-prod-only
           },
         ]),
         datasourceId: 'trino-prod',
+
+        principalSnapshot: { user: 'alice' },
       });
       const { runId } = await h.runner.runManual(w);
       await h.runner.whenIdle();
@@ -642,6 +662,8 @@ defaultRole: trino-prod-only
         { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_ROWS' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(w);
     await h.runner.whenIdle();
@@ -673,6 +695,8 @@ defaultRole: trino-prod-only
         { steps: [{ id: 'st_link', name: 'Link', statement: 'LINK_FAILURE' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const linkError = new Error('DB link failed');
     vi.spyOn(h.runs, 'finishStep').mockRejectedValueOnce(linkError);
@@ -709,6 +733,8 @@ defaultRole: trino-prod-only
         { steps: [{ id: 'st_link', name: 'Link', statement: 'LINK_RESPONSE_LOST' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const finishStep = h.runs.finishStep.bind(h.runs);
     const responseLost = new Error('commit response lost');
@@ -754,6 +780,8 @@ defaultRole: trino-prod-only
         { steps: [{ id: 'st_upload', name: 'Upload', statement: 'UPLOAD_ABORT' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(workflow);
     await store.reachedUpload;
@@ -794,6 +822,8 @@ defaultRole: trino-prod-only
         },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(workflow);
     await store.reachedUpload;
@@ -820,6 +850,8 @@ defaultRole: trino-prod-only
         { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT 1' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const runId = await h.runs.startRun(
       w,
@@ -857,6 +889,8 @@ describe('WorkflowRunner GitHub governance', () => {
         { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_GOV' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.runner.start();
     await h.runner.tick();
@@ -904,6 +938,8 @@ describe('WorkflowRunner GitHub governance', () => {
         { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_GOV_MANUAL' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.runner.runManual(w);
     await h.runner.whenIdle();
@@ -934,6 +970,8 @@ describe('WorkflowRunner GitHub governance', () => {
         { steps: [{ id: 'st_x', name: 'X', statement: 'SELECT_GOV_OK' }] },
       ]),
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.links.upsert('workflow', w.id, {
       path: `workflows/${w.id}.yaml`,

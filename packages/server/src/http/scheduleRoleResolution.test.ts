@@ -20,12 +20,6 @@ const SELECT_SNAPSHOT: FakeScenario = {
   pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]], state: 'FINISHED' }],
 };
 
-const SELECT_LEGACY: FakeScenario = {
-  match: 'legacy_value',
-  trinoId: 'q_legacy',
-  pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]], state: 'FINISHED' }],
-};
-
 let tempDir: string | undefined;
 
 afterEach(() => {
@@ -135,45 +129,4 @@ describe('schedule execution role resolution', () => {
       await ctx.services.shutdown();
     },
   );
-
-  it('keeps the legacy owner-string fallback when no snapshot exists', async () => {
-    const cwd = makeTempDir();
-    writeRbac(
-      cwd,
-      `  - email: legacy@example.com
-    role: runner`,
-    );
-    const headers = proxyHeaders({ email: 'legacy@example.com' });
-    const ctx = await createTestContext({
-      cwd,
-      scenarios: [VALIDATE_OK, SELECT_LEGACY],
-      env: { AUTH_MODE: 'proxy', AUTH_USER_MAPPING: 'email' },
-      remoteAddress: () => '127.0.0.1',
-    });
-
-    const record = await ctx.services.schedules.create('legacy@example.com', {
-      name: 'legacy',
-      statement: 'SELECT 1 AS legacy_value',
-      cron: '* * * * *',
-      datasourceId: ctx.services.defaultDatasourceId,
-    });
-
-    const runRes = await ctx.app.request(`/api/schedules/${record.id}/run`, {
-      method: 'POST',
-      headers,
-    });
-    expect(runRes.status).toBe(202);
-    await ctx.services.scheduler.whenIdle();
-
-    const runs = scheduleRunsResponseSchema.parse(
-      await (
-        await ctx.app.request(`/api/schedules/${record.id}/runs`, {
-          headers,
-        })
-      ).json(),
-    );
-    expect(runs.items[0]?.status).toBe('success');
-    expect(runs.items[0]?.rowCount).toBe(1);
-    await ctx.services.shutdown();
-  });
 });

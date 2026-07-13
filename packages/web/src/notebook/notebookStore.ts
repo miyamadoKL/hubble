@@ -288,12 +288,6 @@ const workspaceSnapshotSchema = z.object({
   draftIds: z.array(z.string()),
 });
 
-const legacyWorkspaceSnapshotSchema = z.object({
-  openIds: z.array(z.string()),
-  activeId: z.string().nullable(),
-  draftIds: z.array(z.string()),
-});
-
 const workspaceDraftIdsSchema = z.object({ draftIds: z.array(z.string()) });
 
 // SSR やプライベートブラウジング等で localStorage が使えない環境でも例外で
@@ -600,12 +594,8 @@ export function readWorkspaceSnapshot(): WorkspaceSnapshot | null {
     const value: unknown = JSON.parse(raw);
     const parsed = workspaceSnapshotSchema.safeParse(value);
     if (parsed.success) return parsed.data;
-    const legacy = legacyWorkspaceSnapshotSchema.safeParse(value);
-    if (!legacy.success) {
-      backupWorkspaceRaw(ls, raw);
-      return null;
-    }
-    return { version: 1, ...legacy.data };
+    backupWorkspaceRaw(ls, raw);
+    return null;
   } catch {
     backupWorkspaceRaw(ls, raw);
     return null;

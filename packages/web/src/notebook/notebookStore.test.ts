@@ -772,17 +772,15 @@ describe('workspace persistence', () => {
     expect(snap.activeId).toBe('b');
   });
 
-  test('versionなしworkspace snapshotをversion 1として復元する', () => {
+  test('versionなしworkspace snapshotを拒否して退避する', () => {
     localStorage.setItem(
       'hubble-workspace',
       JSON.stringify({ openIds: ['a'], activeId: 'a', draftIds: [] }),
     );
-    expect(readWorkspaceSnapshot()).toEqual({
-      version: 1,
-      openIds: ['a'],
-      activeId: 'a',
-      draftIds: [],
-    });
+    expect(readWorkspaceSnapshot()).toBeNull();
+    expect(localStorage.getItem('hubble-workspace-backup')).toBe(
+      JSON.stringify({ openIds: ['a'], activeId: 'a', draftIds: [] }),
+    );
   });
 
   test('構造が不正なworkspace snapshotを拒否する', () => {

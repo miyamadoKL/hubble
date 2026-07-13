@@ -29,6 +29,7 @@ import {
 import type { PrincipalIdentity } from '../auth/principal';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
+import { AppError } from '../errors';
 
 const SQL_ID_CHUNK_SIZE = 500;
 
@@ -70,8 +71,7 @@ export interface ScheduleRecord {
   /** 実行先データソース id（作成/更新時に解決して永続化）。 */
   datasourceId: string;
   /**
-   * 作成/更新時点の principal スナップショット。旧レコードでは null で、その場合は
-   * owner 文字列からの従来フォールバックを使う。
+   * 作成/更新時点の principal スナップショット。歴史的な null は読み出せるが、実行時に拒否する。
    */
   principalSnapshot: SchedulePrincipalSnapshot | null;
   createdAt: string;
@@ -97,7 +97,7 @@ export interface CreateScheduleInput {
   /** 実行先データソース id（ルート層で省略時は既定に解決済み）。 */
   datasourceId: string;
   /** 作成時点の principal。email/group assignment を実行時にも再現するため保存する。 */
-  principalSnapshot?: PrincipalIdentity;
+  principalSnapshot: PrincipalIdentity;
 }
 
 /**
@@ -294,6 +294,12 @@ export class ScheduleRepository {
 
   /** 新しいスケジュールを作成する。id は `sch_` プレフィックス付きで採番される。 */
   async create(owner: string, input: CreateScheduleInput): Promise<ScheduleRecord> {
+    if (!input.principalSnapshot) {
+      throw AppError.badRequest(
+        'A principal snapshot is required when creating a schedule',
+        'PRINCIPAL_SNAPSHOT_REQUIRED',
+      );
+    }
     const nowIso = new Date().toISOString();
     // retry 未指定時はスキーマ既定値（zod のデフォルト）を採用する。
     const retry = input.retry ?? retryPolicySchema.parse({});
@@ -309,7 +315,7 @@ export class ScheduleRepository {
       retry,
       notifications: input.notifications ?? defaultScheduleNotifications,
       datasourceId: input.datasourceId,
-      principalSnapshot: input.principalSnapshot ?? null,
+      principalSnapshot: input.principalSnapshot,
       createdAt: nowIso,
       updatedAt: nowIso,
     };

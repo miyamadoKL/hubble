@@ -378,14 +378,13 @@ for (const backend of dbBackends) {
         await repo.clearResultObjects(['jsonl-result']);
         expect(
           await db.query(
-            'SELECT result_object_key, result_columns_json, result_format FROM query_history WHERE id=?',
+            'SELECT result_object_key, result_columns_json FROM query_history WHERE id=?',
             ['h_json'],
           ),
         ).toEqual([
           {
             result_object_key: null,
             result_columns_json: null,
-            result_format: null,
           },
         ]);
         expect(await repo.pruneBefore('2026-01-01T00:00:00.000Z', 10)).toBe(2);

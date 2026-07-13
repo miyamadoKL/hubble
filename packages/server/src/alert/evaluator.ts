@@ -225,6 +225,15 @@ export class AlertEvaluator {
 
   private async evaluateAlert(alert: AlertRecord): Promise<AlertEvalOutcome> {
     const previousState = alert.state;
+    if (!alert.principalSnapshot) {
+      return this.persistOutcome(alert, previousState, {
+        conditionMet: false,
+        observedValue: null,
+        notified: false,
+        errorType: 'PRINCIPAL_SNAPSHOT_REQUIRED',
+        errorMessage: `Alert '${alert.id}' cannot execute without a principal snapshot`,
+      });
+    }
     const alertIdentity = schedulePrincipalIdentity(alert.owner, alert.principalSnapshot);
     const alertRole = resolveRoleForPrincipal(this.deps.getRbac(), alertIdentity);
     const savedQuery = await this.deps.savedQueries.get(

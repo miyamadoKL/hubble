@@ -23,6 +23,7 @@ import {
 import type { PrincipalIdentity } from '../auth/principal';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
+import { AppError } from '../errors';
 import { schedulePrincipalSnapshotSchema, type SchedulePrincipalSnapshot } from './schedules';
 import { likeParam } from './notebooks';
 import { ResultObjectDeletionRepository } from './resultObjectDeletions';
@@ -55,7 +56,7 @@ export interface CreateWorkflowInput {
   cron?: string | null;
   enabled?: boolean;
   retry?: RetryPolicy;
-  principalSnapshot?: PrincipalIdentity;
+  principalSnapshot: PrincipalIdentity;
 }
 
 export interface UpdateWorkflowInput {
@@ -225,6 +226,12 @@ export class WorkflowRepository {
   }
 
   async create(owner: string, input: CreateWorkflowInput): Promise<WorkflowRecord> {
+    if (!input.principalSnapshot) {
+      throw AppError.badRequest(
+        'A principal snapshot is required when creating a workflow',
+        'PRINCIPAL_SNAPSHOT_REQUIRED',
+      );
+    }
     const nowIso = new Date().toISOString();
     const retry = input.retry ?? retryPolicySchema.parse({});
     const record: WorkflowRecord = {
@@ -237,7 +244,7 @@ export class WorkflowRepository {
       cron: input.cron ?? null,
       enabled: input.enabled ?? true,
       retry,
-      principalSnapshot: input.principalSnapshot ?? null,
+      principalSnapshot: input.principalSnapshot,
       createdAt: nowIso,
       updatedAt: nowIso,
     };

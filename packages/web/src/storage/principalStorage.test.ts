@@ -1,5 +1,5 @@
 // 認証主体ごとの browser storage namespace 分離を検証する。
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vitest';
 import {
   __resetPrincipalStorageForTest,
   activatePrincipalStorage,
@@ -43,65 +43,6 @@ describe('principalStorage', () => {
     expect(localStorage.getItem(bobWorkspace)).toBeNull();
     expect(localStorage.getItem(bobDraft)).toBeNull();
     expect(localStorage.getItem(aliceDraft)).toBe('SELECT secret_from_alice');
-  });
-
-  test('auth noneでは旧workspaceとdraftを唯一のprincipalへ移行する', () => {
-    localStorage.setItem('hubble-workspace', '{"openIds":["draft-1"]}');
-    localStorage.setItem('hubble-draft:draft-1', 'SELECT legacy');
-
-    expect(activatePrincipalStorage('technical-user', ALICE_SCOPE, 'none')).toMatchObject({
-      kind: 'ready',
-      legacyData: 'migrated',
-    });
-    expect(localStorage.getItem(principalStorageKey('hubble-workspace'))).toContain('draft-1');
-    expect(localStorage.getItem(`${principalStorageKey('hubble-draft')}:draft-1`)).toBe(
-      'SELECT legacy',
-    );
-    expect(localStorage.getItem('hubble-workspace')).toBeNull();
-    expect(localStorage.getItem('hubble-draft:draft-1')).toBeNull();
-  });
-
-  test('auth noneのdraft移行失敗時は全sourceを維持して新規targetを戻す', () => {
-    localStorage.setItem('hubble-workspace', '{"openIds":["draft-1"]}');
-    localStorage.setItem('hubble-draft:draft-1', 'SELECT legacy');
-    const workspaceTarget = `hubble-workspace:${ALICE_SCOPE}`;
-    const draftTarget = `hubble-draft:${ALICE_SCOPE}:draft-1`;
-    const originalSetItem = Storage.prototype.setItem;
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
-      this: Storage,
-      key,
-      value,
-    ) {
-      if (key === draftTarget) throw new DOMException('quota exceeded', 'QuotaExceededError');
-      return originalSetItem.call(this, key, value);
-    });
-
-    try {
-      expect(activatePrincipalStorage('technical-user', ALICE_SCOPE, 'none')).toMatchObject({
-        kind: 'ready',
-        legacyData: 'migration-failed',
-      });
-    } finally {
-      setItem.mockRestore();
-    }
-
-    expect(localStorage.getItem('hubble-workspace')).toContain('draft-1');
-    expect(localStorage.getItem('hubble-draft:draft-1')).toBe('SELECT legacy');
-    expect(localStorage.getItem(workspaceTarget)).toBeNull();
-    expect(localStorage.getItem(draftTarget)).toBeNull();
-  });
-
-  test('auth proxyでは所有者不明の旧dataを原位置に保全する', () => {
-    localStorage.setItem('hubble-workspace', '{"openIds":["draft-1"]}');
-    localStorage.setItem('hubble-draft:draft-1', 'SELECT legacy');
-
-    expect(activatePrincipalStorage('alice@example.com', ALICE_SCOPE, 'proxy')).toMatchObject({
-      kind: 'ready',
-      legacyData: 'preserved',
-    });
-    expect(localStorage.getItem(principalStorageKey('hubble-workspace'))).toBeNull();
-    expect(localStorage.getItem('hubble-workspace')).not.toBeNull();
-    expect(localStorage.getItem('hubble-draft:draft-1')).toBe('SELECT legacy');
   });
 
   test('同じpage lifetimeでprincipalが変わった場合はreloadを要求する', () => {

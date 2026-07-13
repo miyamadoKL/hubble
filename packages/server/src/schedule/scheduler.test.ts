@@ -189,6 +189,8 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT_OK',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -242,6 +244,8 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT_LEASED',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
 
     await h.scheduler.runManual(schedule);
@@ -273,6 +277,8 @@ describe('Scheduler run matrix', () => {
       cron: '* * * * *',
       notifications: { onFailure: true, channels: ['slack'] },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -304,6 +310,8 @@ describe('Scheduler run matrix', () => {
       retry: { maxAttempts: 1, backoffSeconds: 1, backoffMultiplier: 1 },
       notifications: { onFailure: true, channels: ['slack'] },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.runManual(schedule);
     await started;
@@ -326,6 +334,8 @@ describe('Scheduler run matrix', () => {
       statement: 'SELECT 1',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const gate = deferred();
     const startReached = deferred();
@@ -371,6 +381,8 @@ describe('Scheduler run matrix', () => {
       cron: '* * * * *',
       retry: { maxAttempts: 5, backoffSeconds: 60, backoffMultiplier: 2 },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -423,6 +435,8 @@ describe('Scheduler run matrix', () => {
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       notifications: { onFailure: true, channels: ['slack'] },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -458,6 +472,8 @@ describe('Scheduler run matrix', () => {
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const { runId } = await h.scheduler.runManual(schedule);
     await vi.waitFor(() => expect(h.sleeps).toEqual([30_000]));
@@ -486,6 +502,8 @@ describe('Scheduler run matrix', () => {
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
 
     await h.scheduler.runManual(schedule);
@@ -523,6 +541,8 @@ describe('Scheduler run matrix', () => {
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       notifications: { onFailure: true, channels: ['slack'] },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -565,6 +585,8 @@ defaultRole: trino-prod-only
         statement: 'SELECT 1',
         cron: '* * * * *',
         datasourceId: DEFAULT_DATASOURCE_ID,
+
+        principalSnapshot: { user: 'alice' },
       });
       await h.scheduler.runManual(s);
       await h.scheduler.whenIdle();
@@ -576,6 +598,30 @@ defaultRole: trino-prod-only
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('blocks a historical schedule when its principal snapshot is missing', async () => {
+    h = await makeHarness([VALIDATE_OK]);
+    const schedule = await h.schedules.create('alice', {
+      name: 'missing snapshot',
+      statement: 'SELECT 1',
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+      principalSnapshot: { user: 'alice' },
+    });
+    await h.db.run('UPDATE schedules SET principal_snapshot = NULL WHERE id = ?', [schedule.id]);
+    const historical = await h.schedules.getById(schedule.id);
+    expect(historical?.principalSnapshot).toBeNull();
+
+    await h.scheduler.runManual(historical!);
+    await h.scheduler.whenIdle();
+
+    const [run] = await h.runs.list(schedule.id, 10);
+    expect(run).toMatchObject({
+      status: 'blocked',
+      errorType: 'PRINCIPAL_SNAPSHOT_REQUIRED',
+    });
+    expect(h.fake.activeCount).toBe(0);
   });
 
   it('blocks (no retry) when Query Guard enforce decides block', async () => {
@@ -600,6 +646,8 @@ defaultRole: trino-prod-only
       cron: '* * * * *',
       retry: { maxAttempts: 5, backoffSeconds: 60, backoffMultiplier: 2 },
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.runManual(s);
     await h.scheduler.whenIdle();
@@ -647,6 +695,8 @@ describe('Scheduler overlap and concurrency', () => {
       statement: 'SELECT_HOLD',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.runManual(s);
     // Second manual run must be rejected while the first is in flight.
@@ -674,12 +724,16 @@ describe('Scheduler overlap and concurrency', () => {
       statement: 'SELECT 1 /* SELECT_HOLD first */',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     const second = await h.schedules.create('alice', {
       name: 'second',
       statement: 'SELECT 2 /* SELECT_HOLD second */',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
 
     await h.scheduler.runManual(first);
@@ -712,6 +766,8 @@ describe('Scheduler tick + lifecycle', () => {
       statement: 'SELECT_TICK',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     // Start (seeds nextFire from now). enabled stays false so no real timer runs;
     // we drive tick() manually.
@@ -744,6 +800,8 @@ describe('Scheduler tick + lifecycle', () => {
       statement: 'SELECT 1 /* SELECT_TICK_BLOCKED */',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.tick();
     const blocker = h.admission.tryAcquire('workflow', 'workflow-holder');
@@ -763,6 +821,8 @@ describe('Scheduler tick + lifecycle', () => {
       statement: 'SELECT 1',
       cron: '* * * * *',
       datasourceId: DEFAULT_DATASOURCE_ID,
+
+      principalSnapshot: { user: 'alice' },
     });
     // Simulate a run left `running` by a crashed process.
     const orphanId = await h.runs.start({
@@ -789,6 +849,8 @@ describe('Scheduler disabled', () => {
         statement: 'SELECT 1',
         cron: '* * * * *',
         datasourceId: DEFAULT_DATASOURCE_ID,
+
+        principalSnapshot: { user: 'alice' },
       });
       const orphanId = await h.runs.start({
         scheduleId: s.id,

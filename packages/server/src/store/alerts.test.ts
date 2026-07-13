@@ -36,6 +36,8 @@ for (const backend of dbBackends) {
         selector: 'max',
         cron: '*/5 * * * *',
         notifications: { channels: ['slack'] },
+
+        principalSnapshot: { user: 'alice' },
       });
       expect(created.id).toMatch(/^alt_/);
       expect(created.state).toBe('unknown');
@@ -65,6 +67,8 @@ for (const backend of dbBackends) {
         op: '>',
         value: '1',
         cron: '* * * * *',
+
+        principalSnapshot: { user: 'alice' },
       });
       const muted = await repo.create('alice', {
         name: 'muted',
@@ -74,6 +78,8 @@ for (const backend of dbBackends) {
         value: '1',
         cron: '* * * * *',
         muted: true,
+
+        principalSnapshot: { user: 'alice' },
       });
       const active = await repo.listAllUnmuted();
       expect(active.map((a) => a.id)).not.toContain(muted.id);

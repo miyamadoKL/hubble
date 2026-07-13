@@ -293,7 +293,6 @@ describe('query', () => {
       catalog: 'tpch',
       schema: 'tiny',
       sessionProperties: { query_max_run_time: '5m' },
-      source: 'hubble',
       notebookId: 'nb1',
       cellId: 'c1',
       maxRows: 100000,
@@ -303,6 +302,12 @@ describe('query', () => {
 
   it('rejects an empty statement', () => {
     expect(createQueryRequestSchema.safeParse({ statement: '' }).success).toBe(false);
+  });
+
+  it('rejects the deprecated source field', () => {
+    expect(
+      createQueryRequestSchema.safeParse({ statement: 'SELECT 1', source: 'hubble' }).success,
+    ).toBe(false);
   });
 
   it('rejects an oversized statement and too many session properties', () => {

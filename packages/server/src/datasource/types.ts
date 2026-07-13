@@ -1,8 +1,8 @@
 /**
  * データソース設定の解決済み型定義。
  *
- * `loadDatasources()` が YAML または後方互換フォールバックから組み立てる
- * 実行時のデータソース表現。`password` を含むが、ログや API には出さない。
+ * `loadDatasources()` が YAML から組み立てる実行時のデータソース表現。
+ * `password` を含むが、ログや API には出さない。
  */
 import type { DatasourceKind } from '@hubble/contracts';
 
