@@ -18,11 +18,6 @@
 import type { TrinoRequestContext } from '../trino/types';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import type { HistoryRepository } from '../store/history';
-import {
-  buildResultParquetObjectKey,
-  RESULT_PARQUET_CONVERSION_ENCODING_VERSION,
-  type ResultParquetConversionJobRepository,
-} from '../store/resultParquetConversionJobs';
 import type { AuditLogger } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { ResultJsonlCapture } from '../resultStore/jsonl';
@@ -39,7 +34,6 @@ export interface QueryServiceParams {
   registry: QueryRegistry;
   db: SqlDatabase;
   history: HistoryRepository;
-  parquetConversionJobs: ResultParquetConversionJobRepository;
   resultStore?: ResultStore;
   /** DB 未関連 object の削除を再試行する durable outbox。 */
   resultObjectDeletions: ResultObjectDeletionQueue;
@@ -175,11 +169,6 @@ export class QueryService {
             await resultCapture.finish();
             const elapsedMs =
               exec.finishedAt !== undefined ? Math.max(exec.finishedAt - exec.submittedAt, 0) : 0;
-            const targetObjectKey = buildResultParquetObjectKey(
-              this.params.resultKeyPrefix ?? 'hubble-results/',
-              exec.queryId,
-            );
-            const nowIso = new Date(this.params.now?.() ?? Date.now()).toISOString();
             await this.params.db.transaction(async (tx) => {
               try {
                 // 履歴 repository の呼び出し自体は root object を経由するため、
@@ -201,7 +190,7 @@ export class QueryService {
                 );
               } catch (error) {
                 // DB commit 応答だけを失った wrapper でも、同じ tx に link が
-                // 残っていれば二重 cleanup せず job 登録を続ける。
+                // 残っていれば二重 cleanup を避ける。
                 const linked = await tx.query<{ id: string }>(
                   `SELECT id FROM query_history
                    WHERE id=? AND result_object_key=? AND result_expires_at IS NOT NULL`,
@@ -209,16 +198,6 @@ export class QueryService {
                 );
                 if (linked.length === 0) throw error;
               }
-              await this.params.parquetConversionJobs.enqueue(
-                {
-                  historyId: exec.queryId,
-                  sourceObjectKey: resultCapture.key,
-                  targetObjectKey,
-                  encodingVersion: RESULT_PARQUET_CONVERSION_ENCODING_VERSION,
-                },
-                nowIso,
-                tx,
-              );
             });
             resultObjectLinked = true;
           } catch (err) {

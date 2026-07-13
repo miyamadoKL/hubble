@@ -147,7 +147,7 @@ describe('openDatabase with the real initial migration', () => {
     expect(migrations[0]!.version).toBe(1);
   });
 
-  it('creates nullable Parquet columns and partial lifecycle indexes', async () => {
+  it('keeps Parquet schema tombstones and restores the JSONL retention index', async () => {
     const db = await openMemoryDatabase();
     const columns = await db.query<{ name: string; notnull: number }>(
       'PRAGMA table_info(query_history)',
@@ -164,20 +164,14 @@ describe('openDatabase with the real initial migration', () => {
          ('idx_query_history_retention', 'idx_query_history_parquet_expiry_cursor',
           'idx_query_history_parquet_object_key')`,
     );
-    expect(indexes.map((index) => index.name).sort()).toEqual([
-      'idx_query_history_parquet_expiry_cursor',
-      'idx_query_history_parquet_object_key',
-      'idx_query_history_retention',
-    ]);
+    expect(indexes.map((index) => index.name).sort()).toEqual(['idx_query_history_retention']);
     expect(indexes.find((index) => index.name === 'idx_query_history_retention')?.sql).toMatch(
-      /result_object_key IS NULL AND parquet_object_key IS NULL/,
+      /result_object_key IS NULL/,
     );
-    expect(
-      indexes.find((index) => index.name === 'idx_query_history_parquet_expiry_cursor')?.sql,
-    ).toMatch(/parquet_object_key IS NOT NULL AND parquet_expires_at IS NOT NULL/);
-    expect(
-      indexes.find((index) => index.name === 'idx_query_history_parquet_object_key')?.sql,
-    ).toMatch(/parquet_object_key IS NOT NULL/);
+    expect(indexes.find((index) => index.name === 'idx_query_history_retention')?.sql).not.toMatch(
+      /parquet_object_key/,
+    );
+    expect(await tableNames(db)).toContain('result_parquet_conversion_jobs');
     await db.close();
   });
 });

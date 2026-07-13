@@ -10,7 +10,7 @@ import { createApp } from '../app';
 import type { AuthVariables, RemoteAddressFn } from '../auth/middleware';
 import type { FakeScenario } from './fakeTrino';
 import { FakeTrino } from './fakeTrino';
-import type { DuckdbPersistedProfileReader, ResultStore } from '../resultStore';
+import type { ResultStore } from '../resultStore';
 import type { AiProvider } from '../ai/provider';
 
 /**
@@ -112,8 +112,6 @@ export async function createTestContext(
     reloadLogWarn?: (message: string) => void;
     resultStore?: ResultStore;
     resultStoreLogWarn?: (message: string, err?: unknown) => void;
-    duckdbProfile?: DuckdbPersistedProfileReader;
-    duckdbProfileLogWarn?: (message: string, err?: unknown) => void;
     sheetsClientFactory?: import('../query/exportSheets').SheetsClientFactory;
     /** Override fetch for non-Trino HTTP (e.g. GitHub API). When set, used instead of fake.fetch. */
     fetchImpl?: typeof fetch;
@@ -181,8 +179,6 @@ export async function createTestContext(
     reloadLogWarn: options.reloadLogWarn,
     resultStore: options.resultStore,
     resultStoreLogWarn: options.resultStoreLogWarn,
-    duckdbProfile: options.duckdbProfile,
-    duckdbProfileLogWarn: options.duckdbProfileLogWarn,
     resultCleanupSetTimer: () => ({ clear: () => {} }),
     aiProvider: options.aiProvider,
   });

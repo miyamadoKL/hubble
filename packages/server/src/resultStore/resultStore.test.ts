@@ -5,24 +5,15 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { S3Client, S3ServiceException } from '@aws-sdk/client-s3';
+import { S3Client } from '@aws-sdk/client-s3';
 import type { QueryRowsPage, QuerySnapshot } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 import {
-  memoryResultStoreValidator,
-  memoryResultStoreVersionId,
-  readMemoryResultRange,
-  validateMemoryResultRequest,
-} from '../test/memoryResultStore';
-import {
   NoneResultStore,
-  RESULT_STORE_MAX_RANGE_BYTES,
-  ResultStoreError,
   type DeleteExpiredResult,
   type ExpiredResultObject,
   type ResultArtifactFormat,
-  type ResultStoreRequestOptions,
   type ResultStore,
 } from './store';
 import {
@@ -41,22 +32,6 @@ const COLUMNS = [
   { name: 'id', type: 'bigint' },
   { name: 'note', type: 'varchar' },
 ];
-
-function s3ServiceError(status: number): S3ServiceException {
-  return new S3ServiceException({
-    name: `S3Status${status}`,
-    $fault: 'client',
-    $metadata: { httpStatusCode: status },
-    message: `S3 status ${status}`,
-  });
-}
-
-function expectedResultStoreErrorCode(status: number): string {
-  if (status === 404) return 'not_found';
-  if (status === 412) return 'precondition_failed';
-  if (status === 416) return 'range_not_satisfiable';
-  return 'backend_error';
-}
 
 function manyRows(rowCount: number): FakeScenario {
   return {
@@ -86,28 +61,6 @@ class MemoryResultStore implements ResultStore {
     const object = this.objects.get(key);
     if (!object) throw new Error(`missing object: ${key}`);
     return Readable.from(object);
-  }
-
-  async stat(key: string, options?: ResultStoreRequestOptions) {
-    const object = this.objects.get(key);
-    if (!object) throw new Error(`missing object: ${key}`);
-    validateMemoryResultRequest(key, object, options);
-    return {
-      size: object.length,
-      validator: memoryResultStoreValidator(object),
-      versionId: memoryResultStoreVersionId(object),
-    };
-  }
-
-  async readRange(
-    key: string,
-    offset: number,
-    length: number,
-    options?: ResultStoreRequestOptions,
-  ): Promise<Buffer> {
-    const object = this.objects.get(key);
-    if (!object) throw new Error(`missing object: ${key}`);
-    return readMemoryResultRange(key, object, offset, length, options);
   }
 
   async delete(key: string): Promise<void> {
@@ -255,12 +208,6 @@ describe('ResultStore persistence', () => {
       },
       async getStream(key) {
         return Readable.from(objects.get(key) ?? Buffer.alloc(0));
-      },
-      async stat(key) {
-        return { size: objects.get(key)?.length ?? 0 };
-      },
-      async readRange(key, offset, length) {
-        return Buffer.from((objects.get(key) ?? Buffer.alloc(0)).subarray(offset, offset + length));
       },
       async delete() {},
       async deleteExpired() {
@@ -414,6 +361,8 @@ describe('ResultStore persistence', () => {
     const queryId = await submitPersistQuery(ctx);
     const ref = await waitForResultRef(ctx, queryId);
     expect(ref.resultObjectKey).toBe(`hubble-results/${queryId}.jsonl.zst`);
+    expect([...store.objects.keys()]).toEqual([ref.resultObjectKey]);
+    expect([...store.objects.keys()].some((key) => key.endsWith('.parquet'))).toBe(false);
     expect(ref.rowCount).toBe(20);
     expect(ref.columns).toEqual(COLUMNS);
     expect(ref.format).toBe('jsonl.zst');
@@ -501,42 +450,6 @@ describe('ResultStore persistence', () => {
 
     releaseUpdate();
     await ctx.services.queries.drain();
-  });
-
-  it('JSONL link と Parquet conversion job を同じ transaction で enqueue する', async () => {
-    const store = new MemoryResultStore();
-    const ctx = await createTestContext({ scenarios: [manyRows(3)], resultStore: store });
-
-    const queryId = await submitPersistQuery(ctx);
-    await ctx.services.queries.drain();
-
-    expect(await ctx.services.history.getResultRef('admin', queryId)).toMatchObject({
-      resultObjectKey: `hubble-results/${queryId}.jsonl.zst`,
-    });
-    expect(await ctx.services.parquetConversionJobs.get(queryId)).toMatchObject({
-      historyId: queryId,
-      sourceObjectKey: `hubble-results/${queryId}.jsonl.zst`,
-      targetObjectKey: `hubble-results/${queryId}.parquet`,
-      encodingVersion: '1',
-      status: 'pending',
-      attempts: 0,
-    });
-  });
-
-  it('conversion job enqueue failure rolls back the JSONL history link', async () => {
-    const store = new MemoryResultStore();
-    const ctx = await createTestContext({ scenarios: [manyRows(2)], resultStore: store });
-    vi.spyOn(ctx.services.parquetConversionJobs, 'enqueue').mockRejectedValueOnce(
-      new Error('job database unavailable'),
-    );
-
-    const queryId = await submitPersistQuery(ctx);
-    await ctx.services.queries.drain();
-
-    const jsonlKey = `hubble-results/${queryId}.jsonl.zst`;
-    expect(await ctx.services.history.getResultRef('admin', queryId)).toBeUndefined();
-    expect(await ctx.services.parquetConversionJobs.get(queryId)).toBeUndefined();
-    expect(store.deleted).toContain(jsonlKey);
   });
 
   it('query result の DB 関連付けに失敗した場合は upload 済み object を削除する', async () => {
@@ -828,12 +741,6 @@ defaultRole: allowed
       async getStream() {
         throw new Error('not stored');
       },
-      async stat() {
-        throw new Error('not stored');
-      },
-      async readRange() {
-        throw new Error('not stored');
-      },
       async delete() {},
       async deleteExpired() {
         return { deleted: [], failed: [] };
@@ -857,13 +764,10 @@ defaultRole: allowed
 });
 
 describe('NoneResultStore', () => {
-  it('rejects metadata and range reads with an explicit disabled error', async () => {
+  it('rejects result reads with an explicit disabled error', async () => {
     const store = new NoneResultStore();
 
-    await expect(store.stat('result.jsonl.zst')).rejects.toThrow(
-      'Result store is disabled: result.jsonl.zst',
-    );
-    await expect(store.readRange('result.jsonl.zst', 0, 1)).rejects.toThrow(
+    await expect(store.getStream('result.jsonl.zst')).rejects.toThrow(
       'Result store is disabled: result.jsonl.zst',
     );
   });
@@ -926,7 +830,6 @@ describe('S3ResultStore', () => {
 
     await store.put('prefix/q.jsonl.gz', Readable.from(Buffer.from('x')), 'jsonl.gz');
     await store.put('prefix/q.jsonl.zst', Readable.from(Buffer.from('x')), 'jsonl.zst');
-    await store.put('prefix/q.parquet', Readable.from(Buffer.from('x')), 'parquet');
     await store.getStream('prefix/q.jsonl.gz');
     await store.delete('prefix/q.jsonl.gz');
     await store.close();
@@ -946,381 +849,9 @@ describe('S3ResultStore', () => {
         contentType: 'application/x-ndjson',
         contentEncoding: 'zstd',
       }),
-      expect.objectContaining({
-        bucket: 'bucket',
-        key: 'prefix/q.parquet',
-        format: 'parquet',
-        contentType: 'application/vnd.apache.parquet',
-        contentEncoding: undefined,
-      }),
     ]);
     expect(commands).toEqual(['GetObjectCommand', 'DeleteObjectCommand']);
     expect(destroy).not.toHaveBeenCalled();
-  });
-
-  it('returns metadata and an exact raw byte range with validators', async () => {
-    const calls: Array<{
-      name: string;
-      input: Record<string, unknown>;
-      abortSignal?: AbortSignal;
-    }> = [];
-    const abortController = new AbortController();
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async (
-        command: { constructor: { name: string }; input: Record<string, unknown> },
-        options?: { abortSignal?: AbortSignal },
-      ) => {
-        calls.push({
-          name: command.constructor.name,
-          input: command.input,
-          ...(options?.abortSignal === undefined ? {} : { abortSignal: options.abortSignal }),
-        });
-        if (command.constructor.name === 'HeadObjectCommand') {
-          return { ContentLength: 11, ETag: '"v1"', VersionId: 'version-1' };
-        }
-        return {
-          $metadata: { httpStatusCode: 206 },
-          ContentLength: 4,
-          ContentRange: 'bytes 2-5/11',
-          Body: Readable.from(Buffer.from('2345')),
-        };
-      },
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await expect(
-      store.stat('result.jsonl.zst', {
-        signal: abortController.signal,
-        validator: '"old"',
-        versionId: 'version-0',
-      }),
-    ).resolves.toEqual({ size: 11, validator: '"v1"', versionId: 'version-1' });
-    await expect(
-      store.readRange('result.jsonl.zst', 2, 4, {
-        signal: abortController.signal,
-        validator: '"v1"',
-        versionId: 'version-1',
-      }),
-    ).resolves.toEqual(Buffer.from('2345'));
-
-    expect(calls).toEqual([
-      {
-        name: 'HeadObjectCommand',
-        input: {
-          Bucket: 'bucket',
-          Key: 'result.jsonl.zst',
-          IfMatch: '"old"',
-          VersionId: 'version-0',
-        },
-        abortSignal: abortController.signal,
-      },
-      {
-        name: 'GetObjectCommand',
-        input: {
-          Bucket: 'bucket',
-          Key: 'result.jsonl.zst',
-          Range: 'bytes=2-5',
-          IfMatch: '"v1"',
-          VersionId: 'version-1',
-        },
-        abortSignal: abortController.signal,
-      },
-    ]);
-  });
-
-  it('keeps getStream as a full object request without Range', async () => {
-    let input: Record<string, unknown> | undefined;
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async (command: { input: Record<string, unknown> }) => {
-        input = command.input;
-        return { Body: Readable.from(Buffer.from('body')) };
-      },
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await store.getStream('result.jsonl.gz');
-
-    expect(input).toEqual({ Bucket: 'bucket', Key: 'result.jsonl.gz' });
-  });
-
-  it('rejects a full-body 200 response instead of accepting it as a range', async () => {
-    const body = Readable.from(Buffer.from('full body'));
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async () => ({ $metadata: { httpStatusCode: 200 }, Body: body }),
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await expect(store.readRange('result.jsonl.gz', 0, 4)).rejects.toThrow(/200.*expected 206/);
-    expect(body.destroyed).toBe(true);
-  });
-
-  it.each([404, 412, 500])(
-    'converts S3 stat errors into a stable ResultStoreError (%s)',
-    async (status) => {
-      const error = s3ServiceError(status);
-      const fakeClient = {
-        destroy: vi.fn(),
-        send: async () => {
-          throw error;
-        },
-      };
-      const store = new S3ResultStore(
-        { bucket: 'bucket', region: 'us-east-1' },
-        { client: fakeClient as never },
-      );
-
-      const rejection = store.stat('result.jsonl.gz');
-      await expect(rejection).rejects.toBeInstanceOf(ResultStoreError);
-      await expect(rejection).rejects.toMatchObject({
-        code: expectedResultStoreErrorCode(status),
-        operation: 'stat',
-        backendStatus: status,
-        cause: error,
-        message: expect.stringContaining(`stat failed for result.jsonl.gz (HTTP status ${status})`),
-      });
-    },
-  );
-
-  it.each([404, 412, 416, 500])(
-    'converts S3 readRange errors into a stable ResultStoreError (%s)',
-    async (status) => {
-      const error = s3ServiceError(status);
-      const fakeClient = {
-        destroy: vi.fn(),
-        send: async () => {
-          throw error;
-        },
-      };
-      const store = new S3ResultStore(
-        { bucket: 'bucket', region: 'us-east-1' },
-        { client: fakeClient as never },
-      );
-
-      const rejection = store.readRange('result.jsonl.gz', 0, 1);
-      await expect(rejection).rejects.toBeInstanceOf(ResultStoreError);
-      await expect(rejection).rejects.toMatchObject({
-        code: expectedResultStoreErrorCode(status),
-        operation: 'readRange',
-        backendStatus: status,
-        cause: error,
-        message: expect.stringContaining(
-          `readRange failed for result.jsonl.gz (HTTP status ${status})`,
-        ),
-      });
-    },
-  );
-
-  it('preserves a non-S3 AbortError without wrapping it', async () => {
-    const abortError = new Error('request aborted');
-    abortError.name = 'AbortError';
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async () => {
-        throw abortError;
-      },
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await expect(store.readRange('result.jsonl.gz', 0, 1)).rejects.toBe(abortError);
-  });
-
-  it('rejects a mismatched Content-Range response', async () => {
-    const body = Readable.from(Buffer.from('2345'));
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async () => ({
-        $metadata: { httpStatusCode: 206 },
-        ContentLength: 4,
-        ContentRange: 'bytes 1-4/11',
-        Body: body,
-      }),
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await expect(store.readRange('result.jsonl.gz', 2, 4)).rejects.toThrow(
-      /Content-Range mismatch/,
-    );
-    expect(body.destroyed).toBe(true);
-  });
-
-  it('rejects a short range response body', async () => {
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async () => ({
-        $metadata: { httpStatusCode: 206 },
-        ContentLength: 4,
-        ContentRange: 'bytes 2-5/11',
-        Body: Readable.from(Buffer.from('23')),
-      }),
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await expect(store.readRange('result.jsonl.gz', 2, 4)).rejects.toThrow(
-      /body length mismatch.*2.*expected 4/,
-    );
-  });
-
-  it.each([undefined, -1, 1.5, 3])(
-    'rejects invalid or mismatched range ContentLength (%s) and destroys the body',
-    async (contentLength) => {
-      const body = Readable.from(Buffer.from('1234'));
-      const fakeClient = {
-        destroy: vi.fn(),
-        send: async () => ({
-          $metadata: { httpStatusCode: 206 },
-          ...(contentLength === undefined ? {} : { ContentLength: contentLength }),
-          ContentRange: 'bytes 0-3/4',
-          Body: body,
-        }),
-      };
-      const store = new S3ResultStore(
-        { bucket: 'bucket', region: 'us-east-1' },
-        { client: fakeClient as never },
-      );
-
-      await expect(store.readRange('result.jsonl.gz', 0, 4)).rejects.toThrow(
-        contentLength === 3 ? /ContentLength mismatch/ : /invalid ContentLength/,
-      );
-      expect(body.destroyed).toBe(true);
-    },
-  );
-
-  it('destroys a range body that exceeds the requested length while reading', async () => {
-    const body = Readable.from([Buffer.from('1234'), Buffer.from('56')]);
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async () => ({
-        $metadata: { httpStatusCode: 206 },
-        ContentLength: 4,
-        ContentRange: 'bytes 0-3/6',
-        Body: body,
-      }),
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await expect(store.readRange('result.jsonl.gz', 0, 4)).rejects.toThrow(
-      /body length mismatch.*6.*expected 4/,
-    );
-    expect(body.destroyed).toBe(true);
-  });
-
-  it('rejects a range response whose body is not a Node stream', async () => {
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async () => ({
-        $metadata: { httpStatusCode: 206 },
-        ContentLength: 4,
-        ContentRange: 'bytes 0-3/4',
-        Body: new Uint8Array([1, 2, 3, 4]),
-      }),
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await expect(store.readRange('result.jsonl.gz', 0, 4)).rejects.toThrow(
-      /body is not a Node stream/,
-    );
-  });
-
-  it.each([undefined, 'bytes malformed/11', 'bytes 0-3/3'])(
-    'rejects missing, malformed, or undersized Content-Range (%s)',
-    async (contentRange) => {
-      const fakeClient = {
-        destroy: vi.fn(),
-        send: async () => ({
-          $metadata: { httpStatusCode: 206 },
-          ContentLength: 4,
-          ...(contentRange === undefined ? {} : { ContentRange: contentRange }),
-          Body: Readable.from(Buffer.from('1234')),
-        }),
-      };
-      const store = new S3ResultStore(
-        { bucket: 'bucket', region: 'us-east-1' },
-        { client: fakeClient as never },
-      );
-
-      await expect(store.readRange('result.jsonl.gz', 0, 4)).rejects.toThrow(
-        /Content-Range mismatch/,
-      );
-    },
-  );
-
-  it('rejects invalid ranges before sending a command', async () => {
-    const send = vi.fn();
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: { destroy: vi.fn(), send } as never },
-    );
-
-    await expect(store.readRange('result.jsonl.gz', -1, 1)).rejects.toThrow(/range offset/);
-    await expect(store.readRange('result.jsonl.gz', 0, 0)).rejects.toThrow(/range length/);
-    await expect(
-      store.readRange('result.jsonl.gz', 0, RESULT_STORE_MAX_RANGE_BYTES + 1),
-    ).rejects.toThrow(/exceeds maximum/);
-    await expect(store.readRange('result.jsonl.gz', Number.MAX_SAFE_INTEGER, 2)).rejects.toThrow(
-      /range overflow/,
-    );
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it.each([undefined, -1, 1.5])(
-    'rejects missing or invalid HEAD ContentLength (%s)',
-    async (size) => {
-      const fakeClient = {
-        destroy: vi.fn(),
-        send: async () => ({
-          ETag: '"v1"',
-          ...(size === undefined ? {} : { ContentLength: size }),
-        }),
-      };
-      const store = new S3ResultStore(
-        { bucket: 'bucket', region: 'us-east-1' },
-        { client: fakeClient as never },
-      );
-
-      await expect(store.stat('result.jsonl.gz')).rejects.toThrow(/invalid ContentLength/);
-    },
-  );
-
-  it.each([412, 416])('includes the HTTP status in range errors (%s)', async (status) => {
-    const fakeClient = {
-      destroy: vi.fn(),
-      send: async () => ({ $metadata: { httpStatusCode: status } }),
-    };
-    const store = new S3ResultStore(
-      { bucket: 'bucket', region: 'us-east-1' },
-      { client: fakeClient as never },
-    );
-
-    await expect(store.readRange('result.jsonl.gz', 0, 1)).rejects.toThrow(
-      new RegExp(`status ${status}`),
-    );
   });
 
   it('期限切れ object を最大8並行で削除する', async () => {

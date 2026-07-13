@@ -64,15 +64,6 @@ ENV CI=true
 RUN pnpm install --prod --frozen-lockfile --filter "@hubble/server..."
 
 # ---------------------------------------------------------------------------
-# duckdb-httpfs: linux/amd64 用の DuckDB extension を production image に含める
-# ---------------------------------------------------------------------------
-FROM deps AS duckdb-httpfs
-# aws と httpfs は image build 時に取得する。runtime gate は autoload と
-# autoinstall を無効にするため、最初の request は network access を発生させない。
-RUN pnpm --filter @hubble/server exec node --input-type=module -e "import { DuckDBInstance } from '@duckdb/node-api'; const instance = await DuckDBInstance.create(':memory:'); const connection = await instance.connect(); await connection.run('INSTALL aws'); await connection.run('INSTALL httpfs'); connection.disconnectSync(); instance.closeSync();"
-RUN mkdir -p /home/node/.duckdb && cp -a /root/.duckdb/extensions /home/node/.duckdb/extensions && chown -R node:node /home/node/.duckdb
-
-# ---------------------------------------------------------------------------
 # runtime: minimal image running the server with tsx
 # ---------------------------------------------------------------------------
 FROM base AS runtime
@@ -90,7 +81,6 @@ COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=node:node /app/packages/contracts/node_modules ./packages/contracts/node_modules
 COPY --from=prod-deps --chown=node:node /app/packages/server/node_modules ./packages/server/node_modules
-COPY --from=duckdb-httpfs --chown=node:node /home/node/.duckdb /home/node/.duckdb
 
 # Server + contracts sources (executed directly via tsx) and their manifests.
 COPY --chown=node:node packages/contracts/package.json ./packages/contracts/package.json

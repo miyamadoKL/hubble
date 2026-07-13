@@ -44,24 +44,14 @@ multi-stage の流れ：
 4. **runtime** — server / contracts の **TS ソース**（tsx で直接実行）、web の dist、
    本番 `node_modules` を配置。非 root（`node`）で実行。
 
-Batch 5 の Parquet production smoke gate は linux/amd64 を対象にしています。
-arm64 のデプロイ対象はまだ宣言していないため、arm64 イメージを運用へ投入する場合は、同じ smoke を実行する別の検証を追加してください。
+結果保存は JSONL を正本とし、zstd を保存形式、gzip を読み取り互換形式として扱います。
+本番イメージには結果の変換用 native extension や専用の外部サービスを含めません。
+結果読み取りの認可、ETag、期限切れ掃除は通常の server 経路で実行します。
 
-DuckDB の direct S3 読み出しは Docker production smoke とは別の `DuckDB direct S3 / MinIO credential gate` で検証します。
-この CI job は MinIO の disposable credential で bucket 作成、A1 互換 ZSTD Parquet の upload、DuckDB `httpfs` の直接読取を実行します。
-本番の S3 credential や endpoint を CI に渡す必要はありません。
-bucket と policy user の bootstrap だけに MinIO root credential を使い、Parquet upload は `S3ResultStore` の writer identity、stat と DuckDB の直接読取は prefix-scoped reader identity を使います。
-gate bucket は policy fixture と同じ `hubble-duckdb-s3-gate` に固定しており、別 bucket への override は許可していません。
+migration 0021 と 0022 は既存データとの互換性のため変更せず、追加済みの非稼働列とテーブルを残します。
+migration 0023 はデータを削除せず、非稼働経路専用の index を削除して JSONL 用 retention index を再作成します。
 
-C の check context は、最初の CI 実行後に repository の branch protection または ruleset で required status check に登録してください。
-E の persisted search/profile route へ進む条件は、C が credential、region、endpoint、path-style、Parquet の件数、projection、filter、不正 credential の拒否を再現可能な形で検証できることです。
-IRSA、ECS task role、EC2 instance profile、AWS profile、session token を本番で使う場合は、本番と同じ配備 identity を使う staging probe も E 着手前に通します。
-C の直接読取、credential rejection、または baked extension が失敗した場合は E を保留し、先に D の HTTP Range proxy で server 認可と Range 読み出しを検証します。
-Range の観測精度だけが不足していて直接読取が成功している場合は、それだけを D 移行理由にしません。
-MinIO の標準 access log から Range GET の発行回数を安定して観測できないため、C は Range の発行回数や転送量を合格条件にしません。
-運用上の直接読取契約と検証手順は [`operations.md` §9.4.2](operations.md#942-duckdb-直接-s3-読み出しの検証ゲート) を参照してください。
-
-イメージには次が既定で入っています（`docker run -e ...` で上書き可能）。
+イメージには次が既定で入っています
 
 | 変数         | 既定（イメージ）         |
 | ------------ | ------------------------ |

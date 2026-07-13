@@ -36,9 +36,6 @@ interface HistoryRow {
   datasource_id: string;
   result_object_key: string | null;
   result_expires_at: string | null;
-  parquet_object_key: string | null;
-  parquet_expires_at: string | null;
-  parquet_encoding_version: string | null;
   result_columns_json?: string | null;
   result_format?: string | null;
   submitted_at: string;
@@ -89,11 +86,6 @@ export interface HistoryResultRef {
   submittedAt: string;
   resultObjectKey: string;
   resultExpiresAt: string;
-  parquetRef?: {
-    objectKey: string;
-    expiresAt: string;
-    encodingVersion: string;
-  };
   columns?: QueryColumn[];
   format?: ResultFormat;
 }
@@ -108,19 +100,6 @@ export interface ExpiredHistoryResult {
 /** 期限切れ結果を安定した順序でページ走査するためのカーソル。 */
 export interface ExpiredHistoryResultCursor {
   resultExpiresAt: string;
-  id: string;
-}
-
-/** 期限切れ掃除対象の派生 Parquet オブジェクト。JSONL とは別のカーソルで走査する。 */
-export interface ExpiredHistoryParquetResult {
-  id: string;
-  parquetObjectKey: string;
-  parquetExpiresAt: string;
-}
-
-/** 派生 Parquet 結果を安定した順序でページ走査するためのカーソル。 */
-export interface ExpiredHistoryParquetResultCursor {
-  parquetExpiresAt: string;
   id: string;
 }
 
@@ -228,13 +207,6 @@ export class HistoryRepository {
        WHERE result_object_key IN (${placeholders})`,
       keys,
     );
-    await this.db.run(
-      `UPDATE query_history
-       SET parquet_object_key=NULL, parquet_expires_at=NULL,
-           parquet_encoding_version=NULL
-       WHERE parquet_object_key IN (${placeholders})`,
-      keys,
-    );
   }
 
   /** owner が所有する単一の履歴エントリを id で取得する。存在しなければ undefined。 */
@@ -254,36 +226,6 @@ export class HistoryRepository {
       [id, owner],
     );
     return rows[0] ? rowToResultRef(rows[0]) : undefined;
-  }
-
-  /** worker が owner を持たずに変換対象の履歴を再検証するための参照取得。 */
-  async getResultRefById(id: string): Promise<HistoryResultRef | undefined> {
-    const rows = await this.db.query<HistoryRow>(
-      `SELECT * FROM query_history
-       WHERE id = ? AND result_object_key IS NOT NULL AND result_expires_at IS NOT NULL`,
-      [id],
-    );
-    return rows[0] ? rowToResultRef(rows[0]) : undefined;
-  }
-
-  /** JSONL の参照を検証し、同じ期限を引き継いだ Parquet 参照を一度だけ登録する。 */
-  async setParquetObject(
-    id: string,
-    sourceResultObjectKey: string,
-    parquetKey: string,
-    encodingVersion: string,
-  ): Promise<boolean> {
-    const updated = await this.db.query<{ id: string }>(
-      `UPDATE query_history
-       SET parquet_object_key=?, parquet_expires_at=result_expires_at,
-           parquet_encoding_version=?
-       WHERE id=? AND state='finished'
-         AND result_object_key=? AND result_expires_at IS NOT NULL
-         AND parquet_object_key IS NULL
-       RETURNING id`,
-      [parquetKey, encodingVersion, id, sourceResultObjectKey],
-    );
-    return updated.length > 0;
   }
 
   /** 期限切れ result 参照を失効時刻と id のカーソル順でページ取得する。 */
@@ -319,47 +261,14 @@ export class HistoryRepository {
     }));
   }
 
-  /** JSONL とは独立したカーソルで、期限切れ Parquet 参照をページ取得する。 */
-  async listExpiredParquetResults(
-    nowIso: string,
-    options: { after?: ExpiredHistoryParquetResultCursor; limit?: number } = {},
-  ): Promise<ExpiredHistoryParquetResult[]> {
-    const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
-    const cursorWhere = options.after
-      ? 'AND (parquet_expires_at > ? OR (parquet_expires_at = ? AND id > ?))'
-      : '';
-    const params: SqlParam[] = [nowIso];
-    if (options.after) {
-      params.push(options.after.parquetExpiresAt, options.after.parquetExpiresAt, options.after.id);
-    }
-    params.push(limit);
-    const rows = await this.db.query<{
-      id: string;
-      parquet_object_key: string;
-      parquet_expires_at: string;
-    }>(
-      `SELECT id, parquet_object_key, parquet_expires_at FROM query_history
-       WHERE parquet_object_key IS NOT NULL AND parquet_expires_at IS NOT NULL
-         AND parquet_expires_at <= ? ${cursorWhere}
-       ORDER BY parquet_expires_at ASC, id ASC
-       LIMIT ?`,
-      params,
-    );
-    return rows.map((row) => ({
-      id: row.id,
-      parquetObjectKey: row.parquet_object_key,
-      parquetExpiresAt: row.parquet_expires_at,
-    }));
-  }
-
   /** S3 object 参照を持たず、保持期限を過ぎた履歴を古い順にページ削除する。 */
   async pruneBefore(cutoffIso: string, limit: number): Promise<number> {
     const rows = await this.db.query<{ id: string }>(
       `DELETE FROM query_history
-       WHERE submitted_at < ? AND result_object_key IS NULL AND parquet_object_key IS NULL
+       WHERE submitted_at < ? AND result_object_key IS NULL
          AND id IN (
          SELECT id FROM query_history
-         WHERE submitted_at < ? AND result_object_key IS NULL AND parquet_object_key IS NULL
+         WHERE submitted_at < ? AND result_object_key IS NULL
          ORDER BY submitted_at ASC, id ASC
          LIMIT ?
        )
@@ -454,14 +363,6 @@ function rowToResultRef(row: HistoryRow): HistoryResultRef | undefined {
   if (row.schema) ref.schema = row.schema;
   if (row.trino_query_id) ref.trinoQueryId = row.trino_query_id;
   if (row.error_message) ref.errorMessage = row.error_message;
-  if (row.parquet_object_key && row.parquet_expires_at) {
-    ref.parquetRef = {
-      objectKey: row.parquet_object_key,
-      expiresAt: row.parquet_expires_at,
-      // A1 より前の暫定行も読み取れるよう、未保存時は v1 とみなす。
-      encodingVersion: row.parquet_encoding_version ?? '1',
-    };
-  }
   const columns = parseResultColumns(row.result_columns_json);
   if (columns !== undefined) ref.columns = columns;
   const format = parseResultFormat(row.result_format);

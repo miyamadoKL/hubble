@@ -349,128 +349,7 @@ for (const backend of dbBackends) {
         expect(second.items.map((entry) => entry.id)).toEqual(['h_same_a']);
       });
 
-      it('JSONL の期限を引き継いだ Parquet 参照を条件付きで一度だけ登録する', async () => {
-        const repo = new HistoryRepository(await open());
-        const expiresAt = '2026-02-01T00:00:00.000Z';
-        await repo.insert({
-          id: 'h_parquet',
-          statement: 'SELECT 1',
-          state: 'running',
-          owner: 'alice',
-          datasourceId: 'trino-default',
-          submittedAt: '2026-01-01T00:00:00.000Z',
-        });
-
-        expect(await repo.setParquetObject('h_parquet', 'jsonl.gz', 'parquet-a', '1')).toBe(false);
-        await repo.setResultObject(
-          'h_parquet',
-          'jsonl-a',
-          expiresAt,
-          { state: 'finished', rowCount: 1, elapsedMs: 2 },
-          [{ name: 'id', type: 'bigint' }],
-          'jsonl.zst',
-        );
-
-        expect(await repo.setParquetObject('h_parquet', 'wrong-source', 'parquet-a', '1')).toBe(
-          false,
-        );
-        expect(await repo.setParquetObject('h_parquet', 'jsonl-a', 'parquet-a', '1')).toBe(true);
-        expect(await repo.setParquetObject('h_parquet', 'jsonl-a', 'parquet-b', '1')).toBe(false);
-        expect(await repo.getResultRef('alice', 'h_parquet')).toMatchObject({
-          resultObjectKey: 'jsonl-a',
-          resultExpiresAt: expiresAt,
-          parquetRef: { objectKey: 'parquet-a', expiresAt, encodingVersion: '1' },
-        });
-      });
-
-      it('Parquet 参照がない旧 JSONL 履歴を読み取り、各 artifact の期限を独立して走査する', async () => {
-        const repo = new HistoryRepository(await open());
-        const expiresAt = '2026-01-01T00:00:00.000Z';
-        await repo.insert({
-          id: 'h_old',
-          statement: 'SELECT old',
-          state: 'finished',
-          owner: 'alice',
-          datasourceId: 'trino-default',
-          submittedAt: '2025-12-01T00:00:00.000Z',
-        });
-        await repo.setResultObject(
-          'h_old',
-          'jsonl-old',
-          expiresAt,
-          { state: 'finished', rowCount: 0, elapsedMs: 1 },
-          [],
-          'jsonl.gz',
-        );
-        expect((await repo.getResultRef('alice', 'h_old'))?.parquetRef).toBeUndefined();
-
-        await repo.insert({
-          id: 'h_dual',
-          statement: 'SELECT dual',
-          state: 'finished',
-          owner: 'alice',
-          datasourceId: 'trino-default',
-          submittedAt: '2025-12-01T00:00:01.000Z',
-        });
-        await repo.setResultObject(
-          'h_dual',
-          'jsonl-dual',
-          expiresAt,
-          { state: 'finished', rowCount: 0, elapsedMs: 1 },
-          [],
-          'jsonl.gz',
-        );
-        expect(await repo.setParquetObject('h_dual', 'jsonl-dual', 'parquet-dual', '1')).toBe(true);
-
-        await repo.insert({
-          id: 'h_parquet_only',
-          statement: 'SELECT parquet',
-          state: 'finished',
-          owner: 'alice',
-          datasourceId: 'trino-default',
-          submittedAt: '2025-12-01T00:00:02.000Z',
-        });
-        await repo.setResultObject(
-          'h_parquet_only',
-          'jsonl-only-temporary',
-          expiresAt,
-          { state: 'finished', rowCount: 0, elapsedMs: 1 },
-          [],
-          'jsonl.gz',
-        );
-        expect(
-          await repo.setParquetObject(
-            'h_parquet_only',
-            'jsonl-only-temporary',
-            'parquet-only',
-            '1',
-          ),
-        ).toBe(true);
-        await db.run(
-          `UPDATE query_history
-           SET result_object_key=NULL, result_expires_at=NULL,
-               result_columns_json=NULL, result_format=NULL
-           WHERE id=?`,
-          ['h_parquet_only'],
-        );
-
-        expect((await repo.listExpiredResults(expiresAt)).map((item) => item.id)).toEqual([
-          'h_dual',
-          'h_old',
-        ]);
-        const firstParquet = await repo.listExpiredParquetResults(expiresAt, { limit: 1 });
-        expect(firstParquet).toHaveLength(1);
-        const secondParquet = await repo.listExpiredParquetResults(expiresAt, {
-          after: {
-            parquetExpiresAt: firstParquet[0]!.parquetExpiresAt,
-            id: firstParquet[0]!.id,
-          },
-          limit: 10,
-        });
-        expect(secondParquet.map((item) => item.id)).toEqual(['h_parquet_only']);
-      });
-
-      it('JSONL と Parquet の片側削除と prune を独立して扱う', async () => {
+      it('JSONL の期限切れ参照を走査し、削除後は履歴を prune できる', async () => {
         const repo = new HistoryRepository(await open());
         const oldSubmittedAt = '2025-12-01T00:00:00.000Z';
         const expiresAt = '2026-02-01T00:00:00.000Z';
@@ -484,72 +363,35 @@ for (const backend of dbBackends) {
             submittedAt: oldSubmittedAt,
           });
 
-        await insert('h_json_only');
+        await insert('h_json');
         await repo.setResultObject(
-          'h_json_only',
-          'jsonl-only',
+          'h_json',
+          'jsonl-result',
           expiresAt,
           { state: 'finished', rowCount: 1, elapsedMs: 1 },
           [{ name: 'id', type: 'bigint' }],
           'jsonl.zst',
         );
-        await repo.setParquetObject('h_json_only', 'jsonl-only', 'parquet-only', '1');
-
         await insert('h_no_refs');
-        await insert('h_kept_parquet');
-        await repo.setResultObject(
-          'h_kept_parquet',
-          'jsonl-kept',
-          expiresAt,
-          { state: 'finished', rowCount: 1, elapsedMs: 1 },
-          [],
-          'jsonl.gz',
-        );
-        await repo.setParquetObject('h_kept_parquet', 'jsonl-kept', 'parquet-kept', '1');
-
-        await repo.clearResultObjects(['parquet-only']);
-        expect(
-          await db.query(
-            'SELECT result_object_key, parquet_object_key, result_format FROM query_history WHERE id=?',
-            ['h_json_only'],
-          ),
-        ).toEqual([
-          { result_object_key: 'jsonl-only', parquet_object_key: null, result_format: 'jsonl.zst' },
+        expect((await repo.listExpiredResults(expiresAt)).map((item) => item.id)).toEqual([
+          'h_json',
         ]);
-
-        await repo.clearResultObjects(['jsonl-only']);
+        await repo.clearResultObjects(['jsonl-result']);
         expect(
           await db.query(
-            'SELECT result_object_key, parquet_object_key, result_columns_json, result_format FROM query_history WHERE id=?',
-            ['h_json_only'],
+            'SELECT result_object_key, result_columns_json, result_format FROM query_history WHERE id=?',
+            ['h_json'],
           ),
         ).toEqual([
           {
             result_object_key: null,
-            parquet_object_key: null,
-            result_columns_json: null,
-            result_format: null,
-          },
-        ]);
-
-        await repo.clearResultObjects(['jsonl-kept']);
-        expect(
-          await db.query(
-            'SELECT result_object_key, parquet_object_key, result_columns_json, result_format FROM query_history WHERE id=?',
-            ['h_kept_parquet'],
-          ),
-        ).toEqual([
-          {
-            result_object_key: null,
-            parquet_object_key: 'parquet-kept',
             result_columns_json: null,
             result_format: null,
           },
         ]);
         expect(await repo.pruneBefore('2026-01-01T00:00:00.000Z', 10)).toBe(2);
-        expect(await repo.get('alice', 'h_json_only')).toBeUndefined();
+        expect(await repo.get('alice', 'h_json')).toBeUndefined();
         expect(await repo.get('alice', 'h_no_refs')).toBeUndefined();
-        expect(await repo.get('alice', 'h_kept_parquet')).toBeDefined();
       });
     });
   });
