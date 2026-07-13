@@ -361,7 +361,7 @@ for (const backend of dbBackends) {
           submittedAt: '2026-01-01T00:00:00.000Z',
         });
 
-        expect(await repo.setParquetObject('h_parquet', 'jsonl.gz', 'parquet-a')).toBe(false);
+        expect(await repo.setParquetObject('h_parquet', 'jsonl.gz', 'parquet-a', '1')).toBe(false);
         await repo.setResultObject(
           'h_parquet',
           'jsonl-a',
@@ -371,13 +371,15 @@ for (const backend of dbBackends) {
           'jsonl.zst',
         );
 
-        expect(await repo.setParquetObject('h_parquet', 'wrong-source', 'parquet-a')).toBe(false);
-        expect(await repo.setParquetObject('h_parquet', 'jsonl-a', 'parquet-a')).toBe(true);
-        expect(await repo.setParquetObject('h_parquet', 'jsonl-a', 'parquet-b')).toBe(false);
+        expect(await repo.setParquetObject('h_parquet', 'wrong-source', 'parquet-a', '1')).toBe(
+          false,
+        );
+        expect(await repo.setParquetObject('h_parquet', 'jsonl-a', 'parquet-a', '1')).toBe(true);
+        expect(await repo.setParquetObject('h_parquet', 'jsonl-a', 'parquet-b', '1')).toBe(false);
         expect(await repo.getResultRef('alice', 'h_parquet')).toMatchObject({
           resultObjectKey: 'jsonl-a',
           resultExpiresAt: expiresAt,
-          parquetRef: { objectKey: 'parquet-a', expiresAt },
+          parquetRef: { objectKey: 'parquet-a', expiresAt, encodingVersion: '1' },
         });
       });
 
@@ -418,7 +420,7 @@ for (const backend of dbBackends) {
           [],
           'jsonl.gz',
         );
-        expect(await repo.setParquetObject('h_dual', 'jsonl-dual', 'parquet-dual')).toBe(true);
+        expect(await repo.setParquetObject('h_dual', 'jsonl-dual', 'parquet-dual', '1')).toBe(true);
 
         await repo.insert({
           id: 'h_parquet_only',
@@ -437,7 +439,12 @@ for (const backend of dbBackends) {
           'jsonl.gz',
         );
         expect(
-          await repo.setParquetObject('h_parquet_only', 'jsonl-only-temporary', 'parquet-only'),
+          await repo.setParquetObject(
+            'h_parquet_only',
+            'jsonl-only-temporary',
+            'parquet-only',
+            '1',
+          ),
         ).toBe(true);
         await db.run(
           `UPDATE query_history
@@ -486,7 +493,7 @@ for (const backend of dbBackends) {
           [{ name: 'id', type: 'bigint' }],
           'jsonl.zst',
         );
-        await repo.setParquetObject('h_json_only', 'jsonl-only', 'parquet-only');
+        await repo.setParquetObject('h_json_only', 'jsonl-only', 'parquet-only', '1');
 
         await insert('h_no_refs');
         await insert('h_kept_parquet');
@@ -498,7 +505,7 @@ for (const backend of dbBackends) {
           [],
           'jsonl.gz',
         );
-        await repo.setParquetObject('h_kept_parquet', 'jsonl-kept', 'parquet-kept');
+        await repo.setParquetObject('h_kept_parquet', 'jsonl-kept', 'parquet-kept', '1');
 
         await repo.clearResultObjects(['parquet-only']);
         expect(

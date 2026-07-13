@@ -503,6 +503,42 @@ describe('ResultStore persistence', () => {
     await ctx.services.queries.drain();
   });
 
+  it('JSONL link と Parquet conversion job を同じ transaction で enqueue する', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({ scenarios: [manyRows(3)], resultStore: store });
+
+    const queryId = await submitPersistQuery(ctx);
+    await ctx.services.queries.drain();
+
+    expect(await ctx.services.history.getResultRef('admin', queryId)).toMatchObject({
+      resultObjectKey: `hubble-results/${queryId}.jsonl.zst`,
+    });
+    expect(await ctx.services.parquetConversionJobs.get(queryId)).toMatchObject({
+      historyId: queryId,
+      sourceObjectKey: `hubble-results/${queryId}.jsonl.zst`,
+      targetObjectKey: `hubble-results/${queryId}.parquet`,
+      encodingVersion: '1',
+      status: 'pending',
+      attempts: 0,
+    });
+  });
+
+  it('conversion job enqueue failure rolls back the JSONL history link', async () => {
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({ scenarios: [manyRows(2)], resultStore: store });
+    vi.spyOn(ctx.services.parquetConversionJobs, 'enqueue').mockRejectedValueOnce(
+      new Error('job database unavailable'),
+    );
+
+    const queryId = await submitPersistQuery(ctx);
+    await ctx.services.queries.drain();
+
+    const jsonlKey = `hubble-results/${queryId}.jsonl.zst`;
+    expect(await ctx.services.history.getResultRef('admin', queryId)).toBeUndefined();
+    expect(await ctx.services.parquetConversionJobs.get(queryId)).toBeUndefined();
+    expect(store.deleted).toContain(jsonlKey);
+  });
+
   it('query result の DB 関連付けに失敗した場合は upload 済み object を削除する', async () => {
     const store = new MemoryResultStore();
     const logWarn = vi.fn();

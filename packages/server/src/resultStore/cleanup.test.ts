@@ -267,7 +267,7 @@ describe('ResultExpiryService periodic execution', () => {
       [{ name: 'id', type: 'bigint' }],
       'jsonl.zst',
     );
-    expect(await history.setParquetObject('dual_cleanup', jsonlKey, parquetKey)).toBe(true);
+    expect(await history.setParquetObject('dual_cleanup', jsonlKey, parquetKey, '1')).toBe(true);
 
     const parquetFailure = new Error('Parquet delete unavailable');
     const deleteExpired = vi
