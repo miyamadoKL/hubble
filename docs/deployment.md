@@ -59,7 +59,7 @@ IRSA、ECS task role、EC2 instance profile、AWS profile、session token を本
 C の直接読取、credential rejection、または baked extension が失敗した場合は E を保留し、先に D の HTTP Range proxy で server 認可と Range 読み出しを検証します。
 Range の観測精度だけが不足していて直接読取が成功している場合は、それだけを D 移行理由にしません。
 MinIO の標準 access log から Range GET の発行回数を安定して観測できないため、C は Range の発行回数や転送量を合格条件にしません。
-運用上の直接読取契約と検証手順は [`operations.md` §9.4.1](operations.md#941-duckdb-直接-s3-読み出しの検証ゲート) を参照してください。
+運用上の直接読取契約と検証手順は [`operations.md` §9.4.2](operations.md#942-duckdb-直接-s3-読み出しの検証ゲート) を参照してください。
 
 イメージには次が既定で入っています（`docker run -e ...` で上書き可能）。
 

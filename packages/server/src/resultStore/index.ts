@@ -40,6 +40,20 @@ export {
   type DuckdbS3SecretStatement,
   type DuckdbS3TemporarySecretInput,
 } from './duckdbS3';
+export {
+  createDuckdbPersistedProfileReader,
+  DuckdbProfileError,
+  buildDuckdbProfileSelectSql,
+  buildDuckdbProfileS3Uris,
+  expectedDuckdbPhysicalType,
+  getDuckdbProfileEligibility,
+  physicalDuckdbColumnName,
+  type DuckdbPersistedProfileReader,
+  type DuckdbProfileDeps,
+  type DuckdbProfileEligibilityReason,
+  type DuckdbProfileFailureCode,
+  type DuckdbProfileInput,
+} from './duckdbProfile';
 
 /** ResultStore 生成時の注入ポイント。 */
 export interface CreateResultStoreDeps {
