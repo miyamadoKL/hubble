@@ -151,6 +151,17 @@ describe('loadServerConfig integer bounds', () => {
     ).toBe(true);
   });
 
+  it('configures the DuckDB profile negative capability cache TTL', () => {
+    expect(
+      loadServerConfig({ RESULT_PROFILE_DUCKDB_NEGATIVE_CACHE_TTL_MS: '1234' })
+        .resultProfileDuckdbNegativeCacheTtlMs,
+    ).toBe(1234);
+    expect(
+      loadServerConfig({ RESULT_PROFILE_DUCKDB_NEGATIVE_CACHE_TTL_MS: '0' })
+        .resultProfileDuckdbNegativeCacheTtlMs,
+    ).toBe(0);
+  });
+
   it('defaults export destinations to disabled settings', () => {
     expect(loadServerConfig({}).export).toEqual({
       s3: { prefix: 'hubble-exports/' },

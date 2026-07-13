@@ -56,6 +56,14 @@ import {
   ParquetConversionWorker,
   type ParquetConversionWorkerConfig,
 } from './resultStore/parquetConversionWorker';
+import {
+  createConsoleDuckdbProfileObserver,
+  type DuckdbProfileObserver,
+} from './query/persistedProfileObservability';
+import {
+  InMemoryDuckdbProfileNegativeCapabilityCache,
+  type DuckdbProfileNegativeCapabilityCache,
+} from './query/duckdbProfileNegativeCache';
 import { NotificationService } from './notification/service';
 import type {
   FailureNotificationSender,
@@ -105,6 +113,8 @@ export interface Services {
   resultStore: ResultStore;
   duckdbProfile: DuckdbPersistedProfileReader;
   duckdbProfileLogWarn: (message: string, err?: unknown) => void;
+  duckdbProfileObserver: DuckdbProfileObserver;
+  duckdbProfileNegativeCache: DuckdbProfileNegativeCapabilityCache;
   parquetConversionJobs: ResultParquetConversionJobRepository;
   parquetConversionWorker: ParquetConversionWorker;
   resultExpiry: ResultExpiryService;
@@ -161,6 +171,8 @@ export interface BuildServicesOptions {
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
   duckdbProfile?: DuckdbPersistedProfileReader;
   duckdbProfileLogWarn?: (message: string, err?: unknown) => void;
+  duckdbProfileObserver?: DuckdbProfileObserver;
+  duckdbProfileNegativeCache?: DuckdbProfileNegativeCapabilityCache;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   parquetConversionSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   parquetConversionLogWarn?: (message: string, err?: unknown) => void;
@@ -250,6 +262,11 @@ export async function buildServices(
     createDuckdbPersistedProfileReader({ enabled: config.resultProfileDuckdbEnabled });
   const duckdbProfileLogWarn =
     options.duckdbProfileLogWarn ?? options.resultStoreLogWarn ?? (() => {});
+  const duckdbProfileObserver =
+    options.duckdbProfileObserver ?? createConsoleDuckdbProfileObserver();
+  const duckdbProfileNegativeCache =
+    options.duckdbProfileNegativeCache ??
+    new InMemoryDuckdbProfileNegativeCapabilityCache(config.resultProfileDuckdbNegativeCacheTtlMs);
   const notifications =
     options.notificationSender ??
     new NotificationService(config.notification, {
@@ -718,6 +735,8 @@ export async function buildServices(
     resultStore,
     duckdbProfile,
     duckdbProfileLogWarn,
+    duckdbProfileObserver,
+    duckdbProfileNegativeCache,
     parquetConversionJobs,
     parquetConversionWorker,
     resultExpiry,

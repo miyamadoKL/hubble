@@ -181,6 +181,8 @@ export interface ServerConfig {
   resultStore: ResultStoreConfig;
   /** 日本語: DuckDB Parquet profile の実験的経路。既定では無効。 */
   resultProfileDuckdbEnabled: boolean;
+  /** 日本語: DuckDB profile capability failure の process 内 cache TTL。 */
+  resultProfileDuckdbNegativeCacheTtlMs: number;
   /** 日本語: クエリ結果エクスポート先の設定（`EXPORT_*`）。 */
   export: ExportConfig;
   /** Query Guard configuration (Query Guard feature). */
@@ -715,6 +717,11 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
     },
     resultStore: resolveResultStoreConfig(env),
     resultProfileDuckdbEnabled: envBool(env, 'RESULT_PROFILE_DUCKDB_ENABLED', false),
+    resultProfileDuckdbNegativeCacheTtlMs: envNonNegativeInt(
+      env,
+      'RESULT_PROFILE_DUCKDB_NEGATIVE_CACHE_TTL_MS',
+      60_000,
+    ),
     export: resolveExportConfig(env),
     guard: {
       mode: envEnum(env, 'QUERY_GUARD_MODE', ['off', 'warn', 'enforce'] as const, 'warn'),

@@ -172,7 +172,7 @@ jobs:
       - name: Build production image with baked httpfs
         run: docker build --platform linux/amd64 -t hubble:duckdb-s3-gate .
 
-      - name: Run DuckDB direct S3 production gate
+      - name: Run DuckDB direct S3 and product reader gate
         run: >-
           docker run --rm --network host --entrypoint /app/packages/server/node_modules/.bin/tsx
           -e DUCKDB_S3_ENDPOINT=http://127.0.0.1:9000

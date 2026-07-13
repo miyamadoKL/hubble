@@ -573,11 +573,14 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         config: services.config,
         reader: services.duckdbProfile,
         signal: c.req.raw.signal,
+        observer: services.duckdbProfileObserver,
+        negativeCache: services.duckdbProfileNegativeCache,
       });
       if (duckdbAttempt.kind === 'success') return c.json(duckdbAttempt.profile);
       if (duckdbAttempt.kind === 'fallback') {
         services.duckdbProfileLogWarn('persisted profile DuckDB fallback: ' + duckdbAttempt.reason);
       }
+      const jsonlFallbackStartedAt = Date.now();
       try {
         const cursor = await openPersistedResult(
           await services.resultStore.getStream(ref.resultObjectKey),
@@ -597,6 +600,10 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
           );
         }
         throw error;
+      } finally {
+        if (duckdbAttempt.kind === 'fallback') {
+          duckdbAttempt.completeJsonlFallback(Date.now() - jsonlFallbackStartedAt);
+        }
       }
     }
     const columns = exec.snapshot().columns ?? [];

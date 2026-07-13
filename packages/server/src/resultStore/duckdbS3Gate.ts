@@ -20,6 +20,9 @@ import {
   parseDuckdbS3Endpoint,
   type DuckdbS3Endpoint,
 } from './duckdbS3';
+import { createDuckdbPersistedProfileReader } from './duckdbProfile';
+import { buildResultParquetObjectKey } from '../store/resultParquetConversionJobs';
+import { profileRowsStream } from '../query/exploration';
 
 interface AwsCredentials {
   accessKeyId: string;
@@ -46,6 +49,8 @@ export interface DuckdbS3GateMetrics {
   filteredRows: number;
   rowGroups: number;
   badCredentialRejected: boolean;
+  productReaderRowCount: number;
+  productReaderColumns: number;
   rangeObservation: string;
 }
 
@@ -129,7 +134,7 @@ function createBootstrapClient(config: DuckdbS3GateConfig): S3Client {
 
 async function createParquetFixture(
   path: string,
-): Promise<{ rows: unknown[][]; rowGroups: number }> {
+): Promise<{ rows: unknown[][]; columns: QueryColumn[]; rowGroups: number }> {
   const rows = Array.from({ length: 15_000 }, (_, index) => [
     index,
     index % 3 === 0 ? null : `value-${index % 17}`,
@@ -147,7 +152,7 @@ async function createParquetFixture(
     expectedRowCount: rows.length,
     outputPath: path,
   });
-  return { rows, rowGroups: 2 };
+  return { rows, columns, rowGroups: 2 };
 }
 
 async function readDirectFromDuckdb(
@@ -220,7 +225,8 @@ async function readDirectFromDuckdb(
 export async function runDuckdbS3Gate(config: DuckdbS3GateConfig): Promise<DuckdbS3GateMetrics> {
   const directory = mkdtempSync(join(tmpdir(), 'hubble-duckdb-s3-gate-'));
   const fixturePath = join(directory, 'result.parquet');
-  const key = `${GATE_PREFIX}${process.pid}-${Date.now()}/result.parquet`;
+  const historyId = `gate-${process.pid}-${Date.now()}`;
+  const key = buildResultParquetObjectKey(GATE_PREFIX, historyId);
   const secretName = sqlIdentifierPart(`gate_secret_${process.pid}_${Date.now()}`);
   const objectUri = `s3://${config.bucket}/${key}`;
   const adminClient = createBootstrapClient(config);
@@ -277,6 +283,33 @@ export async function runDuckdbS3Gate(config: DuckdbS3GateConfig): Promise<Duckd
     ]);
     assert.equal(valid.rowGroups, fixture.rowGroups);
 
+    const productReader = createDuckdbPersistedProfileReader({
+      enabled: true,
+      concurrency: 1,
+      timeoutMs: 120_000,
+    });
+    const productProfile = await withAwsCredentials(config.readerCredentials, () =>
+      productReader({
+        historyId,
+        objectKey: key,
+        parquetExpiresAt: '2099-01-01T00:00:00.000Z',
+        rowCount: fixture.rows.length,
+        columns: fixture.columns,
+        bucket: config.bucket,
+        prefix: GATE_PREFIX,
+        region: config.region,
+        endpoint: config.endpointUrl,
+        encodingVersion: '1',
+      }),
+    );
+    assert.ok(productProfile);
+    const expectedProfile = await profileRowsStream(fixture.columns, fixture.rows);
+    assert.deepEqual(productProfile, {
+      rowCount: expectedProfile.rowCount,
+      complete: true,
+      columns: expectedProfile.profiles,
+    });
+
     let badCredentialRejected = false;
     try {
       await readDirectFromDuckdb(
@@ -299,6 +332,8 @@ export async function runDuckdbS3Gate(config: DuckdbS3GateConfig): Promise<Duckd
       filteredRows: valid.filteredRows.length,
       rowGroups: valid.rowGroups,
       badCredentialRejected,
+      productReaderRowCount: productProfile.rowCount,
+      productReaderColumns: productProfile.columns.length,
       rangeObservation: 'informational only; MinIO access log is not a stable Range oracle',
     };
   } finally {

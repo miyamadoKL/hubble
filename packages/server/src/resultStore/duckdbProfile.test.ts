@@ -18,6 +18,7 @@ import {
   physicalDuckdbColumnName,
   profileDuckdbParquetRows,
   type DuckdbProfileInput,
+  type DuckdbProfileTiming,
 } from './duckdbProfile';
 
 const fixtureDirectories: string[] = [];
@@ -422,12 +423,19 @@ describe('DuckDB profile resource admission and cleanup', () => {
   it('cleans up the connection, instance, temp directory, and permit on success', async () => {
     const before = profileTempDirectories();
     const fake = fakeDuckdbInstance();
+    const timings: DuckdbProfileTiming[] = [];
     const reader = createDuckdbPersistedProfileReader({
       enabled: true,
       createInstance: async () => fake.instance,
     });
 
-    await expect(reader(validInput())).resolves.toMatchObject({
+    await expect(
+      reader(
+        validInput({
+          timingObserver: (timing) => timings.push(timing),
+        }),
+      ),
+    ).resolves.toMatchObject({
       rowCount: 1,
       complete: true,
     });
@@ -435,6 +443,9 @@ describe('DuckDB profile resource admission and cleanup', () => {
     expect(fake.disconnectSync).toHaveBeenCalledOnce();
     expect(fake.closeSync).toHaveBeenCalledOnce();
     expect(profileTempDirectories()).toEqual(before);
+    expect(timings).toHaveLength(1);
+    expect(timings[0]!.queueWaitMs).toBeGreaterThanOrEqual(0);
+    expect(timings[0]!.duckdbDurationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('returns cleanup failure and releases the permit when disconnect fails', async () => {

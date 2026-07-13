@@ -11,6 +11,11 @@ import type { AuthVariables, RemoteAddressFn } from '../auth/middleware';
 import type { FakeScenario } from './fakeTrino';
 import { FakeTrino } from './fakeTrino';
 import type { DuckdbPersistedProfileReader, ResultStore } from '../resultStore';
+import {
+  CountingDuckdbProfileObserver,
+  type DuckdbProfileObserver,
+} from '../query/persistedProfileObservability';
+import type { DuckdbProfileNegativeCapabilityCache } from '../query/duckdbProfileNegativeCache';
 import type { AiProvider } from '../ai/provider';
 
 /**
@@ -114,6 +119,8 @@ export async function createTestContext(
     resultStoreLogWarn?: (message: string, err?: unknown) => void;
     duckdbProfile?: DuckdbPersistedProfileReader;
     duckdbProfileLogWarn?: (message: string, err?: unknown) => void;
+    duckdbProfileObserver?: DuckdbProfileObserver;
+    duckdbProfileNegativeCache?: DuckdbProfileNegativeCapabilityCache;
     sheetsClientFactory?: import('../query/exportSheets').SheetsClientFactory;
     /** Override fetch for non-Trino HTTP (e.g. GitHub API). When set, used instead of fake.fetch. */
     fetchImpl?: typeof fetch;
@@ -183,6 +190,8 @@ export async function createTestContext(
     resultStoreLogWarn: options.resultStoreLogWarn,
     duckdbProfile: options.duckdbProfile,
     duckdbProfileLogWarn: options.duckdbProfileLogWarn,
+    duckdbProfileObserver: options.duckdbProfileObserver ?? new CountingDuckdbProfileObserver(),
+    duckdbProfileNegativeCache: options.duckdbProfileNegativeCache,
     resultCleanupSetTimer: () => ({ clear: () => {} }),
     aiProvider: options.aiProvider,
   });

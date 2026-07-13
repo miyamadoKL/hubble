@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --exclude src/resultStore/duckdbParquetPoc.test.ts --exclude src/resultStore/duckdbS3Gate.test.ts",
     "test:duckdb-poc": "vitest run src/resultStore/duckdbParquetPoc.test.ts",
-    "test:duckdb-s3-gate": "vitest run src/resultStore/duckdbS3Gate.test.ts --testTimeout 120000"
+    "test:duckdb-s3-gate": "vitest run src/resultStore/duckdbS3Gate.test.ts --testTimeout 120000",
+    "bench:duckdb-profile": "tsx src/resultStore/duckdbProfileBenchmark.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.947.0",

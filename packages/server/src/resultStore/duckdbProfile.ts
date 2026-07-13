@@ -87,6 +87,14 @@ export interface DuckdbProfileInput {
   endpoint?: string;
   encodingVersion: string;
   signal?: AbortSignal;
+  /** reader の semaphore 待機と DuckDB 区間を呼び出し元へ返す。 */
+  timingObserver?: (timing: DuckdbProfileTiming) => void;
+}
+
+/** profile reader の resource admission と DuckDB 実行時間。 */
+export interface DuckdbProfileTiming {
+  queueWaitMs: number;
+  duckdbDurationMs: number;
 }
 
 /** DuckDB profile reader。テストでは reader 全体を差し替えられる。 */
@@ -457,10 +465,39 @@ export function createDuckdbPersistedProfileReader(
     if (!enabled) return undefined;
     const eligibility = getDuckdbProfileEligibility(input);
     if (!eligibility.eligible) return undefined;
-    const release = await semaphore.acquire(input.signal, waitTimeoutMs);
+    const queueStartedAt = Date.now();
+    let queueWaitMs = 0;
+    const duckdbStartedAt: { value: number | undefined } = { value: undefined };
+    let timingReported = false;
+    const reportTiming = (): void => {
+      if (timingReported) return;
+      timingReported = true;
+      try {
+        input.timingObserver?.({
+          queueWaitMs,
+          duckdbDurationMs:
+            duckdbStartedAt.value === undefined
+              ? 0
+              : Math.max(0, Date.now() - duckdbStartedAt.value),
+        });
+      } catch {
+        // timing 通知の失敗で profile reader の結果を変えない。
+      }
+    };
+    let release: (() => void) | undefined;
+    try {
+      release = await semaphore.acquire(input.signal, waitTimeoutMs);
+      queueWaitMs = Math.max(0, Date.now() - queueStartedAt);
+    } catch (error) {
+      queueWaitMs = Math.max(0, Date.now() - queueStartedAt);
+      reportTiming();
+      throw error;
+    }
     if (release === undefined) {
+      reportTiming();
       throw new DuckdbProfileError('overloaded', 'DuckDB profile concurrency limit reached');
     }
+    duckdbStartedAt.value = Date.now();
 
     let tempDirectory: string | undefined;
     const controller = new AbortController();
@@ -613,6 +650,7 @@ export function createDuckdbPersistedProfileReader(
         }
       }
       release();
+      reportTiming();
     }
     if (failure !== undefined) throw failure;
     return result;

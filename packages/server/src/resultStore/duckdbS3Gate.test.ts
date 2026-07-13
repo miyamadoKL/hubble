@@ -14,6 +14,8 @@ describe.skipIf(config === undefined)('DuckDB direct S3 credential gate', () => 
       filteredRows: 3,
       rowGroups: 2,
       badCredentialRejected: true,
+      productReaderRowCount: 15_000,
+      productReaderColumns: 3,
     });
     console.info('DuckDB S3 gate metrics', metrics);
   });
