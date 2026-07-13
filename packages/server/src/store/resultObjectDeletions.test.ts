@@ -1,4 +1,4 @@
-/** query_history と workflow の両方を含む結果 object 参照判定を検証する。 */
+/** query_history と workflow の両方を含む JSONL object 参照判定を検証する。 */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { dbBackends } from '../test/dbBackends';
@@ -13,7 +13,7 @@ for (const backend of dbBackends) {
       if (db) await db.close();
     });
 
-    it('query の JSONL/Parquet と workflow の参照を保護する', async () => {
+    it('query の JSONL と workflow の参照を保護する', async () => {
       db = await backend.open();
       const history = new HistoryRepository(db);
       const deletions = new ResultObjectDeletionRepository(db);
@@ -37,10 +37,7 @@ for (const backend of dbBackends) {
         [],
         'jsonl.gz',
       );
-      await history.setParquetObject('h_ref', 'jsonl-ref', 'parquet-ref', '1');
-
       expect(await deletions.isReferenced('jsonl-ref')).toBe(true);
-      expect(await deletions.isReferenced('parquet-ref')).toBe(true);
 
       await db.run(
         `INSERT INTO workflow_step_runs

@@ -23,7 +23,6 @@ import { ScheduleRepository, ScheduleRunRepository } from './store/schedules';
 import { AlertRepository } from './store/alerts';
 import { AlertDeliveryRepository } from './store/alertDeliveries';
 import { ResultObjectDeletionRepository } from './store/resultObjectDeletions';
-import { ResultParquetConversionJobRepository } from './store/resultParquetConversionJobs';
 import { WorkflowRepository, WorkflowRunRepository } from './store/workflows';
 import { Scheduler } from './schedule/scheduler';
 import { AlertEvaluator } from './alert/evaluator';
@@ -45,17 +44,8 @@ import type { MysqlPoolFactory } from './engine/mysql/pool';
 import type { PgPoolFactory } from './engine/postgresql/pool';
 import type { QueryEngine } from './engine/types';
 import { AuditLogger, AuditRepository } from './audit';
-import {
-  createDuckdbPersistedProfileReader,
-  createResultStore,
-  type DuckdbPersistedProfileReader,
-  type ResultStore,
-} from './resultStore';
+import { createResultStore, type ResultStore } from './resultStore';
 import { ResultExpiryService } from './resultStore/cleanup';
-import {
-  ParquetConversionWorker,
-  type ParquetConversionWorkerConfig,
-} from './resultStore/parquetConversionWorker';
 import { NotificationService } from './notification/service';
 import type {
   FailureNotificationSender,
@@ -103,10 +93,6 @@ export interface Services {
   workflowRunner: WorkflowRunner;
   audit: AuditLogger;
   resultStore: ResultStore;
-  duckdbProfile: DuckdbPersistedProfileReader;
-  duckdbProfileLogWarn: (message: string, err?: unknown) => void;
-  parquetConversionJobs: ResultParquetConversionJobRepository;
-  parquetConversionWorker: ParquetConversionWorker;
   resultExpiry: ResultExpiryService;
   /** 永続テーブルの期限切れ行をページ削除する日次サービス。 */
   dataRetention: DataRetentionService;
@@ -159,12 +145,7 @@ export interface BuildServicesOptions {
   /** 注入した ResultStore の所有権は Services へ移り、shutdown時にcloseされる。 */
   resultStore?: ResultStore;
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
-  duckdbProfile?: DuckdbPersistedProfileReader;
-  duckdbProfileLogWarn?: (message: string, err?: unknown) => void;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
-  parquetConversionSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
-  parquetConversionLogWarn?: (message: string, err?: unknown) => void;
-  parquetConversionConfig?: ParquetConversionWorkerConfig;
   dataRetentionSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   dataRetentionLogWarn?: (message: string, err: unknown) => void;
   notificationLogWarn?: (message: string, detail?: unknown) => void;
@@ -245,11 +226,6 @@ export async function buildServices(
           now: options.now,
         });
   const resultStore = options.resultStore ?? createResultStore(config.resultStore);
-  const duckdbProfile =
-    options.duckdbProfile ??
-    createDuckdbPersistedProfileReader({ enabled: config.resultProfileDuckdbEnabled });
-  const duckdbProfileLogWarn =
-    options.duckdbProfileLogWarn ?? options.resultStoreLogWarn ?? (() => {});
   const notifications =
     options.notificationSender ??
     new NotificationService(config.notification, {
@@ -259,7 +235,6 @@ export async function buildServices(
     });
   const history = new HistoryRepository(db);
   const resultObjectDeletions = new ResultObjectDeletionRepository(db);
-  const parquetConversionJobs = new ResultParquetConversionJobRepository(db);
   const documentShares = new DocumentShareRepository(db);
   const notebooks = new NotebookRepository(db, documentShares);
   const dashboards = new DashboardRepository(db, documentShares);
@@ -280,7 +255,6 @@ export async function buildServices(
     registry,
     db,
     history,
-    parquetConversionJobs,
     resultStore,
     resultObjectDeletions,
     resultKeyPrefix:
@@ -408,17 +382,6 @@ export async function buildServices(
     setTimer: options.resultCleanupSetTimer,
   });
   resultExpiry.start();
-  const parquetConversionWorker = new ParquetConversionWorker({
-    jobs: parquetConversionJobs,
-    history,
-    resultStore,
-    resultObjectDeletions,
-    config: options.parquetConversionConfig,
-    now: options.now,
-    setTimer: options.parquetConversionSetTimer,
-    logWarn: options.parquetConversionLogWarn ?? options.resultStoreLogWarn,
-  });
-  parquetConversionWorker.start();
   const dataRetention = new DataRetentionService({
     alertDeliveries,
     history,
@@ -614,7 +577,6 @@ export async function buildServices(
     stopAdmission();
     const tasks: Promise<unknown>[] = [
       dataRetention.stop(),
-      parquetConversionWorker.stop(),
       resultExpiry.stop(),
       githubSyncScheduler?.stop() ?? Promise.resolve(),
       workflowRunner.stop(),
@@ -716,10 +678,6 @@ export async function buildServices(
     workflowRunner,
     audit,
     resultStore,
-    duckdbProfile,
-    duckdbProfileLogWarn,
-    parquetConversionJobs,
-    parquetConversionWorker,
     resultExpiry,
     dataRetention,
     notifications,
