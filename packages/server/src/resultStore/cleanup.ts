@@ -1,7 +1,11 @@
 /**
  * 期限切れクエリ結果オブジェクトと、参照削除済みの結果オブジェクトを削除するサービス。
  */
-import type { ExpiredHistoryResult, HistoryRepository } from '../store/history';
+import type {
+  ExpiredHistoryParquetResult,
+  ExpiredHistoryResult,
+  HistoryRepository,
+} from '../store/history';
 import type {
   ResultObjectDeletionJob,
   ResultObjectDeletionRepository,
@@ -89,14 +93,22 @@ export class ResultExpiryService {
     const nowMs = this.options.now?.() ?? Date.now();
     const nowIso = new Date(nowMs).toISOString();
     let historyAfter: { resultExpiresAt: string; id: string } | undefined;
+    let parquetAfter: { parquetExpiresAt: string; id: string } | undefined;
     let workflowAfter: { resultExpiresAt: string; id: string } | undefined;
     let historyDone = false;
+    let parquetDone = false;
     let workflowDone = false;
-    while (!historyDone || !workflowDone) {
+    while (!historyDone || !parquetDone || !workflowDone) {
       const historyPage: Promise<ExpiredHistoryResult[]> = historyDone
         ? Promise.resolve([])
         : this.options.history.listExpiredResults(nowIso, {
             after: historyAfter,
+            limit: REFERENCE_EXPIRY_PAGE_SIZE,
+          });
+      const parquetPage: Promise<ExpiredHistoryParquetResult[]> = parquetDone
+        ? Promise.resolve([])
+        : this.options.history.listExpiredParquetResults(nowIso, {
+            after: parquetAfter,
             limit: REFERENCE_EXPIRY_PAGE_SIZE,
           });
       const workflowPage: Promise<ExpiredWorkflowStepResult[]> = workflowDone
@@ -105,12 +117,24 @@ export class ResultExpiryService {
             after: workflowAfter,
             limit: REFERENCE_EXPIRY_PAGE_SIZE,
           });
-      const [historyExpired, workflowExpired] = await Promise.all([historyPage, workflowPage]);
+      const [historyExpired, parquetExpired, workflowExpired] = await Promise.all([
+        historyPage,
+        parquetPage,
+        workflowPage,
+      ]);
       historyDone = historyExpired.length < REFERENCE_EXPIRY_PAGE_SIZE;
+      parquetDone = parquetExpired.length < REFERENCE_EXPIRY_PAGE_SIZE;
       workflowDone = workflowExpired.length < REFERENCE_EXPIRY_PAGE_SIZE;
       const lastHistory = historyExpired.at(-1);
       if (lastHistory) {
         historyAfter = { resultExpiresAt: lastHistory.resultExpiresAt, id: lastHistory.id };
+      }
+      const lastParquet = parquetExpired.at(-1);
+      if (lastParquet) {
+        parquetAfter = {
+          parquetExpiresAt: lastParquet.parquetExpiresAt,
+          id: lastParquet.id,
+        };
       }
       const lastWorkflow = workflowExpired.at(-1);
       if (lastWorkflow) {
@@ -119,6 +143,7 @@ export class ResultExpiryService {
       const keys = [
         ...new Set([
           ...historyExpired.map((item) => item.resultObjectKey),
+          ...parquetExpired.map((item) => item.parquetObjectKey),
           ...workflowExpired.map((item) => item.resultObjectKey),
         ]),
       ];

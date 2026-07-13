@@ -1,6 +1,6 @@
 /** Result expiry の定期実行で失敗を隔離し、次回を予約することを検証する。 */
 import { describe, expect, it, vi } from 'vitest';
-import type { HistoryRepository } from '../store/history';
+import { HistoryRepository } from '../store/history';
 import { ResultObjectDeletionRepository } from '../store/resultObjectDeletions';
 import type { WorkflowRunRepository } from '../store/workflows';
 import { openMemoryDatabase } from '../db';
@@ -16,12 +16,14 @@ describe('ResultExpiryService periodic execution', () => {
     const service = new ResultExpiryService({
       history: {
         listExpiredResults: vi.fn().mockRejectedValue(failure),
+        listExpiredParquetResults: vi.fn().mockResolvedValue([]),
       } as unknown as HistoryRepository,
       workflowRuns: {
         listExpiredResults: vi.fn().mockResolvedValue([]),
       } as unknown as WorkflowRunRepository,
       deletions: {
         claimDue: vi.fn().mockResolvedValue([]),
+        complete: vi.fn().mockResolvedValue(undefined),
       } as unknown as ResultObjectDeletionRepository,
       resultStore: { enabled: true } as ResultStore,
       logWarn,
@@ -56,6 +58,7 @@ describe('ResultExpiryService periodic execution', () => {
     const service = new ResultExpiryService({
       history: {
         listExpiredResults: vi.fn().mockResolvedValue([]),
+        listExpiredParquetResults: vi.fn().mockResolvedValue([]),
         clearResultObjects: vi.fn().mockResolvedValue(undefined),
       } as unknown as HistoryRepository,
       workflowRuns: {
@@ -107,6 +110,7 @@ describe('ResultExpiryService periodic execution', () => {
     const logWarn = vi.fn();
     const history = {
       listExpiredResults: vi.fn().mockResolvedValue([]),
+      listExpiredParquetResults: vi.fn().mockResolvedValue([]),
       clearResultObjects: vi.fn().mockResolvedValue(undefined),
     } as unknown as HistoryRepository;
     const workflowRuns = {
@@ -156,6 +160,7 @@ describe('ResultExpiryService periodic execution', () => {
     await deletions.enqueue([key], nowIso);
     const history = {
       listExpiredResults: vi.fn().mockResolvedValue([{ id: 'qry_1', resultObjectKey: key }]),
+      listExpiredParquetResults: vi.fn().mockResolvedValue([]),
       clearResultObjects: vi.fn().mockResolvedValue(undefined),
     } as unknown as HistoryRepository;
     const workflowRuns = {
@@ -201,6 +206,7 @@ describe('ResultExpiryService periodic execution', () => {
       .mockResolvedValueOnce([finalItem]);
     const history = {
       listExpiredResults,
+      listExpiredParquetResults: vi.fn().mockResolvedValue([]),
       clearResultObjects: vi.fn().mockResolvedValue(undefined),
     } as unknown as HistoryRepository;
     const workflowRuns = {
@@ -239,6 +245,75 @@ describe('ResultExpiryService periodic execution', () => {
     expect(deleteExpired.mock.calls[1]![0]).toEqual([{ key: finalItem.resultObjectKey }]);
   });
 
+  it('JSONL の削除成功と Parquet の削除失敗を分離し、次回に Parquet だけを再試行する', async () => {
+    const db = await openMemoryDatabase();
+    const history = new HistoryRepository(db);
+    const jsonlKey = 'hubble-results/query/dual.jsonl.zst';
+    const parquetKey = 'hubble-results/query/dual.parquet';
+    const expiresAt = '2026-01-01T00:00:00.000Z';
+    await history.insert({
+      id: 'dual_cleanup',
+      statement: 'SELECT 1',
+      state: 'finished',
+      owner: 'alice',
+      datasourceId: 'trino-default',
+      submittedAt: '2025-12-01T00:00:00.000Z',
+    });
+    await history.setResultObject(
+      'dual_cleanup',
+      jsonlKey,
+      expiresAt,
+      { state: 'finished', rowCount: 1, elapsedMs: 1 },
+      [{ name: 'id', type: 'bigint' }],
+      'jsonl.zst',
+    );
+    expect(await history.setParquetObject('dual_cleanup', jsonlKey, parquetKey)).toBe(true);
+
+    const parquetFailure = new Error('Parquet delete unavailable');
+    const deleteExpired = vi
+      .fn<ResultStore['deleteExpired']>()
+      .mockResolvedValueOnce({
+        deleted: [jsonlKey],
+        failed: [{ key: parquetKey, error: parquetFailure }],
+      })
+      .mockResolvedValueOnce({ deleted: [parquetKey], failed: [] });
+    const service = new ResultExpiryService({
+      history,
+      workflowRuns: {
+        listExpiredResults: vi.fn().mockResolvedValue([]),
+        clearResultObjects: vi.fn().mockResolvedValue(undefined),
+      } as unknown as WorkflowRunRepository,
+      deletions: {
+        claimDue: vi.fn().mockResolvedValue([]),
+        complete: vi.fn().mockResolvedValue(undefined),
+      } as unknown as ResultObjectDeletionRepository,
+      resultStore: { enabled: true, deleteExpired } as unknown as ResultStore,
+      now: () => Date.parse(expiresAt),
+    });
+
+    try {
+      await service.runOnce();
+      expect(deleteExpired).toHaveBeenNthCalledWith(1, [{ key: jsonlKey }, { key: parquetKey }]);
+      expect(
+        await db.query(
+          'SELECT result_object_key, parquet_object_key FROM query_history WHERE id=?',
+          ['dual_cleanup'],
+        ),
+      ).toEqual([{ result_object_key: null, parquet_object_key: parquetKey }]);
+
+      await service.runOnce();
+      expect(deleteExpired).toHaveBeenNthCalledWith(2, [{ key: parquetKey }]);
+      expect(
+        await db.query(
+          'SELECT result_object_key, parquet_object_key FROM query_history WHERE id=?',
+          ['dual_cleanup'],
+        ),
+      ).toEqual([{ result_object_key: null, parquet_object_key: null }]);
+    } finally {
+      await db.close();
+    }
+  });
+
   it('claim 上限を超える due job を同じ runOnce 内で drain する', async () => {
     const db = await openMemoryDatabase();
     const deletions = new ResultObjectDeletionRepository(db);
@@ -257,6 +332,7 @@ describe('ResultExpiryService periodic execution', () => {
     const service = new ResultExpiryService({
       history: {
         listExpiredResults: vi.fn().mockResolvedValue([]),
+        listExpiredParquetResults: vi.fn().mockResolvedValue([]),
         clearResultObjects: vi.fn().mockResolvedValue(undefined),
       } as unknown as HistoryRepository,
       workflowRuns: {
@@ -319,6 +395,7 @@ describe('ResultExpiryService periodic execution', () => {
     const service = new ResultExpiryService({
       history: {
         listExpiredResults: vi.fn().mockResolvedValue([]),
+        listExpiredParquetResults: vi.fn().mockResolvedValue([]),
       } as unknown as HistoryRepository,
       workflowRuns: {
         listExpiredResults: vi.fn().mockResolvedValue([]),

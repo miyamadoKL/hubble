@@ -50,18 +50,21 @@ export class ResultObjectDeletionRepository {
     }
   }
 
-  /** query または workflow の live 行が object key を参照しているか確認する。 */
+  /** query の JSONL/Parquet または workflow の live 行が object key を参照しているか確認する。 */
   async isReferenced(key: string): Promise<boolean> {
     const rows = await this.db.query<{ object_key: string }>(
       `SELECT object_key FROM (
          SELECT result_object_key AS object_key
          FROM query_history WHERE result_object_key = ?
          UNION ALL
+         SELECT parquet_object_key AS object_key
+         FROM query_history WHERE parquet_object_key = ?
+         UNION ALL
          SELECT result_object_key AS object_key
          FROM workflow_step_runs WHERE result_object_key = ?
        ) AS live_result_refs
        LIMIT 1`,
-      [key, key],
+      [key, key, key],
     );
     return rows.length > 0;
   }
