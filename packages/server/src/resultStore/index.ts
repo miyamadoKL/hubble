@@ -31,6 +31,15 @@ export {
   type ParquetConversionWorkerConfig,
   type ParquetConversionWorkerDeps,
 } from './parquetConversionWorker';
+export {
+  buildDuckdbS3TemporarySecret,
+  createDuckdbS3TemporarySecret,
+  parseDuckdbS3Endpoint,
+  validateDuckdbS3Scope,
+  type DuckdbS3Endpoint,
+  type DuckdbS3SecretStatement,
+  type DuckdbS3TemporarySecretInput,
+} from './duckdbS3';
 
 /** ResultStore 生成時の注入ポイント。 */
 export interface CreateResultStoreDeps {

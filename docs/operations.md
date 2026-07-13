@@ -901,6 +901,58 @@ DB の key を NULL に戻す処理は Hubble 側が行うため、lifecycle rul
 }
 ```
 
+### 9.4.1 DuckDB 直接 S3 読み出しの検証ゲート
+
+**C ゲート**は、A2 が保存した Parquet artifact を DuckDB の `httpfs` から S3 互換ストレージへ直接読み出せることを検証する CI 専用のチェックです。
+
+このチェックは本番用の endpoint や認証情報を設定する機能ではありません。
+CI は使い捨ての MinIO と認証情報を起動し、A1 converter と同じ ZSTD Parquet を bucket へ upload してから、DuckDB で件数、射影、filter を実行します。
+bucket の作成と policy の登録だけが MinIO root credential を使い、Parquet の upload は writer identity、stat と DuckDB の直接読取は prefix-scoped reader identity を使います。
+この分離により、実際の結果保存と同じ `S3ResultStore` の upload metadata、endpoint、AWS SDK credential chain を gate に通します。
+
+DuckDB 側では `PROVIDER CREDENTIAL_CHAIN`、`CHAIN 'env'`、temporary secret、prefix scope の secret contract を確認します。
+secret の access key、secret key、session token は `duckdb_settings()` やログへ出しません。
+session token は builder の parameter contract に含めますが、MinIO gate の実読取が証明するのは static environment credential provider だけです。
+
+通常の `pnpm test` にはこのチェックを含めません。
+明示実行は `pnpm --filter @hubble/server test:duckdb-s3-gate` で行い、`DUCKDB_S3_ENDPOINT` が未設定のローカル実行は skip します。
+endpoint を設定した実行で credential が欠けている場合は、設定漏れとして失敗させます。
+gate bucket は policy fixture と同じ `hubble-duckdb-s3-gate` に固定しています。
+この gate では `DUCKDB_S3_BUCKET` override を受け付けません。別 bucket は policy fixture と bootstrap 手順を含む別構成です。
+
+合格条件は、MinIO 上の object に対して次のすべてが成立することです。
+
+- bucket 作成と Parquet upload が、指定した credential と path-style endpoint で成功する。
+- DuckDB が `httpfs` を load し、endpoint、region、credential、path-style を設定できる。
+- DuckDB の `read_parquet` が object を直接読み、件数、列の射影、filter の結果が fixture と一致する。
+- Parquet の metadata を読め、複数 row group を含む artifact を扱える。
+- 不正な credential で fresh DuckDB instance の読取が失敗し、匿名 HTTP や別の credential へ fallback しない。
+
+production image は build 時に DuckDB 1.5.4-r.1 の linux-amd64 `aws` と `httpfs` extension を配置します。
+gate runtime は `autoinstall_known_extensions` と `autoload_known_extensions` を無効にしてから `LOAD aws` と `LOAD httpfs` だけを実行します。
+したがって、最初の利用者 request が extension の外部 download を開始する構成ではありません。
+image build には extension repository への outbound access が必要ですが、runtime の直接読取には不要です。
+
+credential provider の検証範囲は次の通りです。
+
+| provider                                               | C gate の扱い                                                   | E 着手前の条件                                                  |
+| ------------------------------------------------------ | --------------------------------------------------------------- | --------------------------------------------------------------- |
+| AWS access key と secret key の環境変数                | MinIO の writer と reader で実読取を検証する                    | C の required check を通す                                      |
+| session token                                          | temporary secret builder の契約で optional parameter を検証する | token を発行する staging provider で同じ direct read を検証する |
+| IRSA、ECS task role、EC2 instance profile、AWS profile | MinIO gate では証明しない                                       | 本番と同じ配備 identity を使う staging probe を E 着手前に通す  |
+
+`credential_chain` の期限更新と secret の refresh は C の対象外です。
+初期の E 実装は処理単位で DuckDB instance と temporary secret を作り直し、長寿命 instance に credential を保持しない前提にします。
+
+このチェックは HTTP Range の発行回数を合格条件にしません。
+DuckDB の HTTP Range の成立条件は Batch 3 の bounded PoC で検証済みですが、MinIO の標準 access log から CI 内の Range GET を安定して識別する観測経路はこのチェックに用意していません。
+したがって C の成功は「S3 credential と DuckDB 直接読取が成立した」ことを意味し、Range の転送量や発行回数を保証しません。
+
+C の check context は、最初の CI 実行後に repository の branch protection または ruleset で required status check に登録してください。
+E の persisted search/profile route へ進む条件は、C が再実行可能な MinIO gate として必須チェックになり、A2 の Parquet artifact を同じ credential と endpoint 契約で直接読めることです。
+C の直接読取、credential rejection、または baked extension の条件が失敗した場合は E の route 実装を始めず、先に D の HTTP Range proxy を実装して server の認可と Range 読み出しを経路へ固定します。
+Range の観測精度だけが不足していて直接読取が成功している場合は、それだけを D 移行理由にしません。
+
 ### 9.5 結果の外部エクスポート
 
 結果ペインの XLSX ダウンロードと **Export** メニューは、CSV ダウンロードと同じ owner チェックと現在 role の datasource allowlist を評価します。
