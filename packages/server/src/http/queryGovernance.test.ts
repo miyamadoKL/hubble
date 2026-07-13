@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import { createTestContext, waitForTerminal } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
-import type { ResultStore } from '../resultStore';
+import {
+  memoryResultStoreValidator,
+  memoryResultStoreVersionId,
+  readMemoryResultRange,
+  validateMemoryResultRequest,
+} from '../test/memoryResultStore';
+import type { ResultStore, ResultStoreRequestOptions } from '../resultStore';
 import type { QueryEngine } from '../engine/types';
 import { DocumentGitLinkRepository } from '../github/store';
 import { contentHash, savedQueryToContent } from '../github/canonical';
@@ -33,6 +39,28 @@ class MemoryResultStore implements ResultStore {
     const data = this.objects.get(key);
     if (!data) throw new Error(`missing ${key}`);
     return Readable.from(data);
+  }
+
+  async stat(key: string, options?: ResultStoreRequestOptions) {
+    const data = this.objects.get(key);
+    if (!data) throw new Error(`missing ${key}`);
+    validateMemoryResultRequest(key, data, options);
+    return {
+      size: data.length,
+      validator: memoryResultStoreValidator(data),
+      versionId: memoryResultStoreVersionId(data),
+    };
+  }
+
+  async readRange(
+    key: string,
+    offset: number,
+    length: number,
+    options?: ResultStoreRequestOptions,
+  ): Promise<Buffer> {
+    const data = this.objects.get(key);
+    if (!data) throw new Error(`missing ${key}`);
+    return readMemoryResultRange(key, data, offset, length, options);
   }
 
   async delete(): Promise<void> {}

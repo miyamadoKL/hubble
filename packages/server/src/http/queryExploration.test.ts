@@ -7,7 +7,14 @@ import type { ResultProfile, ResultSearchPage } from '@hubble/contracts';
 import { apiRoutes } from '@hubble/contracts';
 import { createTestContext, waitForTerminal } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
+import {
+  memoryResultStoreValidator,
+  memoryResultStoreVersionId,
+  readMemoryResultRange,
+  validateMemoryResultRequest,
+} from '../test/memoryResultStore';
 import type { DeleteExpiredResult, ExpiredResultObject, ResultStore } from '../resultStore/store';
+import type { ResultStoreRequestOptions } from '../resultStore/store';
 
 const NATION_COLUMNS = [
   { name: 'nationkey', type: 'bigint' },
@@ -67,6 +74,28 @@ class MemoryResultStore implements ResultStore {
     const object = this.objects.get(key);
     if (!object) throw new Error(`missing object: ${key}`);
     return Readable.from(object);
+  }
+
+  async stat(key: string, options?: ResultStoreRequestOptions) {
+    const object = this.objects.get(key);
+    if (!object) throw new Error(`missing object: ${key}`);
+    validateMemoryResultRequest(key, object, options);
+    return {
+      size: object.length,
+      validator: memoryResultStoreValidator(object),
+      versionId: memoryResultStoreVersionId(object),
+    };
+  }
+
+  async readRange(
+    key: string,
+    offset: number,
+    length: number,
+    options?: ResultStoreRequestOptions,
+  ): Promise<Buffer> {
+    const object = this.objects.get(key);
+    if (!object) throw new Error(`missing object: ${key}`);
+    return readMemoryResultRange(key, object, offset, length, options);
   }
 
   async delete(key: string): Promise<void> {

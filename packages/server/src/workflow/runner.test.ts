@@ -16,12 +16,18 @@ import { GithubGovernanceService } from '../github/governance';
 import { loadServerConfig } from '../config';
 import { contentHash, workflowToContent } from '../github/canonical';
 import { FakeTrino, type FakeScenario } from '../test/fakeTrino';
+import {
+  memoryResultStoreValidator,
+  memoryResultStoreVersionId,
+  readMemoryResultRange,
+  validateMemoryResultRequest,
+} from '../test/memoryResultStore';
 import { loadRbac } from '../rbac/loader';
 import type { LoadedRbac } from '../rbac/types';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { WorkflowRunner } from './runner';
 import { AuditLogger, AuditRepository } from '../audit';
-import type { ResultStore } from '../resultStore';
+import type { ResultStore, ResultStoreRequestOptions } from '../resultStore';
 import { NoneResultStore } from '../resultStore';
 import { JobAdmissionController } from '../schedule/admission';
 import { ResultObjectDeletionRepository } from '../store/resultObjectDeletions';
@@ -59,6 +65,28 @@ class MemoryResultStore implements ResultStore {
     const data = this.objects.get(key);
     if (!data) throw new Error(`missing ${key}`);
     return Readable.from(data);
+  }
+
+  async stat(key: string, options?: ResultStoreRequestOptions) {
+    const data = this.objects.get(key);
+    if (!data) throw new Error(`missing ${key}`);
+    validateMemoryResultRequest(key, data, options);
+    return {
+      size: data.length,
+      validator: memoryResultStoreValidator(data),
+      versionId: memoryResultStoreVersionId(data),
+    };
+  }
+
+  async readRange(
+    key: string,
+    offset: number,
+    length: number,
+    options?: ResultStoreRequestOptions,
+  ): Promise<Buffer> {
+    const data = this.objects.get(key);
+    if (!data) throw new Error(`missing ${key}`);
+    return readMemoryResultRange(key, data, offset, length, options);
   }
 
   async delete(key: string): Promise<void> {
