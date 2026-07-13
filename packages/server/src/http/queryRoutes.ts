@@ -360,8 +360,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       return {
         events: streamPersistedResultEvents(
           await services.resultStore.getStream(persisted.resultObjectKey),
-          undefined,
-          { format: persisted.format, key: persisted.resultObjectKey },
         ),
         source: 'resultStore',
         target: persisted.id,
@@ -439,12 +437,8 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const ref = await requirePersistedResult(c);
     const columns =
       ref.columns ??
-      (
-        await readPersistedResultMetadata(
-          await services.resultStore.getStream(ref.resultObjectKey),
-          { format: ref.format, key: ref.resultObjectKey },
-        )
-      ).columns;
+      (await readPersistedResultMetadata(await services.resultStore.getStream(ref.resultObjectKey)))
+        .columns;
     const snapshot: QuerySnapshot = {
       queryId: ref.id,
       state: ref.state,
@@ -487,8 +481,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         {
           totalRows: ref.rowCount,
           columns: ref.columns,
-          format: ref.format,
-          key: ref.resultObjectKey,
         },
       );
       const page: QueryRowsPage = {
@@ -526,7 +518,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       const ref = await requirePersistedResult(c);
       const cursor = await openPersistedResult(
         await services.resultStore.getStream(ref.resultObjectKey),
-        { format: ref.format, key: ref.resultObjectKey },
       );
       assertResultSearchColumnIndices(cursor.columns, body);
       const searched = await searchRowsStream(cursor.columns, cursor.rows, body);
@@ -569,7 +560,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       }
       const cursor = await openPersistedResult(
         await services.resultStore.getStream(ref.resultObjectKey),
-        { format: ref.format, key: ref.resultObjectKey },
       );
       const profiled = await profileRowsStream(cursor.columns, cursor.rows);
       const profile: ResultProfile = {
@@ -786,7 +776,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         rawStream.onAbort(() => ac.abort());
         const csv = streamPersistedCsv(
           await services.resultStore.getStream(persisted.resultObjectKey),
-          { format: persisted.format, key: persisted.resultObjectKey },
         );
         await writeCsvDownload(rawStream, csvName, csv, { zip, gzip, signal: ac.signal });
       });
@@ -1034,7 +1023,6 @@ function persistedResultEtag(
     version: PERSISTED_RESULT_REVALIDATION_VERSION,
     route,
     key: ref.resultObjectKey,
-    format: ref.format ?? 'legacy',
     ...params,
   });
   return `W/"${createHash('sha256').update(input).digest('hex')}"`;

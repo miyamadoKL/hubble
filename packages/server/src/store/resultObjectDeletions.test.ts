@@ -35,7 +35,6 @@ for (const backend of dbBackends) {
         expiresAt,
         { state: 'finished', rowCount: 1, elapsedMs: 1 },
         [],
-        'jsonl.gz',
       );
       expect(await deletions.isReferenced('jsonl-ref')).toBe(true);
 

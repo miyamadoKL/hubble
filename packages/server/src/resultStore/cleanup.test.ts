@@ -45,7 +45,7 @@ describe('ResultExpiryService periodic execution', () => {
   it('1 分後の outbox timer で backoff 済みジョブを再試行する', async () => {
     const db = await openMemoryDatabase();
     const deletions = new ResultObjectDeletionRepository(db);
-    const key = 'hubble-results/workflow/timer-retry.jsonl.gz';
+    const key = 'hubble-results/workflow/timer-retry.jsonl.zst';
     let now = Date.parse('2026-01-01T00:00:00.000Z');
     await deletions.enqueue([key], new Date(now).toISOString());
     const failure = new Error('temporary failure');
@@ -96,7 +96,7 @@ describe('ResultExpiryService periodic execution', () => {
   it('同一 key を一度だけ削除し、失敗後は backoff を経て再試行する', async () => {
     const db = await openMemoryDatabase();
     const deletions = new ResultObjectDeletionRepository(db);
-    const key = 'hubble-results/workflow/retry.jsonl.gz';
+    const key = 'hubble-results/workflow/retry.jsonl.zst';
     let now = Date.parse('2026-01-01T00:00:00.000Z');
     await deletions.enqueue([key, key], new Date(now).toISOString());
     await deletions.enqueue([key], new Date(now).toISOString());
@@ -152,7 +152,7 @@ describe('ResultExpiryService periodic execution', () => {
   it('通常の expiry と outbox が同じ key を参照しても削除を一回にまとめる', async () => {
     const db = await openMemoryDatabase();
     const deletions = new ResultObjectDeletionRepository(db);
-    const key = 'hubble-results/shared.jsonl.gz';
+    const key = 'hubble-results/shared.jsonl.zst';
     const nowIso = '2026-01-01T00:00:00.000Z';
     await deletions.enqueue([key], nowIso);
     const history = {
@@ -188,12 +188,12 @@ describe('ResultExpiryService periodic execution', () => {
   it('期限切れ参照を100件ずつカーソル走査し、全件配列を作らない', async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       id: `qry_${String(index).padStart(3, '0')}`,
-      resultObjectKey: `hubble-results/${String(index).padStart(3, '0')}.jsonl.gz`,
+      resultObjectKey: `hubble-results/${String(index).padStart(3, '0')}.jsonl.zst`,
       resultExpiresAt: '2025-12-01T00:00:00.000Z',
     }));
     const finalItem = {
       id: 'qry_100',
-      resultObjectKey: 'hubble-results/100.jsonl.gz',
+      resultObjectKey: 'hubble-results/100.jsonl.zst',
       resultExpiresAt: '2025-12-02T00:00:00.000Z',
     };
     const listExpiredResults = vi
@@ -246,7 +246,7 @@ describe('ResultExpiryService periodic execution', () => {
     const nowIso = '2026-01-01T00:00:00.000Z';
     const keys = Array.from(
       { length: 101 },
-      (_, index) => `hubble-results/workflow/batch-${String(index).padStart(3, '0')}.jsonl.gz`,
+      (_, index) => `hubble-results/workflow/batch-${String(index).padStart(3, '0')}.jsonl.zst`,
     );
     await deletions.enqueue(keys, nowIso);
     const deleteExpired = vi
@@ -283,7 +283,7 @@ describe('ResultExpiryService periodic execution', () => {
   it('ResultStore 無効時は outbox を完了せず、再有効化が必要だと一度だけ警告する', async () => {
     const db = await openMemoryDatabase();
     const deletions = new ResultObjectDeletionRepository(db);
-    const key = 'hubble-results/workflow/disabled.jsonl.gz';
+    const key = 'hubble-results/workflow/disabled.jsonl.zst';
     const nowIso = '2026-01-01T00:00:00.000Z';
     await deletions.enqueue([key], nowIso);
     const deleteExpired = vi.fn<ResultStore['deleteExpired']>();
@@ -314,7 +314,7 @@ describe('ResultExpiryService periodic execution', () => {
   });
 
   it('outbox key が live 行から参照されている場合は object を削除せず job を破棄する', async () => {
-    const key = 'hubble-results/live.jsonl.gz';
+    const key = 'hubble-results/live.jsonl.zst';
     const complete = vi.fn(async () => undefined);
     const deleteExpired = vi.fn<ResultStore['deleteExpired']>();
     const service = new ResultExpiryService({

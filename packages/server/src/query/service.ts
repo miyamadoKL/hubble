@@ -185,7 +185,6 @@ export class QueryService {
                     errorMessage: exec.error?.message,
                   },
                   exec.columns,
-                  resultCapture.format,
                   tx,
                 );
               } catch (error) {

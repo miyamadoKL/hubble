@@ -5,7 +5,7 @@ import type { ServerConfig } from '../config';
 import { NoneResultStore, type ResultStore } from './store';
 import { S3ResultStore, type S3ResultStoreDeps } from './s3';
 
-export { NoneResultStore, type ResultStore, type ResultArtifactFormat } from './store';
+export { NoneResultStore, type ResultStore } from './store';
 export { S3ResultStore, buildS3ClientConfig, resultArtifactMetadata } from './s3';
 
 /** ResultStore 生成時の注入ポイント。 */

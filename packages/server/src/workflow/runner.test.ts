@@ -21,7 +21,7 @@ import type { LoadedRbac } from '../rbac/types';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { WorkflowRunner } from './runner';
 import { AuditLogger, AuditRepository } from '../audit';
-import type { ResultArtifactFormat, ResultStore } from '../resultStore';
+import type { ResultStore } from '../resultStore';
 import { NoneResultStore } from '../resultStore';
 import { JobAdmissionController } from '../schedule/admission';
 import { ResultObjectDeletionRepository } from '../store/resultObjectDeletions';
@@ -47,8 +47,7 @@ class MemoryResultStore implements ResultStore {
   readonly enabled = true;
   readonly objects = new Map<string, Buffer>();
 
-  async put(key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
-    void _format;
+  async put(key: string, body: Readable): Promise<void> {
     const chunks: Buffer[] = [];
     for await (const chunk of body) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -89,8 +88,8 @@ class GatedResultStore extends MemoryResultStore {
   readonly reachedUpload = this.uploadReached.promise;
   deleteFailure?: Error;
 
-  override async put(key: string, body: Readable, format: ResultArtifactFormat): Promise<void> {
-    await super.put(key, body, format);
+  override async put(key: string, body: Readable): Promise<void> {
+    await super.put(key, body);
     this.uploadReached.resolve();
     await this.uploadGate.promise;
   }

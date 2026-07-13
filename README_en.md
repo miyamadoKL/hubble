@@ -43,7 +43,7 @@ Trino-only. Rebuilt as a modern, single-language TypeScript app.
   search, client-side filter/sort, CSV/XLSX download, S3 and Google Sheets export,
   TSV/HTML copy.
 - **Optional result persistence** — set `RESULT_STORE=s3` to store completed
-  query results as gzip JSONL in S3 and reopen them from history without
+  query results as zstd-compressed JSONL in S3 and reopen them from history without
   re-running the query. The default is `RESULT_STORE=none`, which keeps only the
   in-memory result.
 - **Charts** (ECharts) — bars / lines / timeline / pie / scatter, with X/Y (multi-Y),

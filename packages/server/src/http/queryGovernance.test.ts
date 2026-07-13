@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import { createTestContext, waitForTerminal } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
-import type { ResultArtifactFormat, ResultStore } from '../resultStore';
+import type { ResultStore } from '../resultStore';
 import type { QueryEngine } from '../engine/types';
 import { DocumentGitLinkRepository } from '../github/store';
 import { contentHash, savedQueryToContent } from '../github/canonical';
@@ -21,8 +21,7 @@ class MemoryResultStore implements ResultStore {
   readonly enabled = true;
   readonly objects = new Map<string, Buffer>();
 
-  async put(key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
-    void _format;
+  async put(key: string, body: Readable): Promise<void> {
     const chunks: Buffer[] = [];
     for await (const chunk of body) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
