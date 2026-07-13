@@ -146,6 +146,40 @@ describe('openDatabase with the real initial migration', () => {
     expect(migrations.length).toBeGreaterThanOrEqual(1);
     expect(migrations[0]!.version).toBe(1);
   });
+
+  it('creates nullable Parquet columns and partial lifecycle indexes', async () => {
+    const db = await openMemoryDatabase();
+    const columns = await db.query<{ name: string; notnull: number }>(
+      'PRAGMA table_info(query_history)',
+    );
+    expect(columns.map(({ name, notnull }) => ({ name, notnull }))).toEqual(
+      expect.arrayContaining([
+        { name: 'parquet_object_key', notnull: 0 },
+        { name: 'parquet_expires_at', notnull: 0 },
+      ]),
+    );
+    const indexes = await db.query<{ name: string; sql: string }>(
+      `SELECT name, sql FROM sqlite_master
+       WHERE type='index' AND name IN
+         ('idx_query_history_retention', 'idx_query_history_parquet_expiry_cursor',
+          'idx_query_history_parquet_object_key')`,
+    );
+    expect(indexes.map((index) => index.name).sort()).toEqual([
+      'idx_query_history_parquet_expiry_cursor',
+      'idx_query_history_parquet_object_key',
+      'idx_query_history_retention',
+    ]);
+    expect(indexes.find((index) => index.name === 'idx_query_history_retention')?.sql).toMatch(
+      /result_object_key IS NULL AND parquet_object_key IS NULL/,
+    );
+    expect(
+      indexes.find((index) => index.name === 'idx_query_history_parquet_expiry_cursor')?.sql,
+    ).toMatch(/parquet_object_key IS NOT NULL AND parquet_expires_at IS NOT NULL/);
+    expect(
+      indexes.find((index) => index.name === 'idx_query_history_parquet_object_key')?.sql,
+    ).toMatch(/parquet_object_key IS NOT NULL/);
+    await db.close();
+  });
 });
 
 // PostgreSQL-only: idempotent migrations + advisory-lock serialization. Gated on
