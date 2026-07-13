@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { gzipSync } from 'node:zlib';
+import { zstdCompressSync } from 'node:zlib';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,7 +13,6 @@ import {
   NoneResultStore,
   type DeleteExpiredResult,
   type ExpiredResultObject,
-  type ResultArtifactFormat,
   type ResultStore,
 } from './store';
 import {
@@ -50,8 +49,7 @@ class MemoryResultStore implements ResultStore {
   readonly objects = new Map<string, Buffer>();
   readonly deleted: string[] = [];
 
-  async put(key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
-    void _format;
+  async put(key: string, body: Readable): Promise<void> {
     const chunks: Buffer[] = [];
     for await (const chunk of body) chunks.push(Buffer.from(chunk as Buffer));
     this.objects.set(key, Buffer.concat(chunks));
@@ -131,9 +129,9 @@ describe('ResultStore persistence', () => {
     });
     const store = new MemoryResultStore();
     const originalPut = store.put.bind(store);
-    vi.spyOn(store, 'put').mockImplementation(async (key, body, format) => {
+    vi.spyOn(store, 'put').mockImplementation(async (key, body) => {
       await uploadGate;
-      await originalPut(key, body, format);
+      await originalPut(key, body);
     });
     const ctx = await createTestContext({ scenarios: [manyRows(2)], resultStore: store });
     await submitPersistQuery(ctx);
@@ -199,8 +197,7 @@ describe('ResultStore persistence', () => {
     const objects = new Map<string, Buffer>();
     const store: ResultStore = {
       enabled: true,
-      async put(key, body, _format) {
-        void _format;
+      async put(key, body) {
         await uploadGate;
         const chunks: Buffer[] = [];
         for await (const chunk of body) chunks.push(Buffer.from(chunk as Buffer));
@@ -215,7 +212,7 @@ describe('ResultStore persistence', () => {
       },
       async close() {},
     };
-    const capture = new ResultJsonlCapture(store, 'blocked.jsonl.gz');
+    const capture = new ResultJsonlCapture(store, 'blocked.jsonl.zst');
     capture.writeColumns(COLUMNS);
     const largeValue = randomBytes(2 * 1024 * 1024).toString('base64');
     let resolved = false;
@@ -230,7 +227,7 @@ describe('ResultStore persistence', () => {
     releaseUpload();
     await writing;
     await capture.finish();
-    expect(objects.has('blocked.jsonl.gz')).toBe(true);
+    expect(objects.has('blocked.jsonl.zst')).toBe(true);
   });
 
   it('writes and reads a zstd JSONL object with the native node:zlib codec', async () => {
@@ -244,9 +241,8 @@ describe('ResultStore persistence', () => {
     ]);
     await capture.finish();
 
-    const page = await readPersistedRowsPage(await store.getStream(key), 0, 10, { key });
+    const page = await readPersistedRowsPage(await store.getStream(key), 0, 10);
 
-    expect(capture.format).toBe('jsonl.zst');
     expect(page.columns).toEqual(COLUMNS);
     expect(page.rows).toEqual([
       [1, 'one'],
@@ -255,7 +251,7 @@ describe('ResultStore persistence', () => {
     expect(page.totalRows).toBe(2);
   });
 
-  it('uses the zstd dual reader for metadata, cursor, CSV, and result events', async () => {
+  it('uses the zstd reader for metadata, cursor, CSV, and result events', async () => {
     const store = new MemoryResultStore();
     const key = 'hubble-results/dual-reader.jsonl.zst';
     const capture = new ResultJsonlCapture(store, key);
@@ -263,17 +259,14 @@ describe('ResultStore persistence', () => {
     await capture.writeRows([[1, 'one']]);
     await capture.finish();
 
-    const metadata = await readPersistedResultMetadata(await store.getStream(key), { key });
-    const cursor = await openPersistedResult(await store.getStream(key), { key });
+    const metadata = await readPersistedResultMetadata(await store.getStream(key));
+    const cursor = await openPersistedResult(await store.getStream(key));
     const rows: unknown[][] = [];
     for await (const row of cursor.rows) rows.push(row);
     const csv: string[] = [];
-    for await (const chunk of streamPersistedCsv(await store.getStream(key), { key }))
-      csv.push(chunk);
+    for await (const chunk of streamPersistedCsv(await store.getStream(key))) csv.push(chunk);
     const events: unknown[] = [];
-    for await (const event of streamPersistedResultEvents(await store.getStream(key), undefined, {
-      key,
-    })) {
+    for await (const event of streamPersistedResultEvents(await store.getStream(key))) {
       events.push(event);
     }
 
@@ -284,70 +277,6 @@ describe('ResultStore persistence', () => {
       { type: 'columns', columns: COLUMNS },
       { type: 'row', row: [1, 'one'] },
     ]);
-  });
-
-  it.each([
-    { name: 'gzip', key: 'hubble-results/table-gzip.jsonl.gz' },
-    { name: 'zstd', key: 'hubble-results/table-zstd.jsonl.zst' },
-  ])('runs the same reader group for $name objects', async ({ key }) => {
-    const store = new MemoryResultStore();
-    const capture = new ResultJsonlCapture(store, key);
-    capture.writeColumns(COLUMNS);
-    await capture.writeRows([[7, 'seven']]);
-    await capture.finish();
-    const options = { key, format: capture.format };
-
-    const metadata = await readPersistedResultMetadata(await store.getStream(key), options);
-    const page = await readPersistedRowsPage(await store.getStream(key), 0, 10, options);
-    const cursor = await openPersistedResult(await store.getStream(key), options);
-    const rows: unknown[][] = [];
-    for await (const row of cursor.rows) rows.push(row);
-    const csv: string[] = [];
-    for await (const chunk of streamPersistedCsv(await store.getStream(key), options))
-      csv.push(chunk);
-    const events: unknown[] = [];
-    for await (const event of streamPersistedResultEvents(
-      await store.getStream(key),
-      undefined,
-      options,
-    )) {
-      events.push(event);
-    }
-
-    expect(metadata.columns).toEqual(COLUMNS);
-    expect(page.rows).toEqual([[7, 'seven']]);
-    expect(rows).toEqual([[7, 'seven']]);
-    expect(csv.join('')).toBe('id,note\r\n7,seven\r\n');
-    expect(events).toEqual([
-      { type: 'columns', columns: COLUMNS },
-      { type: 'row', row: [7, 'seven'] },
-    ]);
-  });
-
-  it.each([
-    {
-      contentKey: 'hubble-results/priority-gzip.jsonl.gz',
-      format: 'jsonl.gz' as const,
-      readKey: 'hubble-results/wrong-extension.jsonl.zst',
-    },
-    {
-      contentKey: 'hubble-results/priority-zstd.jsonl.zst',
-      format: 'jsonl.zst' as const,
-      readKey: 'hubble-results/wrong-extension.jsonl.gz',
-    },
-  ])('uses format before an opposite key extension', async ({ contentKey, format, readKey }) => {
-    const store = new MemoryResultStore();
-    const capture = new ResultJsonlCapture(store, contentKey);
-    capture.writeColumns(COLUMNS);
-    await capture.writeRows([[8, 'eight']]);
-    await capture.finish();
-
-    const options = { format, key: readKey };
-    const metadata = await readPersistedResultMetadata(await store.getStream(contentKey), options);
-    const page = await readPersistedRowsPage(await store.getStream(contentKey), 0, 10, options);
-
-    expect(metadata.columns).toEqual(COLUMNS);
-    expect(page.rows).toEqual([[8, 'eight']]);
   });
 
   it('streams all rows to fake ResultStore and records the history object key', async () => {
@@ -365,13 +294,9 @@ describe('ResultStore persistence', () => {
     expect([...store.objects.keys()].some((key) => key.endsWith('.parquet'))).toBe(false);
     expect(ref.rowCount).toBe(20);
     expect(ref.columns).toEqual(COLUMNS);
-    expect(ref.format).toBe('jsonl.zst');
     expect(new Date(ref.resultExpiresAt).getTime()).toBeGreaterThan(Date.now());
 
-    const page = await readPersistedRowsPage(await store.getStream(ref.resultObjectKey), 18, 5, {
-      format: ref.format,
-      key: ref.resultObjectKey,
-    });
+    const page = await readPersistedRowsPage(await store.getStream(ref.resultObjectKey), 18, 5);
     expect(page.columns).toEqual(COLUMNS);
     expect(page.totalRows).toBe(20);
     expect(page.rows).toEqual([
@@ -387,9 +312,9 @@ describe('ResultStore persistence', () => {
     });
     const store = new MemoryResultStore();
     const originalPut = store.put.bind(store);
-    vi.spyOn(store, 'put').mockImplementation(async (key, body, format) => {
+    vi.spyOn(store, 'put').mockImplementation(async (key, body) => {
       await uploadGate;
-      await originalPut(key, body, format);
+      await originalPut(key, body);
     });
     const ctx = await createTestContext({ scenarios: [manyRows(3)], resultStore: store });
 
@@ -437,7 +362,6 @@ describe('ResultStore persistence', () => {
     expect(ref.state).toBe('finished');
     expect(ref.rowCount).toBe(3);
     expect(ref.columns).toEqual(COLUMNS);
-    expect(ref.format).toBe('jsonl.zst');
     expect(update).toHaveBeenCalledOnce();
 
     dropExecution(ctx, queryId);
@@ -507,8 +431,8 @@ describe('ResultStore persistence', () => {
     expect(await new ResultObjectDeletionRepository(ctx.db).listForTest()).toEqual([]);
   });
 
-  it('既知の総行数があれば page window 後に gzip 入力を閉じる', async () => {
-    const totalRows = 1_000;
+  it('既知の総行数があれば page window 後に zstd 入力を閉じる', async () => {
+    const totalRows = 10_000;
     const records = Array.from({ length: totalRows }, (_, index) => ({
       kind: 'record',
       row: [index, randomBytes(64).toString('hex')],
@@ -518,9 +442,10 @@ describe('ResultStore persistence', () => {
       ...records.map((record) => JSON.stringify(record)),
       '',
     ].join('\n');
-    const compressed = gzipSync(payload);
-    const chunks = Array.from({ length: Math.ceil(compressed.length / 64) }, (_, index) =>
-      compressed.subarray(index * 64, (index + 1) * 64),
+    const compressed = zstdCompressSync(payload);
+    const chunkSize = 1024;
+    const chunks = Array.from({ length: Math.ceil(compressed.length / chunkSize) }, (_, index) =>
+      compressed.subarray(index * chunkSize, (index + 1) * chunkSize),
     );
     let yieldedChunks = 0;
     let sourceClosed = false;
@@ -540,7 +465,6 @@ describe('ResultStore persistence', () => {
 
     const page = await readPersistedRowsPage(stream, 10, 5, {
       totalRows,
-      key: 'legacy.jsonl.gz',
     });
 
     expect(page.totalRows).toBe(totalRows);
@@ -717,7 +641,6 @@ defaultRole: allowed
         errorMessage: ref.errorMessage,
       },
       ref.columns ?? [],
-      ref.format ?? 'jsonl.zst',
     );
 
     await ctx.services.resultExpiry.runOnce();
@@ -730,8 +653,7 @@ defaultRole: allowed
     const persistenceError = new Error('result upload failed');
     const store: ResultStore = {
       enabled: true,
-      async put(_key, body, _format) {
-        void _format;
+      async put(_key, body) {
         for await (const chunk of body) {
           void chunk;
           throw persistenceError;
@@ -805,9 +727,8 @@ describe('S3ResultStore', () => {
       bucket: string;
       key: string;
       body: Readable;
-      format: string;
       contentType: string;
-      contentEncoding?: string;
+      contentEncoding: string;
     }> = [];
     const store = new S3ResultStore(
       { bucket: 'bucket', region: 'us-east-1' },
@@ -819,7 +740,6 @@ describe('S3ResultStore', () => {
               bucket: params.bucket,
               key: params.key,
               body: params.body,
-              format: params.format,
               contentType: params.contentType,
               contentEncoding: params.contentEncoding,
             });
@@ -828,24 +748,15 @@ describe('S3ResultStore', () => {
       },
     );
 
-    await store.put('prefix/q.jsonl.gz', Readable.from(Buffer.from('x')), 'jsonl.gz');
-    await store.put('prefix/q.jsonl.zst', Readable.from(Buffer.from('x')), 'jsonl.zst');
-    await store.getStream('prefix/q.jsonl.gz');
-    await store.delete('prefix/q.jsonl.gz');
+    await store.put('prefix/q.jsonl.zst', Readable.from(Buffer.from('x')));
+    await store.getStream('prefix/q.jsonl.zst');
+    await store.delete('prefix/q.jsonl.zst');
     await store.close();
 
     expect(uploaded).toEqual([
       expect.objectContaining({
         bucket: 'bucket',
-        key: 'prefix/q.jsonl.gz',
-        format: 'jsonl.gz',
-        contentType: 'application/x-ndjson',
-        contentEncoding: 'gzip',
-      }),
-      expect.objectContaining({
-        bucket: 'bucket',
         key: 'prefix/q.jsonl.zst',
-        format: 'jsonl.zst',
         contentType: 'application/x-ndjson',
         contentEncoding: 'zstd',
       }),

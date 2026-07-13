@@ -2,7 +2,7 @@
  * クエリ結果を serializer 非依存のイベント列として読み出す。
  *
  * CSV、xlsx、外部エクスポートが同じ行ソース解決を使えるように、メモリ上の
- * `QueryExecution`、保存済み zstd JSONL（旧 gzip JSONL も読取可）、再実行クエリを `columns` と `row`
+ * `QueryExecution`、保存済み zstd JSONL、再実行クエリを `columns` と `row`
  * のイベントへ正規化する。
  */
 import type { QueryColumn } from '@hubble/contracts';

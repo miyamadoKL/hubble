@@ -370,7 +370,6 @@ for (const backend of dbBackends) {
           expiresAt,
           { state: 'finished', rowCount: 1, elapsedMs: 1 },
           [{ name: 'id', type: 'bigint' }],
-          'jsonl.zst',
         );
         await insert('h_no_refs');
         expect((await repo.listExpiredResults(expiresAt)).map((item) => item.id)).toEqual([

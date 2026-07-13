@@ -14,7 +14,6 @@ import type {
 } from '@hubble/contracts';
 import { queryColumnSchema, queryHistoryEntrySchema } from '@hubble/contracts';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
-import type { ResultFormat } from '../resultStore/jsonl';
 
 /**
  * `query_history` テーブルの行を SQL ドライバがそのまま返す形。列名は
@@ -37,7 +36,6 @@ interface HistoryRow {
   result_object_key: string | null;
   result_expires_at: string | null;
   result_columns_json?: string | null;
-  result_format?: string | null;
   submitted_at: string;
 }
 
@@ -87,7 +85,6 @@ export interface HistoryResultRef {
   resultObjectKey: string;
   resultExpiresAt: string;
   columns?: QueryColumn[];
-  format?: ResultFormat;
 }
 
 /** 期限切れ掃除対象の結果オブジェクト。 */
@@ -169,13 +166,12 @@ export class HistoryRepository {
     expiresAt: string,
     update: HistoryUpdate,
     columns: readonly QueryColumn[],
-    format: ResultFormat,
     database: SqlDatabase = this.db,
   ): Promise<void> {
     const updated = await database.query<{ id: string }>(
       `UPDATE query_history
        SET state=?, row_count=?, elapsed_ms=?, trino_query_id=?, error_message=?,
-           result_object_key=?, result_expires_at=?, result_columns_json=?, result_format=?
+           result_object_key=?, result_expires_at=?, result_columns_json=?
        WHERE id=?
        RETURNING id`,
       [
@@ -187,7 +183,6 @@ export class HistoryRepository {
         key,
         expiresAt,
         JSON.stringify(columns),
-        format,
         id,
       ],
     );
@@ -203,7 +198,7 @@ export class HistoryRepository {
     await this.db.run(
       `UPDATE query_history
        SET result_object_key=NULL, result_expires_at=NULL,
-           result_columns_json=NULL, result_format=NULL
+           result_columns_json=NULL
        WHERE result_object_key IN (${placeholders})`,
       keys,
     );
@@ -365,13 +360,7 @@ function rowToResultRef(row: HistoryRow): HistoryResultRef | undefined {
   if (row.error_message) ref.errorMessage = row.error_message;
   const columns = parseResultColumns(row.result_columns_json);
   if (columns !== undefined) ref.columns = columns;
-  const format = parseResultFormat(row.result_format);
-  if (format !== undefined) ref.format = format;
   return ref;
-}
-
-function parseResultFormat(value: string | null | undefined): ResultFormat | undefined {
-  return value === 'jsonl.gz' || value === 'jsonl.zst' ? value : undefined;
 }
 
 function parseResultColumns(value: string | null | undefined): QueryColumn[] | undefined {

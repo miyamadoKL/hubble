@@ -7,12 +7,7 @@ import type { ResultProfile, ResultSearchPage } from '@hubble/contracts';
 import { apiRoutes } from '@hubble/contracts';
 import { createTestContext, waitForTerminal } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
-import type {
-  DeleteExpiredResult,
-  ExpiredResultObject,
-  ResultArtifactFormat,
-  ResultStore,
-} from '../resultStore/store';
+import type { DeleteExpiredResult, ExpiredResultObject, ResultStore } from '../resultStore/store';
 
 const NATION_COLUMNS = [
   { name: 'nationkey', type: 'bigint' },
@@ -62,8 +57,7 @@ class MemoryResultStore implements ResultStore {
   readonly enabled = true;
   readonly objects = new Map<string, Buffer>();
 
-  async put(key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
-    void _format;
+  async put(key: string, body: Readable): Promise<void> {
     const chunks: Buffer[] = [];
     for await (const chunk of body) chunks.push(Buffer.from(chunk as Buffer));
     this.objects.set(key, Buffer.concat(chunks));

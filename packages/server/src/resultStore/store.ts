@@ -3,9 +3,6 @@
  */
 import { Readable } from 'node:stream';
 
-/** ResultStore に保存する artifact の wire format。 */
-export type ResultArtifactFormat = 'jsonl.gz' | 'jsonl.zst';
-
 /** 期限切れ掃除の対象になるオブジェクト。 */
 export interface ExpiredResultObject {
   key: string;
@@ -21,8 +18,8 @@ export interface DeleteExpiredResult {
 export interface ResultStore {
   /** このバックエンドで実際に保存するかどうか。 */
   readonly enabled: boolean;
-  /** 指定 format の artifact を key に保存する。 */
-  put(key: string, body: Readable, format: ResultArtifactFormat): Promise<void>;
+  /** zstd 圧縮 JSONL artifact を key に保存する。 */
+  put(key: string, body: Readable): Promise<void>;
   /** 指定 key の圧縮 JSONL 読み取りストリームを返す。 */
   getStream(key: string): Promise<Readable>;
   /** 指定 key のオブジェクトを削除する。 */
@@ -37,8 +34,7 @@ export interface ResultStore {
 export class NoneResultStore implements ResultStore {
   readonly enabled = false;
 
-  async put(_key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
-    void _format;
+  async put(_key: string, body: Readable): Promise<void> {
     body.resume();
   }
 

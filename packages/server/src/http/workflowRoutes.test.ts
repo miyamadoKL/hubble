@@ -12,7 +12,7 @@ import {
 } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
-import type { ResultArtifactFormat, ResultStore } from '../resultStore';
+import type { ResultStore } from '../resultStore';
 import type { SheetsApiClient } from '../query/exportSheets';
 import { WorkflowRunTargetNotFoundError } from '../store/workflows';
 
@@ -29,8 +29,7 @@ class MemoryResultStore implements ResultStore {
   readonly enabled = true;
   readonly objects = new Map<string, Buffer>();
 
-  async put(key: string, body: Readable, _format: ResultArtifactFormat): Promise<void> {
-    void _format;
+  async put(key: string, body: Readable): Promise<void> {
     const chunks: Buffer[] = [];
     for await (const chunk of body) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));

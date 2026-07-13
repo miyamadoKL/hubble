@@ -4,7 +4,7 @@
  * web の ResultGrid と同じセマンティクスで行を絞り込み、ソートし、列統計を計算する。
  * HTTP 層は行ソース解決と認可のみ担当し、評価ロジックはここに集約する。
  *
- * 行ソースは AsyncIterable（永続化結果の zstd JSONL ストリーム。旧 gzip JSONL も読取可）と同期 Iterable
+ * 行ソースは AsyncIterable（永続化結果の zstd JSONL ストリーム）と同期 Iterable
  * （メモリバッファの配列）の両方を受ける。永続化結果は QUERY_MAX_ROWS で有界では
  * ない（キャプチャはメモリ側の打ち切りと独立に全結果を保存する）ため、全行を
  * 配列へ materialize せず 1 パスの逐次処理で評価し、保持する状態を有界に保つ。

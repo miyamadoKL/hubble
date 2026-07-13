@@ -138,7 +138,7 @@ for (const backend of dbBackends) {
         await runs.finishStep(stepRunId, {
           status: 'success',
           attempt: 1,
-          resultObjectKey: 'hubble-results/workflow/delete.jsonl.gz',
+          resultObjectKey: 'hubble-results/workflow/delete.jsonl.zst',
           resultExpiresAt: '2026-02-01T00:00:00.000Z',
           finishedAt: '2026-01-01T00:00:01.000Z',
         });
@@ -152,7 +152,7 @@ for (const backend of dbBackends) {
         expect(await runs.listRuns(w.id, 10)).toHaveLength(0);
         expect(await deletions.listForTest()).toEqual([
           expect.objectContaining({
-            key: 'hubble-results/workflow/delete.jsonl.gz',
+            key: 'hubble-results/workflow/delete.jsonl.zst',
             attempts: 0,
           }),
         ]);
@@ -182,7 +182,7 @@ for (const backend of dbBackends) {
         await runs.finishStep(stepRunId, {
           status: 'success',
           attempt: 1,
-          resultObjectKey: 'hubble-results/workflow/delete-before-finish.jsonl.gz',
+          resultObjectKey: 'hubble-results/workflow/delete-before-finish.jsonl.zst',
           resultExpiresAt: '2026-02-01T00:00:00.000Z',
           finishedAt: '2026-01-01T00:00:01.000Z',
         });
@@ -190,7 +190,7 @@ for (const backend of dbBackends) {
         expect(await runs.getRun(runId)).toBeUndefined();
         expect(await deletions.listForTest()).toEqual([
           expect.objectContaining({
-            key: 'hubble-results/workflow/delete-before-finish.jsonl.gz',
+            key: 'hubble-results/workflow/delete-before-finish.jsonl.zst',
             attempts: 0,
           }),
         ]);
@@ -222,7 +222,7 @@ for (const backend of dbBackends) {
           failingRuns.finishStep(stepRunId, {
             status: 'success',
             attempt: 1,
-            resultObjectKey: 'hubble-results/workflow/finish-rollback.jsonl.gz',
+            resultObjectKey: 'hubble-results/workflow/finish-rollback.jsonl.zst',
             resultExpiresAt: '2026-02-01T00:00:00.000Z',
             finishedAt: '2026-01-01T00:00:01.000Z',
           }),
@@ -254,7 +254,7 @@ for (const backend of dbBackends) {
           await runs.finishStep(stepRunId, {
             status: 'success',
             attempt: 1,
-            resultObjectKey: 'hubble-results/workflow/rollback.jsonl.gz',
+            resultObjectKey: 'hubble-results/workflow/rollback.jsonl.zst',
             resultExpiresAt: '2026-02-01T00:00:00.000Z',
             finishedAt: '2026-01-01T00:00:01.000Z',
           });
@@ -464,7 +464,7 @@ for (const backend of dbBackends) {
           await runs.finishStep(stepRunId, {
             status: 'success',
             attempt: 1,
-            resultObjectKey: `hubble-results/workflow/prune-${i}.jsonl.gz`,
+            resultObjectKey: `hubble-results/workflow/prune-${i}.jsonl.zst`,
             resultExpiresAt: '2026-02-01T00:00:00.000Z',
             finishedAt: ts,
           });
@@ -476,8 +476,8 @@ for (const backend of dbBackends) {
         }
         expect(await runs.listRuns(w.id, 10)).toHaveLength(2);
         expect((await deletions.listForTest()).map((job) => job.key)).toEqual([
-          'hubble-results/workflow/prune-0.jsonl.gz',
-          'hubble-results/workflow/prune-1.jsonl.gz',
+          'hubble-results/workflow/prune-0.jsonl.zst',
+          'hubble-results/workflow/prune-1.jsonl.zst',
         ]);
       });
 
@@ -505,7 +505,7 @@ for (const backend of dbBackends) {
           await runs.finishStep(firstStepId, {
             status: 'success',
             attempt: 1,
-            resultObjectKey: 'hubble-results/workflow/prune-rollback.jsonl.gz',
+            resultObjectKey: 'hubble-results/workflow/prune-rollback.jsonl.zst',
             resultExpiresAt: '2026-02-01T00:00:00.000Z',
             finishedAt: '2026-01-01T00:00:01.000Z',
           });
@@ -563,7 +563,7 @@ for (const backend of dbBackends) {
           attempt: 1,
           rowCount: 1,
           elapsedMs: 1,
-          resultObjectKey: 'hubble-results/workflow/x.jsonl.gz',
+          resultObjectKey: 'hubble-results/workflow/x.jsonl.zst',
           resultExpiresAt: '2020-01-01T00:00:00.000Z',
           finishedAt: '2026-01-01T00:00:01.000Z',
         });
@@ -571,11 +571,11 @@ for (const backend of dbBackends) {
         expect(expired).toEqual([
           {
             id: stepRunId,
-            resultObjectKey: 'hubble-results/workflow/x.jsonl.gz',
+            resultObjectKey: 'hubble-results/workflow/x.jsonl.zst',
             resultExpiresAt: '2020-01-01T00:00:00.000Z',
           },
         ]);
-        await runs.clearResultObjects(['hubble-results/workflow/x.jsonl.gz']);
+        await runs.clearResultObjects(['hubble-results/workflow/x.jsonl.zst']);
         const step = await runs.getStepRun(runId, stepRunId);
         expect(step?.resultObjectKey).toBeNull();
       });

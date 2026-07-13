@@ -1,13 +1,7 @@
 /**
  * 圧縮 JSONL 形式のクエリ結果ストリームを読み書きするヘルパー。
  */
-import {
-  constants as zlibConstants,
-  createGunzip,
-  createGzip,
-  createZstdCompress,
-  createZstdDecompress,
-} from 'node:zlib';
+import { constants as zlibConstants, createZstdCompress, createZstdDecompress } from 'node:zlib';
 import { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import type { QueryColumn } from '@hubble/contracts';
@@ -20,15 +14,8 @@ type ResultJsonlLine =
   | { kind: 'columns'; columns: QueryColumn[] }
   | { kind: 'record'; row: unknown[] };
 
-/** 結果オブジェクトの JSONL 形式。拡張子と履歴行の format に保存する。 */
-export type ResultFormat = 'jsonl.gz' | 'jsonl.zst';
-
-/** 保存済み結果を読むときに圧縮形式を解決するための情報。 */
+/** 保存済み結果を読むときの制御情報。 */
 export interface PersistedResultReadOptions {
-  /** T1 の履歴行に保存された形式。key より優先する。 */
-  format?: string;
-  /** 旧履歴行で形式を推測する object key。 */
-  key?: string;
   /** 圧縮ストリームの読み取りを中断するシグナル。 */
   signal?: AbortSignal;
 }
@@ -53,24 +40,24 @@ export interface PersistedResultMetadata {
   columns: QueryColumn[];
 }
 
-/** 実行中の結果を key の拡張子に応じた圧縮 JSONL へ流し込む writer。 */
+/** 実行中の結果を zstd 圧縮 JSONL へ流し込む writer。 */
 export class ResultJsonlCapture {
-  private readonly input: ReturnType<typeof createGzip> | ReturnType<typeof createZstdCompress>;
+  private readonly input: ReturnType<typeof createZstdCompress>;
   private readonly upload: Promise<void>;
   private writeTail: Promise<void> = Promise.resolve();
   private closed = false;
   private sawColumns = false;
   private failure?: unknown;
-  readonly format: ResultFormat;
 
   constructor(
     private readonly store: ResultStore,
     readonly key: string,
   ) {
-    this.format = resultFormatForKey(key);
-    this.input = createCompression(this.format);
+    this.input = createZstdCompress({
+      params: { [zlibConstants.ZSTD_c_compressionLevel]: 3 },
+    });
     this.upload = Promise.resolve()
-      .then(() => this.store.put(this.key, this.input, this.format))
+      .then(() => this.store.put(this.key, this.input))
       .catch((err: unknown) => {
         this.markFailed(err);
       });
@@ -178,7 +165,7 @@ export async function readPersistedRowsPage(
       : undefined;
   const targetEnd =
     knownTotalRows === undefined ? undefined : Math.min(knownTotalRows, offset + limit);
-  for await (const line of readResultLines(stream, options.signal, options)) {
+  for await (const line of readResultLines(stream, options.signal)) {
     if (line.kind === 'columns') {
       if (options.columns === undefined) columns = line.columns;
       if (knownTotalRows !== undefined && (limit === 0 || offset >= knownTotalRows)) break;
@@ -216,7 +203,7 @@ export async function openPersistedResult(
   stream: Readable,
   options: PersistedResultReadOptions = {},
 ): Promise<PersistedResultCursor> {
-  const lines = readResultLines(stream, options.signal, options);
+  const lines = readResultLines(stream, options.signal);
   const first = await lines.next();
 
   // 先頭行から列情報を決める。バッファするのは最大 1 行なのでメモリは有界。
@@ -247,7 +234,7 @@ export async function readPersistedResultMetadata(
   stream: Readable,
   options: PersistedResultReadOptions = {},
 ): Promise<PersistedResultMetadata> {
-  for await (const line of readResultLines(stream, options.signal, options)) {
+  for await (const line of readResultLines(stream, options.signal)) {
     if (line.kind === 'columns') return { columns: line.columns };
   }
   return { columns: [] };
@@ -259,7 +246,7 @@ export async function* streamPersistedCsv(
   options: PersistedResultReadOptions = {},
 ): AsyncGenerator<string> {
   let headerWritten = false;
-  for await (const line of readResultLines(stream, options.signal, options)) {
+  for await (const line of readResultLines(stream, options.signal)) {
     if (line.kind === 'columns') {
       if (line.columns.length > 0)
         yield `${csvRecord(line.columns.map((column) => column.name))}\r\n`;
@@ -277,7 +264,6 @@ export async function* streamPersistedCsv(
 export function streamPersistedResultEvents(
   stream: Readable,
   signal?: AbortSignal,
-  options: PersistedResultReadOptions = {},
 ): AsyncGenerator<QueryResultEvent> {
   // generator の最初の next より前に中断されても、既に開いた S3 body を閉じる。
   const abortBeforeStart = (): void => {
@@ -290,7 +276,7 @@ export function streamPersistedResultEvents(
     signal?.removeEventListener('abort', abortBeforeStart);
     if (signal?.aborted) throw createSqlAbortError();
     let columnsWritten = false;
-    for await (const line of readResultLines(stream, signal, options)) {
+    for await (const line of readResultLines(stream, signal)) {
       if (line.kind === 'columns') {
         columnsWritten = true;
         yield { type: 'columns', columns: line.columns };
@@ -309,9 +295,8 @@ export function streamPersistedResultEvents(
 async function* readResultLines(
   stream: Readable,
   signal?: AbortSignal,
-  options: PersistedResultReadOptions = {},
 ): AsyncGenerator<ResultJsonlLine> {
-  const decompressor = createDecompressor(options);
+  const decompressor = createZstdDecompress();
   const lines = createInterface({
     input: stream.pipe(decompressor),
     crlfDelay: Infinity,
@@ -345,28 +330,4 @@ function parseLine(line: string): ResultJsonlLine {
     return { kind: 'record', row: parsed.row };
   }
   throw new Error('Invalid persisted result JSONL line');
-}
-
-function resultFormatForKey(key: string): ResultFormat {
-  return key.endsWith('.jsonl.zst') ? 'jsonl.zst' : 'jsonl.gz';
-}
-
-function resultCodecFor(options: PersistedResultReadOptions): ResultFormat {
-  if (options.format !== undefined) {
-    return options.format.toLowerCase().includes('zst') ? 'jsonl.zst' : 'jsonl.gz';
-  }
-  return options.key ? resultFormatForKey(options.key) : 'jsonl.gz';
-}
-
-function createCompression(format: ResultFormat) {
-  if (format === 'jsonl.zst') {
-    return createZstdCompress({
-      params: { [zlibConstants.ZSTD_c_compressionLevel]: 3 },
-    });
-  }
-  return createGzip();
-}
-
-function createDecompressor(options: PersistedResultReadOptions) {
-  return resultCodecFor(options) === 'jsonl.zst' ? createZstdDecompress() : createGunzip();
 }

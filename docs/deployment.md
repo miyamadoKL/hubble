@@ -44,7 +44,7 @@ multi-stage の流れ：
 4. **runtime** — server / contracts の **TS ソース**（tsx で直接実行）、web の dist、
    本番 `node_modules` を配置。非 root（`node`）で実行。
 
-結果保存は JSONL を正本とし、zstd を保存形式、gzip を読み取り互換形式として扱います。
+結果保存は JSONL を正本とし、zstd を唯一の保存形式として扱います。
 本番イメージには結果の変換用 native extension や専用の外部サービスを含めません。
 結果読み取りの認可、ETag、期限切れ掃除は通常の server 経路で実行します。
 

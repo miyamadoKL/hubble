@@ -203,7 +203,7 @@ proxy をその upstream にするのが安全です（[§7](#7-認証-auth_mode
 | `QUERY_TTL_MINUTES`               | `30`                              | 完了クエリを保持してから sweep するまでの分数                                                                                                                                                                                   |
 | `QUERY_OVERFLOW_MODE`             | `truncate`                        | `QUERY_MAX_ROWS` 超過時の挙動（`truncate` = 打ち切り / `cancel` = 中止）                                                                                                                                                        |
 | `METADATA_TTL_SECONDS`            | `300`                             | メタデータキャッシュの TTL（秒）                                                                                                                                                                                                |
-| `RESULT_STORE`                    | `none`                            | クエリ結果の保存先（`none` / `s3`）。`s3` のとき完了結果を zstd 圧縮 JSONL で S3 へ保存し、旧 gzip JSONL も読み取れます                                                                                                         |
+| `RESULT_STORE`                    | `none`                            | クエリ結果の保存先（`none` / `s3`）。`s3` のとき完了結果を zstd 圧縮 JSONL で S3 へ保存します                                                                                                                                   |
 | `RESULT_STORE_TTL_DAYS`           | `7`                               | 保存済み結果の保持日数。期限切れ後は起動時と日次の掃除で S3 object を削除し、DB の object key を NULL に戻します                                                                                                                |
 | `RESULT_STORE_S3_BUCKET`          | （未設定）                        | `RESULT_STORE=s3` のとき必須の S3 bucket 名                                                                                                                                                                                     |
 | `RESULT_STORE_S3_PREFIX`          | `hubble-results/`                 | S3 object key の prefix。末尾の `/` を必須とします                                                                                                                                                                              |
@@ -827,7 +827,6 @@ zero gate の SQL と object 件数を PR body に記載し、レビュアーが
 
 `RESULT_STORE=none` では、完了済みクエリの行データを `QUERY_TTL_MINUTES` のあいだサーバーメモリに保持します。
 `RESULT_STORE=s3` では、正常終了したクエリの全結果を zstd レベル3の JSONL として S3 へストリーミング保存します。
-旧 gzip JSONL は読み取り互換のために保持します。
 JSONL の先頭行は columns メタデータで、以降は 1 行 1 record です。
 
 JSONL が結果保存の唯一の artifact です。
@@ -835,7 +834,7 @@ rows、search、profile、export、workflow の結果読み取りは同じ JSONL
 profile は `profileRowsStream` へ行を渡して列統計を計算します。
 認可、所有者、datasource、期限の確認と ETag の 304 判定は、本文を読み取る前に実行します。
 
-S3 metadata は gzip なら `Content-Encoding: gzip`、zstd なら `Content-Encoding: zstd` です。
+S3 metadata は `Content-Encoding: zstd` です。
 結果保存のバックエンドは、保存、圧縮 JSONL の読み取り、削除、期限切れ削除だけを提供します。
 raw byte range を結果読み取りの契約には含めません。
 
