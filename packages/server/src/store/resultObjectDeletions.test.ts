@@ -37,7 +37,7 @@ for (const backend of dbBackends) {
         [],
         'jsonl.gz',
       );
-      await history.setParquetObject('h_ref', 'jsonl-ref', 'parquet-ref');
+      await history.setParquetObject('h_ref', 'jsonl-ref', 'parquet-ref', '1');
 
       expect(await deletions.isReferenced('jsonl-ref')).toBe(true);
       expect(await deletions.isReferenced('parquet-ref')).toBe(true);

@@ -38,6 +38,7 @@ interface HistoryRow {
   result_expires_at: string | null;
   parquet_object_key: string | null;
   parquet_expires_at: string | null;
+  parquet_encoding_version: string | null;
   result_columns_json?: string | null;
   result_format?: string | null;
   submitted_at: string;
@@ -91,6 +92,7 @@ export interface HistoryResultRef {
   parquetRef?: {
     objectKey: string;
     expiresAt: string;
+    encodingVersion: string;
   };
   columns?: QueryColumn[];
   format?: ResultFormat;
@@ -189,8 +191,9 @@ export class HistoryRepository {
     update: HistoryUpdate,
     columns: readonly QueryColumn[],
     format: ResultFormat,
+    database: SqlDatabase = this.db,
   ): Promise<void> {
-    const updated = await this.db.query<{ id: string }>(
+    const updated = await database.query<{ id: string }>(
       `UPDATE query_history
        SET state=?, row_count=?, elapsed_ms=?, trino_query_id=?, error_message=?,
            result_object_key=?, result_expires_at=?, result_columns_json=?, result_format=?
@@ -227,7 +230,8 @@ export class HistoryRepository {
     );
     await this.db.run(
       `UPDATE query_history
-       SET parquet_object_key=NULL, parquet_expires_at=NULL
+       SET parquet_object_key=NULL, parquet_expires_at=NULL,
+           parquet_encoding_version=NULL
        WHERE parquet_object_key IN (${placeholders})`,
       keys,
     );
@@ -252,20 +256,32 @@ export class HistoryRepository {
     return rows[0] ? rowToResultRef(rows[0]) : undefined;
   }
 
+  /** worker が owner を持たずに変換対象の履歴を再検証するための参照取得。 */
+  async getResultRefById(id: string): Promise<HistoryResultRef | undefined> {
+    const rows = await this.db.query<HistoryRow>(
+      `SELECT * FROM query_history
+       WHERE id = ? AND result_object_key IS NOT NULL AND result_expires_at IS NOT NULL`,
+      [id],
+    );
+    return rows[0] ? rowToResultRef(rows[0]) : undefined;
+  }
+
   /** JSONL の参照を検証し、同じ期限を引き継いだ Parquet 参照を一度だけ登録する。 */
   async setParquetObject(
     id: string,
     sourceResultObjectKey: string,
     parquetKey: string,
+    encodingVersion: string,
   ): Promise<boolean> {
     const updated = await this.db.query<{ id: string }>(
       `UPDATE query_history
-       SET parquet_object_key=?, parquet_expires_at=result_expires_at
+       SET parquet_object_key=?, parquet_expires_at=result_expires_at,
+           parquet_encoding_version=?
        WHERE id=? AND state='finished'
          AND result_object_key=? AND result_expires_at IS NOT NULL
          AND parquet_object_key IS NULL
        RETURNING id`,
-      [parquetKey, id, sourceResultObjectKey],
+      [parquetKey, encodingVersion, id, sourceResultObjectKey],
     );
     return updated.length > 0;
   }
@@ -442,6 +458,8 @@ function rowToResultRef(row: HistoryRow): HistoryResultRef | undefined {
     ref.parquetRef = {
       objectKey: row.parquet_object_key,
       expiresAt: row.parquet_expires_at,
+      // A1 より前の暫定行も読み取れるよう、未保存時は v1 とみなす。
+      encodingVersion: row.parquet_encoding_version ?? '1',
     };
   }
   const columns = parseResultColumns(row.result_columns_json);

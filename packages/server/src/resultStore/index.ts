@@ -26,6 +26,11 @@ export {
   type ParquetConverterResourceLimits,
   type ParquetConverterResult,
 } from './parquetConverter';
+export {
+  ParquetConversionWorker,
+  type ParquetConversionWorkerConfig,
+  type ParquetConversionWorkerDeps,
+} from './parquetConversionWorker';
 
 /** ResultStore 生成時の注入ポイント。 */
 export interface CreateResultStoreDeps {

@@ -45,6 +45,7 @@ const OWNED_TABLES = [
   'workflow_runs',
   'workflow_step_runs',
   'result_object_deletions',
+  'result_parquet_conversion_jobs',
   'alerts',
   'alert_deliveries',
   'audit_log',
