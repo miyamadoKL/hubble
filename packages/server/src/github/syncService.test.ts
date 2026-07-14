@@ -27,7 +27,12 @@ const KEY = Buffer.alloc(32, 2);
 const REPO = 'acme/hubble-docs';
 const DEFAULT_BRANCH = 'main';
 const TEST_RBAC = {
-  roles: new Map([['unrestricted', { permissions: new Set(['query.write', 'ai.use'] as const) }]]),
+  roles: new Map([
+    [
+      'unrestricted',
+      { permissions: new Set(['query.write', 'ai.use'] as const), datasources: ['*'] },
+    ],
+  ]),
   assignments: [],
   defaultRole: 'unrestricted',
 } satisfies LoadedRbac;
@@ -171,7 +176,7 @@ function buildService(
 
 const principalAlice = {
   user: 'alice',
-  role: { name: 'admin', permissions: new Set(['query.write'] as const) },
+  role: { name: 'admin', permissions: new Set(['query.write'] as const), datasources: ['*'] },
   groups: [] as string[],
 } as Principal;
 const accessorAlice = { user: 'alice', groups: [] as string[], role: 'admin' };
@@ -366,7 +371,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
     );
     const principalBob = {
       user: 'bob',
-      role: { name: 'admin', permissions: new Set(['query.write'] as const) },
+      role: { name: 'admin', permissions: new Set(['query.write'] as const), datasources: ['*'] },
       groups: [] as string[],
     } as Principal;
     await expect(service.push(principalBob, 'saved_query', saved.id, {})).rejects.toMatchObject({
@@ -504,7 +509,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
     );
     const principalBob = {
       user: 'bob',
-      role: { name: 'admin', permissions: new Set(['query.write'] as const) },
+      role: { name: 'admin', permissions: new Set(['query.write'] as const), datasources: ['*'] },
       groups: [] as string[],
     } as Principal;
 

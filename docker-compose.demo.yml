@@ -8,6 +8,8 @@ services:
   hubble:
     environment:
       DATASOURCES_PATH: /etc/hubble/datasources.yaml
+      # base compose の RBAC mount を継承し、明示的な role 設定を使う。
+      RBAC_PATH: /etc/hubble/rbac.yaml
       DEMO_MYSQL_PASSWORD: ${DEMO_MYSQL_PASSWORD:-hubble-demo}
       DEMO_POSTGRES_PASSWORD: ${DEMO_POSTGRES_PASSWORD:-hubble-demo}
     volumes:

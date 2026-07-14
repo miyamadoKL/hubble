@@ -27,6 +27,14 @@ const DEFAULT_GUARD_CONFIG = {
   bytesPerSecond: 0,
 };
 
+const TEST_RBAC: LoadedRbac = {
+  roles: new Map([
+    ['unrestricted', { permissions: new Set(['query.write', 'ai.use']), datasources: ['*'] }],
+  ]),
+  assignments: [],
+  defaultRole: 'unrestricted',
+};
+
 /**
  * Scheduler behavior matrix (Query Scheduling feature). Each statement marker is
  * exercised through three Trino calls — `EXPLAIN (TYPE VALIDATE) <stmt>`
@@ -135,7 +143,7 @@ async function makeHarness(
     engines,
     defaultDatasourceId,
     estimate,
-    getRbac: getRbac ?? (() => loadRbac({})),
+    getRbac: getRbac ?? (() => TEST_RBAC),
     guardConfig: {
       ...DEFAULT_GUARD_CONFIG,
       mode: configOverrides.guardMode ?? DEFAULT_GUARD_CONFIG.mode,

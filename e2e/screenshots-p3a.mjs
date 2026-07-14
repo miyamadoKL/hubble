@@ -10,7 +10,7 @@
  *   p3a-dark.png        — the editor under the dark theme
  *
  * Prereqs (start these first):
- *   - server: PORT=8081 (P2a build, live Trino) — provides /api/catalogs...
+ *   - server: PORT=8081 (P2a build, live Trino): データソーススコープ付きメタデータルートを提供
  *   - web:    pnpm --filter @hubble/web dev   (vite :5173)
  *
  * Run: node e2e/screenshots-p3a.mjs

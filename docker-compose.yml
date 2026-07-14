@@ -25,6 +25,8 @@ services:
       PORT: '8080'
       # 宣言的データソース定義ファイル (Trino の baseUrl/認証/source はここに集約)。
       DATASOURCES_PATH: /etc/hubble/datasources.yaml
+      # Compose デモ用の明示的 RBAC 定義。ロールと datasource allowlist はファイルで管理する。
+      RBAC_PATH: /etc/hubble/rbac.yaml
       # deploy/compose/datasources.yaml の passwordEnv: TRINO_PASSWORD が参照する
       # 環境変数。デモ Trino は認証不要のため既定値は空文字。外部 Trino に接続する
       # 場合は .env に TRINO_PASSWORD=*** を設定する。
@@ -45,6 +47,8 @@ services:
     volumes:
       # データソース定義を読み取り専用でマウント。
       - ./deploy/compose/datasources.yaml:/etc/hubble/datasources.yaml:ro
+      # 明示的な demo RBAC 定義を読み取り専用でマウント。
+      - ./deploy/compose/rbac.yaml:/etc/hubble/rbac.yaml:ro
       # Non-production 向け: SQLite で動かす場合はここで hubble-data を /data に
       # マウントし、DATABASE_URL を外して DB_PATH (既定 /data/hubble.db) を使う。
       # - hubble-data:/data

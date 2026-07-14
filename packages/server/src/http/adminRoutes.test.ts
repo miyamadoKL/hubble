@@ -31,12 +31,16 @@ function writeRbac(dir: string): void {
     `roles:
   viewer:
     permissions: [queries.viewAll]
+    datasources: ['*']
   killer:
     permissions: [queries.viewAll, query.killAny]
+    datasources: ['*']
   auditor:
     permissions: [audit.view]
+    datasources: ['*']
   runner:
     permissions: [query.write]
+    datasources: ['*']
 assignments:
   - user: viewer
     role: viewer

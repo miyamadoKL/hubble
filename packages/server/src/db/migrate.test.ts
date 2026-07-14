@@ -143,13 +143,13 @@ describe('openDatabase with the real initial migration', () => {
 
   it('loads the real migrations directory', () => {
     const migrations = loadMigrations(MIGRATIONS_DIR);
-    expect(migrations.length).toBeGreaterThanOrEqual(1);
-    expect(migrations[0]!.version).toBe(1);
+    expect(migrations.map((migration) => migration.version)).toEqual([1]);
+    expect(migrations[0]!.name).toBe('0001_baseline.sql');
   });
 
-  it('removes Parquet compatibility schema and keeps the JSONL retention index', async () => {
+  it('creates the current schema without legacy compatibility or owner defaults', async () => {
     const db = await openMemoryDatabase();
-    const columns = await db.query<{ name: string; notnull: number }>(
+    const columns = await db.query<{ name: string; notnull: number; dflt_value: string | null }>(
       'PRAGMA table_info(query_history)',
     );
     expect(columns.map(({ name }) => name)).toContain('result_columns_json');
@@ -161,6 +161,15 @@ describe('openDatabase with the real initial migration', () => {
         'parquet_encoding_version',
       ]),
     );
+    for (const table of ['notebooks', 'saved_queries', 'query_history']) {
+      const owner = await db.query<{
+        name: string;
+        notnull: number;
+        dflt_value: string | null;
+      }>(`PRAGMA table_info(${table})`);
+      const ownerColumn = owner.find((column) => column.name === 'owner');
+      expect(ownerColumn).toMatchObject({ notnull: 1, dflt_value: null });
+    }
     const indexes = await db.query<{ name: string; sql: string }>(
       `SELECT name, sql FROM sqlite_master
        WHERE type='index' AND name IN
@@ -207,6 +216,32 @@ describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
         'schema_migrations',
       ]),
     );
+    const columns = await db2.query<{ column_name: string; column_default: string | null }>(
+      `SELECT column_name, column_default
+         FROM information_schema.columns
+        WHERE table_schema='public'
+          AND table_name IN ('notebooks', 'saved_queries', 'query_history')
+          AND column_name = 'owner'`,
+    );
+    expect(columns).toHaveLength(3);
+    expect(columns.every((column) => column.column_default === null)).toBe(true);
+    const legacyColumns = await db2.query<{ table_name: string; column_name: string }>(
+      `SELECT table_name, column_name
+         FROM information_schema.columns
+        WHERE table_schema='public'
+          AND (column_name IN ('result_format', 'parquet_object_key',
+                               'parquet_expires_at', 'parquet_encoding_version')
+               OR table_name = 'result_parquet_conversion_jobs')`,
+    );
+    expect(legacyColumns).toHaveLength(0);
+    const jsonlColumns = await db2.query<{ column_name: string }>(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema='public'
+          AND table_name='query_history'
+          AND column_name IN ('result_object_key', 'result_expires_at', 'result_columns_json')`,
+    );
+    expect(jsonlColumns).toHaveLength(3);
     await db2.close();
   });
 

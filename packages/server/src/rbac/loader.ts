@@ -1,17 +1,16 @@
 /**
  * rbac.yaml の読み込みと解決済み RBAC 設定への変換。
  *
- * `RBAC_PATH` または `./rbac.yaml` から宣言的設定を読み込み、
- * 未設定時は組み込み `unrestricted` ロールを全員に割り当てる（後方互換）。
+ * `RBAC_PATH` または `./rbac.yaml` から宣言的設定を読み込む。
+ * RBAC ファイルが存在しない場合は起動を失敗させる。
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { ZodError } from 'zod';
 import type { Permission } from '@hubble/contracts';
 import { rbacFileSchema, type RbacFile } from './schema';
 import type { LoadedRbac, RoleDatasourcesAllowlist, RoleGuardOverrides } from './types';
-import { builtInUnrestrictedRole, UNRESTRICTED_ROLE_NAME } from './resolve';
 
 type Env = Record<string, string | undefined>;
 
@@ -21,8 +20,6 @@ export interface LoadRbacOptions {
   env?: Env;
   /** 作業ディレクトリ（既定は `process.cwd()`）。 */
   cwd?: string;
-  /** 既定の rbac.yaml が無い場合に組み込み設定を許可するか。 */
-  allowMissingDefault?: boolean;
 }
 
 function formatIssuePath(path: PropertyKey[]): string {
@@ -52,14 +49,14 @@ function toLoadedRbac(file: RbacFile): LoadedRbac {
     {
       permissions: ReadonlySet<Permission>;
       guard?: RoleGuardOverrides;
-      datasources?: RoleDatasourcesAllowlist;
+      datasources: RoleDatasourcesAllowlist;
     }
   >();
   for (const [name, definition] of Object.entries(file.roles)) {
     roles.set(name, {
       permissions: new Set(definition.permissions),
       ...(definition.guard !== undefined ? { guard: definition.guard } : {}),
-      ...(definition.datasources !== undefined ? { datasources: definition.datasources } : {}),
+      datasources: definition.datasources,
     });
   }
   return {
@@ -101,27 +98,10 @@ function loadFromFile(path: string): LoadedRbac {
   return toLoadedRbac(result.data);
 }
 
-/** rbac.yaml が無いときの組み込み設定。 */
-function builtInFallback(): LoadedRbac {
-  const role = builtInUnrestrictedRole();
-  return {
-    roles: new Map([
-      [
-        UNRESTRICTED_ROLE_NAME,
-        {
-          permissions: role.permissions,
-        },
-      ],
-    ]),
-    assignments: [],
-    defaultRole: UNRESTRICTED_ROLE_NAME,
-  };
-}
-
 /**
  * ホットリロード監視用の rbac ファイルパスを返す。
  *
- * ファイルの有無にかかわらず常にパスを返す（起動時に無くても監視対象にする）。
+ * 設定された RBAC ファイルのパスを返す。
  */
 export function resolveRbacPath(env: Env, cwd: string): string {
   const explicitPath = env.RBAC_PATH;
@@ -134,9 +114,9 @@ export function resolveRbacPath(env: Env, cwd: string): string {
 /**
  * 宣言的 RBAC 設定を読み込み、解決済み設定を返す。
  *
- * - `RBAC_PATH` が設定されていればそのファイルを必須として読む
- * - 未設定なら `./rbac.yaml` があれば読む
- * - どちらも無ければ組み込み `unrestricted` を返す
+ * - `RBAC_PATH` が設定されていればそのファイルを読む
+ * - 未設定なら `./rbac.yaml` を読む
+ * - RBAC file が無ければ起動を失敗させる
  */
 export function loadRbac(options: LoadRbacOptions = {}): LoadedRbac {
   const env = options.env ?? process.env;
@@ -148,13 +128,5 @@ export function loadRbac(options: LoadRbacOptions = {}): LoadedRbac {
   }
 
   const defaultPath = resolve(cwd, 'rbac.yaml');
-  if (existsSync(defaultPath)) {
-    return loadFromFile(defaultPath);
-  }
-
-  if (options.allowMissingDefault === false) {
-    throw new Error(`rbac file '${defaultPath}' cannot be read: file does not exist`);
-  }
-
-  return builtInFallback();
+  return loadFromFile(defaultPath);
 }

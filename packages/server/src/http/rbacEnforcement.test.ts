@@ -61,10 +61,13 @@ function writeRbac(dir: string): void {
     `roles:
   readonly:
     permissions: []
+    datasources: ['*']
   writer:
     permissions: [query.write]
+    datasources: ['*']
   member:
     permissions: []
+    datasources: ['*']
     guard:
       maxScanBytes: 1000
       onUnknown: block

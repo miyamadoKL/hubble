@@ -13,6 +13,7 @@ import type { ResolvedRole } from './types';
 const viewerRole: ResolvedRole = {
   name: 'viewer',
   permissions: new Set<Permission>(['queries.viewAll']),
+  datasources: ['*'],
 };
 
 describe('requirePermission', () => {
@@ -41,7 +42,11 @@ describe('hasPermission', () => {
 });
 
 describe('roleAllowsDatasource', () => {
-  const unrestricted: ResolvedRole = { name: 'unrestricted', permissions: new Set() };
+  const unrestricted: ResolvedRole = {
+    name: 'unrestricted',
+    permissions: new Set(),
+    datasources: ['*'],
+  };
   const explicitAll: ResolvedRole = {
     name: 'all',
     permissions: new Set(),
@@ -54,7 +59,7 @@ describe('roleAllowsDatasource', () => {
   };
   const none: ResolvedRole = { name: 'none', permissions: new Set(), datasources: [] };
 
-  it('allows all datasources when datasources is omitted', () => {
+  it('requires an explicit wildcard for all datasources', () => {
     expect(roleAllowsDatasource(unrestricted, 'mysql-a')).toBe(true);
   });
 

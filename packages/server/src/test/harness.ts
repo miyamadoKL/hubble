@@ -55,6 +55,29 @@ function resolveTestDatasourcesCwd(
   return effectiveCwd;
 }
 
+/** 通常の結合テストが使う unrestricted 相当の RBAC を明示的に用意する。 */
+function ensureTestRbacFile(
+  cwd: string,
+  env: Record<string, string | undefined> | undefined,
+): void {
+  if (env?.RBAC_PATH !== undefined) return;
+  const defaultPath = join(cwd, 'rbac.yaml');
+  if (existsSync(defaultPath)) return;
+  writeFileSync(
+    defaultPath,
+    [
+      'roles:',
+      '  unrestricted:',
+      '    permissions: [query.write, ai.use]',
+      "    datasources: ['*']",
+      'assignments: []',
+      'defaultRole: unrestricted',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}
+
 /**
  * server パッケージの結合テストで共通利用する「テストコンテキスト構築」を
  * 提供するファイル。インメモリ SQLite + `FakeTrino` (fakeTrino.ts) を使い、
@@ -164,6 +187,7 @@ export async function createTestContext(
 
   const db = await openMemoryDatabase();
   const cwd = resolveTestDatasourcesCwd(options.cwd, options.env);
+  ensureTestRbacFile(cwd, options.env);
   const services = await buildServices(config, db, {
     env: options.env,
     cwd,

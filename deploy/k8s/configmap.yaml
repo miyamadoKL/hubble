@@ -18,6 +18,7 @@ data:
   # 既定は単一 Trino 構成と等価。mysql/postgresql を足すときはこの YAML と
   # Secret のパスワードエントリを拡張する (README のデータソース設定を参照)。
   DATASOURCES_PATH: /etc/hubble/datasources.yaml
+  RBAC_PATH: /etc/hubble/rbac.yaml
   datasources.yaml: |
     datasources:
       - id: trino-default
@@ -31,6 +32,14 @@ data:
         source: hubble
         metadataSource: hubble-metadata
         scheduledSource: hubble-scheduled
+  # 明示的な demo RBAC。各 role に datasource allowlist を指定する。
+  rbac.yaml: |
+    roles:
+      demo:
+        permissions: [query.write, ai.use]
+        datasources: ['*']
+    assignments: []
+    defaultRole: demo
   # Impersonation user (X-Trino-User)。Trino の接続情報そのものではないため維持する。
   TRINO_USER: admin
   # Initial catalog/schema for new notebooks.

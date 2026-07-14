@@ -112,8 +112,10 @@ function writeRbac(dir: string): void {
     `roles:
   readonly:
     permissions: []
+    datasources: ['*']
   writer:
     permissions: [query.write]
+    datasources: ['*']
 assignments:
   - user: reader
     role: readonly

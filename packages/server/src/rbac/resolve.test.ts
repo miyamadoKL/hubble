@@ -2,15 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Permission } from '@hubble/contracts';
+import { parse, stringify } from 'yaml';
 import { loadRbac } from './loader';
-import { resolveRoleForPrincipal, builtInUnrestrictedRole } from './resolve';
+import { resolveRoleForPrincipal } from './resolve';
 import type { LoadedRbac } from './types';
 
 function loadedFromYaml(yaml: string): LoadedRbac {
   const dir = mkdtempSync(join(tmpdir(), 'hubble-rbac-resolve-'));
   const path = join(dir, 'rbac.yaml');
-  writeFileSync(path, yaml, 'utf8');
+  const parsed = parse(yaml) as {
+    roles: Record<string, { datasources?: string[] }>;
+  };
+  for (const role of Object.values(parsed.roles)) {
+    role.datasources ??= ['*'];
+  }
+  writeFileSync(path, stringify(parsed), 'utf8');
   try {
     return loadRbac({ env: { RBAC_PATH: path }, cwd: dir });
   } finally {
@@ -174,12 +180,6 @@ defaultRole: email-role
       groups: ['admins@corp.com'],
     });
     expect(role.name).toBe('group-role');
-  });
-
-  it('builtInUnrestrictedRole matches legacy behavior', () => {
-    const role = builtInUnrestrictedRole();
-    expect(role.name).toBe('unrestricted');
-    expect([...role.permissions].sort()).toEqual<Permission[]>(['ai.use', 'query.write']);
   });
 
   it('carries datasources allowlist from resolved role definition', () => {

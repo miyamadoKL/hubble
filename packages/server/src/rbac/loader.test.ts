@@ -3,7 +3,6 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadRbac } from './loader';
-import { UNRESTRICTED_ROLE_NAME } from './resolve';
 
 function writeRbac(dir: string, body: string): string {
   const path = join(dir, 'rbac.yaml');
@@ -14,8 +13,10 @@ function writeRbac(dir: string, body: string): string {
 const validYaml = `roles:
   admin:
     permissions: [query.write, query.killAny, queries.viewAll]
+    datasources: ['*']
   member:
     permissions: []
+    datasources: ['*']
     guard:
       maxScanBytes: 50000000000
       onUnknown: block
@@ -55,13 +56,10 @@ describe('loadRbac', () => {
     });
   });
 
-  it('falls back to unrestricted when no rbac file exists', () => {
-    const rbac = loadRbac({ env: {}, cwd: tempDir });
-    expect(rbac.defaultRole).toBe(UNRESTRICTED_ROLE_NAME);
-    expect(rbac.roles.get(UNRESTRICTED_ROLE_NAME)?.permissions).toEqual(
-      new Set(['ai.use', 'query.write']),
+  it('fails when the default rbac file does not exist', () => {
+    expect(() => loadRbac({ env: {}, cwd: tempDir })).toThrow(
+      /rbac file .* cannot be read:.*no such file or directory/,
     );
-    expect(rbac.assignments).toEqual([]);
   });
 
   it('rejects duplicate permissions in a role', () => {
@@ -70,6 +68,7 @@ describe('loadRbac', () => {
       `roles:
   admin:
     permissions: [query.write, query.write]
+    datasources: ['*']
 assignments: []
 defaultRole: admin
 `,
@@ -85,6 +84,7 @@ defaultRole: admin
       `roles:
   admin:
     permissions: [query.write]
+    datasources: ['*']
 assignments:
   - user: alice
     role: missing
@@ -102,6 +102,7 @@ defaultRole: admin
       `roles:
   admin:
     permissions: [query.write]
+    datasources: ['*']
 assignments:
   - email: a@b.com
     user: alice
@@ -120,6 +121,7 @@ defaultRole: admin
       `roles:
   admin:
     permissions: [query.write]
+    datasources: ['*']
 assignments:
   - user: first
     role: admin
@@ -139,6 +141,7 @@ defaultRole: admin
       `roles:
   admin:
     permissions: [query.write]
+    datasources: ['*']
 assignments:
   - user: Alice
     role: admin
@@ -159,6 +162,7 @@ defaultRole: admin
       `roles:
   admin:
     permissions: [query.write]
+    datasources: ['*']
 assignments:
   - user: Alice
     priority: 1
@@ -179,6 +183,7 @@ defaultRole: admin
       `roles:
   Admin:
     permissions: [query.write]
+    datasources: ['*']
 assignments: []
 defaultRole: Admin
 `,
@@ -194,6 +199,7 @@ defaultRole: Admin
       `roles:
   admin:
     permissions: [query.write, query.admin]
+    datasources: ['*']
 assignments: []
 defaultRole: admin
 `,
@@ -224,6 +230,7 @@ defaultRole: admin
     datasources: []
   legacy:
     permissions: []
+    datasources: ['*']
 assignments: []
 defaultRole: all
 `,
@@ -232,7 +239,22 @@ defaultRole: all
     expect(rbac.roles.get('all')?.datasources).toEqual(['*']);
     expect(rbac.roles.get('trino-only')?.datasources).toEqual(['trino-prod']);
     expect(rbac.roles.get('none')?.datasources).toEqual([]);
-    expect(rbac.roles.get('legacy')?.datasources).toBeUndefined();
+    expect(rbac.roles.get('legacy')?.datasources).toEqual(['*']);
+  });
+
+  it('rejects a role with missing datasources', () => {
+    const path = writeRbac(
+      tempDir,
+      `roles:
+  member:
+    permissions: []
+assignments: []
+defaultRole: member
+`,
+    );
+    expect(() => loadRbac({ env: { RBAC_PATH: path }, cwd: tempDir })).toThrow(
+      /roles\.member\.datasources/,
+    );
   });
 
   it('rejects null datasources in role definition', () => {

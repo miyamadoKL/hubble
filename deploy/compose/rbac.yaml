@@ -1,0 +1,8 @@
+# Compose のデモ起動で使う明示的な RBAC 設定。
+roles:
+  demo:
+    permissions: [query.write, ai.use]
+    datasources: ['*']
+
+assignments: []
+defaultRole: demo

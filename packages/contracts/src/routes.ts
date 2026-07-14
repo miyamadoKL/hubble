@@ -24,24 +24,7 @@ export const apiRoutes = {
   // ログイン中ユーザー情報取得エンドポイント。
   me: () => '/api/me',
 
-  // Metadata
-  // カタログ一覧取得。
-  catalogs: () => '/api/catalogs',
-  // 指定カタログ配下のスキーマ一覧取得。
-  schemas: (catalog: string) => `/api/catalogs/${enc(catalog)}/schemas`,
-  // 指定スキーマ配下のテーブル一覧取得。
-  tables: (catalog: string, schema: string) =>
-    `/api/catalogs/${enc(catalog)}/schemas/${enc(schema)}/tables`,
-  // 単一テーブルの詳細（カラム一覧など）取得。
-  table: (catalog: string, schema: string, table: string) =>
-    `/api/catalogs/${enc(catalog)}/schemas/${enc(schema)}/tables/${enc(table)}`,
-  // テーブルのサンプル行取得。
-  tableSample: (catalog: string, schema: string, table: string) =>
-    `/api/catalogs/${enc(catalog)}/schemas/${enc(schema)}/tables/${enc(table)}/sample`,
-  // メタデータキャッシュの強制再取得。
-  metadataRefresh: () => '/api/metadata/refresh',
-
-  // Datasource-scoped metadata (Phase 2)
+  // データソーススコープ付きメタデータ。
   datasourceCatalogs: (datasourceId: string) => `/api/datasources/${enc(datasourceId)}/catalogs`,
   datasourceSchemas: (datasourceId: string, catalog: string) =>
     `/api/datasources/${enc(datasourceId)}/catalogs/${enc(catalog)}/schemas`,
