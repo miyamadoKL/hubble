@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SheetsExporter, type SheetsApiClient } from './exportSheets';
+import { defaultSheetsClientFactory, SheetsExporter, type SheetsApiClient } from './exportSheets';
 import type { QueryResultEvent } from './resultEvents';
 
 function events(rows: number): AsyncGenerator<QueryResultEvent> {
@@ -231,10 +231,34 @@ describe('SheetsExporter', () => {
     expect(deleteSpreadsheet).toHaveBeenCalledWith('sheet_multi_failure');
   });
 
-  it('imports googleapis without connecting to Google APIs', async () => {
-    const { google } = await import('googleapis');
-    expect(typeof google.sheets).toBe('function');
-    expect(typeof google.drive).toBe('function');
-    expect(typeof google.auth.GoogleAuth).toBe('function');
+  it('個別 package から認証と API client をネットワーク接続なしで構築する', async () => {
+    const [sheetsApi, driveApi] = await Promise.all([
+      import('@googleapis/sheets'),
+      import('@googleapis/drive'),
+    ]);
+    const googleAuth = new sheetsApi.auth.GoogleAuth({
+      scopes: [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive',
+      ],
+    });
+    const sheets = sheetsApi.sheets({ version: 'v4', auth: googleAuth });
+    const drive = driveApi.drive({ version: 'v3', auth: googleAuth });
+
+    expect(googleAuth).toBeInstanceOf(sheetsApi.auth.GoogleAuth);
+    expect(typeof sheets.spreadsheets.create).toBe('function');
+    expect(typeof drive.permissions.create).toBe('function');
+    expect(typeof drive.files.delete).toBe('function');
+  });
+
+  it('既定 factory を実行して API client の各メソッドを構築する', async () => {
+    const client = await defaultSheetsClientFactory('/tmp/hubble-test-service-account.json');
+
+    expect(typeof client.createSpreadsheet).toBe('function');
+    expect(typeof client.appendValues).toBe('function');
+    expect(typeof client.renameFirstSheet).toBe('function');
+    expect(typeof client.addSheet).toBe('function');
+    expect(typeof client.shareWithWriter).toBe('function');
+    expect(typeof client.deleteSpreadsheet).toBe('function');
   });
 });
