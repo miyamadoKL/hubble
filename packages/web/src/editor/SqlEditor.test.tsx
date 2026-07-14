@@ -92,14 +92,6 @@ function Harness({ trinoLanguage }: { trinoLanguage: boolean }) {
   return <SqlEditor value="SELECT 1" trinoLanguage={trinoLanguage} />;
 }
 
-function deferredValue<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
-
 describe('SqlEditor datasource language switch', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -150,7 +142,7 @@ describe('SqlEditor datasource language switch', () => {
   });
 
   test('uses the latest controlled value when Monaco resolves after a prop update', async () => {
-    const pending = deferredValue<typeof import('monaco-editor')>();
+    const pending = Promise.withResolvers<typeof import('monaco-editor')>();
     let currentValue = '';
     const setValue = vi.fn((next: string) => {
       currentValue = next;

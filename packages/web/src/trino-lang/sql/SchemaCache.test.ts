@@ -20,14 +20,6 @@ function source(overrides: Partial<MetadataSource> = {}): MetadataSource {
   };
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 async function settlePromises(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
@@ -105,29 +97,26 @@ describe('SchemaCache', () => {
   });
 
   test('invalidate後は進行中の旧応答をキャッシュへ戻さない', async () => {
-    let resolveCatalogs!: (catalogs: string[]) => void;
+    const catalogs = Promise.withResolvers<string[]>();
     const cache = new SchemaCache(
       source({
-        listCatalogs: () =>
-          new Promise<string[]>((resolve) => {
-            resolveCatalogs = resolve;
-          }),
+        listCatalogs: () => catalogs.promise,
       }),
       () => 'primary',
     );
 
     cache.warmCatalogs();
     cache.invalidate('primary');
-    resolveCatalogs(['stale']);
+    catalogs.resolve(['stale']);
     await new Promise((resolve) => setTimeout(resolve, 5));
 
     expect(cache.getCatalogList()).toEqual([]);
   });
 
   test('invalidate前のrequest完了時に新requestのin-flight所有権を削除しない', async () => {
-    const requests: Array<ReturnType<typeof deferred<MetadataTable | undefined>>> = [];
+    const requests: Array<PromiseWithResolvers<MetadataTable | undefined>> = [];
     const getTable = vi.fn(() => {
-      const request = deferred<MetadataTable | undefined>();
+      const request = Promise.withResolvers<MetadataTable | undefined>();
       requests.push(request);
       return request.promise;
     });

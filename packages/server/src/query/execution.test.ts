@@ -4,22 +4,6 @@ import type { QueryEngine, StatementClient } from '../engine/types';
 import type { TrinoStatementResponse } from '../trino/types';
 import { QueryExecution } from './execution';
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-function valueDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 function executionWithObserver(onRows: (rows: unknown[][]) => void | Promise<void>): {
   exec: QueryExecution;
   advance: ReturnType<typeof vi.fn>;
@@ -65,8 +49,8 @@ function executionWithObserver(onRows: (rows: unknown[][]) => void | Promise<voi
 
 describe('QueryExecution result observer backpressure', () => {
   it('emits and buffers rows before waiting, then delays the next page fetch', async () => {
-    const persistenceStarted = deferred();
-    const releasePersistence = deferred();
+    const persistenceStarted = Promise.withResolvers<void>();
+    const releasePersistence = Promise.withResolvers<void>();
     let calls = 0;
     const { exec, advance } = executionWithObserver(async () => {
       calls += 1;
@@ -107,7 +91,7 @@ describe('QueryExecution result observer backpressure', () => {
 
 describe('QueryExecution cancellation around the first page', () => {
   it('stays canceled when a signal-ignoring client returns a single finished page', async () => {
-    const firstPage = valueDeferred<TrinoStatementResponse>();
+    const firstPage = Promise.withResolvers<TrinoStatementResponse>();
     const client = {
       start: vi.fn(() => firstPage.promise),
       advance: vi.fn(),
@@ -143,8 +127,8 @@ describe('QueryExecution cancellation around the first page', () => {
   });
 
   it('stays canceled when a signal-ignoring client returns its final advance page', async () => {
-    const finalPage = valueDeferred<TrinoStatementResponse>();
-    const advanceStarted = deferred();
+    const finalPage = Promise.withResolvers<TrinoStatementResponse>();
+    const advanceStarted = Promise.withResolvers<void>();
     const client = {
       start: vi.fn(async () => ({
         id: 'driver-query',
@@ -185,8 +169,8 @@ describe('QueryExecution cancellation around the first page', () => {
   });
 
   it('stays canceled when Stop arrives during single-page observer backpressure', async () => {
-    const observerStarted = deferred();
-    const releaseObserver = deferred();
+    const observerStarted = Promise.withResolvers<void>();
+    const releaseObserver = Promise.withResolvers<void>();
     const client = {
       start: vi.fn(async () => ({
         id: 'driver-query',
@@ -228,8 +212,8 @@ describe('QueryExecution cancellation around the first page', () => {
   });
 
   it('stays canceled when Stop arrives during final advance observer backpressure', async () => {
-    const observerStarted = deferred();
-    const releaseObserver = deferred();
+    const observerStarted = Promise.withResolvers<void>();
+    const releaseObserver = Promise.withResolvers<void>();
     let observedPages = 0;
     const { exec } = executionWithObserver(async () => {
       observedPages += 1;

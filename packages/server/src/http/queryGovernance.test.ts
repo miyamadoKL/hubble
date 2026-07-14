@@ -9,14 +9,6 @@ import { contentHash, savedQueryToContent } from '../github/canonical';
 
 const GITHUB_KEY = Buffer.alloc(32, 6);
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
-
 class MemoryResultStore implements ResultStore {
   readonly enabled = true;
   readonly objects = new Map<string, Buffer>();
@@ -106,8 +98,8 @@ describe('query governance persistence', () => {
       scenarios: [UNAPPROVED_SCENARIO],
       configOverrides: githubConfigOverrides(),
     });
-    const approvalStarted = deferred<void>();
-    const approval = deferred<boolean>();
+    const approvalStarted = Promise.withResolvers<void>();
+    const approval = Promise.withResolvers<boolean>();
     const submitSpy = vi.spyOn(ctx.services.queries, 'submit');
     vi.spyOn(ctx.services.githubGovernance, 'isStatementApproved').mockImplementation(async () => {
       approvalStarted.resolve(undefined);
@@ -139,8 +131,8 @@ describe('query governance persistence', () => {
       scenarios: [UNAPPROVED_SCENARIO],
       configOverrides: githubConfigOverrides(),
     });
-    const approvalStarted = deferred<void>();
-    const approval = deferred<boolean>();
+    const approvalStarted = Promise.withResolvers<void>();
+    const approval = Promise.withResolvers<boolean>();
     const submitSpy = vi.spyOn(ctx.services.queries, 'submit');
     vi.spyOn(ctx.services.githubGovernance, 'isStatementApproved').mockImplementation(async () => {
       approvalStarted.resolve(undefined);

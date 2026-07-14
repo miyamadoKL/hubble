@@ -4,14 +4,6 @@ import type { StatementClient } from '../engine/types';
 import type { ResultJsonlCapture } from '../resultStore/jsonl';
 import { drainStatementWithCapture } from './execute';
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 describe('drainStatementWithCapture', () => {
   it('start が中断を無視して応答しても残存クエリを停止して失敗する', async () => {
     const controller = new AbortController();
@@ -38,8 +30,8 @@ describe('drainStatementWithCapture', () => {
   });
 
   it('capture の背圧が解消するまで次ページを取得しない', async () => {
-    const writeStarted = deferred();
-    const releaseWrite = deferred();
+    const writeStarted = Promise.withResolvers<void>();
+    const releaseWrite = Promise.withResolvers<void>();
     const advance = vi.fn(async () => ({
       id: 'query-1',
       data: [[2]],

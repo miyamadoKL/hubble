@@ -2,14 +2,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PeriodicRunner, type PeriodicTimerHandle } from './periodicRunner';
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 describe('PeriodicRunner', () => {
   it('logs a rejected tick and schedules the next tick', async () => {
     const callbacks: Array<() => void> = [];
@@ -35,7 +27,7 @@ describe('PeriodicRunner', () => {
   });
 
   it('shares one in-flight task and waits for it during stop', async () => {
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     const task = vi.fn(() => gate.promise);
     const runner = new PeriodicRunner({
       intervalMs: 1_000,

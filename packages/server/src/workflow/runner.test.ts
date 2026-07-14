@@ -81,17 +81,9 @@ class MemoryResultStore implements ResultStore {
   async close(): Promise<void> {}
 }
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 class GatedResultStore extends MemoryResultStore {
-  private readonly uploadGate = deferred();
-  private readonly uploadReached = deferred();
+  private readonly uploadGate = Promise.withResolvers<void>();
+  private readonly uploadReached = Promise.withResolvers<void>();
 
   readonly reachedUpload = this.uploadReached.promise;
   deleteFailure?: Error;
@@ -343,8 +335,8 @@ describe('WorkflowRunner', () => {
 
       principalSnapshot: { user: 'alice' },
     });
-    const gate = deferred();
-    const startReached = deferred();
+    const gate = Promise.withResolvers<void>();
+    const startReached = Promise.withResolvers<void>();
     const originalStart = h.runs.startRun.bind(h.runs);
     const start = vi.spyOn(h.runs, 'startRun').mockImplementation(async (...args) => {
       startReached.resolve();
@@ -484,7 +476,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('records an aborted run when shutdown interrupts retry backoff', async () => {
-    const sleepGate = deferred();
+    const sleepGate = Promise.withResolvers<void>();
     h = await makeHarness(
       [
         VALIDATE_OK,

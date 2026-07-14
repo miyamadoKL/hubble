@@ -6,19 +6,11 @@ import {
   type ShutdownTimerFactory,
 } from './coordinator';
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 describe('ShutdownCoordinator', () => {
   it('受付停止、drain、HTTP close、資源解放を順番に実行する', async () => {
     const calls: string[] = [];
-    const httpClose = deferred();
-    const drain = deferred();
+    const httpClose = Promise.withResolvers<void>();
+    const drain = Promise.withResolvers<void>();
     const coordinator = new ShutdownCoordinator({
       timeoutMs: 1_000,
       beginHttpClose: () => {
@@ -61,7 +53,7 @@ describe('ShutdownCoordinator', () => {
   });
 
   it('重複呼び出しへ同じ Promise を返し、各処理を一度だけ実行する', async () => {
-    const httpClose = deferred();
+    const httpClose = Promise.withResolvers<void>();
     const beginHttpClose = vi.fn(() => httpClose.promise);
     const stopAdmission = vi.fn();
     const drain = vi.fn(async () => undefined);
@@ -128,7 +120,7 @@ describe('ShutdownCoordinator', () => {
 
   it('drain が失敗しても HTTP close の完了を待ってから資源を解放する', async () => {
     const drainError = new Error('drain failed');
-    const httpClose = deferred();
+    const httpClose = Promise.withResolvers<void>();
     const calls: string[] = [];
     const coordinator = new ShutdownCoordinator({
       timeoutMs: 1_000,
@@ -168,8 +160,8 @@ describe('ShutdownCoordinator', () => {
   });
 
   it('絶対期限を超えると HTTP を一度だけ強制 close して資源を解放する', async () => {
-    const drain = deferred();
-    const httpClose = deferred();
+    const drain = Promise.withResolvers<void>();
+    const httpClose = Promise.withResolvers<void>();
     const forceCloseHttp = vi.fn();
     const closeResources = vi.fn();
     const aborted = vi.fn();
@@ -211,8 +203,8 @@ describe('ShutdownCoordinator', () => {
   });
 
   it('drain の期限超過前に完了した HTTP close を timeout と誤記録しない', async () => {
-    const drain = deferred();
-    const httpClose = deferred();
+    const drain = Promise.withResolvers<void>();
+    const httpClose = Promise.withResolvers<void>();
     let now = 1_000;
     let timerCallback: (() => void) | undefined;
     const coordinator = new ShutdownCoordinator({
@@ -241,7 +233,7 @@ describe('ShutdownCoordinator', () => {
   });
 
   it('資源解放が絶対期限を超えても強制 close 後に結果を返す', async () => {
-    const closeResourcesGate = deferred();
+    const closeResourcesGate = Promise.withResolvers<void>();
     const forceCloseHttp = vi.fn();
     const closeResources = vi.fn(() => closeResourcesGate.promise);
     let now = 1_000;

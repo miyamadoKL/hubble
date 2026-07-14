@@ -3,21 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StatementClient } from './types';
 import { driveStatementPages, StatementPageCursor, statementPages } from './statementDriver';
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe('statement page driver', () => {
   it('同時 cancel を一回にまとめる', async () => {
-    const release = deferred();
+    const release = Promise.withResolvers<void>();
     const cancel = vi.fn(async () => release.promise);
     const client = { cancel } as unknown as StatementClient;
     const cursor = new StatementPageCursor(client, {});
@@ -100,8 +92,8 @@ describe('statement page driver', () => {
   });
 
   it('observer の完了を待ってから次ページを取得する', async () => {
-    const observerStarted = deferred();
-    const releaseObserver = deferred();
+    const observerStarted = Promise.withResolvers<void>();
+    const releaseObserver = Promise.withResolvers<void>();
     const advance = vi.fn(async () => ({ id: 'q1', stats: { state: 'FINISHED' }, data: [[2]] }));
     const client = {
       start: vi.fn(async () => ({

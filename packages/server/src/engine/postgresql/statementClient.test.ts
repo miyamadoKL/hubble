@@ -103,14 +103,6 @@ function makeFakePgPool(opts: FakePgPoolOptions = {}): {
   return { pool, actions, connectionCount: () => connections };
 }
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 async function settlesWithin(promise: Promise<unknown>, timeoutMs = 250): Promise<boolean> {
   return Promise.race([
     promise.then(
@@ -223,7 +215,7 @@ describe('createPgStatementClient', () => {
   });
 
   it('stops on deadline while waiting for a pool connection and destroys a late connection', async () => {
-    const connectGate = deferred();
+    const connectGate = Promise.withResolvers<void>();
     const { pool, actions } = makeFakePgPool({ connectGate: connectGate.promise });
     const client = createPgStatementClient(pool, {
       datasourceReadOnly: false,
@@ -245,8 +237,8 @@ describe('createPgStatementClient', () => {
   });
 
   it('aborts the first cursor read and destroys the active connection', async () => {
-    const readGate = deferred();
-    const readStarted = deferred();
+    const readGate = Promise.withResolvers<void>();
+    const readStarted = Promise.withResolvers<void>();
     const { pool, actions } = makeFakePgPool({
       readGate: readGate.promise,
       onRead: () => readStarted.resolve(),
@@ -274,7 +266,7 @@ describe('createPgStatementClient', () => {
   });
 
   it('aborts an in-flight advance cursor read', async () => {
-    const secondReadGate = deferred();
+    const secondReadGate = Promise.withResolvers<void>();
     const full = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
     const { pool, actions } = makeFakePgPool({
       batches: [full.slice(0, SQL_BATCH_SIZE), full.slice(SQL_BATCH_SIZE)],
@@ -303,8 +295,8 @@ describe('createPgStatementClient', () => {
   });
 
   it('aborts cursor cleanup before returning a single first page', async () => {
-    const closeGate = deferred();
-    const closeStarted = deferred();
+    const closeGate = Promise.withResolvers<void>();
+    const closeStarted = Promise.withResolvers<void>();
     const { pool, actions } = makeFakePgPool({
       batches: [[[1]]],
       closeGate: closeGate.promise,

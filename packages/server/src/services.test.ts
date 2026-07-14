@@ -12,14 +12,6 @@ import { NoneResultStore } from './resultStore';
 import { buildServices } from './services';
 import { createTestContext } from './test/harness';
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
-
 describe('Services shutdown', () => {
   it('RBAC ファイルがない場合はサービス起動に失敗する', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'hubble-missing-rbac-'));
@@ -39,7 +31,7 @@ describe('Services shutdown', () => {
 
   it('一件が同期例外で失敗しても全資源を閉じ、DBを最後に一度だけ閉じる', async () => {
     const calls: string[] = [];
-    const resultStoreGate = deferred();
+    const resultStoreGate = Promise.withResolvers<void>();
     const resultStore = new NoneResultStore();
     const context = await createTestContext({ resultStore });
     const engine = [...context.services.engines.values()][0]!;

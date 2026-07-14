@@ -103,14 +103,6 @@ function makeFakePool(opts: FakePoolOptions = {}): {
   return { pool, actions, connectionCount: () => connections };
 }
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 async function settlesWithin(promise: Promise<unknown>, timeoutMs = 250): Promise<boolean> {
   return Promise.race([
     promise.then(
@@ -241,7 +233,7 @@ describe('createMysqlStatementClient', () => {
   });
 
   it('stops on deadline while waiting for a pool connection and destroys a late connection', async () => {
-    const connectionGate = deferred();
+    const connectionGate = Promise.withResolvers<void>();
     const { pool, actions } = makeFakePool({ connectionGate: connectionGate.promise });
     const client = createMysqlStatementClient(pool, {
       datasourceReadOnly: false,
@@ -263,8 +255,8 @@ describe('createMysqlStatementClient', () => {
   });
 
   it('aborts the first stream read and destroys the active connection', async () => {
-    const rowsGate = deferred();
-    const fieldsSent = deferred();
+    const rowsGate = Promise.withResolvers<void>();
+    const fieldsSent = Promise.withResolvers<void>();
     const { pool, actions } = makeFakePool({
       rowsGate: rowsGate.promise,
       onFields: () => fieldsSent.resolve(),
@@ -292,7 +284,7 @@ describe('createMysqlStatementClient', () => {
   });
 
   it('aborts an in-flight advance stream read', async () => {
-    const afterFirstBatchGate = deferred();
+    const afterFirstBatchGate = Promise.withResolvers<void>();
     const rows = Array.from({ length: SQL_BATCH_SIZE + 1 }, (_, i) => [i]);
     const { pool, actions } = makeFakePool({
       rows,
@@ -321,8 +313,8 @@ describe('createMysqlStatementClient', () => {
   });
 
   it('aborts session cleanup before returning a single first page', async () => {
-    const sessionRestoreGate = deferred();
-    const sessionRestoreStarted = deferred();
+    const sessionRestoreGate = Promise.withResolvers<void>();
+    const sessionRestoreStarted = Promise.withResolvers<void>();
     const { pool, actions } = makeFakePool({
       rows: [[1]],
       sessionRestoreGate: sessionRestoreGate.promise,

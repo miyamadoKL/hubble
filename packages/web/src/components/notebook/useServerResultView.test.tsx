@@ -35,14 +35,6 @@ function page(rows: unknown[][], totalMatched: number): ResultSearchPage {
   return { offset: 0, rows, totalMatched, totalRows: 100, complete: true };
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
-
 describe('useServerResultView', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -118,7 +110,7 @@ describe('useServerResultView', () => {
 
   test('drops a stale response when the filter changes mid-flight', async () => {
     // 1 回目は遅延させ、2 回目のレスポンスの後に届くようにする。
-    const first = deferred<ResultSearchPage>();
+    const first = Promise.withResolvers<ResultSearchPage>();
     let firstSignal: AbortSignal | undefined;
     searchQueryRows
       .mockImplementationOnce((_queryId: string, _request: unknown, signal: AbortSignal) => {
@@ -146,7 +138,7 @@ describe('useServerResultView', () => {
   });
 
   test('keeps previous rows visible while the next condition is fetching', async () => {
-    const second = deferred<ResultSearchPage>();
+    const second = Promise.withResolvers<ResultSearchPage>();
     searchQueryRows.mockResolvedValueOnce(page([['first']], 1)).mockReturnValueOnce(second.promise);
     renderProbe({ queryId: 'q1', active: true, filter: 'first' });
     await act(async () => {
@@ -170,7 +162,7 @@ describe('useServerResultView', () => {
   });
 
   test('cancels a pending debounce before invoking the latest condition', async () => {
-    const latest = deferred<ResultSearchPage>();
+    const latest = Promise.withResolvers<ResultSearchPage>();
     searchQueryRows.mockReturnValueOnce(latest.promise);
     renderProbe({ queryId: 'q1', active: true, filter: 'first' });
     act(() => vi.advanceTimersByTime(299));
