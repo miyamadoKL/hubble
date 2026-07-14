@@ -45,4 +45,39 @@ describe('streamQueryResultEvents', () => {
       source: 'hubble-download',
     });
   });
+
+  it('columns 待ちの途中で abort すると購読を解除して AbortError にする', async () => {
+    const client = {
+      start: vi.fn(),
+      advance: vi.fn(),
+      cancel: vi.fn(async () => undefined),
+      waitBackoff: vi.fn(async () => undefined),
+    } as unknown as StatementClient;
+    const engine = {
+      isClosed: () => false,
+      downloadClient: () => client,
+    } as unknown as QueryEngine;
+    const exec = new QueryExecution({
+      queryId: 'qry_columns_wait',
+      statement: 'INSERT INTO target VALUES (1)',
+      ctx: {},
+      datasourceId: 'trino-default',
+      maxRows: 10,
+      overflowMode: 'truncate',
+      client,
+      engine,
+    });
+    exec.state = 'running';
+    const subscribe = vi.spyOn(exec, 'subscribe');
+    const controller = new AbortController();
+    const next = streamQueryResultEvents(exec, { signal: controller.signal }).events.next();
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    controller.abort();
+
+    await expect(next).rejects.toMatchObject({ name: 'AbortError' });
+    const unsubscribe = subscribe.mock.results[0]?.value as () => boolean;
+    expect(unsubscribe()).toBe(false);
+  });
 });

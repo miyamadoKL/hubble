@@ -1,17 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { gunzipSync } from 'node:zlib';
 import { CSV_REEXEC_UNAVAILABLE } from '@hubble/contracts';
 import type { ApiError } from '@hubble/contracts';
-import {
-  CSV_REEXEC_HEADER,
-  CSV_TRUNCATED_HEADER,
-  csvField,
-  csvRecord,
-  streamCsvReexec,
-} from './csv';
+import { CSV_REEXEC_HEADER, CSV_TRUNCATED_HEADER, csvField, csvRecord } from './csv';
+import { streamQueryResultEvents } from './resultEvents';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 
@@ -236,14 +231,13 @@ describe('CSV full-result re-execution (C-2)', () => {
     await exec.settled;
     expect(exec.truncated).toBe(true);
 
-    // Drive the re-execution generator directly so we can abort mid-stream and
-    // assert the teardown DELETE fires (Hono's in-process request doesn't model
-    // a real client disconnect reliably).
+    // Hono のインプロセスリクエストでは実クライアントの切断を再現しにくいため、
+    // 再実行イベントを直接進めて途中で中断し、後始末の DELETE を確認する。
     const ac = new AbortController();
-    const gen = streamCsvReexec(exec, { signal: ac.signal }, { flushEvery: 1 });
-    // Pull the first chunk (flushEvery=1 yields after page 1, parked at a live
-    // nextUri), then abort and close the generator to trigger its finally{}
-    // teardown DELETE.
+    const gen = streamQueryResultEvents(exec, { signal: ac.signal }).events;
+    // 列と最初の行を取得した時点で live nextUri の応答待ちにし、中断して
+    // finally の DELETE を発火させる。
+    await gen.next();
     await gen.next();
     ac.abort();
     await gen.return(undefined);
@@ -404,6 +398,9 @@ describe('CSV re-exec engine pinning', () => {
     expect(csvRes.status).toBe(422);
     const body = (await csvRes.json()) as ApiError;
     expect(body.error.code).toBe(CSV_REEXEC_UNAVAILABLE);
+    expect(body.error.message).toBe(
+      'Full CSV download requires re-execution but the original datasource connection is no longer available.',
+    );
     const auditRows = await ctx.services.audit.listForTest();
     const csvAudit = auditRows.find((row) => row.action === 'csv.download');
     expect(csvAudit?.detail).toMatchObject({
@@ -414,6 +411,34 @@ describe('CSV re-exec engine pinning', () => {
       allowsReexec: true,
       truncated: true,
     });
+    await ctx.services.shutdown();
+  });
+
+  it('keeps the CSV unavailable message when the engine closes after the guard', async () => {
+    const ctx = await createTestContext({
+      scenarios: [manyRowScenario(10)],
+      configOverrides: { query: { maxRows: 2 } as never },
+    });
+    const res = await ctx.app.request('/api/queries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ statement: 'SELECT * FROM many', maxRows: 2 }),
+    });
+    const { queryId } = (await res.json()) as { queryId: string };
+    const exec = ctx.services.registry.get(queryId)!;
+    await exec.settled;
+    const isClosed = vi.spyOn(exec.engine, 'isClosed');
+    isClosed.mockReset();
+    isClosed.mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    const csvRes = await ctx.app.request(`/api/queries/${queryId}/download.csv`);
+    expect(csvRes.status).toBe(422);
+    const body = (await csvRes.json()) as ApiError;
+    expect(body.error.code).toBe(CSV_REEXEC_UNAVAILABLE);
+    expect(body.error.message).toBe(
+      'Full CSV download requires re-execution but the original datasource connection is no longer available.',
+    );
+    expect(isClosed).toHaveBeenCalledTimes(2);
     await ctx.services.shutdown();
   });
 });
