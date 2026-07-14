@@ -20,6 +20,7 @@
     "exceljs": "^4.4.0",
     "googleapis": "^173.0.0",
     "hono": "4.12.25",
+    "ipaddr.js": "2.4.0",
     "mysql2": "3.14.1",
     "nanoid": "^5.1.11",
     "nodemailer": "^9.0.3",

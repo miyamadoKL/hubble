@@ -6,38 +6,44 @@
 import { describe, it, expect } from 'vitest';
 import { cidrContains, isTrustedAddress, parseAddress, parseCidr, parseCidrList } from './cidr';
 
-// parseAddress: 文字列を {version, value} に正規化できるかを検証する。
+// parseAddress: 文字列を {version} に正規化できるかを検証する。
 describe('parseAddress', () => {
   it('parses IPv4', () => {
     expect(parseAddress('127.0.0.1')?.version).toBe(4);
-    expect(parseAddress('10.0.0.5')).toEqual({ version: 4, value: 0x0a000005n });
+    expect(parseAddress('10.0.0.5')).toEqual({ version: 4 });
   });
 
   it('parses IPv6 incl. loopback and compression', () => {
-    expect(parseAddress('::1')).toEqual({ version: 6, value: 1n });
+    expect(parseAddress('::1')).toEqual({ version: 6 });
     expect(parseAddress('2001:db8::1')?.version).toBe(6);
   });
 
   it('unwraps IPv4-mapped IPv6 to IPv4', () => {
     const mapped = parseAddress('::ffff:127.0.0.1');
-    expect(mapped?.version).toBe(4);
-    expect(mapped?.value).toBe(parseAddress('127.0.0.1')?.value);
+    expect(mapped).toEqual({ version: 4 });
+    expect(mapped).toEqual(parseAddress('127.0.0.1'));
   });
 
-  it('handles hex-form IPv4-mapped IPv6', () => {
-    // ::ffff:7f00:0001 === ::ffff:127.0.0.1
-    expect(parseAddress('::ffff:7f00:1')).toEqual(parseAddress('127.0.0.1'));
+  it('accepts an outer bracket', () => {
+    expect(parseAddress('[::1]')).toEqual({ version: 6 });
   });
 
-  it('strips brackets and zone ids', () => {
-    expect(parseAddress('[::1]')).toEqual({ version: 6, value: 1n });
-    expect(parseAddress('fe80::1%eth0')?.version).toBe(6);
-    expect(parseAddress('[fe80::1%eth0]')).toEqual(parseAddress('fe80::1'));
+  it.each([
+    '127.1',
+    '127.0.1',
+    '2130706433',
+    '0177.0.0.1',
+    '0x7f.0.0.1',
+    '::ffff:127.1',
+    '::ffff:0177.0.0.1',
+    '::ffff:0x7f.0.0.1',
+  ])('rejects ipaddr.js legacy IPv4 notation: %s', (address) => {
+    expect(parseAddress(address)).toBeUndefined();
   });
 
-  it('accounts for an embedded IPv4 as two groups', () => {
-    expect(parseAddress('2001:db8::192.0.2.1')).toEqual(parseAddress('2001:db8:0:0:0:0:c000:201'));
-    expect(parseAddress('2001:db8:0:0:0:0:192.0.2.1')).toEqual(parseAddress('2001:db8::c000:201'));
+  it('rejects an unbalanced outer bracket', () => {
+    expect(parseAddress('[::1')).toBeUndefined();
+    expect(parseAddress('::1]')).toBeUndefined();
   });
 
   it('rejects malformed input', () => {
@@ -70,9 +76,27 @@ describe('parseCidr', () => {
     expect(parseCidr('10.0.0.0/33')).toBeUndefined();
     expect(parseCidr('::1/129')).toBeUndefined();
   });
+
+  it('normalizes mapped CIDR input to IPv4 and rejects an IPv6-sized prefix', () => {
+    expect(parseCidr('::ffff:127.0.0.1/32')).toMatchObject({ version: 4, prefix: 32 });
+    expect(parseCidr('::ffff:127.0.0.1/33')).toBeUndefined();
+    expect(parseCidr('::ffff:127.0.0.1/120')).toBeUndefined();
+  });
+
+  it.each(['10.0.0.0/8/1', '10.0.0.0//8', '::1/128/0'])(
+    'rejects a CIDR with an extra slash: %s',
+    (cidr) => {
+      expect(parseCidr(cidr)).toBeUndefined();
+    },
+  );
+
+  it('境界で角括弧付き IPv6 とホストルートを受理する', () => {
+    expect(parseCidr(' [::1] ')).toMatchObject({ version: 6, prefix: 128 });
+    expect(parseCidr(' [fe80::1%eth0]/128 ')).toMatchObject({ version: 6, prefix: 128 });
+  });
 });
 
-// cidrContains: アドレスが CIDR レンジに含まれるかの判定（v4/v6 混在の扱いを含む）を検証する。
+// cidrContains: アドレスが CIDR レンジに含まれるかの判定を検証する。
 describe('cidrContains', () => {
   const v4 = parseCidr('127.0.0.0/8')!;
   const v6Loop = parseCidr('::1/128')!;
@@ -104,6 +128,24 @@ describe('cidrContains', () => {
   it('matches an IPv4-mapped IPv6 peer against an IPv4 range', () => {
     expect(cidrContains(v4, '::ffff:127.0.0.1')).toBe(true);
     expect(cidrContains(v4, '::ffff:10.0.0.1')).toBe(false);
+  });
+
+  it('matches a hexadecimal mapped address against the exact IPv4 host route', () => {
+    const host = parseCidr('127.0.0.1/32')!;
+    expect(cidrContains(host, '::ffff:7f00:1')).toBe(true);
+    expect(cidrContains(host, '127.0.0.2')).toBe(false);
+  });
+
+  it('normalizes brackets and arbitrary zones before matching an IPv6 host route', () => {
+    const host = parseCidr('fe80::1/128')!;
+    expect(cidrContains(host, '[fe80::1%eth-0]')).toBe(true);
+    expect(cidrContains(host, 'fe80::2%any-zone')).toBe(false);
+  });
+
+  it('matches an embedded dotted IPv4 against the exact IPv6 host route', () => {
+    const host = parseCidr('2001:db8::c000:201/128')!;
+    expect(cidrContains(host, '2001:db8::192.0.2.1')).toBe(true);
+    expect(cidrContains(host, '2001:db8::192.0.2.2')).toBe(false);
   });
 
   it('does not cross address families', () => {
