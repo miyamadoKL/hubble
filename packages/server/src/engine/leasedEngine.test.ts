@@ -34,20 +34,6 @@ function innerEngine(close = vi.fn(async () => {})): QueryEngine {
   } as unknown as QueryEngine;
 }
 
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (reason: unknown) => void;
-} {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
 function statementClient(overrides: Partial<StatementClient> = {}): StatementClient {
   return {
     start: vi.fn(async () => ({ id: 'q', nextUri: 'next', stats: { state: 'RUNNING' } })),
@@ -159,7 +145,7 @@ describe('LeasedEngine', () => {
 
   it('holds an automatic lease until a promise operation succeeds', async () => {
     const closeInner = vi.fn(async () => {});
-    const pending = deferred<{ name: string }[]>();
+    const pending = Promise.withResolvers<{ name: string }[]>();
     const inner = innerEngine(closeInner);
     inner.listCatalogs = vi.fn(() => pending.promise);
     const engine = new LeasedEngine(inner);
@@ -177,7 +163,7 @@ describe('LeasedEngine', () => {
 
   it('releases an automatic promise lease after rejection', async () => {
     const closeInner = vi.fn(async () => {});
-    const pending = deferred<{ name: string }[]>();
+    const pending = Promise.withResolvers<{ name: string }[]>();
     const inner = innerEngine(closeInner);
     inner.listCatalogs = vi.fn(() => pending.promise);
     const engine = new LeasedEngine(inner);

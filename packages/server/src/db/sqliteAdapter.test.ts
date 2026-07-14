@@ -3,19 +3,6 @@ import { describe, expect, test } from 'vitest';
 import type { SqlDatabase } from './sqlDatabase';
 import { openSqlite } from './sqliteAdapter';
 
-interface Deferred<T> {
-  promise: Promise<T>;
-  resolve(value: T): void;
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 async function openTestDatabase(): Promise<SqlDatabase> {
   const db = openSqlite(':memory:');
   await db.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, label TEXT NOT NULL)');
@@ -30,8 +17,8 @@ async function labels(db: SqlDatabase): Promise<string[]> {
 describe('SqliteDatabase operation isolation', () => {
   test('ロールバック中の通常書き込みを次の境界まで待機させる', async () => {
     const db = await openTestDatabase();
-    const entered = deferred<void>();
-    const release = deferred<void>();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
 
     try {
       const transaction = db.transaction(async (tx) => {
@@ -62,8 +49,8 @@ describe('SqliteDatabase operation isolation', () => {
 
   test('並行トランザクションを開始順に直列化する', async () => {
     const db = await openTestDatabase();
-    const firstEntered = deferred<void>();
-    const releaseFirst = deferred<void>();
+    const firstEntered = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
     const order: string[] = [];
 
     try {
@@ -95,8 +82,8 @@ describe('SqliteDatabase operation isolation', () => {
 
   test('commit後に通常操作を開始し、callback用handleは同じ境界を再利用する', async () => {
     const db = await openTestDatabase();
-    const entered = deferred<void>();
-    const release = deferred<void>();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
     let retainedTx: SqlDatabase | undefined;
 
     try {

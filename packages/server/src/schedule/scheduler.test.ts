@@ -58,14 +58,6 @@ function validationFailure(marker: string, message: string): FakeScenario {
   };
 }
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 /** An EXPLAIN IO plan cell whose single input table scans `rows` rows. */
 function ioPlan(rows: number): string {
   return JSON.stringify({
@@ -345,8 +337,8 @@ describe('Scheduler run matrix', () => {
 
       principalSnapshot: { user: 'alice' },
     });
-    const gate = deferred();
-    const startReached = deferred();
+    const gate = Promise.withResolvers<void>();
+    const startReached = Promise.withResolvers<void>();
     const originalStart = h.runs.start.bind(h.runs);
     const start = vi.spyOn(h.runs, 'start').mockImplementation(async (input) => {
       startReached.resolve();

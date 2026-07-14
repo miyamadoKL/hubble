@@ -10,14 +10,6 @@ import type { Catalog, DatasourceKind } from '@hubble/contracts';
 import { MetadataService } from './service';
 import type { MetadataOptions, QueryEngine } from '../engine/types';
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
-
 /** A counting fake engine with controllable results. */
 class FakeEngine implements QueryEngine {
   async probe(): Promise<void> {}
@@ -183,7 +175,7 @@ describe('MetadataService cache generation', () => {
     const engine = new FakeEngine();
     const clock = { t: 0 };
     const service = svc(engine, 100000, clock);
-    const pending = deferred<Catalog[]>();
+    const pending = Promise.withResolvers<Catalog[]>();
     let calls = 0;
     engine.listCatalogs = async () => {
       calls += 1;
@@ -210,7 +202,7 @@ describe('MetadataService cache generation', () => {
     const first = new FakeEngine();
     const second = new FakeEngine();
     second.catalogs = [{ name: 'new-engine' }];
-    const pending = deferred<Catalog[]>();
+    const pending = Promise.withResolvers<Catalog[]>();
     first.listCatalogs = async () => pending.promise;
     const engines = new Map<string, QueryEngine>([[first.datasourceId, first]]);
     const service = new MetadataService(engines, first.datasourceId, 100000);
@@ -237,7 +229,7 @@ describe('MetadataService cache generation', () => {
     await service.getCatalogs(PRINCIPAL);
 
     clock.t = 5000;
-    const pending = deferred<Catalog[]>();
+    const pending = Promise.withResolvers<Catalog[]>();
     let refreshCalls = 0;
     engine.listCatalogs = async () => {
       refreshCalls += 1;
@@ -261,7 +253,7 @@ describe('MetadataService cache generation', () => {
     const engine = new FakeEngine();
     const clock = { t: 0 };
     const service = svc(engine, 100000, clock);
-    const pending = deferred<Catalog[]>();
+    const pending = Promise.withResolvers<Catalog[]>();
     let calls = 0;
     engine.listCatalogs = async () => {
       calls += 1;
@@ -285,9 +277,9 @@ describe('MetadataService cache generation', () => {
     const engine = new FakeEngine();
     const clock = { t: 0 };
     const service = svc(engine, 100000, clock);
-    const firstPending = deferred<Catalog[]>();
-    const secondPending = deferred<Catalog[]>();
-    const secondStarted = deferred<void>();
+    const firstPending = Promise.withResolvers<Catalog[]>();
+    const secondPending = Promise.withResolvers<Catalog[]>();
+    const secondStarted = Promise.withResolvers<void>();
     let calls = 0;
     engine.listCatalogs = async () => {
       calls += 1;

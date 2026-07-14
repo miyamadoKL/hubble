@@ -8,14 +8,6 @@ import {
   type ExplainLifecycleDependencies,
 } from './explainLifecycle';
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const request = (statement: string): CreateQueryRequest => ({ statement });
 const page = (text: string): QueryRowsPage => ({
@@ -77,7 +69,7 @@ describe('ExplainQueryLifecycle', () => {
   });
 
   test('編集でcreate待機中の旧queryを失効させ、queryId確定後にcancelする', async () => {
-    const pending = deferred<{ queryId: string }>();
+    const pending = Promise.withResolvers<{ queryId: string }>();
     createQuery.mockReturnValue(pending.promise);
     const lifecycle = new ExplainQueryLifecycle(dependencies);
 
@@ -126,7 +118,7 @@ describe('ExplainQueryLifecycle', () => {
   });
 
   test('削除後はdoneに続く行取得の遅延応答を反映しない', async () => {
-    const rows = deferred<QueryRowsPage>();
+    const rows = Promise.withResolvers<QueryRowsPage>();
     createQuery.mockResolvedValue({ queryId: 'deleted-query' });
     fetchQueryRows.mockReturnValue(rows.promise);
     const lifecycle = new ExplainQueryLifecycle(dependencies);

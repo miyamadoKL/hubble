@@ -14,19 +14,9 @@ const result = (queryName: string) => ({
   rows: [[1]],
 });
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
 describe('DashboardQueryCoordinator', () => {
   test('同じsavedQueryIdの購読は一つのquery実行を共有する', async () => {
-    const execution = deferred<ReturnType<typeof result>>();
+    const execution = Promise.withResolvers<ReturnType<typeof result>>();
     const executor = vi.fn(() => execution.promise);
     const coordinator = new DashboardQueryCoordinator(4, executor);
     const first: SharedWidgetQueryState[] = [];
@@ -47,13 +37,13 @@ describe('DashboardQueryCoordinator', () => {
   });
 
   test('dashboardの同時実行数を上限内に保つ', async () => {
-    const executions = new Map<string, ReturnType<typeof deferred<ReturnType<typeof result>>>>();
+    const executions = new Map<string, PromiseWithResolvers<ReturnType<typeof result>>>();
     let active = 0;
     let peak = 0;
     const executor = vi.fn((savedQueryId: string) => {
       active += 1;
       peak = Math.max(peak, active);
-      const execution = deferred<ReturnType<typeof result>>();
+      const execution = Promise.withResolvers<ReturnType<typeof result>>();
       executions.set(savedQueryId, execution);
       return execution.promise.finally(() => {
         active -= 1;
@@ -92,8 +82,8 @@ describe('DashboardQueryCoordinator', () => {
   });
 
   test('失敗した実行が枠を解放して次のqueued queryを開始する', async () => {
-    const first = deferred<ReturnType<typeof result>>();
-    const second = deferred<ReturnType<typeof result>>();
+    const first = Promise.withResolvers<ReturnType<typeof result>>();
+    const second = Promise.withResolvers<ReturnType<typeof result>>();
     const executor = vi
       .fn()
       .mockImplementationOnce(() => first.promise)
@@ -112,7 +102,7 @@ describe('DashboardQueryCoordinator', () => {
   });
 
   test('保存query名を実行中と失敗後の共有stateへ保持する', async () => {
-    const execution = deferred<ReturnType<typeof result>>();
+    const execution = Promise.withResolvers<ReturnType<typeof result>>();
     const executor = vi.fn(
       (_id: string, _signal: AbortSignal, onQueryName?: (queryName: string) => void) => {
         onQueryName?.('Resolved title');
@@ -201,7 +191,7 @@ describe('executeWidgetQuery', () => {
 
   test('cancel完了までexecutorをsettleせず元エラーを維持する', async () => {
     const pollingError = new Error('snapshot unavailable');
-    const canceling = deferred<void>();
+    const canceling = Promise.withResolvers<void>();
     const cancel = vi.fn(() => canceling.promise);
     const api: WidgetQueryApi = {
       getSavedQuery: async () => ({
@@ -237,7 +227,7 @@ describe('executeWidgetQuery', () => {
   });
 
   test('create応答待ちのabort後もqueryIdを受け取ってcancelする', async () => {
-    const creating = deferred<{ queryId: string }>();
+    const creating = Promise.withResolvers<{ queryId: string }>();
     const create = vi.fn(() => creating.promise);
     const cancel = vi.fn(async () => undefined);
     const api: WidgetQueryApi = {

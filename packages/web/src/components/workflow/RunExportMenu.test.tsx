@@ -16,14 +16,6 @@ vi.mock('../common/Toast', () => ({
   },
 }));
 
-function deferredValue<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
-}
-
 async function flushPromises(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -74,7 +66,7 @@ describe('RunExportMenu downloads', () => {
   });
 
   test('downloads a successful CSV zip without navigating the SPA', async () => {
-    const pending = deferredValue<Response>();
+    const pending = Promise.withResolvers<Response>();
     fetchMock.mockReturnValue(pending.promise);
 
     await selectOption(container, 'CSV (zip)');

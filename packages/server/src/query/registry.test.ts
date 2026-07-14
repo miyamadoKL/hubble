@@ -62,14 +62,6 @@ function makeRegistryForEngines(
   });
 }
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 function reloadOldEngine(
   engines: Map<string, QueryEngine>,
   oldEngine: QueryEngine,
@@ -109,7 +101,7 @@ describe('QueryRegistry concurrency', () => {
 
   it('drains queued leases before reload closes the old engine', async () => {
     const fake = new FakeTrino([fast]);
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     fake.holdAdvance = gate.promise;
     const inner = makeTrinoEngine(fake);
     const closeInner = vi.spyOn(inner, 'close');
@@ -144,7 +136,7 @@ describe('QueryRegistry concurrency', () => {
 
   it('releases a queued lease after cancellation before closing the old engine', async () => {
     const fake = new FakeTrino([fast]);
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     fake.holdAdvance = gate.promise;
     const inner = makeTrinoEngine(fake);
     const closeInner = vi.spyOn(inner, 'close');
@@ -168,7 +160,7 @@ describe('QueryRegistry concurrency', () => {
 
   it('bounds the global and per-principal wait queues', async () => {
     const fake = new FakeTrino([fast]);
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     fake.holdAdvance = gate.promise;
     const registry = makeRegistry(fake, {
       concurrency: 1,
@@ -204,7 +196,7 @@ describe('QueryRegistry concurrency', () => {
 
   it('releases queue admission and skips result capture when a queued query is canceled', async () => {
     const fake = new FakeTrino([fast]);
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     fake.holdAdvance = gate.promise;
     const registry = makeRegistry(fake, {
       concurrency: 1,
@@ -236,7 +228,7 @@ describe('QueryRegistry concurrency', () => {
 
   it('bounds tracked executions and rejects admission after stopAccepting', async () => {
     const fake = new FakeTrino([fast]);
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     fake.holdAdvance = gate.promise;
     const registry = makeRegistry(fake, { concurrency: 1, maxTracked: 1 });
     const first = registry.submit({ statement: 'SELECT first', ctx: { user: 'alice' } });
@@ -293,7 +285,7 @@ describe('QueryRegistry not found', () => {
 describe('QueryRegistry shutdown', () => {
   it('is single-flight and returns at the deadline when cancellation does not settle', async () => {
     const fake = new FakeTrino([fast]);
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     fake.holdAdvance = gate.promise;
     const registry = makeRegistry(fake, { concurrency: 1 });
     const exec = registry.submit({ statement: 'SELECT blocked', ctx: { user: 'alice' } });
@@ -313,7 +305,7 @@ describe('QueryRegistry shutdown', () => {
 
   it('cancels queued and running executions and waits for both terminal states', async () => {
     const fake = new FakeTrino([fast]);
-    const gate = deferred();
+    const gate = Promise.withResolvers<void>();
     fake.holdAdvance = gate.promise;
     const registry = makeRegistry(fake, { concurrency: 1 });
     const running = registry.submit({ statement: 'SELECT running', ctx: { user: 'alice' } });

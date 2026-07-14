@@ -4,14 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { QueryEngine } from '../engine/types';
 import { EstimateService, type EstimateRequestParams } from './estimateService';
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
-
 const CONFIG = {
   mode: 'enforce',
   maxScanBytes: 1000,
@@ -159,7 +151,7 @@ describe('EstimateService cache key', () => {
   });
 
   it('does not restore an estimate that crossed datasource invalidation', async () => {
-    const pending = deferred<EstimateResult>();
+    const pending = Promise.withResolvers<EstimateResult>();
     const first = fakeEngine('ds', 1);
     first.engine.estimate = vi
       .fn()
@@ -179,7 +171,7 @@ describe('EstimateService cache key', () => {
   });
 
   it('does not return an old allow verdict after the engine is replaced', async () => {
-    const pending = deferred<EstimateResult>();
+    const pending = Promise.withResolvers<EstimateResult>();
     const first = fakeEngine('ds', 1);
     first.engine.estimate = vi.fn(() => pending.promise);
     const second = fakeEngine('ds', 2, 'block');
@@ -200,8 +192,8 @@ describe('EstimateService cache key', () => {
   });
 
   it('fails closed when the datasource generation changes during both attempts', async () => {
-    const firstPending = deferred<EstimateResult>();
-    const secondPending = deferred<EstimateResult>();
+    const firstPending = Promise.withResolvers<EstimateResult>();
+    const secondPending = Promise.withResolvers<EstimateResult>();
     const engine = fakeEngine('ds', 1);
     engine.engine.estimate = vi
       .fn()
