@@ -24,8 +24,8 @@ export { splitStatements, type StatementSlice } from './splitStatements';
 export { SchemaCache } from './sql/SchemaCache';
 // メタデータ供給のための DI インターフェースと DTO 型。
 export { type MetadataSource, type MetadataTable, type MetadataColumn } from './sql/MetadataSource';
-// ANTLR トークン種別 → Monaco ハイライトスコープの対応表。
-export { tokenMap } from './sql/TokenMap';
+// ANTLR トークン種別を Monaco ハイライトスコープへ変換する関数。
+export { tokenScope, type TokenScope } from './sql/TokenMap';
 // スキーマモデル（カタログ→スキーマ→テーブル→カラム）のうち、外部から直接
 // 使われる値オブジェクトのみを再エクスポートする。
 export { default as TableReference } from './schema/TableReference';

@@ -26,7 +26,7 @@ import { SqlBaseLexer } from '../trino-lang/generated/SqlBaseLexer.js';
 import {
   collectCompletions,
   parseStatement,
-  tokenMap,
+  tokenScope,
   TableReference,
   type CompletionCandidate,
 } from '../trino-lang';
@@ -113,13 +113,12 @@ export function registerTrinoLanguage(monacoNs: typeof monaco, deps: TrinoLangua
   registerHoverProvider(monacoNs, () => registration.deps);
 }
 
-/** Per-line ANTLR tokenizer mapping token types → TokenMap highlight scopes. */
-/** 1 行単位で ANTLR レキサーを走らせ、トークン種別を TokenMap のハイライトスコープへ変換する tokenizer。 */
+/** 1 行単位で ANTLR レキサーを走らせ、tokenScope でスコープへ変換する tokenizer。 */
 function registerTokenizer(monacoNs: typeof monaco): void {
-  // The tokenizer is line-stateless, but Monaco's IState contract still needs a
-  // real `clone()` + `equals()` (a bare object throws "endState.equals is not a
-  // function" and silently kills the whole language). One shared instance is
-  // fine since there is no per-line carry-over.
+  // tokenizer は行状態を持たないが、Monaco の IState 契約には実体のある
+  // `clone()` と `equals()` が必要である。単なるオブジェクトでは
+  // "endState.equals is not a function" が発生し、言語機能全体が停止する。
+  // 行をまたいで引き継ぐ状態がないため、インスタンスは共有できる。
   const STATE: monaco.languages.IState = {
     clone: () => STATE,
     equals: () => true,
@@ -136,7 +135,7 @@ function registerTokenizer(monacoNs: typeof monaco): void {
       while (token.type !== SqlBaseLexer.EOF) {
         tokens.push({
           startIndex: token.column,
-          scopes: tokenMap[token.type as keyof typeof tokenMap] ?? 'identifier',
+          scopes: tokenScope(token.type),
         });
         token = lexer.nextToken();
       }
