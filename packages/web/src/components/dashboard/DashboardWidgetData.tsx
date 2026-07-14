@@ -1,7 +1,24 @@
 /** dashboard 内の query widget が共有する実行 coordinator と React hook。 */
+import type { QueryColumn } from '@hubble/contracts';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { WidgetData } from './useWidgetData';
+import type { ResultRow } from '../../execution';
 import { DashboardQueryCoordinator, type SharedWidgetQueryState } from './widgetQueryCoordinator';
+
+/** widget のデータ取得状態。 */
+interface WidgetData {
+  /** 読み込み中 (初回または手動リフレッシュ中) かどうか。 */
+  loading: boolean;
+  /** 取得失敗時のエラーメッセージ (参照先クエリの消失や実行エラーを含む)。 */
+  error: string | null;
+  /** 結果の列定義。 */
+  columns: QueryColumn[];
+  /** 結果の行データ。 */
+  rows: ResultRow[];
+  /** 参照している保存クエリの名前 (タイトル未設定時の表示に使う)。 */
+  queryName: string | null;
+  /** クエリを再実行してデータを更新する。 */
+  refresh: () => void;
+}
 
 const DashboardQueryContext = createContext<DashboardQueryCoordinator | null>(null);
 

@@ -15,6 +15,7 @@
     "lint": "eslint . && pnpm lint:ast",
     "lint:ast": "node scripts/ast-grep.mjs scan",
     "lint:ast:test": "node scripts/ast-grep.mjs test --skip-snapshot-tests",
+    "knip": "knip",
     "test": "pnpm -r --filter \"./packages/contracts\" --filter \"./packages/server\" --filter \"./packages/web\" test",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
@@ -26,6 +27,7 @@
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.6.0",
+    "knip": "6.26.0",
     "prettier": "3.8.4",
     "typescript": "6.0.3",
     "typescript-eslint": "8.61.0"

@@ -60,6 +60,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Knip (unused files / dependencies / binaries)
+        run: pnpm knip
+
       # Steps are kept separate so a failure points at the exact task.
       - name: Typecheck
         run: pnpm typecheck
