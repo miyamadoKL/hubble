@@ -342,8 +342,9 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
   };
 
   const resolveExportEvents = async (
-    c: { req: { param: (k: string) => string }; var: AuthVariables },
+    c: { req: { param: (k: string) => string; raw: Request }; var: AuthVariables },
     exec: ReturnType<typeof services.registry.get> | undefined,
+    signal: AbortSignal = c.req.raw.signal,
   ): Promise<{
     events: AsyncGenerator<QueryResultEvent>;
     source: QueryResultEventSource;
@@ -355,10 +356,12 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const principal = c.var.principal;
     const persisted = await usablePersistedResult(c, { optional: exec !== undefined });
     if (persisted) {
+      const events = (async function* (): AsyncGenerator<QueryResultEvent> {
+        const stream = await services.resultStore.getStream(persisted.resultObjectKey, signal);
+        yield* streamPersistedResultEvents(stream, signal);
+      })();
       return {
-        events: streamPersistedResultEvents(
-          await services.resultStore.getStream(persisted.resultObjectKey),
-        ),
+        events,
         source: 'resultStore',
         target: persisted.id,
         datasourceId: persisted.datasourceId,
@@ -400,6 +403,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         roleName: principal.role.name,
         sessionReadOnly: !hasQueryWrite(principal.role),
       },
+      signal,
     });
     return {
       events: resolved.events,
@@ -470,12 +474,15 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         return c.body(null, 304);
       }
       const persisted = await readPersistedRowsPage(
-        await services.resultStore.getStream(ref.resultObjectKey),
+        await services.resultStore.getStream(ref.resultObjectKey, c.req.raw.signal),
         Math.max(offset, 0),
         limit,
         {
           totalRows: ref.rowCount,
           columns: ref.columns,
+          signal: c.req.raw.signal,
+          observer: services.resultStoreObserver,
+          clock: services.resultStoreClock,
         },
       );
       const page: QueryRowsPage = {
@@ -512,10 +519,15 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     if (!exec) {
       const ref = await requirePersistedResult(c);
       const cursor = await openPersistedResult(
-        await services.resultStore.getStream(ref.resultObjectKey),
+        await services.resultStore.getStream(ref.resultObjectKey, c.req.raw.signal),
+        { signal: c.req.raw.signal },
       );
       assertResultSearchColumnIndices(cursor.columns, body);
-      const searched = await searchRowsStream(cursor.columns, cursor.rows, body);
+      const searched = await searchRowsStream(cursor.columns, cursor.rows, body, {
+        signal: c.req.raw.signal,
+        observer: services.resultStoreObserver,
+        clock: services.resultStoreClock,
+      });
       const page: ResultSearchPage = {
         offset: body.offset,
         rows: searched.rows,
@@ -554,9 +566,14 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         return c.body(null, 304);
       }
       const cursor = await openPersistedResult(
-        await services.resultStore.getStream(ref.resultObjectKey),
+        await services.resultStore.getStream(ref.resultObjectKey, c.req.raw.signal),
+        { signal: c.req.raw.signal },
       );
-      const profiled = await profileRowsStream(cursor.columns, cursor.rows);
+      const profiled = await profileRowsStream(cursor.columns, cursor.rows, {
+        signal: c.req.raw.signal,
+        observer: services.resultStoreObserver,
+        clock: services.resultStoreClock,
+      });
       const profile: ResultProfile = {
         rowCount: profiled.rowCount,
         complete: true,
@@ -769,10 +786,12 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       return stream(c, async (rawStream) => {
         const ac = new AbortController();
         rawStream.onAbort(() => ac.abort());
+        const signal = AbortSignal.any([c.req.raw.signal, ac.signal]);
         const csv = streamPersistedCsv(
-          await services.resultStore.getStream(persisted.resultObjectKey),
+          await services.resultStore.getStream(persisted.resultObjectKey, signal),
+          { signal },
         );
-        await writeCsvDownload(rawStream, csvName, csv, { zip, gzip, signal: ac.signal });
+        await writeCsvDownload(rawStream, csvName, csv, { zip, gzip, signal });
       });
     }
 
@@ -853,17 +872,18 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       // 再クエリ）の両方を同時に打ち切れるようにする。
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
+      const signal = AbortSignal.any([c.req.raw.signal, ac.signal]);
       const csv = streamQueryCsv(exec, {
         downloadClientOptions: {
           user: exec.ctx.user,
           roleName: principal.role.name,
           sessionReadOnly: !hasQueryWrite(principal.role),
         },
-        signal: ac.signal,
+        signal,
       });
 
       if (zip) {
-        await pipeZip(rawStream, csvName, csv, ac.signal);
+        await pipeZip(rawStream, csvName, csv, signal);
       } else if (gzip) {
         // Pipe CSV text through a gzip CompressionStream.
         // Web標準の CompressionStream を使い、CSV テキストを都度 gzip 圧縮しながら書き出す。
@@ -873,7 +893,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         const pumped = rawStream.pipe(gz.readable);
         try {
           for await (const chunk of csv) {
-            if (ac.signal.aborted) break;
+            if (signal.aborted) break;
             await writer.write(encoder.encode(chunk));
           }
         } finally {
@@ -883,7 +903,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       } else {
         // 非圧縮: CSV テキストのチャンクをそのままレスポンスへ書き出す。
         for await (const chunk of csv) {
-          if (ac.signal.aborted) break;
+          if (signal.aborted) break;
           await rawStream.write(chunk);
         }
       }
@@ -896,9 +916,11 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const id = c.req.param('id');
     const exec = maybeOwnedExec(id, c);
     const principal = c.var.principal;
+    const responseAbort = new AbortController();
+    const signal = AbortSignal.any([c.req.raw.signal, responseAbort.signal]);
     let resolved: Awaited<ReturnType<typeof resolveExportEvents>>;
     try {
-      resolved = await resolveExportEvents(c, exec);
+      resolved = await resolveExportEvents(c, exec, signal);
       assertXlsxLimit(resolved.rowCount);
     } catch (err) {
       await recordExportDenied({
@@ -927,14 +949,13 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     c.header('Content-Disposition', `attachment; filename="${id}.xlsx"`);
     c.header('Cache-Control', 'no-store');
     return stream(c, async (rawStream) => {
-      const ac = new AbortController();
-      rawStream.onAbort(() => ac.abort());
+      rawStream.onAbort(() => responseAbort.abort());
       const xlsx = new PassThrough();
-      const writer = writeXlsx(resolved.events, xlsx, { signal: ac.signal }).catch((err) => {
+      const writer = writeXlsx(resolved.events, xlsx, { signal }).catch((err) => {
         xlsx.destroy(err instanceof Error ? err : new Error(String(err)));
         throw err;
       });
-      await Promise.all([pipeNodeReadable(rawStream, xlsx, ac.signal), writer]);
+      await Promise.all([pipeNodeReadable(rawStream, xlsx, signal), writer]);
     });
   });
 
@@ -949,7 +970,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     let resolved: Awaited<ReturnType<typeof resolveExportEvents>> | undefined;
 
     try {
-      resolved = await resolveExportEvents(c, exec);
+      resolved = await resolveExportEvents(c, exec, c.req.raw.signal);
       if (body.destination === 's3') {
         if (body.format === 'xlsx') assertXlsxLimit(resolved.rowCount);
         const response = await exportToS3({

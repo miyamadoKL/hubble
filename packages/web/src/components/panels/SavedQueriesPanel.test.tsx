@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { SavedQuery } from '@hubble/contracts';
+import type { SavedQueryResponse } from '@hubble/contracts';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { useDatasourceStore } from '../../stores/datasourceStore';
 import { useUiStore } from '../../stores/uiStore';
@@ -56,7 +56,7 @@ afterAll(() => {
   ).IS_REACT_ACT_ENVIRONMENT = false;
 });
 
-const ownedQuery: SavedQuery = {
+const ownedQuery: SavedQueryResponse = {
   id: 'sq-owned',
   name: 'Owned query',
   description: '',
@@ -67,10 +67,11 @@ const ownedQuery: SavedQuery = {
   isFavorite: false,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
+  owner: 'admin',
   myPermission: 'owner',
 };
 
-const sharedQuery: SavedQuery = {
+const sharedQuery: SavedQueryResponse = {
   ...ownedQuery,
   id: 'sq-shared',
   name: 'Shared query',
@@ -78,7 +79,7 @@ const sharedQuery: SavedQuery = {
   myPermission: 'view',
 };
 
-const contextualQuery: SavedQuery = {
+const contextualQuery: SavedQueryResponse = {
   ...ownedQuery,
   id: 'sq-context',
   name: 'Warehouse B orders',

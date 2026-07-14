@@ -100,14 +100,17 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
     }
   });
 
-  // unsafe method は Fetch Metadata と Origin で同一 origin からの要求に限定する。
-  // 両ヘッダーを送らない古い利用者エージェントは互換性のため従来どおり許可する。
+  // unsafe method は Fetch Metadata または Origin で同一 origin からの要求に限定する。
+  // 両ヘッダーが無い要求は出所を確認できないため拒否する。
   app.use('/api/*', async (c, next) => {
     if (!CSRF_SAFE_METHODS.has(c.req.method.toUpperCase())) {
       const fetchSite = c.req.header('Sec-Fetch-Site')?.toLowerCase();
-      if (fetchSite === 'cross-site') throw crossSiteRequestError();
+      if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'same-site') {
+        throw crossSiteRequestError();
+      }
 
       const origin = c.req.header('Origin');
+      if (fetchSite !== 'same-origin' && origin === undefined) throw crossSiteRequestError();
       if (origin !== undefined) {
         let suppliedHost: string;
         try {

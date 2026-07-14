@@ -42,7 +42,13 @@ import type { MysqlPoolFactory } from './engine/mysql/pool';
 import type { PgPoolFactory } from './engine/postgresql/pool';
 import type { QueryEngine } from './engine/types';
 import { AuditLogger, AuditRepository } from './audit';
-import { createResultStore, type ResultStore } from './resultStore';
+import {
+  createResultStore,
+  defaultResultStoreClock,
+  type ResultStore,
+  type ResultStoreClock,
+  type ResultStoreObserver,
+} from './resultStore';
 import { ResultExpiryService } from './resultStore/cleanup';
 import { NotificationService } from './notification/service';
 import type {
@@ -106,6 +112,10 @@ export interface Services {
   aiRateLimiter?: AiRateLimiter;
   /** DB と既定エンジンの受付可能状態を確認する。 */
   readiness: ReadinessService;
+  /** ResultStore計測を受け取る任意のobserver。 */
+  resultStoreObserver?: ResultStoreObserver;
+  /** ResultStore計測へ渡す単調増加時計。 */
+  resultStoreClock: ResultStoreClock;
   /** GitHub OAuth state 生成用の now 注入 (テスト用)。 */
   githubNow?: () => number;
   reloadDatasources: () => Promise<void>;
@@ -129,6 +139,8 @@ export interface BuildServicesOptions {
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** ResultStore計測用の単調増加時計（テスト注入用）。 */
+  resultStoreClock?: ResultStoreClock;
   schedulerSleep?: (ms: number) => Promise<void>;
   schedulerSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   alertEvaluatorSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
@@ -142,6 +154,8 @@ export interface BuildServicesOptions {
   auditLogError?: (message: string, err: unknown) => void;
   /** 注入した ResultStore の所有権は Services へ移り、shutdown時にcloseされる。 */
   resultStore?: ResultStore;
+  /** ResultStore計測を受け取る任意のobserver。 */
+  resultStoreObserver?: ResultStoreObserver;
   resultStoreLogWarn?: (message: string, err?: unknown) => void;
   resultCleanupSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
   dataRetentionSetTimer?: (fn: () => void, ms: number) => { clear: () => void };
@@ -218,7 +232,15 @@ export async function buildServices(
           perPrincipalPerMinute: aiLimits.perPrincipalPerMinute,
           now: options.now,
         });
-  const resultStore = options.resultStore ?? createResultStore(config.resultStore);
+  const resultStoreClock = options.resultStoreClock ?? defaultResultStoreClock;
+  const resultStore =
+    options.resultStore ??
+    createResultStore(config.resultStore, {
+      s3: {
+        observer: options.resultStoreObserver,
+        clock: resultStoreClock,
+      },
+    });
   const notifications =
     options.notificationSender ??
     new NotificationService(config.notification, {
@@ -256,6 +278,8 @@ export async function buildServices(
     audit,
     logWarn: options.resultStoreLogWarn,
     now: options.now,
+    resultStoreObserver: options.resultStoreObserver,
+    resultStoreClock,
   });
   const estimate = new EstimateService(
     engines,
@@ -362,6 +386,8 @@ export async function buildServices(
       guardMode: config.guard.mode,
     },
     now: options.now,
+    resultStoreObserver: options.resultStoreObserver,
+    resultStoreClock,
     sleep: options.workflowRunnerSleep ?? options.schedulerSleep,
     setTimer: options.workflowRunnerSetTimer ?? options.schedulerSetTimer,
   });
@@ -667,6 +693,8 @@ export async function buildServices(
     ai,
     aiRateLimiter,
     readiness,
+    resultStoreObserver: options.resultStoreObserver,
+    resultStoreClock,
     githubNow,
     reloadDatasources,
     reloadRbac,

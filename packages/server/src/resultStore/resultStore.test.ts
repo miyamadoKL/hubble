@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { Readable } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { zstdCompressSync } from 'node:zlib';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,10 +19,12 @@ import {
   openPersistedResult,
   readPersistedRowsPage,
   ResultJsonlCapture,
+  RESULT_JSONL_WRITE_CHUNK_BYTES,
   streamPersistedCsv,
   streamPersistedResultEvents,
 } from './jsonl';
 import { S3ResultStore, buildS3ClientConfig } from './s3';
+import type { ResultStoreMetric } from './observability';
 import type { HistoryResultRef } from '../store/history';
 import { ResultObjectDeletionRepository } from '../store/resultObjectDeletions';
 
@@ -212,6 +214,12 @@ describe('ResultStore persistence', () => {
       async close() {},
     };
     const capture = new ResultJsonlCapture(store, 'blocked.jsonl.zst');
+    const input = (
+      capture as unknown as {
+        input: { write: (payload: string | Buffer) => boolean };
+      }
+    ).input;
+    const write = vi.spyOn(input, 'write');
     capture.writeColumns(COLUMNS);
     const largeValue = randomBytes(2 * 1024 * 1024).toString('base64');
     let resolved = false;
@@ -227,6 +235,91 @@ describe('ResultStore persistence', () => {
     await writing;
     await capture.finish();
     expect(objects.has('blocked.jsonl.zst')).toBe(true);
+    expect(
+      write.mock.calls.every(([payload]) =>
+        Buffer.isBuffer(payload)
+          ? payload.byteLength <= RESULT_JSONL_WRITE_CHUNK_BYTES
+          : Buffer.byteLength(payload) <= RESULT_JSONL_WRITE_CHUNK_BYTES,
+      ),
+    ).toBe(true);
+  });
+
+  it('counts a large record once across bounded writer chunks', async () => {
+    const events: ResultStoreMetric[] = [];
+    const store = new MemoryResultStore();
+    const key = 'large-row.jsonl.zst';
+    const largeRow = [1, 'x'.repeat(RESULT_JSONL_WRITE_CHUNK_BYTES * 3)];
+    let currentTime = 100;
+    const capture = new ResultJsonlCapture(store, key, {
+      observer: (event) => events.push(event),
+      clock: () => ++currentTime,
+    });
+    capture.writeColumns(COLUMNS);
+    await capture.writeRows([largeRow]);
+    await capture.finish();
+
+    const page = await readPersistedRowsPage(await store.getStream(key), 0, 1);
+    expect(page.columns).toEqual(COLUMNS);
+    expect(page.rows).toEqual([largeRow]);
+
+    const event = events.find((entry) => entry.kind === 'write');
+    expect(event).toMatchObject({ kind: 'write', rows: 1, outcome: 'success' });
+    if (!event || event.kind !== 'write') throw new Error('writer event was not recorded');
+    const columnsLine = `${JSON.stringify({ kind: 'columns', columns: COLUMNS })}\n`;
+    const recordLine = `${JSON.stringify({ kind: 'record', row: largeRow })}\n`;
+    expect(event.uncompressedBytes).toBe(Buffer.byteLength(columnsLine + recordLine));
+    expect(event.compressedBytes).toBeGreaterThan(0);
+    expect(event.durationMs).toBeGreaterThan(0);
+  });
+
+  it('waits for a failed upload even when abort follows failure notification', async () => {
+    let releaseUpload!: () => void;
+    const uploadGate = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    let uploadStarted!: () => void;
+    const uploadStartedPromise = new Promise<void>((resolve) => {
+      uploadStarted = resolve;
+    });
+    const events: ResultStoreMetric[] = [];
+    const store: ResultStore = {
+      enabled: true,
+      async put(_key, body) {
+        uploadStarted();
+        await uploadGate;
+        for await (const chunk of body) void chunk;
+      },
+      async getStream() {
+        throw new Error('not stored');
+      },
+      async delete() {},
+      async deleteExpired() {
+        return { deleted: [], failed: [] };
+      },
+      async close() {},
+    };
+    const capture = new ResultJsonlCapture(store, 'failed-abort.jsonl.zst', {
+      observer: (event) => events.push(event),
+      clock: () => 1,
+    });
+    await uploadStartedPromise;
+
+    const failure = new Error('upload failed');
+    const input = capture as unknown as {
+      input: { emit: (event: string, error: Error) => boolean };
+    };
+    input.input.emit('error', failure);
+
+    let aborted = false;
+    const aborting = capture.abort().then(() => {
+      aborted = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(aborted).toBe(false);
+
+    releaseUpload();
+    await aborting;
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'write', outcome: 'failure' }));
   });
 
   it('writes and reads a zstd JSONL object with the native node:zlib codec', async () => {
@@ -248,6 +341,36 @@ describe('ResultStore persistence', () => {
       [2, 'two'],
     ]);
     expect(page.totalRows).toBe(2);
+  });
+
+  it('batches a page into bounded JSONL payloads while preserving rows', async () => {
+    const store = new MemoryResultStore();
+    const capture = new ResultJsonlCapture(store, 'hubble-results/batched.jsonl.zst');
+    const input = (
+      capture as unknown as {
+        input: { write: (payload: string | Buffer) => boolean };
+      }
+    ).input;
+    const write = vi.spyOn(input, 'write');
+    capture.writeColumns(COLUMNS);
+    await capture.writeRows(Array.from({ length: 3_000 }, (_, index) => [index, `note_${index}`]));
+    await capture.finish();
+
+    const payloads = write.mock.calls.map(([payload]) => payload);
+    expect(payloads.length).toBeGreaterThan(2);
+    expect(
+      payloads.every((payload) =>
+        Buffer.isBuffer(payload)
+          ? payload.byteLength <= RESULT_JSONL_WRITE_CHUNK_BYTES
+          : Buffer.byteLength(payload) <= RESULT_JSONL_WRITE_CHUNK_BYTES,
+      ),
+    ).toBe(true);
+    const page = await readPersistedRowsPage(
+      await store.getStream('hubble-results/batched.jsonl.zst'),
+      2_999,
+      1,
+    );
+    expect(page.rows).toEqual([[2_999, 'note_2999']]);
   });
 
   it('rejects record-first, duplicate-columns, and empty JSONL objects', async () => {
@@ -284,6 +407,61 @@ describe('ResultStore persistence', () => {
         signal: secondController.signal,
       }),
     ).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
+  });
+
+  it('closes the compressed reader when abort happens during a read', async () => {
+    const controller = new AbortController();
+    const source = new PassThrough();
+    const reading = readPersistedRowsPage(source, 0, 10, { signal: controller.signal });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+
+    await expect(reading).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
+    expect(source.destroyed).toBe(true);
+  });
+
+  it('records persisted rows metrics with low and high offsets', async () => {
+    const compressed = zstdCompressSync(
+      Buffer.from(
+        [
+          JSON.stringify({ kind: 'columns', columns: COLUMNS }),
+          JSON.stringify({ kind: 'record', row: [1, 'one'] }),
+          JSON.stringify({ kind: 'record', row: [2, 'two'] }),
+          JSON.stringify({ kind: 'record', row: [3, 'three'] }),
+        ].join('\n') + '\n',
+      ),
+    );
+    const events: ResultStoreMetric[] = [];
+    const clock = (): number => 1;
+
+    await readPersistedRowsPage(Readable.from(compressed), 0, 1, {
+      totalRows: 3,
+      observer: (event) => events.push(event),
+      clock,
+    });
+    await readPersistedRowsPage(Readable.from(compressed), 2, 1, {
+      totalRows: 3,
+      observer: (event) => events.push(event),
+      clock,
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        kind: 'read',
+        operation: 'rows',
+        offset: 0,
+        scannedRows: 1,
+        outcome: 'success',
+      }),
+      expect.objectContaining({
+        kind: 'read',
+        operation: 'rows',
+        offset: 2,
+        scannedRows: 3,
+        outcome: 'success',
+      }),
+    ]);
   });
 
   it('uses the zstd reader for cursor, CSV, and result events', async () => {
@@ -337,6 +515,40 @@ describe('ResultStore persistence', () => {
       [18, 'note_18'],
       [19, 'note_19'],
     ]);
+  });
+
+  it('records only persisted query rows, search, and profile reads', async () => {
+    const events: ResultStoreMetric[] = [];
+    let currentTime = 0;
+    const store = new MemoryResultStore();
+    const ctx = await createTestContext({
+      scenarios: [manyRows(3)],
+      resultStore: store,
+      resultStoreObserver: (event) => events.push(event),
+      resultStoreClock: () => ++currentTime,
+    });
+    const queryId = await submitPersistQuery(ctx);
+    await waitForResultRef(ctx, queryId);
+    dropExecution(ctx, queryId);
+
+    await expect(
+      ctx.app.request(`/api/queries/${queryId}/rows?offset=0&limit=1`),
+    ).resolves.toHaveProperty('status', 200);
+    await expect(
+      ctx.app.request(`/api/queries/${queryId}/rows/search`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ offset: 0, limit: 1 }),
+      }),
+    ).resolves.toHaveProperty('status', 200);
+    await expect(ctx.app.request(`/api/queries/${queryId}/profile`)).resolves.toHaveProperty(
+      'status',
+      200,
+    );
+
+    expect(events.filter((event) => event.kind === 'read').map((event) => event.operation)).toEqual(
+      ['rows', 'search', 'profile'],
+    );
   });
 
   it('records a finished history row while result upload is still pending', async () => {
@@ -755,13 +967,17 @@ describe('S3ResultStore', () => {
 
   it('uses real SDK client and command classes without connecting', async () => {
     const commands: string[] = [];
+    const sendOptions: unknown[] = [];
     const destroy = vi.fn();
+    let responseBody: Readable | undefined;
     const fakeClient = {
       destroy,
-      send: async (command: object) => {
+      send: async (command: object, options?: unknown) => {
         commands.push(command.constructor.name);
+        sendOptions.push(options);
         if (command.constructor.name === 'GetObjectCommand') {
-          return { Body: Readable.from(Buffer.from('body')) };
+          responseBody = Readable.from(Buffer.from('body'));
+          return { Body: responseBody };
         }
         return {};
       },
@@ -792,7 +1008,9 @@ describe('S3ResultStore', () => {
     );
 
     await store.put('prefix/q.jsonl.zst', Readable.from(Buffer.from('x')));
-    await store.getStream('prefix/q.jsonl.zst');
+    const controller = new AbortController();
+    await store.getStream('prefix/q.jsonl.zst', controller.signal);
+    controller.abort();
     await store.delete('prefix/q.jsonl.zst');
     await store.close();
 
@@ -805,20 +1023,76 @@ describe('S3ResultStore', () => {
       }),
     ]);
     expect(commands).toEqual(['GetObjectCommand', 'DeleteObjectCommand']);
+    expect(sendOptions[0]).toEqual({ abortSignal: controller.signal });
+    expect(responseBody?.destroyed).toBe(true);
     expect(destroy).not.toHaveBeenCalled();
   });
 
-  it('期限切れ object を最大8並行で削除する', async () => {
-    let inFlight = 0;
-    let maxInFlight = 0;
+  it('records get success before a later body abort and request failures', async () => {
+    const successEvents: ResultStoreMetric[] = [];
+    const responseBody = Readable.from(Buffer.from('body'));
+    const controller = new AbortController();
+    const successStore = new S3ResultStore(
+      { bucket: 'bucket', region: 'us-east-1' },
+      {
+        client: {
+          send: async () => ({ Body: responseBody }),
+        } as never,
+        observer: (event) => successEvents.push(event),
+        clock: () => 1,
+      },
+    );
+
+    await successStore.getStream('result', controller.signal);
+    controller.abort();
+    expect(successEvents).toContainEqual(
+      expect.objectContaining({ kind: 's3-request', operation: 'get', outcome: 'success' }),
+    );
+
+    const failureEvents: ResultStoreMetric[] = [];
+    const failureStore = new S3ResultStore(
+      { bucket: 'bucket', region: 'us-east-1' },
+      {
+        client: {
+          send: async () => {
+            throw new Error('get failed');
+          },
+        } as never,
+        observer: (event) => failureEvents.push(event),
+        clock: () => 1,
+      },
+    );
+    await expect(failureStore.getStream('result')).rejects.toThrow('get failed');
+    expect(failureEvents).toContainEqual(
+      expect.objectContaining({ kind: 's3-request', operation: 'get', outcome: 'failure' }),
+    );
+  });
+
+  it('期限切れ object の空入力では bulk delete request を送らない', async () => {
+    const send = vi.fn();
+    const store = new S3ResultStore(
+      { bucket: 'bucket', region: 'us-east-1' },
+      { client: { send } as never },
+    );
+
+    await expect(store.deleteExpired([])).resolves.toEqual({ deleted: [], failed: [] });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('bulk delete は 1000 key ごとに分割する', async () => {
+    const requests: Array<{ name: string; keys: string[] }> = [];
     const fakeClient = {
       destroy: vi.fn(),
-      send: async () => {
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        await new Promise<void>((resolve) => queueMicrotask(resolve));
-        inFlight -= 1;
-        return {};
+      send: async (command: object) => {
+        const input = command as {
+          constructor: { name: string };
+          input: { Delete?: { Objects?: Array<{ Key?: string }> } };
+        };
+        const keys = (input.input.Delete?.Objects ?? []).flatMap((entry) =>
+          entry.Key === undefined ? [] : [entry.Key],
+        );
+        requests.push({ name: input.constructor.name, keys });
+        return { Deleted: keys.map((Key) => ({ Key })) };
       },
     };
     const store = new S3ResultStore(
@@ -826,13 +1100,108 @@ describe('S3ResultStore', () => {
       { client: fakeClient as never },
     );
 
-    const result = await store.deleteExpired(
-      Array.from({ length: 20 }, (_, index) => ({ key: `result-${index}` })),
-    );
+    const input = Array.from({ length: 1_001 }, (_, index) => ({ key: `result-${index}` }));
+    const result = await store.deleteExpired(input);
 
     expect(result.failed).toEqual([]);
-    expect(result.deleted).toHaveLength(20);
-    expect(maxInFlight).toBe(8);
+    expect(result.deleted).toEqual(input.map((object) => object.key));
+    expect(requests).toEqual([
+      { name: 'DeleteObjectsCommand', keys: input.slice(0, 1_000).map((o) => o.key) },
+      { name: 'DeleteObjectsCommand', keys: ['result-1000'] },
+    ]);
+  });
+
+  it('bulk delete は partial error を key ごとの結果へ対応付ける', async () => {
+    const send = vi.fn(async () => ({
+      Deleted: [{ Key: 'ok' }],
+      Errors: [{ Key: 'denied', Code: 'AccessDenied', Message: 'denied by policy' }],
+    }));
+    const events: ResultStoreMetric[] = [];
+    const store = new S3ResultStore(
+      { bucket: 'bucket', region: 'us-east-1' },
+      {
+        client: { send } as never,
+        observer: (event) => events.push(event),
+        clock: () => 1,
+      },
+    );
+
+    const result = await store.deleteExpired([
+      { key: 'ok' },
+      { key: 'denied' },
+      { key: 'missing' },
+    ]);
+
+    expect(result.deleted).toEqual(['ok']);
+    expect(result.failed).toHaveLength(2);
+    expect(result.failed[0]).toMatchObject({ key: 'denied', error: new Error('denied by policy') });
+    expect(result.failed[1]).toMatchObject({
+      key: 'missing',
+      error: new Error('S3 bulk delete response omitted key: missing'),
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 's3-request',
+        operation: 'delete',
+        outcome: 'success',
+        batchSize: 3,
+        failedItems: 2,
+      }),
+    );
+  });
+
+  it('bulk delete は Deleted/Errors に無い key を failed にする', async () => {
+    const send = vi.fn(async () => ({}));
+    const store = new S3ResultStore(
+      { bucket: 'bucket', region: 'us-east-1' },
+      { client: { send } as never },
+    );
+
+    const result = await store.deleteExpired([{ key: 'missing-a' }, { key: 'missing-b' }]);
+
+    expect(result.deleted).toEqual([]);
+    expect(result.failed.map(({ key }) => key)).toEqual(['missing-a', 'missing-b']);
+    expect(result.failed[0]?.error).toEqual(
+      new Error('S3 bulk delete response omitted key: missing-a'),
+    );
+  });
+
+  it('bulk delete request failure は batch 全 key を failed にする', async () => {
+    const requestError = new Error('S3 unavailable');
+    const send = vi.fn(async () => {
+      throw requestError;
+    });
+    const store = new S3ResultStore(
+      { bucket: 'bucket', region: 'us-east-1' },
+      { client: { send } as never },
+    );
+
+    const result = await store.deleteExpired([{ key: 'failed-a' }, { key: 'failed-b' }]);
+
+    expect(result.deleted).toEqual([]);
+    expect(result.failed).toEqual([
+      { key: 'failed-a', error: requestError },
+      { key: 'failed-b', error: requestError },
+    ]);
+  });
+
+  it('bulk delete は入力 key を重複除去して一意な結果を返す', async () => {
+    const send = vi.fn(async (command: object) => {
+      const input = command as { input: { Delete?: { Objects?: Array<{ Key?: string }> } } };
+      const keys = (input.input.Delete?.Objects ?? []).flatMap((entry) =>
+        entry.Key === undefined ? [] : [entry.Key],
+      );
+      return { Deleted: keys.map((Key) => ({ Key })) };
+    });
+    const store = new S3ResultStore(
+      { bucket: 'bucket', region: 'us-east-1' },
+      { client: { send } as never },
+    );
+
+    const result = await store.deleteExpired([{ key: 'same' }, { key: 'same' }, { key: 'other' }]);
+
+    expect(result).toEqual({ deleted: ['same', 'other'], failed: [] });
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it('destroys only its internally created SDK client and closes idempotently', async () => {

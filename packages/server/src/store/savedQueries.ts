@@ -116,7 +116,7 @@ export class SavedQueryRepository {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertParams(saved, owner),
     );
-    return saved;
+    return withAccessMeta(saved, owner, 'owner');
   }
 
   /**

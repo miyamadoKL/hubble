@@ -11,13 +11,13 @@
 
 import { z } from 'zod';
 import {
-  savedQuerySchema,
+  savedQueryResponseSchema,
   apiRoutes,
   listDocumentSharesResponseSchema,
   type CreateSavedQueryRequest,
   type DocumentShare,
   type ListDocumentSharesResponse,
-  type SavedQuery,
+  type SavedQueryResponse,
   type UpdateSharesRequest,
   type UpdateSavedQueryRequest,
 } from '@hubble/contracts';
@@ -25,7 +25,7 @@ import { apiFetch } from './client';
 
 // 一覧取得レスポンス用のスキーマ。サーバー（storeRoutes）はオブジェクトで
 // ラップせず、保存済みクエリの配列をそのまま返す。
-const savedQueryListSchema = z.array(savedQuerySchema);
+const savedQueryListSchema = z.array(savedQueryResponseSchema);
 // 削除など成否のみを返す操作向けの共通スキーマ。
 const okSchema = z.object({ ok: z.boolean() });
 
@@ -36,7 +36,7 @@ const okSchema = z.object({ ok: z.boolean() });
  * @returns 保存済みクエリの配列。
  * @throws {ApiClientError} リクエスト失敗時、またはレスポンスがスキーマに一致しない場合。
  */
-export function listSavedQueries(query?: string): Promise<SavedQuery[]> {
+export function listSavedQueries(query?: string): Promise<SavedQueryResponse[]> {
   return apiFetch(savedQueryListSchema, apiRoutes.savedQueries(), {
     query: query ? { query } : undefined,
   });
@@ -49,8 +49,8 @@ export function listSavedQueries(query?: string): Promise<SavedQuery[]> {
  * @returns 保存済みクエリ。
  * @throws {ApiClientError} 存在しない ID (共有されていない場合を含む) やリクエスト失敗時。
  */
-export function getSavedQuery(id: string, signal?: AbortSignal): Promise<SavedQuery> {
-  return apiFetch(savedQuerySchema, apiRoutes.savedQuery(id), { signal });
+export function getSavedQuery(id: string, signal?: AbortSignal): Promise<SavedQueryResponse> {
+  return apiFetch(savedQueryResponseSchema, apiRoutes.savedQuery(id), { signal });
 }
 
 /**
@@ -62,8 +62,8 @@ export function getSavedQuery(id: string, signal?: AbortSignal): Promise<SavedQu
  * @throws {ApiClientError} バリデーションエラーとリクエスト失敗時、
  *                           またはレスポンスがスキーマに一致しない場合。
  */
-export function createSavedQuery(body: CreateSavedQueryRequest): Promise<SavedQuery> {
-  return apiFetch(savedQuerySchema, apiRoutes.savedQueries(), { method: 'POST', body });
+export function createSavedQuery(body: CreateSavedQueryRequest): Promise<SavedQueryResponse> {
+  return apiFetch(savedQueryResponseSchema, apiRoutes.savedQueries(), { method: 'POST', body });
 }
 
 /**
@@ -76,8 +76,11 @@ export function createSavedQuery(body: CreateSavedQueryRequest): Promise<SavedQu
  * @throws {ApiClientError} バリデーションエラー、存在しない ID、リクエスト失敗時、
  *                           またはレスポンスがスキーマに一致しない場合。
  */
-export function updateSavedQuery(id: string, body: UpdateSavedQueryRequest): Promise<SavedQuery> {
-  return apiFetch(savedQuerySchema, apiRoutes.savedQuery(id), { method: 'PUT', body });
+export function updateSavedQuery(
+  id: string,
+  body: UpdateSavedQueryRequest,
+): Promise<SavedQueryResponse> {
+  return apiFetch(savedQueryResponseSchema, apiRoutes.savedQuery(id), { method: 'PUT', body });
 }
 
 /**

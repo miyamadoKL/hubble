@@ -123,6 +123,12 @@ curl -s http://localhost:8080/api/config
 #   {"trino":{...},"defaults":{...},"authMode":"none","version":"0.1.0"}
 ```
 
+状態を変更する `/api/*` の HTTP 要求（`POST`、`PUT`、`PATCH`、`DELETE`）には CSRF 防御が適用されます。
+ブラウザーからの同一 origin 要求は通常どおり通過します。
+ブラウザー以外の HTTP クライアントで確認する場合は、接続先と一致する `Origin` を明示してください。
+`Origin` と `Sec-Fetch-Site` の両方を省略した要求、値が不正な要求、別 origin の要求は HTTP 403（`CSRF_REJECTED`）になります。
+`GET`、`HEAD`、`OPTIONS` はこの判定の対象外です。
+
 静的配信の挙動：
 
 - `index.html` は `Cache-Control: no-cache`（デプロイを即時反映）。

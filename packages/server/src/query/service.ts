@@ -21,6 +21,7 @@ import type { HistoryRepository } from '../store/history';
 import type { AuditLogger } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { ResultJsonlCapture } from '../resultStore/jsonl';
+import type { ResultStoreClock, ResultStoreObserver } from '../resultStore/observability';
 import {
   cleanupUnlinkedResultObject,
   type ResultObjectDeletionQueue,
@@ -42,6 +43,8 @@ export interface QueryServiceParams {
   audit?: AuditLogger;
   logWarn?: (message: string, err?: unknown) => void;
   now?: () => number;
+  resultStoreObserver?: ResultStoreObserver;
+  resultStoreClock?: ResultStoreClock;
 }
 
 /** `submit()` に渡すクエリ提出パラメータ（履歴記録に必要な情報を含む）。 */
@@ -266,7 +269,10 @@ export class QueryService {
     const store = this.params.resultStore;
     if (!store?.enabled) return undefined;
     const prefix = this.params.resultKeyPrefix ?? 'hubble-results/';
-    return new ResultJsonlCapture(store, `${prefix}${queryId}.jsonl.zst`);
+    return new ResultJsonlCapture(store, `${prefix}${queryId}.jsonl.zst`, {
+      observer: this.params.resultStoreObserver,
+      clock: this.params.resultStoreClock,
+    });
   }
 
   private createResultObserver(capture: ResultJsonlCapture): QueryResultObserver {

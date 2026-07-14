@@ -112,7 +112,8 @@ export function NotebookView({
 
   const notebook = entry.notebook;
   const notebookId = notebook.id;
-  const readOnly = !entry.draft && notebook.myPermission === 'view';
+  const readOnly =
+    !entry.draft && notebook.myPermission !== 'owner' && notebook.myPermission !== 'edit';
   const canShare = !entry.draft && isDocumentOwner(notebook.myPermission);
   const cellContext: ExecutionContext = { ...context, notebookId };
 

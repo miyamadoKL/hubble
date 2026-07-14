@@ -2,22 +2,38 @@
  * 圧縮 JSONL 形式のクエリ結果ストリームを読み書きするヘルパー。
  */
 import { constants as zlibConstants, createZstdCompress, createZstdDecompress } from 'node:zlib';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { queryColumnSchema, type QueryColumn } from '@hubble/contracts';
 import { csvRecord } from '../query/csv';
 import type { QueryResultEvent } from '../query/resultEvents';
 import type { ResultStore } from './store';
 import { createSqlAbortError } from '../engine/sql/abort';
+import {
+  defaultResultStoreClock,
+  elapsedResultStoreMs,
+  resultStoreErrorOutcome,
+  safeNotifyResultStoreObserver,
+  type ResultStoreClock,
+  type ResultStoreMetricOptions,
+  type ResultStoreObserver,
+} from './observability';
 
 type ResultJsonlLine =
   | { kind: 'columns'; columns: QueryColumn[] }
   | { kind: 'record'; row: unknown[] };
 
+/** zstd writer が一度に投入する JSONL payload の目標上限（UTF-8 bytes）。 */
+export const RESULT_JSONL_WRITE_CHUNK_BYTES = 64 * 1024;
+
 /** 保存済み結果を読むときの制御情報。 */
 export interface PersistedResultReadOptions {
   /** 圧縮ストリームの読み取りを中断するシグナル。 */
   signal?: AbortSignal;
+  /** 読み取り結果を受け取る任意のobserver。 */
+  observer?: ResultStoreObserver;
+  /** 読み取り時間を測る単調増加時計。 */
+  clock?: ResultStoreClock;
 }
 
 /** 保存済み結果のページ。 */
@@ -38,21 +54,36 @@ export interface ReadPersistedRowsPageOptions extends PersistedResultReadOptions
 /** 実行中の結果を zstd 圧縮 JSONL へ流し込む writer。 */
 export class ResultJsonlCapture {
   private readonly input: ReturnType<typeof createZstdCompress>;
+  private readonly uploadBody: Readable;
   private readonly upload: Promise<void>;
+  private readonly observer: ResultStoreObserver | undefined;
+  private readonly clock: ResultStoreClock;
+  private readonly startedAt: number;
   private writeTail: Promise<void> = Promise.resolve();
   private closed = false;
+  private abortRequested = false;
   private sawColumns = false;
   private failure?: unknown;
+  private rows = 0;
+  private uncompressedBytes = 0;
+  private compressedBytes = 0;
+  private metricFinalized = false;
 
   constructor(
     private readonly store: ResultStore,
     readonly key: string,
+    options: ResultStoreMetricOptions = {},
   ) {
+    this.observer = options.observer;
+    this.clock = options.clock ?? defaultResultStoreClock;
+    this.startedAt = this.clock();
     this.input = createZstdCompress({
       params: { [zlibConstants.ZSTD_c_compressionLevel]: 3 },
     });
+    this.uploadBody = this.createUploadBody();
+    this.input.on('error', (err: Error) => this.markFailed(err));
     this.upload = Promise.resolve()
-      .then(() => this.store.put(this.key, this.input))
+      .then(() => this.store.put(this.key, this.uploadBody))
       .catch((err: unknown) => {
         this.markFailed(err);
       });
@@ -72,24 +103,37 @@ export class ResultJsonlCapture {
 
   /** 正常終了として writer を閉じ、アップロード完了を待つ。 */
   async finish(): Promise<void> {
+    if (this.abortRequested) {
+      await this.upload;
+      this.finalizeMetric('abort');
+      return;
+    }
     if (!this.sawColumns) this.writeColumns([]);
     await this.writeTail;
     this.closed = true;
     if (this.failure === undefined) {
       this.input.end();
     } else {
-      this.input.destroy();
+      this.destroyStreams();
     }
     await this.upload;
-    if (this.failure !== undefined) throw this.failure;
+    if (this.failure !== undefined) {
+      this.finalizeMetric('failure');
+      throw this.failure;
+    }
+    this.finalizeMetric('success');
   }
 
   /** 異常終了時にアップロードを破棄する。 */
   async abort(): Promise<void> {
+    // failure通知が先に確定していても、uploadと書き込みの後始末は待つ。
+    if (this.metricFinalized && this.failure === undefined) return;
+    this.abortRequested = true;
     this.closed = true;
-    this.input.destroy();
+    this.destroyStreams();
     await this.writeTail;
     await this.upload;
+    if (!this.metricFinalized) this.finalizeMetric('abort');
   }
 
   private enqueue(lines: ResultJsonlLine[]): Promise<void> {
@@ -98,9 +142,11 @@ export class ResultJsonlCapture {
     }
     this.writeTail = this.writeTail
       .then(async () => {
-        for (const line of lines) {
+        for (const payload of batchJsonlLines(lines)) {
           if (this.closed || this.failure !== undefined) return;
-          await this.write(`${JSON.stringify(line)}\n`);
+          await this.write(payload.buffer);
+          this.rows += payload.rows;
+          this.uncompressedBytes += payload.uncompressedBytes;
         }
       })
       .catch((err: unknown) => {
@@ -109,7 +155,7 @@ export class ResultJsonlCapture {
     return this.writeTail;
   }
 
-  private async write(payload: string): Promise<void> {
+  private async write(payload: string | Buffer): Promise<void> {
     if (this.input.write(payload)) return;
     await new Promise<void>((resolve, reject) => {
       const cleanup = (): void => {
@@ -136,9 +182,85 @@ export class ResultJsonlCapture {
   }
 
   private markFailed(err: unknown): void {
+    if (this.abortRequested || this.metricFinalized) return;
     if (this.failure !== undefined) return;
     this.failure = err;
-    this.input.destroy();
+    this.destroyStreams(err);
+    this.finalizeMetric('failure');
+  }
+
+  private createUploadBody(): Readable {
+    if (!this.observer) return this.input;
+
+    const counter = new Transform({
+      readableHighWaterMark: this.input.readableHighWaterMark,
+      writableHighWaterMark: this.input.readableHighWaterMark,
+      transform: (chunk: Buffer, _encoding, callback): void => {
+        this.compressedBytes += chunk.byteLength;
+        callback(null, chunk);
+      },
+    });
+    counter.on('error', (err: Error) => this.markFailed(err));
+    this.input.pipe(counter);
+    return counter;
+  }
+
+  private destroyStreams(error?: unknown): void {
+    this.input.destroy(error instanceof Error ? error : undefined);
+    if (this.uploadBody !== this.input) {
+      this.uploadBody.destroy(error instanceof Error ? error : undefined);
+    }
+  }
+
+  private finalizeMetric(outcome: 'success' | 'failure' | 'abort'): void {
+    if (this.metricFinalized) return;
+    this.metricFinalized = true;
+    safeNotifyResultStoreObserver(this.observer, {
+      kind: 'write',
+      rows: this.rows,
+      uncompressedBytes: this.uncompressedBytes,
+      compressedBytes: this.compressedBytes,
+      durationMs: elapsedResultStoreMs(this.clock, this.startedAt),
+      outcome,
+    });
+  }
+}
+
+/** JSONL の行順を保ったまま、入力ページを bounded payload へまとめる。 */
+function* batchJsonlLines(
+  lines: ResultJsonlLine[],
+): Generator<{ buffer: Buffer; rows: number; uncompressedBytes: number }> {
+  const parts: Buffer[] = [];
+  let payloadBytes = 0;
+  let rows = 0;
+  let uncompressedBytes = 0;
+  for (const line of lines) {
+    const encoded = Buffer.from(`${JSON.stringify(line)}\n`);
+    const lineRows = line.kind === 'record' ? 1 : 0;
+    let rowCounted = false;
+    let offset = 0;
+    while (offset < encoded.length) {
+      const room = RESULT_JSONL_WRITE_CHUNK_BYTES - payloadBytes;
+      const size = Math.min(room, encoded.length - offset);
+      parts.push(encoded.subarray(offset, offset + size));
+      payloadBytes += size;
+      uncompressedBytes += size;
+      if (lineRows > 0 && !rowCounted) {
+        rows += lineRows;
+        rowCounted = true;
+      }
+      offset += size;
+      if (payloadBytes === RESULT_JSONL_WRITE_CHUNK_BYTES) {
+        yield { buffer: Buffer.concat(parts, payloadBytes), rows, uncompressedBytes };
+        parts.length = 0;
+        payloadBytes = 0;
+        rows = 0;
+        uncompressedBytes = 0;
+      }
+    }
+  }
+  if (payloadBytes > 0) {
+    yield { buffer: Buffer.concat(parts, payloadBytes), rows, uncompressedBytes };
   }
 }
 
@@ -148,6 +270,40 @@ export async function readPersistedRowsPage(
   offset: number,
   limit: number,
   options: ReadPersistedRowsPageOptions = {},
+): Promise<PersistedRowsPage> {
+  if (!options.observer) {
+    return readPersistedRowsPageImpl(stream, offset, limit, options);
+  }
+
+  const clock = options.clock ?? defaultResultStoreClock;
+  const startedAt = clock();
+  let scannedRows = 0;
+  let outcome: 'success' | 'failure' | 'abort' = 'success';
+  try {
+    return await readPersistedRowsPageImpl(stream, offset, limit, options, () => {
+      scannedRows += 1;
+    });
+  } catch (error) {
+    outcome = resultStoreErrorOutcome(error, options.signal);
+    throw error;
+  } finally {
+    safeNotifyResultStoreObserver(options.observer, {
+      kind: 'read',
+      operation: 'rows',
+      scannedRows,
+      durationMs: elapsedResultStoreMs(clock, startedAt),
+      outcome,
+      offset,
+    });
+  }
+}
+
+async function readPersistedRowsPageImpl(
+  stream: Readable,
+  offset: number,
+  limit: number,
+  options: ReadPersistedRowsPageOptions,
+  onScannedRow?: () => void,
 ): Promise<PersistedRowsPage> {
   const rows: unknown[][] = [];
   let columns: QueryColumn[] | undefined = options.columns;
@@ -169,6 +325,7 @@ export async function readPersistedRowsPage(
     if (targetEnd !== undefined && scannedRows >= targetEnd) break;
     if (scannedRows >= offset && rows.length < limit) rows.push(line.row);
     scannedRows += 1;
+    onScannedRow?.();
     if (targetEnd !== undefined && scannedRows >= targetEnd) break;
   }
   return { columns: columns ?? [], rows, totalRows: knownTotalRows ?? scannedRows };

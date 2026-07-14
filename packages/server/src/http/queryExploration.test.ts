@@ -256,6 +256,28 @@ describe('persisted result exploration (rows beyond QUERY_MAX_ROWS)', () => {
     expect(profile.columns[0]!.max).toBe('11');
   });
 
+  it('passes the HTTP request signal to the persisted search reader', async () => {
+    const { ctx, queryId, store } = await persistedCtx();
+    const getStream = vi.spyOn(store, 'getStream');
+    const controller = new AbortController();
+    const request = new Request(`http://localhost${apiRoutes.queryRowsSearch(queryId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ offset: 0, limit: 10 }),
+      signal: controller.signal,
+    });
+
+    const res = await ctx.app.request(request);
+
+    expect(res.status).toBe(200);
+    const requestSignal = (
+      getStream.mock.calls as unknown as Array<[string, AbortSignal | undefined]>
+    )[0]?.[1];
+    expect(requestSignal).toBeDefined();
+    controller.abort();
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   it('returns 304 for a matching persisted rows ETag without reading ResultStore', async () => {
     const { ctx, queryId, store } = await persistedCtx();
     const first = await ctx.app.request(apiRoutes.queryRows(queryId));

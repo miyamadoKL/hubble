@@ -31,17 +31,15 @@ export function ColumnProfilePanel({ queryId, onClose }: ColumnProfilePanelProps
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    fetchQueryProfile(queryId)
+    const controller = new AbortController();
+    fetchQueryProfile(queryId, controller.signal)
       .then((result) => {
-        if (!cancelled) setProfile(result);
+        if (!controller.signal.aborted) setProfile(result);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : String(err));
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [queryId]);
 
   return (

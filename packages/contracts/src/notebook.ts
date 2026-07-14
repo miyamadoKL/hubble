@@ -165,21 +165,20 @@ export type Notebook = z.infer<typeof notebookSchema>;
  * `GET /api/notebooks` の一覧表示用の軽量版。セル本文などの重いデータを含まない。
  */
 export const notebookListItemSchema = z.object({
-  id: z.string().min(1),
-  name: z.string(),
-  description: z.string(),
+  id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH),
   updatedAt: isoTimestamp,
   createdAt: isoTimestamp,
   /** 所有者 user id。共有経由で取得した場合に設定される。 */
-  owner: z.string().optional(),
+  owner: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
   /** 呼び出し元の effective permission (owner / edit / view)。 */
-  myPermission: myPermissionSchema.optional(),
+  myPermission: myPermissionSchema,
 });
 /** ノートブック一覧項目の推論型。 */
 export type NotebookListItem = z.infer<typeof notebookListItemSchema>;
 
-// API 入力だけに適用する有界版。既存の保存データを読む response schema は
-// 互換性のため変更せず、新規または更新リクエストの増大だけを止める。
+// 保存データと API 入出力に共通して適用する有界版。
 const variableOptionInputSchema = variableOptionSchema.extend({
   label: z.string().max(MAX_NAME_LENGTH),
   value: z.string().max(MAX_DESCRIPTION_LENGTH),
@@ -209,6 +208,25 @@ const notebookContextInputSchema = notebookContextSchema.extend({
   catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
 });
+
+/** 保存済み notebook の構造上限を適用したスキーマ。 */
+export const notebookStoredSchema = notebookSchema.extend({
+  id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH),
+  cells: z.array(cellInputSchema).max(MAX_NOTEBOOK_CELLS),
+  variables: z.array(variableInputSchema).max(MAX_NOTEBOOK_VARIABLES),
+  context: notebookContextInputSchema,
+  owner: z.string().min(1).max(MAX_IDENTIFIER_LENGTH).optional(),
+});
+
+/** サーバーが返す notebook。所有者と effective permission を必須にする。 */
+export const notebookResponseSchema = notebookStoredSchema.extend({
+  owner: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  myPermission: myPermissionSchema,
+});
+/** サーバーから返される notebook の推論型。 */
+export type NotebookResponse = z.infer<typeof notebookResponseSchema>;
 
 /**
  * Request body for `POST /api/notebooks`.

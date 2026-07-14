@@ -150,8 +150,8 @@ function DashboardEditor({
   const navigationOwner = useDocumentNavigationOwner();
   const saving = createMutation.isPending || updateMutation.isPending;
 
-  // 共有経由の view 権限では編集させない (サーバー側でも拒否されるが UI でも隠す)。
-  const canEdit = isNew || dashboard.myPermission !== 'view';
+  // owner または edit 共有だけを編集可能とする。権限欠落時は編集を許可しない。
+  const canEdit = isNew || dashboard.myPermission === 'owner' || dashboard.myPermission === 'edit';
   // 削除と共有管理は所有者のみ (サーバーも owner 以外を 403 にする)。
   const isOwner = !isNew && isDocumentOwner(dashboard.myPermission);
 

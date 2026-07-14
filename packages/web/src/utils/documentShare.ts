@@ -13,10 +13,9 @@ export interface ShareDraftRow {
 
 /**
  * 呼び出し元がドキュメントの所有者かどうかを判定する。
- * myPermission 未設定は従来データ（自分所有）として扱う。
  */
 export function isDocumentOwner(myPermission?: MyPermission): boolean {
-  return myPermission === undefined || myPermission === 'owner';
+  return myPermission === 'owner';
 }
 
 /**
@@ -59,6 +58,5 @@ export function canPersistNotebookToServer(opts: {
   myPermission?: MyPermission;
 }): boolean {
   if (opts.draft) return true;
-  if (opts.myPermission === 'view') return false;
-  return true;
+  return opts.myPermission === 'owner' || opts.myPermission === 'edit';
 }

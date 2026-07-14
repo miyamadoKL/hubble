@@ -14,7 +14,7 @@ import type {
   NotebookListItem,
   UpdateNotebookRequest,
 } from '@hubble/contracts';
-import { notebookSchema } from '@hubble/contracts';
+import { notebookStoredSchema } from '@hubble/contracts';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 import {
@@ -130,7 +130,7 @@ export class NotebookRepository {
     const nowIso = new Date().toISOString();
     // 契約スキーマでバリデーションと既定値補完（cells/variables/context の
     // 未指定は空配列/空オブジェクト）をした上でドメインオブジェクトを組み立てる。
-    const notebook: Notebook = notebookSchema.parse({
+    const notebook: Notebook = notebookStoredSchema.parse({
       id: newId('nb_'),
       name: req.name,
       description: req.description ?? '',
@@ -156,7 +156,7 @@ export class NotebookRepository {
         notebook.revision,
       ],
     );
-    return notebook;
+    return withAccessMeta(notebook, owner, 'owner');
   }
 
   /**
@@ -235,7 +235,7 @@ export class NotebookRepository {
     myPermission: MyPermission,
   ): Promise<Notebook | undefined | StoreConflict> {
     // 既存値の上に req の値をマージし、スキーマで再バリデーションする。
-    const updated: Notebook = notebookSchema.parse({
+    const updated: Notebook = notebookStoredSchema.parse({
       ...this.rowToNotebook(existing),
       name: req.name,
       description: req.description,
@@ -269,7 +269,7 @@ export class NotebookRepository {
     // `data` is the source of truth; parse + validate against the contract.
     // `data` 列（JSON 文字列）が正であり、name/description 列は検索用の複製に
     // すぎないため無視する。パース結果を契約スキーマで検証してから返す。
-    return notebookSchema.parse({
+    return notebookStoredSchema.parse({
       ...(JSON.parse(row.data) as Record<string, unknown>),
       revision: Number(row.revision),
     });

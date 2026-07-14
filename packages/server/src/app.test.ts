@@ -136,13 +136,30 @@ describe('CSRF boundary', () => {
     expectSecurityHeaders(res);
   });
 
-  it('rejects an unsafe request with a mismatched Origin', async () => {
-    const { app } = await createTestContext();
+  it.each(['https://other.example', 'not-an-origin'])(
+    'rejects an unsafe request with an invalid Origin: %s',
+    async (origin) => {
+      const { app } = await createTestContext();
+      const res = await app.request(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain',
+          Origin: origin,
+        },
+        body: invalidQueryBody,
+      });
+
+      expect(res.status).toBe(403);
+      expect((await res.json()) as unknown).toMatchObject({ error: { code: 'CSRF_REJECTED' } });
+    },
+  );
+
+  it('rejects an unsafe request with no origin evidence', async () => {
+    const { app } = await createTestContext({ defaultSameOriginHeaders: false });
     const res = await app.request(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain',
-        Origin: 'https://other.example',
       },
       body: invalidQueryBody,
     });
@@ -151,21 +168,15 @@ describe('CSRF boundary', () => {
     expect((await res.json()) as unknown).toMatchObject({ error: { code: 'CSRF_REJECTED' } });
   });
 
-  it.each([
-    {
-      name: 'same-origin metadata',
+  it('allows same-origin metadata to reach the existing validator', async () => {
+    const { app } = await createTestContext();
+    const res = await app.request(endpoint, {
+      method: 'POST',
       headers: {
         'Content-Type': 'text/plain',
         Origin: 'https://hubble.example',
         'Sec-Fetch-Site': 'same-origin',
       },
-    },
-    { name: 'missing metadata', headers: { 'Content-Type': 'text/plain' } },
-  ])('allows $name to reach the existing validator', async ({ headers }) => {
-    const { app } = await createTestContext();
-    const res = await app.request(endpoint, {
-      method: 'POST',
-      headers,
       body: invalidQueryBody,
     });
 
@@ -173,6 +184,21 @@ describe('CSRF boundary', () => {
     expect((await res.json()) as unknown).toMatchObject({
       error: { code: 'VALIDATION_ERROR' },
     });
+  });
+
+  it('rejects same-site metadata without an Origin', async () => {
+    const { app } = await createTestContext({ defaultSameOriginHeaders: false });
+    const res = await app.request(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+        'Sec-Fetch-Site': 'same-site',
+      },
+      body: invalidQueryBody,
+    });
+
+    expect(res.status).toBe(403);
+    expect((await res.json()) as unknown).toMatchObject({ error: { code: 'CSRF_REJECTED' } });
   });
 
   it('allows an unsafe same-host request behind a TLS-terminating proxy', async () => {

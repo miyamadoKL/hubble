@@ -13,11 +13,15 @@
  * 対象とする。共有設定の GET/PUT は owner のみが操作できる。
  */
 import { Hono } from 'hono';
+import { z } from 'zod';
 import {
   createNotebookRequestSchema,
   createSavedQueryRequestSchema,
   listDocumentSharesResponseSchema,
+  notebookListItemSchema,
+  notebookResponseSchema,
   queryStateSchema,
+  savedQueryResponseSchema,
   updateNotebookRequestSchema,
   updateSavedQueryRequestSchema,
   updateSharesRequestSchema,
@@ -31,6 +35,9 @@ import type { ShareAccessor, StoreForbidden } from '../store/documentShares';
 import { intParam, parseJsonBody } from './validate';
 
 type App = Hono<{ Variables: AuthVariables }>;
+
+const notebookListResponseSchema = z.array(notebookListItemSchema);
+const savedQueryListResponseSchema = z.array(savedQueryResponseSchema);
 
 /** principal から共有 permission 解決用 accessor を組み立てる。 */
 function toShareAccessor(principal: Principal): ShareAccessor {
@@ -102,13 +109,20 @@ export function notebookRoutes(services: Services): App {
   // GET /api/notebooks?query=: 所有と共有ノートブックの一覧（クエリ文字列で絞り込み検索も可能）。
   app.get('/', async (c) => {
     const accessor = toShareAccessor(c.var.principal);
-    return c.json(await services.notebooks.list(accessor, c.req.query('query')));
+    return c.json(
+      notebookListResponseSchema.parse(
+        await services.notebooks.list(accessor, c.req.query('query')),
+      ),
+    );
   });
 
   // POST /api/notebooks: 新規ノートブックを作成する。
   app.post('/', async (c) => {
     const body = await parseJsonBody(c, createNotebookRequestSchema);
-    return c.json(await services.notebooks.create(c.var.principal.user, body), 201);
+    return c.json(
+      notebookResponseSchema.parse(await services.notebooks.create(c.var.principal.user, body)),
+      201,
+    );
   });
 
   // GET /api/notebooks/:id/shares: 共有エントリ一覧を取得する（owner のみ）。
@@ -153,7 +167,7 @@ export function notebookRoutes(services: Services): App {
     const accessor = toShareAccessor(c.var.principal);
     const notebook = await services.notebooks.get(accessor, c.req.param('id'));
     if (!notebook) throw AppError.notFound(`Notebook ${c.req.param('id')} not found`);
-    return c.json(notebook);
+    return c.json(notebookResponseSchema.parse(notebook));
   });
 
   // PUT /api/notebooks/:id: ノートブック全体を置き換える更新（owner または edit 共有者のみ）。
@@ -169,7 +183,7 @@ export function notebookRoutes(services: Services): App {
       });
     }
     const updated = throwUpdateResult(result, `Notebook ${id} not found`);
-    return c.json(updated);
+    return c.json(notebookResponseSchema.parse(updated));
   });
 
   // DELETE /api/notebooks/:id: ノートブックを削除する（owner のみ）。
@@ -198,13 +212,22 @@ export function savedQueryRoutes(services: Services): App {
   // GET /api/saved-queries?query=: 保存済みクエリの一覧（所有のお気に入りが先頭に来る想定、共有分を含む、検索も可能）。
   app.get('/', async (c) => {
     const accessor = toShareAccessor(c.var.principal);
-    return c.json(await services.savedQueries.list(accessor, c.req.query('query')));
+    return c.json(
+      savedQueryListResponseSchema.parse(
+        await services.savedQueries.list(accessor, c.req.query('query')),
+      ),
+    );
   });
 
   // POST /api/saved-queries: 新規に保存する。
   app.post('/', async (c) => {
     const body = await parseJsonBody(c, createSavedQueryRequestSchema);
-    return c.json(await services.savedQueries.create(c.var.principal.user, body), 201);
+    return c.json(
+      savedQueryResponseSchema.parse(
+        await services.savedQueries.create(c.var.principal.user, body),
+      ),
+      201,
+    );
   });
 
   // GET /api/saved-queries/:id/shares: 共有エントリ一覧を取得する（owner のみ）。
@@ -249,7 +272,7 @@ export function savedQueryRoutes(services: Services): App {
     const accessor = toShareAccessor(c.var.principal);
     const saved = await services.savedQueries.get(accessor, c.req.param('id'));
     if (!saved) throw AppError.notFound(`Saved query ${c.req.param('id')} not found`);
-    return c.json(saved);
+    return c.json(savedQueryResponseSchema.parse(saved));
   });
 
   // PUT /api/saved-queries/:id: 保存済みクエリを更新する（名前、本文、お気に入り状態など。owner または edit 共有者のみ）。
@@ -261,7 +284,7 @@ export function savedQueryRoutes(services: Services): App {
       await services.savedQueries.update(accessor, id, body),
       `Saved query ${id} not found`,
     );
-    return c.json(updated);
+    return c.json(savedQueryResponseSchema.parse(updated));
   });
 
   // DELETE /api/saved-queries/:id: 保存済みクエリを削除する（owner のみ）。

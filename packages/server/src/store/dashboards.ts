@@ -12,7 +12,7 @@ import type {
   MyPermission,
   UpdateDashboardRequest,
 } from '@hubble/contracts';
-import { dashboardSchema } from '@hubble/contracts';
+import { dashboardStoredSchema } from '@hubble/contracts';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 import { DocumentShareRepository, type ShareAccessor, type StoreForbidden } from './documentShares';
@@ -94,7 +94,7 @@ export class DashboardRepository {
   /** 新しい Dashboard を作成する。id は `dsh_` プレフィックス付きで採番される。 */
   async create(owner: string, req: CreateDashboardRequest): Promise<Dashboard> {
     const nowIso = new Date().toISOString();
-    const dashboard: Dashboard = dashboardSchema.parse({
+    const dashboard: Dashboard = dashboardStoredSchema.parse({
       id: newId('dsh_'),
       name: req.name,
       description: req.description ?? '',
@@ -115,7 +115,7 @@ export class DashboardRepository {
         dashboard.updatedAt,
       ],
     );
-    return dashboard;
+    return withAccessMeta(dashboard, owner, 'owner');
   }
 
   /**
@@ -224,7 +224,7 @@ export class DashboardRepository {
     owner: string,
     myPermission: MyPermission,
   ): Promise<Dashboard> {
-    const updated: Dashboard = dashboardSchema.parse({
+    const updated: Dashboard = dashboardStoredSchema.parse({
       ...this.rowToDashboard(existing),
       name: req.name,
       description: req.description,
@@ -249,7 +249,7 @@ export class DashboardRepository {
   private rowToDashboard(row: DashboardRow): Dashboard {
     // `data` 列（JSON 文字列）が正であり、name/description 列は検索用の複製に
     // すぎないため無視する。パース結果を契約スキーマで検証してから返す。
-    return dashboardSchema.parse(JSON.parse(row.data));
+    return dashboardStoredSchema.parse(JSON.parse(row.data));
   }
 }
 

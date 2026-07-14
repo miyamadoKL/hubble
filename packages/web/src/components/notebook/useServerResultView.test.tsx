@@ -74,24 +74,29 @@ describe('useServerResultView', () => {
       // resolve 済み Promise の then を flush する。
       await vi.runAllTimersAsync();
     });
-    expect(searchQueryRows).toHaveBeenCalledWith('q1', {
-      search: 'tokyo',
-      offset: 0,
-      limit: 10_000,
-    });
+    expect(searchQueryRows).toHaveBeenCalledWith(
+      'q1',
+      {
+        search: 'tokyo',
+        offset: 0,
+        limit: 10_000,
+      },
+      expect.any(AbortSignal),
+    );
     expect(view()).toMatchObject({ rows: [['a']], totalMatched: 1, loading: false });
   });
 
   test('drops a stale response when the filter changes mid-flight', async () => {
     // 1 回目は遅延させ、2 回目のレスポンスの後に届くようにする。
     let resolveFirst: (value: ResultSearchPage) => void = () => {};
+    let firstSignal: AbortSignal | undefined;
     searchQueryRows
-      .mockImplementationOnce(
-        () =>
-          new Promise<ResultSearchPage>((resolve) => {
-            resolveFirst = resolve;
-          }),
-      )
+      .mockImplementationOnce((_queryId: string, _request: unknown, signal: AbortSignal) => {
+        firstSignal = signal;
+        return new Promise<ResultSearchPage>((resolve) => {
+          resolveFirst = resolve;
+        });
+      })
       .mockResolvedValueOnce(page([['second']], 1));
     act(() => {
       root.render(<Probe queryId="q1" active filter="first" />);
@@ -103,6 +108,7 @@ describe('useServerResultView', () => {
     act(() => {
       root.render(<Probe queryId="q1" active filter="second" />);
     });
+    expect(firstSignal?.aborted).toBe(true);
     await act(async () => {
       vi.advanceTimersByTime(300);
       await vi.runAllTimersAsync();
@@ -113,6 +119,25 @@ describe('useServerResultView', () => {
       await vi.runAllTimersAsync();
     });
     expect(view().rows).toEqual([['second']]);
+  });
+
+  test('aborts an in-flight search when the component unmounts', async () => {
+    let signal: AbortSignal | undefined;
+    searchQueryRows.mockImplementation(
+      (_queryId: string, _request: unknown, requestSignal: AbortSignal) => {
+        signal = requestSignal;
+        return new Promise<ResultSearchPage>(() => {});
+      },
+    );
+    act(() => {
+      root.render(<Probe queryId="q1" active filter="tokyo" />);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(signal?.aborted).toBe(false);
+    act(() => root.unmount());
+    expect(signal?.aborted).toBe(true);
   });
 
   test('resets to empty when inactive', async () => {

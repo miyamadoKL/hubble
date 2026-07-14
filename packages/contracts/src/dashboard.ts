@@ -114,22 +114,22 @@ export type Dashboard = z.infer<typeof dashboardSchema>;
 
 /** `GET /api/dashboards` の一覧表示用の軽量版。widget 本体を含まない。 */
 export const dashboardListItemSchema = z.object({
-  id: z.string().min(1),
-  name: z.string(),
-  description: z.string(),
+  id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH),
   /** widget 数（一覧のサマリ表示用）。 */
   widgetCount: z.number().int().nonnegative(),
   updatedAt: isoTimestamp,
   createdAt: isoTimestamp,
   /** 所有者 user id。共有経由で取得した場合に設定される。 */
-  owner: z.string().optional(),
+  owner: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
   /** 呼び出し元の effective permission (owner / edit / view)。 */
-  myPermission: myPermissionSchema.optional(),
+  myPermission: myPermissionSchema,
 });
 /** 一覧項目の推論型。 */
 export type DashboardListItem = z.infer<typeof dashboardListItemSchema>;
 
-// 保存済み response の互換性は保ち、作成と更新で受け付ける widget だけを有界にする。
+// 保存データと API 入出力に共通して適用する有界版。
 const queryWidgetInputSchema = queryWidgetSchema.extend({
   id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
   savedQueryId: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
@@ -147,6 +147,23 @@ const dashboardWidgetInputSchema = z.discriminatedUnion('kind', [
   queryWidgetInputSchema,
   textWidgetInputSchema,
 ]);
+
+/** 保存済み dashboard の構造上限を適用したスキーマ。 */
+export const dashboardStoredSchema = dashboardSchema.extend({
+  id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  description: z.string().max(MAX_DESCRIPTION_LENGTH),
+  widgets: z.array(dashboardWidgetInputSchema).max(MAX_DASHBOARD_WIDGETS),
+  owner: z.string().min(1).max(MAX_IDENTIFIER_LENGTH).optional(),
+});
+
+/** サーバーが返す dashboard。所有者と effective permission を必須にする。 */
+export const dashboardResponseSchema = dashboardStoredSchema.extend({
+  owner: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  myPermission: myPermissionSchema,
+});
+/** サーバーから返される dashboard の推論型。 */
+export type DashboardResponse = z.infer<typeof dashboardResponseSchema>;
 
 /** `POST /api/dashboards` のリクエストボディ。widgets 省略時は空で作成される。 */
 export const createDashboardRequestSchema = z.object({

@@ -70,17 +70,22 @@ export function useServerResultView(
     keyRef.current = key;
     if (!active || queryId === undefined) return;
     const requestKey = key;
+    const controller = new AbortController();
     // filter のタイプ中に毎キー発火しないよう、デバウンスしてから検索する。
     const timer = setTimeout(() => {
-      searchQueryRows(queryId, {
-        ...(search !== '' ? { search } : {}),
-        ...(sort !== null ? { sort } : {}),
-        offset: 0,
-        limit: SEARCH_PAGE_LIMIT,
-      })
+      searchQueryRows(
+        queryId,
+        {
+          ...(search !== '' ? { search } : {}),
+          ...(sort !== null ? { sort } : {}),
+          offset: 0,
+          limit: SEARCH_PAGE_LIMIT,
+        },
+        controller.signal,
+      )
         .then((page) => {
           // 条件が変わった後に届いたレスポンスは破棄する。
-          if (keyRef.current !== requestKey) return;
+          if (controller.signal.aborted || keyRef.current !== requestKey) return;
           setResult({
             key: requestKey,
             rows: page.rows as ResultRow[],
@@ -88,7 +93,7 @@ export function useServerResultView(
           });
         })
         .catch((err: unknown) => {
-          if (keyRef.current !== requestKey) return;
+          if (controller.signal.aborted || keyRef.current !== requestKey) return;
           setResult({
             key: requestKey,
             rows: [],
@@ -97,7 +102,10 @@ export function useServerResultView(
           });
         });
     }, DEBOUNCE_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
     // sort オブジェクトは呼び出し側で毎レンダー新しい参照になりうるため、
     // 値ベースの key を依存に使う。
     // eslint-disable-next-line react-hooks/exhaustive-deps
