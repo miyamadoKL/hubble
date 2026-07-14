@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 const e2eDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(e2eDir, '..');
+const e2eRbacConfigPath = resolve(repoRoot, 'deploy/compose/rbac.yaml');
 /** マルチデータソース E2E (datasources.spec.ts)。`MULTI_DS_E2E=1` で有効化。 */
 const multiDsE2e = process.env.MULTI_DS_E2E === '1';
 const multiDsConfigPath = resolve(e2eDir, 'datasources.e2e.yaml');
@@ -78,12 +80,11 @@ const singleDsConfigPath = writeSingleDatasourceYaml(e2eTrinoBaseUrl);
  *    用意せずとも「結果が切り詰められた」警告を決定的に発生させられる。
  */
 // web 開発サーバー（Vite）のポート番号。
-const WEB_PORT = 5173;
-// The server's production default is 8080. E2E pins to 8081 to avoid
-// conflicts with any process already bound to 8080 on this dev machine.
-// server の本番既定ポートは 8080 だが、開発機で既に 8080 を使っている
-// プロセスとの衝突を避けるため、E2E では 8081 に固定している。
-const SERVER_PORT = 8081;
+const WEB_PORT = Number(process.env.CAPTURE_WEB_PORT ?? 5173);
+// server の本番既定ポートは 8080。E2E は既定で 8081 を使い、撮影時は
+// CAPTURE_SERVER_PORT で既存サービスと衝突しないポートへ切り替えられる。
+const SERVER_PORT = Number(process.env.CAPTURE_SERVER_PORT ?? 8081);
+const captureMode = process.env.CAPTURE === '1';
 /**
  * A second BFF on a separate port running `AUTH_MODE=proxy`.
  * `auth.spec.ts` drives it directly over HTTP with injected SSO headers — no
@@ -97,6 +98,7 @@ const SERVER_PORT = 8081;
  * 引き続き none モードの SERVER_PORT のサーバーを使う。
  */
 const AUTH_SERVER_PORT = 8082;
+const reuseExistingServer = !captureMode && !process.env.CI && !multiDsE2e;
 
 export default defineConfig({
   // テストファイルの探索ルートディレクトリ。
@@ -106,14 +108,14 @@ export default defineConfig({
   // `capture.spec.ts` はスクリーンショットを docs/screenshots に書き出すツールであり、
   // アサーションを行う通常のテストスイートではない。通常実行時は除外し、
   // `CAPTURE=1 playwright test capture.spec.ts` のように明示指定した場合のみ走らせる。
-  testIgnore: process.env.CAPTURE ? [] : '**/capture.spec.ts',
+  testIgnore: captureMode ? [] : '**/capture.spec.ts',
   // Real Trino is the bottleneck, not the browser. Run files in parallel but
   // keep a modest worker count so we don't thrash the coordinator.
   // ボトルネックはブラウザではなく実際の Trino クラスタなので、ファイル単位の
   // 完全並列実行は行わず、coordinator に負荷をかけすぎない程度の worker 数に抑える。
   fullyParallel: false,
-  // CI では 2、ローカルでは 4 の worker で実行する。
-  workers: process.env.CI ? 2 : 4,
+  // capture は共有 DB を使うため直列化し、通常の E2E は CI 2、ローカル 4 worker とする。
+  workers: captureMode ? 1 : process.env.CI ? 2 : 4,
   // CI では `test.only` の混入をエラーにする（うっかりコミットを防止）。
   forbidOnly: !!process.env.CI,
   // CI ではフレーキーな失敗を許容して 1 回だけ自動リトライする。
@@ -147,9 +149,9 @@ export default defineConfig({
       command: 'pnpm --filter @hubble/server dev',
       port: SERVER_PORT,
       cwd: '..',
-      // CI 以外では既存の起動済みサーバーを再利用する（起動時間短縮のため）。
-      // MULTI_DS_E2E 時は DATASOURCES_PATH / デモ DB パスワードが必要なため再利用しない。
-      reuseExistingServer: !process.env.CI && !multiDsE2e,
+      // 通常の E2E では既存サーバーを再利用する。撮影時とマルチデータソース時は
+      // 設定とデータベースを隔離するため、必ず Playwright が起動したサーバーを使う。
+      reuseExistingServer,
       // サーバー起動待ちのタイムアウト（ミリ秒）。
       timeout: 60_000,
       env: {
@@ -165,45 +167,52 @@ export default defineConfig({
               DEMO_POSTGRES_PASSWORD: process.env.DEMO_POSTGRES_PASSWORD ?? 'hubble-demo',
             }
           : { DATASOURCES_PATH: singleDsConfigPath }),
+        RBAC_PATH: e2eRbacConfigPath,
         DEFAULT_CATALOG: 'tpch',
         DEFAULT_SCHEMA: 'tiny',
       },
     },
-    {
-      // Proxy-mode BFF for auth.spec.ts. Same Trino, separate
-      // DB + port; SSO headers are injected by the spec.
-      // auth.spec.ts 専用の proxy 認証モード BFF サーバー。接続先 Trino は共通だが、
-      // DB とポートは通常サーバーと分離している。SSO ヘッダーはテスト側から注入される。
-      command: 'pnpm --filter @hubble/server dev',
-      port: AUTH_SERVER_PORT,
-      cwd: '..',
-      reuseExistingServer: !process.env.CI && !multiDsE2e,
-      timeout: 60_000,
-      env: {
-        PORT: String(AUTH_SERVER_PORT),
-        AUTH_MODE: 'proxy',
-        DB_PATH: ':memory:',
-        QUERY_MAX_ROWS: '10000',
-        ...(multiDsE2e
-          ? {
-              DATASOURCES_PATH: multiDsConfigPath,
-              DEMO_MYSQL_PASSWORD: process.env.DEMO_MYSQL_PASSWORD ?? 'hubble-demo',
-              DEMO_POSTGRES_PASSWORD: process.env.DEMO_POSTGRES_PASSWORD ?? 'hubble-demo',
-            }
-          : { DATASOURCES_PATH: singleDsConfigPath }),
-        DEFAULT_CATALOG: 'tpch',
-        DEFAULT_SCHEMA: 'tiny',
-      },
-    },
+    ...(captureMode
+      ? []
+      : [
+          {
+            // auth.spec.ts 専用の proxy 認証モード BFF サーバー。接続先 Trino は共通だが、
+            // DB とポートは通常サーバーと分離している。SSO ヘッダーはテスト側から注入する。
+            command: 'pnpm --filter @hubble/server dev',
+            port: AUTH_SERVER_PORT,
+            cwd: '..',
+            reuseExistingServer,
+            timeout: 60_000,
+            env: {
+              PORT: String(AUTH_SERVER_PORT),
+              AUTH_MODE: 'proxy',
+              DB_PATH: ':memory:',
+              QUERY_MAX_ROWS: '10000',
+              ...(multiDsE2e
+                ? {
+                    DATASOURCES_PATH: multiDsConfigPath,
+                    DEMO_MYSQL_PASSWORD: process.env.DEMO_MYSQL_PASSWORD ?? 'hubble-demo',
+                    DEMO_POSTGRES_PASSWORD: process.env.DEMO_POSTGRES_PASSWORD ?? 'hubble-demo',
+                  }
+                : { DATASOURCES_PATH: singleDsConfigPath }),
+              RBAC_PATH: e2eRbacConfigPath,
+              DEFAULT_CATALOG: 'tpch',
+              DEFAULT_SCHEMA: 'tiny',
+            },
+          },
+        ]),
     {
       // web の開発サーバー（Vite）を起動するコマンド。
       command: 'pnpm --filter @hubble/web dev',
       port: WEB_PORT,
       cwd: '..',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer,
       timeout: 60_000,
       // web の dev server 側のプロキシ先ポートを、通常 BFF サーバーに合わせる。
-      env: { PORT: String(SERVER_PORT) },
+      env: {
+        PORT: String(SERVER_PORT),
+        WEB_PORT: String(WEB_PORT),
+      },
     },
   ],
 });
