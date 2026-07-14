@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
-    "screenshots": "node screenshots.mjs",
+    "screenshots": "CAPTURE=1 playwright test tests/capture.spec.ts --workers=1",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

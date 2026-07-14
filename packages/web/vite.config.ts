@@ -2,6 +2,9 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+const webServerPort = Number(process.env.WEB_PORT ?? 5173);
+const bffServerPort = process.env.PORT ?? '8080';
+
 /**
  * web パッケージ（React SPA）の Vite 設定ファイル。
  * React 用プラグインと Tailwind CSS 用プラグインを有効化しつつ、
@@ -47,17 +50,13 @@ export default defineConfig({
   },
   server: {
     // 開発サーバーのポート番号。
-    port: 5173,
+    port: webServerPort,
     proxy: {
       '/api': {
-        // Follow the BFF port: default 8080, overridden by PORT (e.g. when a
-        // sourced .env moves the server to avoid a local port clash).
-        // BFF server のポートに追従する。既定値は 8080 だが、環境変数 PORT で
-        // 上書きされる（例えば .env の読み込みでローカルのポート衝突を避けるために
-        // server 側のポートを変更した場合など）。
-        target: `http://localhost:${process.env.PORT ?? 8080}`,
-        // Origin ヘッダーをプロキシ先に合わせて書き換える。
-        changeOrigin: true,
+        // 開発用 BFF サーバーへブラウザーの Origin をそのまま渡し、
+        // CSRF の同一オリジン判定を成立させる。
+        target: `http://localhost:${bffServerPort}`,
+        changeOrigin: false,
       },
     },
   },

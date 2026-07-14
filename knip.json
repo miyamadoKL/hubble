@@ -2,10 +2,6 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "include": ["files", "dependencies", "unlisted", "binaries"],
   "workspaces": {
-    "e2e": {
-      "entry": ["screenshots*.mjs"],
-      "ignoreBinaries": ["vite"]
-    },
     "packages/web": {
       "entry": ["src/theme/theme.css", "src/trino-lang/diagnostics.worker.ts"],
       "ignoreDependencies": [

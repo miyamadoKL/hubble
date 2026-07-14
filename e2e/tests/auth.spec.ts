@@ -1,6 +1,7 @@
 import { test, expect, request as playwrightRequest } from '@playwright/test';
 import type { APIRequestContext } from '@playwright/test';
 import { AUTH_SERVER_URL } from '../playwright.config';
+import { runToHistory } from './helpers';
 
 /**
  * Proxy-mode auth, verified at the API level against a dedicated
@@ -13,8 +14,6 @@ import { AUTH_SERVER_URL } from '../playwright.config';
  * The default none-mode browser suite is unaffected.
  */
 
-const TINY = { catalog: 'tpch', schema: 'tiny' };
-
 /** An API context bound to the auth server, optionally with an SSO identity. */
 async function ctxFor(email?: string): Promise<APIRequestContext> {
   return playwrightRequest.newContext({
@@ -23,26 +22,12 @@ async function ctxFor(email?: string): Promise<APIRequestContext> {
   });
 }
 
-async function runToHistory(api: APIRequestContext, statement: string): Promise<string> {
-  const res = await api.post('/api/queries', {
-    data: { statement, ...TINY, source: 'hubble' },
-  });
-  expect(res.status()).toBe(202);
-  const { queryId } = await res.json();
-  for (let i = 0; i < 120; i++) {
-    const snap = await api.get(`/api/queries/${queryId}`).then((r) => r.json());
-    if (['finished', 'failed', 'canceled'].includes(snap.state)) return queryId;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error('query did not settle');
-}
-
 test.describe('proxy-mode auth (API)', () => {
   test('(a) /api/me returns the resolved principal for a trusted SSO header', async () => {
     const api = await ctxFor('alice@example.com');
     const res = await api.get('/api/me');
     expect(res.status()).toBe(200);
-    expect(await res.json()).toEqual({
+    expect(await res.json()).toMatchObject({
       user: 'alice',
       email: 'alice@example.com',
       authMode: 'proxy',

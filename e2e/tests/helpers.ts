@@ -370,6 +370,7 @@ export async function seedSavedQuery(
   q: SeedSavedQuery,
 ): Promise<string> {
   const res = await request.post('/api/saved-queries', {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
     data: { catalog: 'tpch', schema: 'tiny', ...q },
   });
   expect(res.ok()).toBeTruthy();
@@ -401,7 +402,8 @@ export async function selectDatasource(page: Page, displayName: string): Promise
 export async function isPostgresDemoReachable(request: APIRequestContext): Promise<boolean> {
   try {
     const res = await request.post('/api/queries', {
-      data: { statement: 'SELECT 1', datasourceId: 'postgres-demo', source: 'hubble' },
+      headers: { 'Sec-Fetch-Site': 'same-origin' },
+      data: { statement: 'SELECT 1', datasourceId: 'postgres-demo' },
     });
     if (res.status() !== 202) return false;
     const { queryId } = (await res.json()) as { queryId: string };
@@ -426,9 +428,17 @@ export async function runToHistory(
 ): Promise<string> {
   // クエリ実行を開始する。
   const res = await request.post('/api/queries', {
-    data: { statement, ...ctx, source: 'hubble' },
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+    data: { statement, ...ctx },
   });
-  const { queryId } = await res.json();
+  if (res.status() !== 202) {
+    throw new Error(`クエリ投入に失敗しました: ${res.status()} ${await res.text()}`);
+  }
+  const body = (await res.json()) as { queryId?: unknown };
+  if (typeof body.queryId !== 'string' || body.queryId.length === 0) {
+    throw new Error(`クエリ ID が応答にありません: ${JSON.stringify(body)}`);
+  }
+  const queryId = body.queryId;
   // 終端状態に達するまで、最大 120 回（約 24 秒）ポーリングする。
   for (let i = 0; i < 120; i++) {
     const snap = await request.get(`/api/queries/${queryId}`).then((r) => r.json());
