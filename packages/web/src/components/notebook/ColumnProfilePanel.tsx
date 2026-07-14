@@ -6,7 +6,7 @@
  * 頻出値を列ごとに表示する。集計はサーバー側で行われるため、クライアントに
  * 全行が載っていない結果でも全行分のプロファイルが見られる。
  */
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type { ResultColumnProfile, ResultProfile } from '@hubble/contracts';
 import { fetchQueryProfile } from '../../execution/api';
 import { formatInt } from '../../utils/format';
@@ -27,34 +27,28 @@ interface ColumnProfilePanelProps {
  * @param props - 対象クエリ id と close コールバック。
  */
 export function ColumnProfilePanel({ queryId, onClose }: ColumnProfilePanelProps) {
-  const [profile, setProfile] = useState<ResultProfile | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchQueryProfile(queryId, controller.signal)
-      .then((result) => {
-        if (!controller.signal.aborted) setProfile(result);
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : String(err));
-      });
-    return () => controller.abort();
-  }, [queryId]);
+  const { data: profile, error } = useQuery<ResultProfile>({
+    queryKey: ['query-profile', queryId],
+    queryFn: ({ signal }) => fetchQueryProfile(queryId, signal),
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: 'always',
+  });
 
   return (
     <>
-      {/* 画面全体を覆う透明な背景。クリックでパネルを閉じる（click-away）。 */}
+      {/* 画面全体を覆う透明な背景。クリックでパネルを閉じる。 */}
       <div className="fixed inset-0 z-30" onClick={onClose} aria-hidden />
       <div
         className="absolute top-7 left-0 z-40 max-h-96 w-80 overflow-auto rounded-md border border-border-base bg-surface-overlay p-2 shadow-lg"
         data-testid="column-profile-panel"
       >
-        {error !== null && <p className="px-1 py-2 text-2xs text-danger">{error}</p>}
-        {error === null && profile === null && (
+        {error !== null && <p className="px-1 py-2 text-2xs text-danger">{error.message}</p>}
+        {error === null && profile === undefined && (
           <p className="px-1 py-2 text-2xs text-ink-subtle">Profiling result…</p>
         )}
-        {profile !== null && (
+        {profile !== undefined && (
           <>
             <p className="px-1 pb-1.5 font-mono text-2xs text-ink-subtle">
               {formatInt(profile.rowCount)} rows profiled
