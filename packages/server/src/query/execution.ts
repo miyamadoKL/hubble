@@ -13,8 +13,8 @@
  *
  * アーキテクチャ上の位置づけ: `registry.ts`（同時実行数制御と TTL 掃除）が
  * `QueryExecution` を生成し管理し、`service.ts`（履歴永続化）や `sse.ts`
- * （SSE ストリーミング）、`csv.ts`（CSV ダウンロード）はこのクラスが持つ
- * バッファとイベントストリームを介して結果を取り出す。Trino との通信自体は
+ * （SSE ストリーミング）、`resultEvents.ts`（バッファ済み結果のイベント生成処理）
+ * はこのクラスが持つバッファとイベントストリームを介して結果を取り出す。Trino との通信自体は
  * `../trino/client` の `TrinoClient` に委譲する。
  */
 import type {
@@ -197,7 +197,7 @@ export class QueryExecution {
     return this.engine.downloadClient(opts);
   }
 
-  /** Read a page of buffered rows. */
+  /** バッファ済み行のページを取得する。 */
   // ページング API（/rows エンドポイント用）。offset を 0 未満から補正してから
   // slice する。範囲外アクセスでも例外にはならず空配列/短い配列を返す。
   getRows(offset: number, limit: number): unknown[][] {
@@ -205,10 +205,9 @@ export class QueryExecution {
     return this.rows.slice(offset, offset + limit);
   }
 
-  /** Iterate buffered rows (for CSV streaming). Index-based so concurrent
-   * appends during an in-flight query are picked up. */
-  // インデックス指定で 1 行だけ取り出す。CSV ストリーミング（csv.ts）が
-  // クエリ実行中でも増え続けるバッファを追随して読めるようにするための API。
+  /** バッファ済み行をインデックスで参照し、実行中の追加行にも追随できるようにする。 */
+  // resultEvents.ts のバッファ済みイベント生成処理が、クエリ実行中でも増え続ける
+  // バッファを追随して読めるようにするための API。
   rowAt(index: number): unknown[] | undefined {
     return this.rows[index];
   }

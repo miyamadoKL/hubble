@@ -2,10 +2,8 @@
  * クエリワークフロー API ルーター (`/api/workflows` および `/api/workflow-runs`)。
  */
 import { Hono } from 'hono';
-import { PassThrough, Readable } from 'node:stream';
+import { PassThrough } from 'node:stream';
 import { stream } from 'hono/streaming';
-import type { StreamingApi } from 'hono/utils/stream';
-import { ZipFile } from 'yazl';
 import {
   createWorkflowRequestSchema,
   updateWorkflowRequestSchema,
@@ -34,15 +32,12 @@ import {
 import { WorkflowRunInProgressError } from '../workflow/runner';
 import { nextRunIso } from '../schedule/cron';
 import { intParam, parseJsonBody } from './validate';
-import {
-  readPersistedRowsPage,
-  streamPersistedCsv,
-  streamPersistedResultEvents,
-} from '../resultStore/jsonl';
+import { readPersistedRowsPage, streamPersistedResultEvents } from '../resultStore/jsonl';
 import { resolveWorkflowRunExport } from '../workflow/exportResolve';
 import { writeXlsxWorkbook, XLSX_CONTENT_TYPE } from '../query/xlsx';
 import { SheetsExporter, type SheetsClientFactory } from '../query/exportSheets';
 import { JobAdmissionRejectedError } from '../schedule/admission';
+import { pipeCsvEntriesZip, pipeNodeReadable } from './exportStreams';
 
 type App = Hono<{ Variables: AuthVariables }>;
 
@@ -414,7 +409,17 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
       const signal = AbortSignal.any([c.req.raw.signal, ac.signal]);
-      await pipeWorkflowZip(rawStream, services, resolved.zipEntries, signal);
+      const entries = resolved.zipEntries.map(({ step, entryName }) => ({
+        entryName,
+        events: async (entrySignal?: AbortSignal) => {
+          const effectiveSignal = entrySignal ?? signal;
+          return streamPersistedResultEvents(
+            await services.resultStore.getStream(step.resultObjectKey, effectiveSignal),
+            effectiveSignal,
+          );
+        },
+      }));
+      await pipeCsvEntriesZip(rawStream, entries, signal);
     });
   });
 
@@ -522,66 +527,4 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
   });
 
   return app;
-}
-
-/** 永続化済み CSV を複数エントリの zip として HTTP レスポンスへ流す。 */
-async function pipeWorkflowZip(
-  out: StreamingApi,
-  services: Services,
-  entries: ReadonlyArray<{ step: { resultObjectKey: string }; entryName: string }>,
-  signal: AbortSignal,
-): Promise<void> {
-  const zip = new ZipFile();
-  const sources: Readable[] = [];
-
-  for (const entry of entries) {
-    const csv = streamPersistedCsv(
-      await services.resultStore.getStream(entry.step.resultObjectKey, signal),
-      { signal },
-    );
-    const source = Readable.from(csvBytes(csv, signal));
-    sources.push(source);
-    zip.addReadStream(source, entry.entryName, { compress: true, mtime: new Date(0) });
-  }
-  zip.end();
-
-  try {
-    for await (const chunk of zip.outputStream as AsyncIterable<Buffer>) {
-      if (signal.aborted) break;
-      await out.write(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-    }
-  } finally {
-    if (signal.aborted) {
-      for (const source of sources) source.destroy();
-    }
-  }
-}
-
-/** UTF-8 encode each CSV text chunk for yazl, stopping early on abort. */
-async function* csvBytes(csv: AsyncGenerator<string>, signal: AbortSignal): AsyncGenerator<Buffer> {
-  const encoder = new TextEncoder();
-  for await (const chunk of csv) {
-    if (signal.aborted) return;
-    yield Buffer.from(encoder.encode(chunk));
-  }
-}
-
-/** Node.js Readable を Hono StreamingApi へポンプする。 */
-async function pipeNodeReadable(
-  rawStream: StreamingApi,
-  source: Readable,
-  signal: AbortSignal,
-): Promise<void> {
-  try {
-    for await (const chunk of source) {
-      if (signal.aborted) break;
-      const buffer =
-        chunk instanceof Uint8Array
-          ? chunk
-          : Buffer.from(typeof chunk === 'string' ? chunk : String(chunk));
-      await rawStream.write(buffer);
-    }
-  } finally {
-    if (signal.aborted) source.destroy();
-  }
 }

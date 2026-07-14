@@ -5,7 +5,6 @@ import { constants as zlibConstants, createZstdCompress, createZstdDecompress } 
 import { Readable, Transform } from 'node:stream';
 import { createInterface } from 'node:readline';
 import { queryColumnSchema, type QueryColumn } from '@hubble/contracts';
-import { csvRecord } from '../query/csv';
 import type { QueryResultEvent } from '../query/resultEvents';
 import type { ResultStore } from './store';
 import { createSqlAbortError } from '../engine/sql/abort';
@@ -370,21 +369,6 @@ export async function openPersistedResult(
   }
 
   return { columns, rows: rows() };
-}
-
-/** 圧縮 JSONL を CSV テキストチャンクへ変換する。 */
-export async function* streamPersistedCsv(
-  stream: Readable,
-  options: PersistedResultReadOptions = {},
-): AsyncGenerator<string> {
-  for await (const line of readResultLines(stream, options.signal)) {
-    if (line.kind === 'columns') {
-      if (line.columns.length > 0)
-        yield `${csvRecord(line.columns.map((column) => column.name))}\r\n`;
-      continue;
-    }
-    yield `${csvRecord(line.row)}\r\n`;
-  }
 }
 
 /** 圧縮 JSONL を serializer 非依存の結果イベントへ変換する。 */

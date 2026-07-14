@@ -11,14 +11,11 @@
  * `../query/execution` や `../query/guard`、`../query/sse`、`../query/csv` に委譲する。
  * `app.ts` から `app.route('/api/queries', queryRoutes(services))` としてマウントされる。
  */
-import { PassThrough, Readable } from 'node:stream';
+import { PassThrough } from 'node:stream';
 import { createHash } from 'node:crypto';
-import { createGzip } from 'node:zlib';
-import { ZipFile } from 'yazl';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { stream } from 'hono/streaming';
-import type { StreamingApi } from 'hono/utils/stream';
 import {
   CSV_REEXEC_UNAVAILABLE,
   createQueryRequestSchema,
@@ -58,27 +55,25 @@ import {
   SSE_KEEPALIVE,
   type EncodedSseEvent,
 } from '../query/sse';
-import {
-  CSV_REEXEC_HEADER,
-  CSV_TRUNCATED_HEADER,
-  needsCsvReexec,
-  csvRecord,
-  statementAllowsCsvReexec,
-  streamQueryCsv,
-} from '../query/csv';
+import { CSV_REEXEC_HEADER, CSV_TRUNCATED_HEADER } from '../query/csv';
 import type { HistoryResultRef } from '../store/history';
 import {
   streamPersistedResultEvents,
   readPersistedRowsPage,
   openPersistedResult,
-  streamPersistedCsv,
 } from '../resultStore/jsonl';
-import { streamQueryResultEvents, type QueryResultEventSource } from '../query/resultEvents';
+import {
+  streamQueryResultEvents,
+  needsResultReplay,
+  statementAllowsResultReplay,
+  type QueryResultEventSource,
+  type QueryResultEvent,
+} from '../query/resultEvents';
+import { pipeCsvDownload, pipeNodeReadable, writeCsvEvents } from './exportStreams';
 import { writeXlsx, XLSX_CONTENT_TYPE, XLSX_MAX_DATA_ROWS } from '../query/xlsx';
 import { buildExportObjectKey, S3ExportUploader } from '../query/exportS3';
 import { SheetsExporter } from '../query/exportSheets';
 import type { AuditAction } from '../audit';
-import type { QueryResultEvent } from '../query/resultEvents';
 import {
   profileRowsStream,
   searchRowsStream,
@@ -345,6 +340,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     c: { req: { param: (k: string) => string; raw: Request }; var: AuthVariables },
     exec: ReturnType<typeof services.registry.get> | undefined,
     signal: AbortSignal = c.req.raw.signal,
+    unavailableMessage = 'Full export requires re-execution but the original datasource connection is no longer available.',
   ): Promise<{
     events: AsyncGenerator<QueryResultEvent>;
     source: QueryResultEventSource;
@@ -370,12 +366,10 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     }
     if (!exec) throw AppError.notFound(`Query ${id} not found`);
 
-    const needsReexec = needsCsvReexec(exec);
-    const allowsReexec = statementAllowsCsvReexec(exec);
+    const needsReexec = needsResultReplay(exec);
+    const allowsReexec = statementAllowsResultReplay(exec);
     if (needsReexec && allowsReexec && exec.engine.isClosed()) {
-      throw AppError.csvReexecUnavailable(
-        'Full export requires re-execution but the original datasource connection is no longer available.',
-      );
+      throw AppError.csvReexecUnavailable(unavailableMessage);
     }
 
     if (needsReexec && allowsReexec) {
@@ -397,14 +391,22 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       });
     }
 
-    const resolved = streamQueryResultEvents(exec, {
-      downloadClientOptions: {
-        user: exec.ctx.user,
-        roleName: principal.role.name,
-        sessionReadOnly: !hasQueryWrite(principal.role),
-      },
-      signal,
-    });
+    let resolved: ReturnType<typeof streamQueryResultEvents>;
+    try {
+      resolved = streamQueryResultEvents(exec, {
+        downloadClientOptions: {
+          user: exec.ctx.user,
+          roleName: principal.role.name,
+          sessionReadOnly: !hasQueryWrite(principal.role),
+        },
+        signal,
+      });
+    } catch (error) {
+      if (error instanceof AppError && error.detail.code === CSV_REEXEC_UNAVAILABLE) {
+        throw AppError.csvReexecUnavailable(unavailableMessage);
+      }
+      throw error;
+    }
     return {
       events: resolved.events,
       source: resolved.source,
@@ -764,98 +766,60 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const zip = compression === 'zip';
     const csvName = `${id}.csv`;
     const filename = zip ? `${id}.zip` : `${csvName}${gzip ? '.gz' : ''}`;
-
-    const persisted = await usablePersistedResult(c, { optional: exec !== undefined });
-    if (persisted) {
-      await services.audit.record({
-        actor: principal.user,
-        action: 'csv.download',
-        target: persisted.id,
-        datasource: persisted.datasourceId,
-        detail: {
-          compression: zip ? 'zip' : gzip ? 'gzip' : 'none',
-          source: 'resultStore',
-          outcome: 'allowed',
-        },
-      });
-      c.header('Content-Type', zip ? 'application/zip' : 'text/csv; charset=utf-8');
-      c.header('Content-Disposition', `attachment; filename="${filename}"`);
-      if (gzip) c.header('Content-Encoding', 'gzip');
-      c.header('Cache-Control', 'no-store');
-
-      return stream(c, async (rawStream) => {
-        const ac = new AbortController();
-        rawStream.onAbort(() => ac.abort());
-        const signal = AbortSignal.any([c.req.raw.signal, ac.signal]);
-        const csv = streamPersistedCsv(
-          await services.resultStore.getStream(persisted.resultObjectKey, signal),
-          { signal },
-        );
-        await writeCsvDownload(rawStream, csvName, csv, { zip, gzip, signal });
-      });
-    }
-
-    if (!exec) throw AppError.notFound(`Query ${id} not found`);
-
-    const engine = exec.engine;
-    const catalog = exec.ctx.catalog ?? services.config.defaults.catalog;
-    const schema = exec.ctx.schema ?? services.config.defaults.schema;
-    const needsReexec = needsCsvReexec(exec);
-    const allowsReexec = statementAllowsCsvReexec(exec);
+    const responseAbort = new AbortController();
+    const signal = AbortSignal.any([c.req.raw.signal, responseAbort.signal]);
+    const needsReexec = exec ? needsResultReplay(exec) : false;
+    const allowsReexec = exec ? statementAllowsResultReplay(exec) : true;
     const csvAuditDetail = {
       compression: zip ? 'zip' : gzip ? 'gzip' : 'none',
       needsReexec,
       allowsReexec,
-      truncated: exec.truncated,
+      truncated: exec?.truncated ?? false,
     } as const;
 
-    if (needsReexec && allowsReexec && exec.engine.isClosed()) {
-      await services.audit.record({
-        actor: principal.user,
-        action: 'csv.download',
-        target: exec.queryId,
-        datasource: exec.datasourceId,
-        detail: {
-          ...csvAuditDetail,
-          outcome: 'denied',
-          reason: 'csvReexecUnavailable',
-          errorCode: CSV_REEXEC_UNAVAILABLE,
-        },
-      });
-      throw AppError.csvReexecUnavailable(
+    let resolved: Awaited<ReturnType<typeof resolveExportEvents>>;
+    try {
+      resolved = await resolveExportEvents(
+        c,
+        exec,
+        signal,
         'Full CSV download requires re-execution but the original datasource connection is no longer available.',
       );
+    } catch (err) {
+      if (err instanceof AppError && err.detail.code === CSV_REEXEC_UNAVAILABLE) {
+        await services.audit.record({
+          actor: principal.user,
+          action: 'csv.download',
+          target: exec?.queryId ?? id,
+          datasource: exec?.datasourceId,
+          detail: {
+            ...csvAuditDetail,
+            outcome: 'denied',
+            reason: 'csvReexecUnavailable',
+            errorCode: CSV_REEXEC_UNAVAILABLE,
+          },
+        });
+      }
+      throw err;
     }
 
-    if (needsReexec && allowsReexec) {
-      requireDatasourceAccess(principal.role, exec.datasourceId);
-      const ioExplain = engine.ioExplainExecution?.({
-        statement: exec.statement,
-        catalog,
-        schema,
-        principal: principal.user,
-      });
-      await assertQueryWriteAllowed({
-        statement: exec.statement,
-        role: principal.role,
-        ioExplainClient: ioExplain?.client,
-        ioExplainCtx: ioExplain?.ctx,
-        ioExplainTimeoutMs: services.config.guard.estimateTimeoutMs,
-      });
-    }
-
-    if (needsReexec && !allowsReexec) {
+    if (resolved.source !== 'resultStore' && needsReexec && !allowsReexec) {
       c.header(CSV_REEXEC_HEADER, 'unavailable');
-      if (exec.truncated) c.header(CSV_TRUNCATED_HEADER, 'true');
+      if (exec?.truncated) c.header(CSV_TRUNCATED_HEADER, 'true');
     }
 
     await services.audit.record({
       actor: principal.user,
       action: 'csv.download',
-      target: exec.queryId,
-      datasource: exec.datasourceId,
+      target: resolved.target,
+      datasource: resolved.datasourceId,
       detail: {
-        ...csvAuditDetail,
+        ...(resolved.source === 'resultStore'
+          ? {
+              compression: csvAuditDetail.compression,
+              source: 'resultStore',
+            }
+          : csvAuditDetail),
         outcome: 'allowed',
       },
     });
@@ -866,47 +830,8 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     c.header('Cache-Control', 'no-store');
 
     return stream(c, async (rawStream) => {
-      // Abort signal drives both the response and the (possible) Trino re-run,
-      // so a client disconnect tears the download query down.
-      // AbortController でレスポンスストリームと Trino 側の再実行（結果が失効している場合の
-      // 再クエリ）の両方を同時に打ち切れるようにする。
-      const ac = new AbortController();
-      rawStream.onAbort(() => ac.abort());
-      const signal = AbortSignal.any([c.req.raw.signal, ac.signal]);
-      const csv = streamQueryCsv(exec, {
-        downloadClientOptions: {
-          user: exec.ctx.user,
-          roleName: principal.role.name,
-          sessionReadOnly: !hasQueryWrite(principal.role),
-        },
-        signal,
-      });
-
-      if (zip) {
-        await pipeZip(rawStream, csvName, csv, signal);
-      } else if (gzip) {
-        // Pipe CSV text through a gzip CompressionStream.
-        // Web標準の CompressionStream を使い、CSV テキストを都度 gzip 圧縮しながら書き出す。
-        const gz = new CompressionStream('gzip');
-        const writer = gz.writable.getWriter();
-        const encoder = new TextEncoder();
-        const pumped = rawStream.pipe(gz.readable);
-        try {
-          for await (const chunk of csv) {
-            if (signal.aborted) break;
-            await writer.write(encoder.encode(chunk));
-          }
-        } finally {
-          await writer.close();
-          await pumped;
-        }
-      } else {
-        // 非圧縮: CSV テキストのチャンクをそのままレスポンスへ書き出す。
-        for await (const chunk of csv) {
-          if (signal.aborted) break;
-          await rawStream.write(chunk);
-        }
-      }
+      rawStream.onAbort(() => responseAbort.abort());
+      await pipeCsvDownload(rawStream, csvName, resolved.events, { zip, gzip, signal });
     });
   });
 
@@ -1057,96 +982,9 @@ function normalizeEntityTag(value: string): string {
   return value.replace(/^W\//i, '');
 }
 
-/**
- * Stream a single-entry DEFLATE zip to the HTTP response. The CSV text generator
- * is fed into yazl as a Node Readable (constant memory: yazl deflates and emits
- * compressed chunks as input arrives); yazl's compressed output stream is pumped
- * to Hono's `StreamingApi`. The whole CSV is never held in memory.
- *
- * CSV 生成ジェネレータを 1 エントリの zip（DEFLATE 圧縮）としてストリーミングし、
- * HTTP レスポンスへ直接書き出す内部ヘルパー。CSV 全体をメモリに保持しない点が重要。
- * @param out - 書き込み先の Hono `StreamingApi`。
- * @param entryName - zip 内のエントリ名（ダウンロードファイル名相当）。
- * @param csv - CSV テキストを逐次生成する非同期ジェネレータ。
- * @param signal - クライアント切断等での中断を伝える AbortSignal。
- */
-async function pipeZip(
-  out: StreamingApi,
-  entryName: string,
-  csv: AsyncGenerator<string>,
-  signal: AbortSignal,
-): Promise<void> {
-  const zip = new ZipFile();
-  const source = Readable.from(csvBytes(csv, signal));
-  // mtime fixed so output is deterministic; size unknown -> streaming entry.
-  zip.addReadStream(source, entryName, { compress: true, mtime: new Date(0) });
-  zip.end();
-
-  try {
-    for await (const chunk of zip.outputStream as AsyncIterable<Buffer>) {
-      if (signal.aborted) break;
-      await out.write(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-    }
-  } finally {
-    // If we bailed early, drain the CSV generator's cleanup (Trino cancel).
-    // 中断時は Readable と CSV ジェネレータの後始末を行い、Trino 側の実行キャンセルを確実にする。
-    if (signal.aborted) {
-      source.destroy();
-      await csv.return(undefined).catch(() => {});
-    }
-  }
-}
-
-/**
- * UTF-8 encode each CSV text chunk for yazl, stopping early on abort.
- *
- * CSV テキストチャンクを UTF-8 バイト列へ変換して yazl に渡すためのアダプタジェネレータ。
- * @param csv - CSV テキストを逐次生成する非同期ジェネレータ。
- * @param signal - 中断を伝える AbortSignal。中断時は残りのチャンクを生成せず終了する。
- */
-async function* csvBytes(csv: AsyncGenerator<string>, signal: AbortSignal): AsyncGenerator<Buffer> {
-  const encoder = new TextEncoder();
-  for await (const chunk of csv) {
-    if (signal.aborted) return;
-    yield Buffer.from(encoder.encode(chunk));
-  }
-}
-
 // Re-export so app.ts can register a not-found that throws AppError consistently.
 // app.ts の not-found ハンドラが同じ AppError 型でエラーを投げられるよう、ここから再エクスポートする。
 export { AppError };
-
-async function writeCsvDownload(
-  rawStream: StreamingApi,
-  csvName: string,
-  csv: AsyncGenerator<string>,
-  options: { zip: boolean; gzip: boolean; signal: AbortSignal },
-): Promise<void> {
-  if (options.zip) {
-    await pipeZip(rawStream, csvName, csv, options.signal);
-    return;
-  }
-  if (options.gzip) {
-    const gz = new CompressionStream('gzip');
-    const writer = gz.writable.getWriter();
-    const encoder = new TextEncoder();
-    const pumped = rawStream.pipe(gz.readable);
-    try {
-      for await (const chunk of csv) {
-        if (options.signal.aborted) break;
-        await writer.write(encoder.encode(chunk));
-      }
-    } finally {
-      await writer.close();
-      await pumped;
-    }
-    return;
-  }
-  for await (const chunk of csv) {
-    if (options.signal.aborted) break;
-    await rawStream.write(chunk);
-  }
-}
 
 function assertXlsxLimit(rowCount: number | undefined): void {
   if (rowCount === undefined || rowCount <= XLSX_MAX_DATA_ROWS) return;
@@ -1169,25 +1007,6 @@ function buildExportDeniedDetail(err: unknown): Record<string, string> {
     outcome: 'denied',
     error: err instanceof Error ? err.message : String(err),
   };
-}
-
-async function pipeNodeReadable(
-  rawStream: StreamingApi,
-  source: Readable,
-  signal: AbortSignal,
-): Promise<void> {
-  try {
-    for await (const chunk of source) {
-      if (signal.aborted) break;
-      const buffer =
-        chunk instanceof Uint8Array
-          ? chunk
-          : Buffer.from(typeof chunk === 'string' ? chunk : String(chunk));
-      await rawStream.write(buffer);
-    }
-  } finally {
-    if (signal.aborted) source.destroy();
-  }
 }
 
 async function exportToS3(input: {
@@ -1245,36 +1064,4 @@ async function exportToSheets(input: {
     spreadsheetId: result.spreadsheetId,
     url: result.url,
   };
-}
-
-async function writeCsvEvents(
-  events: AsyncGenerator<QueryResultEvent>,
-  stream: PassThrough,
-  options: { gzip: boolean },
-): Promise<void> {
-  const destination = options.gzip ? createGzip() : stream;
-  if (options.gzip) destination.pipe(stream);
-  try {
-    for await (const chunk of csvFromEvents(events)) {
-      if (!destination.write(chunk)) {
-        await new Promise((resolve) => destination.once('drain', resolve));
-      }
-    }
-  } finally {
-    destination.end();
-  }
-}
-
-async function* csvFromEvents(events: AsyncGenerator<QueryResultEvent>): AsyncGenerator<string> {
-  let headerWritten = false;
-  for await (const event of events) {
-    if (event.type === 'columns') {
-      if (event.columns.length > 0)
-        yield `${csvRecord(event.columns.map((column) => column.name))}\r\n`;
-      headerWritten = true;
-      continue;
-    }
-    if (!headerWritten) headerWritten = true;
-    yield `${csvRecord(event.row)}\r\n`;
-  }
 }

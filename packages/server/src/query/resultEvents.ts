@@ -15,9 +15,22 @@ import {
   type TrinoColumn,
 } from '../trino/types';
 import type { QueryExecution } from './execution';
-import { DOWNLOAD_SOURCE, needsCsvReexec, statementAllowsCsvReexec } from './csv';
 import { statementPages } from '../engine/statementDriver';
-import { raceSqlAbort } from '../engine/sql/abort';
+import { createSqlAbortError, raceSqlAbort } from '../engine/sql/abort';
+import { classifyStatementWrite } from '../rbac/writeCheck';
+
+/** 再実行クエリに付与するソース識別子。履歴には記録しない。 */
+export const DOWNLOAD_SOURCE = 'hubble-download';
+
+/** バッファだけで全結果を返せず、結果の再取得が必要か判定する。 */
+export function needsResultReplay(exec: QueryExecution): boolean {
+  return !exec.isTerminal || exec.truncated;
+}
+
+/** 結果を再取得しても副作用を起こさない読み取り専用文か判定する。 */
+export function statementAllowsResultReplay(exec: QueryExecution): boolean {
+  return classifyStatementWrite(exec.statement) === 'allow';
+}
 
 /** クエリ結果の列定義または 1 行を表すイベント。 */
 export type QueryResultEvent =
@@ -37,7 +50,7 @@ export async function openQueryResultEvents(
   signal?: AbortSignal,
 ): Promise<AsyncGenerator<QueryResultEvent>> {
   if (typeof input !== 'function') return input;
-  const pending = Promise.resolve(input(signal));
+  const pending = Promise.resolve().then(() => input(signal));
   return raceSqlAbort(pending, signal, () => {
     // factory が中断後に完了しても、開いた入力を未消費のまま残さない。
     void pending.then(
@@ -68,10 +81,11 @@ export function streamQueryResultEvents(
   source: QueryResultEventSource;
   events: AsyncGenerator<QueryResultEvent>;
 } {
-  const needsReexec = needsCsvReexec(exec);
-  const allowsReexec = statementAllowsCsvReexec(exec);
-  if (!needsReexec) return { source: 'buffer', events: streamBufferedEvents(exec) };
-  if (!allowsReexec) return { source: 'bufferedPartial', events: streamBufferedEvents(exec) };
+  const needsReexec = needsResultReplay(exec);
+  const allowsReexec = statementAllowsResultReplay(exec);
+  if (!needsReexec) return { source: 'buffer', events: streamBufferedEvents(exec, deps.signal) };
+  if (!allowsReexec)
+    return { source: 'bufferedPartial', events: streamBufferedEvents(exec, deps.signal) };
   if (exec.engine.isClosed()) {
     throw AppError.csvReexecUnavailable(
       'Full export requires re-execution but the original datasource connection is no longer available.',
@@ -83,8 +97,9 @@ export function streamQueryResultEvents(
 /** バッファ済み行をイベントとして読む。実行中の場合は追加行を追随する。 */
 export async function* streamBufferedEvents(
   exec: QueryExecution,
+  signal?: AbortSignal,
 ): AsyncGenerator<QueryResultEvent> {
-  await waitForColumnsOrTerminal(exec);
+  await waitForColumnsOrTerminal(exec, signal);
   yield { type: 'columns', columns: exec.columns };
 
   let index = 0;
@@ -96,7 +111,19 @@ export async function* streamBufferedEvents(
       continue;
     }
     if (exec.isTerminal && index >= exec.bufferedCount) break;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', abort);
+        resolve();
+      }, 25);
+      const abort = (): void => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        reject(createSqlAbortError());
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    });
   }
 }
 
@@ -136,18 +163,26 @@ async function* streamReexecEvents(
   if (!columnsWritten) yield { type: 'columns', columns: [] };
 }
 
-function waitForColumnsOrTerminal(exec: QueryExecution): Promise<void> {
+function waitForColumnsOrTerminal(exec: QueryExecution, signal?: AbortSignal): Promise<void> {
   if (exec.columns.length > 0 || exec.isTerminal) return Promise.resolve();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const abort = (): void => {
+      unsubscribe();
+      reject(createSqlAbortError());
+    };
     const unsubscribe = exec.subscribe((event) => {
       if (event.type === 'columns' || event.type === 'done') {
         unsubscribe();
+        signal?.removeEventListener('abort', abort);
         resolve();
       }
     });
+    signal?.addEventListener('abort', abort, { once: true });
     if (exec.columns.length > 0 || exec.isTerminal) {
       unsubscribe();
+      signal?.removeEventListener('abort', abort);
       resolve();
     }
+    if (signal?.aborted) abort();
   });
 }

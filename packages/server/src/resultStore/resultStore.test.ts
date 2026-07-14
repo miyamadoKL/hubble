@@ -20,13 +20,13 @@ import {
   readPersistedRowsPage,
   ResultJsonlCapture,
   RESULT_JSONL_WRITE_CHUNK_BYTES,
-  streamPersistedCsv,
   streamPersistedResultEvents,
 } from './jsonl';
 import { S3ResultStore, buildS3ClientConfig } from './s3';
 import type { ResultStoreMetric } from './observability';
 import type { HistoryResultRef } from '../store/history';
 import { ResultObjectDeletionRepository } from '../store/resultObjectDeletions';
+import { csvFromEvents } from '../query/csv';
 
 const COLUMNS = [
   { name: 'id', type: 'bigint' },
@@ -476,7 +476,10 @@ describe('ResultStore persistence', () => {
     const rows: unknown[][] = [];
     for await (const row of cursor.rows) rows.push(row);
     const csv: string[] = [];
-    for await (const chunk of streamPersistedCsv(await store.getStream(key))) csv.push(chunk);
+    for await (const chunk of csvFromEvents(
+      streamPersistedResultEvents(await store.getStream(key)),
+    ))
+      csv.push(chunk);
     const events: unknown[] = [];
     for await (const event of streamPersistedResultEvents(await store.getStream(key))) {
       events.push(event);
