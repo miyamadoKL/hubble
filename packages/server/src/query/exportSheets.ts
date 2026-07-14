@@ -1,7 +1,8 @@
 /**
  * クエリ結果を Google Sheets へエクスポートする。
  *
- * googleapis は重いため、このモジュールの既定 factory から使用時だけ dynamic import する。
+ * Google Sheets と Google Drive の個別 package は重いため、このモジュールの既定 factory
+ * から使用時だけ dynamic import する。
  */
 import type { QueryColumn } from '@hubble/contracts';
 import type { ExportConfig } from '../config';
@@ -34,22 +35,25 @@ type SheetsClientFactoryResult = Omit<SheetsApiClient, 'deleteSpreadsheet'> &
 /** Sheets client factory の差し替えポイント。 */
 export type SheetsClientFactory = (credentialsFile: string) => Promise<SheetsClientFactoryResult>;
 
-/** googleapis を dynamic import し、サービスアカウント client を作る。 */
+/** Google Sheets と Google Drive の個別 package を dynamic import し、サービスアカウント client を作る。 */
 export const defaultSheetsClientFactory: SheetsClientFactory = async (credentialsFile) => {
-  const { google } = await import('googleapis');
-  const auth = new google.auth.GoogleAuth({
+  const [{ auth, sheets }, { drive }] = await Promise.all([
+    import('@googleapis/sheets'),
+    import('@googleapis/drive'),
+  ]);
+  const googleAuth = new auth.GoogleAuth({
     keyFile: credentialsFile,
     scopes: [
       'https://www.googleapis.com/auth/spreadsheets',
       'https://www.googleapis.com/auth/drive',
     ],
   });
-  const sheets = google.sheets({ version: 'v4', auth });
-  const drive = google.drive({ version: 'v3', auth });
+  const sheetsClient = sheets({ version: 'v4', auth: googleAuth });
+  const driveClient = drive({ version: 'v3', auth: googleAuth });
 
   return {
     async createSpreadsheet(title) {
-      const created = await sheets.spreadsheets.create({
+      const created = await sheetsClient.spreadsheets.create({
         requestBody: { properties: { title } },
         fields: 'spreadsheetId,spreadsheetUrl,sheets.properties',
       });
@@ -63,7 +67,7 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
     },
     async appendValues(spreadsheetId, values, range = 'A1') {
       if (values.length === 0) return;
-      await sheets.spreadsheets.values.append({
+      await sheetsClient.spreadsheets.values.append({
         spreadsheetId,
         range,
         valueInputOption: 'RAW',
@@ -72,7 +76,7 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
       });
     },
     async renameFirstSheet(spreadsheetId, title) {
-      const meta = await sheets.spreadsheets.get({
+      const meta = await sheetsClient.spreadsheets.get({
         spreadsheetId,
         fields: 'sheets.properties',
       });
@@ -80,7 +84,7 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
       if (sheetId === undefined || sheetId === null) {
         throw new Error('Google Sheets API did not return the first sheet id');
       }
-      await sheets.spreadsheets.batchUpdate({
+      await sheetsClient.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
           requests: [
@@ -95,7 +99,7 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
       });
     },
     async addSheet(spreadsheetId, title) {
-      await sheets.spreadsheets.batchUpdate({
+      await sheetsClient.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
           requests: [{ addSheet: { properties: { title } } }],
@@ -103,7 +107,7 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
       });
     },
     async shareWithWriter(spreadsheetId, email) {
-      await drive.permissions.create({
+      await driveClient.permissions.create({
         fileId: spreadsheetId,
         sendNotificationEmail: false,
         requestBody: {
@@ -114,7 +118,7 @@ export const defaultSheetsClientFactory: SheetsClientFactory = async (credential
       });
     },
     async deleteSpreadsheet(spreadsheetId) {
-      await drive.files.delete({ fileId: spreadsheetId });
+      await driveClient.files.delete({ fileId: spreadsheetId });
     },
   };
 };
