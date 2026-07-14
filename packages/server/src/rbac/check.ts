@@ -29,7 +29,6 @@ export function hasQueryWrite(role: ResolvedRole): boolean {
 /** ロールが指定 datasource へアクセス可能か。 */
 export function roleAllowsDatasource(role: ResolvedRole, datasourceId: string): boolean {
   const allowlist = role.datasources;
-  if (allowlist === undefined) return true;
   if (allowlist.length === 0) return false;
   if (allowlist.includes('*')) return true;
   return allowlist.includes(datasourceId);

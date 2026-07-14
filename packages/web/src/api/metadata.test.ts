@@ -11,10 +11,10 @@ import {
   metadataQueryKeys,
 } from './metadata';
 
-// Lazy-load data layer for the Data browser tree: each level is
-// fetched on demand from `/api/catalogs...`. These tests stub `fetch` to verify
-// the right URL is hit, the contract response is parsed, and the MetadataSource
-// (used by completion + the tree's cache) dedupes repeat reads.
+// Data ブラウザツリーのデータ層は遅延読み込みする。各階層は
+// `/api/datasources/:id/catalogs...` から必要時に取得する。これらのテストは `fetch` を stub し、
+// 正しい URL が呼ばれ、contract response が解析され、MetadataSource
+//（補完機能とツリーの cache が使う値）が重複した読み込みを排除することを確認する。
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {

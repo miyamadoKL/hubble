@@ -130,9 +130,8 @@ export interface ServerConfig {
   trino: {
     /** Value sent as `X-Trino-User`. */
     /** 日本語: `TRINO_USER`（既定 `admin`）。全 Trino データソース共通の impersonation
-     * ユーザー。AUTH_MODE=none の場合は常にこの値が principal になり、owner
-     * backfill(db/backfill.ts)の初期値としても使われる。proxy モードでは SSO から
-     * 解決した principal が実際の X-Trino-User として使われる。 */
+     * ユーザー。AUTH_MODE=none の場合はこの値が principal になる。proxy モードでは
+     * SSO から解決した principal が実際の X-Trino-User として使われる。 */
     user: string;
   };
   /** 候補データソースを公開する前の疎通確認期限。 */

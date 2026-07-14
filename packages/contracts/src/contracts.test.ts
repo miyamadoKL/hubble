@@ -1030,13 +1030,15 @@ describe('routes', () => {
     expect(apiRoutes.queryRows('q1')).toBe('/api/queries/q1/rows');
     expect(apiRoutes.queryDownloadXlsx('q1')).toBe('/api/queries/q1/download.xlsx');
     expect(apiRoutes.queryExport('q1')).toBe('/api/queries/q1/export');
-    expect(apiRoutes.table('tpch', 'tiny', 'nation')).toBe(
-      '/api/catalogs/tpch/schemas/tiny/tables/nation',
+    expect(apiRoutes.datasourceTable('trino-default', 'tpch', 'tiny', 'nation')).toBe(
+      '/api/datasources/trino-default/catalogs/tpch/schemas/tiny/tables/nation',
     );
   });
 
   it('encodes path segments', () => {
     expect(apiRoutes.notebook('a/b')).toBe('/api/notebooks/a%2Fb');
-    expect(apiRoutes.schemas('cat with space')).toBe('/api/catalogs/cat%20with%20space/schemas');
+    expect(apiRoutes.datasourceSchemas('trino-default', 'cat with space')).toBe(
+      '/api/datasources/trino-default/catalogs/cat%20with%20space/schemas',
+    );
   });
 });

@@ -13,7 +13,6 @@ export interface RoleGuardOverrides {
 
 /**
  * ロールがアクセス可能な datasource id の allowlist。
- * - 未指定(undefined): 全 datasource 許可(後方互換)。
  * - ['*']: 明示的に全許可。
  * - []: いずれの datasource も許可しない。
  * - ['id', ...]: 列挙 id のみ許可。
@@ -25,7 +24,7 @@ export interface ResolvedRole {
   name: string;
   permissions: ReadonlySet<Permission>;
   guard?: RoleGuardOverrides;
-  datasources?: RoleDatasourcesAllowlist;
+  datasources: RoleDatasourcesAllowlist;
 }
 
 /** YAML の 1 件の割り当てルール（バリデーション済み）。 */
@@ -45,7 +44,7 @@ export interface LoadedRbac {
     {
       permissions: ReadonlySet<Permission>;
       guard?: RoleGuardOverrides;
-      datasources?: RoleDatasourcesAllowlist;
+      datasources: RoleDatasourcesAllowlist;
     }
   >;
   assignments: readonly RbacAssignment[];

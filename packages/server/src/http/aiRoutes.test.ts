@@ -69,6 +69,7 @@ describe('POST /api/ai/assist', () => {
       `roles:
   member:
     permissions: []
+    datasources: ['*']
 assignments:
   - user: local-dev
     role: member

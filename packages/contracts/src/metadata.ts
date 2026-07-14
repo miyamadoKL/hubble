@@ -106,11 +106,11 @@ export type MetadataResponse<T> = {
 
 // Concrete response schemas for each metadata endpoint.
 // 各メタデータエンドポイント用に、ファクトリ関数から具体的なスキーマを生成する。
-/** `GET /api/catalogs` のレスポンススキーマ。 */
+/** データソーススコープ付きカタログ一覧のレスポンススキーマ。 */
 export const catalogsResponseSchema = metadataResponseSchema(catalogSchema);
-/** `GET /api/catalogs/:c/schemas` のレスポンススキーマ。 */
+/** データソーススコープ付きスキーマ一覧のレスポンススキーマ。 */
 export const schemasResponseSchema = metadataResponseSchema(schemaItemSchema);
-/** `GET /api/catalogs/:c/schemas/:s/tables` のレスポンススキーマ。 */
+/** データソーススコープ付きテーブル一覧のレスポンススキーマ。 */
 export const tablesResponseSchema = metadataResponseSchema(tableItemSchema);
 
 /** カタログ一覧レスポンスの推論型。 */
@@ -137,8 +137,7 @@ export const sampleRowsResponseSchema = z.object({
 export type SampleRowsResponse = z.infer<typeof sampleRowsResponseSchema>;
 
 /**
- * Request body for `POST /api/metadata/refresh`.
- * `POST /api/metadata/refresh` のリクエストボディ。メタデータキャッシュの
+ * データソーススコープ付きメタデータ更新のリクエストボディ。メタデータキャッシュの
  * 強制再取得をトリガーする。catalog / schema を省略すると全体を対象にする。
  */
 export const metadataRefreshRequestSchema = z.object({

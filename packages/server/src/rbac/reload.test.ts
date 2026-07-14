@@ -36,6 +36,7 @@ function memberRbacYaml(guardMaxScanRows: number): string {
   return `roles:
   member:
     permissions: []
+    datasources: ['*']
     guard:
       maxScanRows: ${guardMaxScanRows}
 defaultRole: member
@@ -46,6 +47,7 @@ function roleRbacYaml(role: string): string {
   return `roles:
   ${role}:
     permissions: []
+    datasources: ['*']
 defaultRole: ${role}
 `;
 }
@@ -211,6 +213,7 @@ describe('services.reloadRbac', () => {
       `roles:
   admin:
     permissions: [query.write]
+    datasources: ['*']
 defaultRole: admin
 `,
       'utf8',
@@ -294,6 +297,7 @@ defaultRole: analyst
       `roles:
   operator:
     permissions: [query.write]
+    datasources: ['*']
 defaultRole: operator
 `,
       'utf8',
@@ -301,17 +305,6 @@ defaultRole: operator
     await ctx.services.reloadRbac();
     res = await ctx.app.request('/api/me');
     expect(meResponseSchema.parse(await res.json()).role).toBe('operator');
-  });
-
-  it('activates roles when rbac.yaml is created after unrestricted startup', async () => {
-    const ctx = await createTestContext({ cwd: tempDir });
-    let res = await ctx.app.request('/api/me');
-    expect(meResponseSchema.parse(await res.json()).role).toBe('unrestricted');
-
-    writeFileSync(join(tempDir, 'rbac.yaml'), memberRbacYaml(10_000), 'utf8');
-    await ctx.services.reloadRbac();
-    res = await ctx.app.request('/api/me');
-    expect(meResponseSchema.parse(await res.json()).role).toBe('member');
   });
 
   it('keeps the adopted default config when rbac.yaml is removed', async () => {
@@ -329,15 +322,6 @@ defaultRole: operator
     const res = await ctx.app.request('/api/me');
     expect(meResponseSchema.parse(await res.json()).role).toBe('member');
     expect(errors).toHaveLength(1);
-  });
-
-  it('keeps the built-in config when rbac.yaml remains absent on reload', async () => {
-    const ctx = await createTestContext({ cwd: tempDir });
-
-    await ctx.services.reloadRbac();
-
-    const res = await ctx.app.request('/api/me');
-    expect(meResponseSchema.parse(await res.json()).role).toBe('unrestricted');
   });
 
   it('uses new guard limits after reload (cache key includes guard values)', async () => {
@@ -409,6 +393,7 @@ describe('rbac hot-reload via startFileReload', () => {
       `roles:
   viewer:
     permissions: []
+    datasources: ['*']
 defaultRole: viewer
 `,
       'utf8',
@@ -420,22 +405,6 @@ defaultRole: viewer
     await Promise.resolve();
     const res = await ctx.app.request('/api/me');
     expect(meResponseSchema.parse(await res.json()).role).toBe('viewer');
-    handle.stop();
-  });
-
-  it('fires reload when rbac.yaml appears after unrestricted startup', async () => {
-    const ctx = await createTestContext({ cwd: tempDir });
-    const rbacPath = join(tempDir, 'rbac.yaml');
-    const mtimes = new Map<string, number>();
-    const handle = startFileReload([{ path: rbacPath, reload: () => ctx.services.reloadRbac() }], {
-      intervalSeconds: 30,
-      statImpl: (p) => (mtimes.has(p) ? { mtimeMs: mtimes.get(p)! } : null),
-    });
-    writeFileSync(rbacPath, memberRbacYaml(10_000), 'utf8');
-    mtimes.set(rbacPath, 1000);
-    await vi.advanceTimersByTimeAsync(30_000);
-    const res = await ctx.app.request('/api/me');
-    expect(meResponseSchema.parse(await res.json()).role).toBe('member');
     handle.stop();
   });
 });

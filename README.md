@@ -108,7 +108,8 @@ docker compose up --build
 ```bash
 pnpm install
 
-# datasources.yaml は必須(下記「データソース設定」参照)。ここでは最小の1件を用意する例。
+# datasources.yaml と rbac.yaml は必須(下記「データソース設定」と「RBAC」参照)。
+# ここでは最小のデータソースと tracked demo RBAC 設定を用意する。
 cat > datasources.yaml <<'EOF'
 datasources:
   - id: trino-default
@@ -117,6 +118,7 @@ datasources:
     username: admin
     baseUrl: http://localhost:30080
 EOF
+cp deploy/compose/rbac.yaml rbac.yaml
 
 # Terminal 1 — the BFF (Hono) on :8080 (DATABASE_URL 未設定時は SQLite にフォールバック)
 PORT=8080 DATABASE_URL=postgres://hubble:hubble@localhost:5432/hubble \
@@ -140,8 +142,8 @@ pnpm --filter @hubble/web dev
 #### ホットリロード
 
 `datasources.yaml` と `rbac.yaml` は、プロセス再起動なしで設定を反映できます。
-`rbac.yaml` は起動時にファイルが無くても監視対象になり、後から配置すればリロードで
-ロールが有効化されます。
+`rbac.yaml` は起動時に必須です。起動後にファイルが削除された場合は、リロードを拒否して
+現行の設定を維持します。
 
 - **ポーリング**: 環境変数 `CONFIG_RELOAD_INTERVAL_SECONDS`（既定 30、0 で無効）ごとに
   ファイルの更新時刻を確認し、変化があればリロードします。
@@ -245,8 +247,7 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo u
 
 ロールと権限は `rbac.yaml` で宣言します（例は `rbac.yaml.example`）。
 `RBAC_PATH` でファイルパスを指定でき、未設定時はカレントディレクトリの
-`rbac.yaml` を探します。ファイルが無い場合は組み込みロール `unrestricted`
-（`query.write` のみ）が全員に割り当てられ、従来どおり全ユーザーが書き込み可能です。
+`rbac.yaml` を探します。ファイルが無い場合は起動に失敗します。
 `query.write` 権限の有無で書き込み文の実行を拒否し、ロールごとに Query Guard 上限を
 上書きできます。割り当てキーは `email` / `user` / `emailDomain` / `group` のいずれか
 1 つです。任意の `priority` は大きい値から評価され、未指定は `0`、同値は記述順です。
@@ -261,12 +262,11 @@ Google Workspace のグループを使う場合は、oauth2-proxy の Google pro
 principal スナップショット（user、email、groups）を使います。
 作成/更新時点で email や groups が解決されていれば、email 系 assignment と
 `group` assignment はスケジュール実行にも適用されます。
-`principal_snapshot` がない旧レコードは、従来どおり owner 文字列のみから
-`{ user: owner, email: owner に '@' が含まれるとき }` を復元します。
-この場合、email localpart の owner では email 系 assignment が効かず、`group`
-assignment も適用されません。
+`principal_snapshot` がない、または検証に失敗したレコードは、owner 文字列から principal を復元せず
+`PRINCIPAL_SNAPSHOT_REQUIRED` として実行を blocked にします。
+必要な場合は principal snapshot を持つ定義を作成し直してください。
 owner がスケジュールを再保存すると、その時点の principal でスナップショットが更新されます。
-設定変更はプロセス再起動後に反映されます。
+設定変更は polling または SIGHUP による hot reload で反映されます。
 
 #### 運用ビュー（Operations）
 
@@ -275,15 +275,15 @@ owner がスケジュールを再保存すると、その時点の principal で
 owner、データソース、statement 先頭、state、経過時間を 5 秒間隔で更新します。
 `query.killAny` 権限を持つユーザーは、確認ダイアログ経由で任意ユーザーのクエリを
 kill できます。kill 操作はサーバーログに 1 行（実行者、対象 owner、queryId）を残します。
-`rbac.yaml` が無い `unrestricted` 運用ではこれらの権限は付与されず、従来どおりの UI です。
+権限と datasource の公開範囲は `rbac.yaml` の role 定義に従います。
 監査ログ検索 API (`GET /api/admin/audit-logs`) は独立した `audit.view` 権限を要求します。
 検索条件には actor、action、datasource、期間を指定でき、応答の cursor で次ページを取得できます。
 
 #### datasource 露出の制限（`role.datasources`）
 
-`rbac.yaml` の各ロールに任意フィールド `datasources` を設定し、クエリ、見積り、メタデータ、
-スケジュールで利用できる datasource id を allowlist で制限できます。未指定時は従来どおり
-全 datasource が許可されます。`GET /api/datasources` もロールに応じて一覧が filter され、
+`rbac.yaml` の各ロールに必須の `datasources` を設定し、クエリ、見積り、メタデータ、
+スケジュールで利用できる datasource id を allowlist で制限します。`['*']` は全許可、`[]` は
+全拒否、id の列挙は指定した datasource のみを許可します。`GET /api/datasources` もロールに応じて一覧が filter され、
 UI から見えない datasource を選べなくなります。MySQL/PostgreSQL で DB 側 GRANT も効かせる場合は
 datasource 側の `roleCredentials` と組み合わせます。
 
@@ -298,7 +298,7 @@ MySQL/PostgreSQL の `roleCredentials` は RBAC role 単位の credential 切り
 | 変数                              | 既定値               | 説明                                                                                                                                         |
 | --------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DATASOURCES_PATH`                | —                    | データソース定義 YAML のパス（必須）。未設定時は `./datasources.yaml` を探し、どちらにも無ければ起動時エラー                                 |
-| `RBAC_PATH`                       | —                    | RBAC 定義 YAML のパス。未設定時は `./rbac.yaml` を探し、無ければ `unrestricted` ロールで後方互換                                             |
+| `RBAC_PATH`                       | —                    | RBAC 定義 YAML のパス。未設定時は `./rbac.yaml` を探し、無ければ起動時エラー                                                                 |
 | `CONFIG_RELOAD_INTERVAL_SECONDS`  | `30`                 | `datasources.yaml` / `rbac.yaml` のホットリロードのポーリング間隔（秒）。`0` で SIGHUP のみ                                                  |
 | `PORT`                            | `8080`               | BFF が待ち受ける HTTP ポート                                                                                                                 |
 | `HTTP_MAX_BODY_BYTES`             | `2097152`            | API request body 全体の最大 byte 数。超過時は HTTP 413 で拒否                                                                                |
@@ -306,7 +306,7 @@ MySQL/PostgreSQL の `roleCredentials` は RBAC role 単位の credential 切り
 | `DATABASE_URL`                    | —                    | `postgres://` / `postgresql://` 形式の接続文字列（1st/production 推奨）。設定すると永続化バックエンドが PostgreSQL になり `DB_PATH` より優先 |
 | `DB_PATH`                         | `./data/hubble.db`   | SQLite データベースファイル（non-production 向け。`DATABASE_URL` 未設定時のみ使われる）                                                      |
 | `STATIC_DIR`                      | —                    | ビルド済み web アプリのディレクトリ（例 `packages/web/dist`）。配信 + SPA フォールバックを担う                                               |
-| `TRINO_USER`                      | `admin`              | 全 Trino データソース共通の `X-Trino-User`（impersonation ユーザー）。`AUTH_MODE=none` の principal 兼 owner backfill の初期値               |
+| `TRINO_USER`                      | `admin`              | 全 Trino データソース共通の `X-Trino-User`（impersonation ユーザー）。`AUTH_MODE=none` の principal に使われる                               |
 | `DEFAULT_CATALOG`                 | —                    | 新規 notebook の初期カタログ                                                                                                                 |
 | `DEFAULT_SCHEMA`                  | —                    | 新規 notebook の初期スキーマ                                                                                                                 |
 | `DEFAULT_LIMIT`                   | `5000`               | `LIMIT` のない `SELECT` に自動付与する `LIMIT`                                                                                               |

@@ -98,8 +98,8 @@ describeIt('real Trino integration', () => {
   });
 
   it('metadata: catalogs endpoint returns live data', async () => {
-    const { app } = await makeApp();
-    const res = await app.request('/api/catalogs');
+    const { app, services } = await makeApp();
+    const res = await app.request(`/api/datasources/${services.defaultDatasourceId}/catalogs`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: { name: string }[]; source: string };
     expect(body.items.map((c) => c.name)).toContain('tpch');

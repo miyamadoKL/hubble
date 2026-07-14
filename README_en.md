@@ -125,7 +125,8 @@ To run server/web individually against your own Node, prepare
 ```bash
 pnpm install
 
-# datasources.yaml is required (see "Datasource configuration" below). Minimal single-entry example:
+# datasources.yaml and rbac.yaml are required (see "Datasource configuration" and "RBAC").
+# This creates a minimal datasource and copies the tracked demo RBAC configuration.
 cat > datasources.yaml <<'EOF'
 datasources:
   - id: trino-default
@@ -134,6 +135,7 @@ datasources:
     username: admin
     baseUrl: http://localhost:30080
 EOF
+cp deploy/compose/rbac.yaml rbac.yaml
 
 # Terminal 1 — the BFF (Hono) on :8080 (falls back to SQLite if DATABASE_URL is unset)
 PORT=8080 DATABASE_URL=postgres://hubble:hubble@localhost:5432/hubble \
@@ -158,8 +160,8 @@ not included).
 #### Hot reload
 
 `datasources.yaml` and `rbac.yaml` can be reloaded without restarting the
-process. `rbac.yaml` is watched even if the file doesn't exist at startup —
-placing it later and letting it reload activates the roles.
+process. `rbac.yaml` is required at startup. If it is deleted after startup,
+the reload is rejected and the current configuration is kept.
 
 - **Polling**: every `CONFIG_RELOAD_INTERVAL_SECONDS` (default 30, `0` disables)
   seconds, checks the files' modification times and reloads on changes.
@@ -274,9 +276,7 @@ to the databases directly from the host, `127.0.0.1:3307` (MySQL) and
 
 Roles and permissions are declared in `rbac.yaml` (see `rbac.yaml.example`).
 `RBAC_PATH` sets the file path; if unset, `./rbac.yaml` in the current
-directory is used. If the file is absent, the built-in `unrestricted` role
-(`query.write` only) is assigned to everyone, so every user can write, as
-before. Whether `query.write` is granted determines whether write statements
+directory is used. If the file is absent, startup fails. Whether `query.write` is granted determines whether write statements
 are rejected, and each role can override the Query Guard limits. An assignment
 key is exactly one of `email` / `user` / `emailDomain` / `group`. `group` is
 matched against membership in the `X-Forwarded-Groups` header
@@ -287,12 +287,11 @@ Role resolution for scheduled runs uses the principal snapshot (`user`,
 `email`, `groups`) saved when the schedule is created or updated. If `email`
 or `groups` were resolved at save time, email-based assignments and `group`
 assignments also apply to scheduled runs. Legacy records without
-`principal_snapshot` keep the previous owner-string fallback
-(`{ user: owner, email: owner when it contains '@' }`), so an email-localpart
-owner still won't match email-based assignments, and `group` assignments don't
-apply. When the owner saves the schedule again, the snapshot is refreshed from
-the current principal.
-Configuration changes take effect after a process restart.
+`principal_snapshot` are not executed: they are marked blocked with
+`PRINCIPAL_SNAPSHOT_REQUIRED` instead of falling back to the owner string.
+Recreate the definition with a principal snapshot when needed. When the owner
+saves the schedule again, the snapshot is refreshed from the current principal.
+Configuration changes take effect through polling or SIGHUP hot reload.
 
 #### Operations view
 
@@ -301,15 +300,16 @@ the sidebar. It lists every user's running queries (including finished
 queries retained within the TTL), refreshing owner, datasource, statement
 head, state, and elapsed time every 5 seconds. Users with `query.killAny` can
 kill any user's query via a confirmation dialog; a kill logs a single
-server-log line (actor, target owner, queryId). Under an `unrestricted`
-deployment without `rbac.yaml`, these permissions are not granted and the UI
-behaves as before.
+server-log line (actor, target owner, queryId). These permissions and the
+visible datasource set are controlled by the explicit role definitions in
+`rbac.yaml`.
 
 #### Restricting datasource exposure (`role.datasources`)
 
-Each role in `rbac.yaml` can set an optional `datasources` field to allowlist
-which datasource ids are usable for queries, estimates, metadata, and
-schedules. When unset, all datasources remain allowed, as before.
+Every role in `rbac.yaml` must set a `datasources` field to allowlist which
+datasource ids are usable for queries, estimates, metadata, and schedules.
+`['*']` allows all datasources, `[]` allows none, and an id list allows only
+those datasources.
 `GET /api/datasources` is also filtered per role, so users can't select a
 datasource they can't see in the UI. To also enforce DB-side `GRANT`s for
 MySQL/PostgreSQL, combine this with datasource-level `roleCredentials`.
@@ -326,13 +326,13 @@ that requirement.
 | Variable                          | Default              | Description                                                                                                                                               |
 | --------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DATASOURCES_PATH`                | —                    | Path to the datasource definition YAML (effectively required). If unset, looks for `./datasources.yaml`; if neither exists, this is a startup error       |
-| `RBAC_PATH`                       | —                    | Path to the RBAC definition YAML. If unset, looks for `./rbac.yaml`; if absent, falls back to the `unrestricted` role for backward compatibility          |
+| `RBAC_PATH`                       | —                    | Path to the RBAC definition YAML. If unset, looks for `./rbac.yaml`; if absent, startup fails                                                             |
 | `CONFIG_RELOAD_INTERVAL_SECONDS`  | `30`                 | Polling interval (seconds) for hot-reloading `datasources.yaml` / `rbac.yaml`. `0` disables polling (SIGHUP only)                                         |
 | `PORT`                            | `8080`               | HTTP port the BFF listens on                                                                                                                              |
 | `DATABASE_URL`                    | —                    | `postgres://` / `postgresql://` connection string (1st/production-recommended). When set, persistence uses PostgreSQL and takes precedence over `DB_PATH` |
 | `DB_PATH`                         | `./data/hubble.db`   | SQLite database file (for non-production use; used only when `DATABASE_URL` is unset)                                                                     |
 | `STATIC_DIR`                      | —                    | Built web app dir (e.g. `packages/web/dist`); serves it + SPA fallback                                                                                    |
-| `TRINO_USER`                      | `admin`              | `X-Trino-User` shared by all Trino datasources (impersonation user). Also the initial value for the `AUTH_MODE=none` principal / owner backfill           |
+| `TRINO_USER`                      | `admin`              | `X-Trino-User` shared by all Trino datasources (impersonation user). Also the `AUTH_MODE=none` principal                                                  |
 | `DEFAULT_CATALOG`                 | —                    | Initial catalog for new notebooks                                                                                                                         |
 | `DEFAULT_SCHEMA`                  | —                    | Initial schema for new notebooks                                                                                                                          |
 | `DEFAULT_LIMIT`                   | `5000`               | Auto-`LIMIT` appended to `SELECT`s without one                                                                                                            |

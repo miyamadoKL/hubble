@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { Permission } from '@hubble/contracts';
 import { WRITE_NOT_ALLOWED } from '@hubble/contracts';
 import { classifyStatementWrite, assertQueryWriteAllowed } from './writeCheck';
-import { builtInUnrestrictedRole } from './resolve';
 
 const readOnlyRole = {
   name: 'readonly',
   permissions: new Set<Permission>(),
+  datasources: ['*'],
 };
 
 describe('classifyStatementWrite', () => {
@@ -75,11 +75,11 @@ describe('classifyStatementWrite', () => {
 });
 
 describe('assertQueryWriteAllowed', () => {
-  it('no-ops for unrestricted role', async () => {
+  it('allows writes for a role with query.write', async () => {
     await expect(
       assertQueryWriteAllowed({
         statement: 'INSERT INTO t VALUES (1)',
-        role: builtInUnrestrictedRole(),
+        role: { name: 'writer', permissions: new Set(['query.write']), datasources: ['*'] },
       }),
     ).resolves.toBeUndefined();
   });

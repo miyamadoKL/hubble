@@ -60,8 +60,10 @@ describe('auth — rbac', () => {
       `roles:
   admin:
     permissions: [query.write, query.killAny, queries.viewAll]
+    datasources: ['*']
   member:
     permissions: []
+    datasources: ['*']
 assignments:
   - group: admins@corp.com
     role: admin
@@ -103,8 +105,10 @@ defaultRole: member
       `roles:
   admin:
     permissions: [query.write, query.killAny, queries.viewAll]
+    datasources: ['*']
   member:
     permissions: []
+    datasources: ['*']
 assignments:
   - group: admins@corp.com
     role: admin
@@ -141,8 +145,10 @@ defaultRole: member
       `roles:
   admin:
     permissions: [query.write, query.killAny, queries.viewAll]
+    datasources: ['*']
   member:
     permissions: []
+    datasources: ['*']
 assignments:
   - email: alice@corp.com
     role: admin
@@ -457,7 +463,9 @@ describe('auth — Trino impersonation (X-Trino-User)', () => {
       },
     ];
     const ctx = await proxyCtx('127.0.0.1', scenarios);
-    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('alice@corp.com') });
+    await ctx.app.request(`/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`, {
+      headers: ssoHeaders('alice@corp.com'),
+    });
     const metaReq = ctx.fake.requests.find(
       (r) => r.headers['x-trino-source'] === 'hubble-metadata',
     );

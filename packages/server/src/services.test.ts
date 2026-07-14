@@ -1,9 +1,15 @@
 /**
  * Services の停止順序と所有資源の解放を検証する。
  */
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { openMemoryDatabase } from './db';
+import { loadServerConfig } from './config';
 import { NotificationService } from './notification/service';
 import { NoneResultStore } from './resultStore';
+import { buildServices } from './services';
 import { createTestContext } from './test/harness';
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -15,6 +21,22 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe('Services shutdown', () => {
+  it('RBAC ファイルがない場合はサービス起動に失敗する', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'hubble-missing-rbac-'));
+    const db = await openMemoryDatabase();
+    try {
+      await expect(
+        buildServices(loadServerConfig({}), db, {
+          cwd,
+          env: { RBAC_PATH: join(cwd, 'missing-rbac.yaml') },
+        }),
+      ).rejects.toThrow(/rbac file .* cannot be read/);
+    } finally {
+      await db.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('一件が同期例外で失敗しても全資源を閉じ、DBを最後に一度だけ閉じる', async () => {
     const calls: string[] = [];
     const resultStoreGate = deferred();

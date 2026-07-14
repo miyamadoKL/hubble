@@ -15,8 +15,7 @@ roles:
     # queries.viewAll: Operations ビューで全ユーザーの実行中クエリを閲覧
     # audit.view: 管理 API から監査ログを検索
     permissions: [query.write, ai.use, query.killAny, queries.viewAll, audit.view]
-    # datasources: ロールが利用できる datasource id の allowlist(任意)
-    # - 未指定: 全 datasource 許可(後方互換)
+    # datasources: ロールが利用できる datasource id の allowlist(必須)
     # - ['*']: 明示的に全許可
     # - [trino-prod, mysql-analytics]: 列挙 id のみ許可
     # - []: いずれの datasource も許可しない

@@ -17,6 +17,7 @@ describe('effectiveGuardLimits', () => {
     const effective = effectiveGuardLimits(baseGuard, {
       name: 'member',
       permissions: new Set(),
+      datasources: ['*'],
       guard: { maxScanBytes: 1000, onUnknown: 'block' },
     });
     expect(effective).toEqual({

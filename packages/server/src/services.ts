@@ -7,7 +7,6 @@
  * PostgreSQL リポジトリ、スケジューラーをすべて生成し、依存関係を配線したうえで
  * ひとつの `Services` オブジェクトとして返す。
  */
-import { existsSync } from 'node:fs';
 import type { SqlDatabase } from './db/sqlDatabase';
 import type { ServerConfig } from './config';
 import { MetadataService } from './metadata/service';
@@ -27,9 +26,8 @@ import { WorkflowRepository, WorkflowRunRepository } from './store/workflows';
 import { Scheduler } from './schedule/scheduler';
 import { AlertEvaluator } from './alert/evaluator';
 import { WorkflowRunner } from './workflow/runner';
-import { backfillOwners } from './db/backfill';
 import { loadDatasources } from './datasource/loader';
-import { loadRbac, resolveRbacPath } from './rbac/loader';
+import { loadRbac } from './rbac/loader';
 import type { LoadedRbac } from './rbac/types';
 import type { ResolvedDatasource } from './datasource/types';
 import {
@@ -166,9 +164,6 @@ export async function buildServices(
   const env = options.env ?? process.env;
   const cwd = options.cwd;
   const rbacState = { current: loadRbac({ env, cwd }) };
-  const rbacPath = resolveRbacPath(env, cwd ?? process.cwd());
-  const hasExplicitRbacPath = env.RBAC_PATH !== undefined && env.RBAC_PATH !== '';
-  let rbacFileRequired = hasExplicitRbacPath || existsSync(rbacPath);
   let datasourceDependencyFiles = new Set<string>();
   const datasources = loadDatasources({ env, cwd, dependencyFiles: datasourceDependencyFiles });
   const buildEngineOptions: BuildEnginesOptions = {
@@ -195,8 +190,6 @@ export async function buildServices(
     config.metadata.ttlSeconds * 1000,
     options.now,
   );
-  await backfillOwners(db, config.trino.user);
-
   const auditRepository = new AuditRepository(db);
   const audit = new AuditLogger(auditRepository, options.auditLogError);
   const aiProvider = options.aiProvider ?? createAiProvider(config.ai, options.fetchImpl);
@@ -459,14 +452,8 @@ export async function buildServices(
     if (rbacReloadInFlight) return;
     rbacReloadInFlight = true;
     try {
-      const defaultFileExists = existsSync(rbacPath);
-      const next = loadRbac({
-        env,
-        cwd,
-        allowMissingDefault: !rbacFileRequired && !defaultFileExists,
-      });
+      const next = loadRbac({ env, cwd });
       rbacState.current = next;
-      if (defaultFileExists || existsSync(rbacPath)) rbacFileRequired = true;
       await audit.record({
         actor: 'system',
         action: 'config.reload',
@@ -523,13 +510,7 @@ export async function buildServices(
     try {
       // 同じ watcher turn の二つ目の呼び出しが in-flight を観測できるよう一度譲る。
       await Promise.resolve();
-      const defaultFileExists = existsSync(rbacPath);
-      const rbacNext = loadRbac({
-        env,
-        cwd,
-        allowMissingDefault: !rbacFileRequired && !defaultFileExists,
-      });
-      const requireRbacFile = rbacFileRequired || defaultFileExists || existsSync(rbacPath);
+      const rbacNext = loadRbac({ env, cwd });
       const nextDependencyFiles = new Set<string>();
       const datasourceNext = loadDatasources({
         env,
@@ -542,7 +523,6 @@ export async function buildServices(
       // 疎通確認済みの候補だけを同一 turn で両設定へ公開する。
       applyDatasourcePlan(plan);
       rbacState.current = rbacNext;
-      rbacFileRequired = requireRbacFile;
       datasourceDependencyFiles = nextDependencyFiles;
       plan = undefined;
       await audit.record({

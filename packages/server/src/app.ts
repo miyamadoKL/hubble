@@ -22,7 +22,7 @@ import { buildServices, type BuildServicesOptions, type Services } from './servi
 import { AppError, toErrorResponse } from './errors';
 import { authMiddleware, type AuthVariables, type RemoteAddressFn } from './auth/middleware';
 import { datasourceRoutes } from './http/datasourceRoutes';
-import { datasourceMetadataRoutes, metadataRoutes } from './http/metadataRoutes';
+import { datasourceMetadataRoutes } from './http/metadataRoutes';
 import { queryRoutes } from './http/queryRoutes';
 import { historyRoutes, notebookRoutes, savedQueryRoutes } from './http/storeRoutes';
 import { scheduleRoutes } from './http/scheduleRoutes';
@@ -201,8 +201,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
 
   // Mount domain routers. Order matters: more specific prefixes first.
   // 日本語: ドメインごとのルーターをマウントする。Hono は前方一致でマッチするため、
-  // より具体的なプレフィックス（/api/queries 等）を先に、包括的な metadataRoutes
-  // （/api 直下に catalogs/metadata を生やす）を最後に登録する。
+  // 各ルーターを対象リソースの prefix に登録する。
   app.route('/api/admin', adminRoutes(services));
   app.route('/api/ai', aiRoutes(services));
   app.route('/api/queries', queryRoutes(services));
@@ -218,9 +217,6 @@ export function createApp(deps: AppDeps): Hono<{ Variables: AuthVariables }> {
     '/api/workflow-runs',
     workflowRunRoutes(services, { sheetsClientFactory: deps.sheetsClientFactory }),
   );
-  // Metadata router owns `/catalogs/...` and `/metadata/refresh` under `/api`.
-  app.route('/api', metadataRoutes(services));
-
   // 404 for unknown /api routes (rendered as the error envelope below). This is
   // registered before static serving so an unknown `/api/*` path always yields
   // the JSON error envelope, never the SPA fallback below.

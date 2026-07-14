@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   catalogsResponseSchema,
   schemasResponseSchema,
-  tablesResponseSchema,
-  tableDetailSchema,
   sampleRowsResponseSchema,
+  tableDetailSchema,
+  tablesResponseSchema,
 } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
@@ -81,50 +81,66 @@ const scenarios: FakeScenario[] = [
 ];
 
 describe('metadata endpoints', () => {
-  it('GET /api/catalogs returns a MetadataResponse<Catalog>', async () => {
+  it('does not expose unscoped metadata routes', async () => {
     const ctx = await createTestContext({ scenarios });
-    const res = await ctx.app.request('/api/catalogs');
-    expect(res.status).toBe(200);
-    const body = catalogsResponseSchema.parse(await res.json());
-    expect(body.items.map((c) => c.name)).toEqual(['tpch', 'mysql']);
-    expect(body.source).toBe('live');
-    expect(body.stale).toBe(false);
+    const legacyRequests = [
+      { path: '/api/catalogs', method: 'GET' },
+      { path: '/api/catalogs/tpch/schemas', method: 'GET' },
+      { path: '/api/catalogs/tpch/schemas/tiny/tables', method: 'GET' },
+      { path: '/api/catalogs/tpch/schemas/tiny/tables/nation', method: 'GET' },
+      { path: '/api/catalogs/tpch/schemas/tiny/tables/nation/sample', method: 'GET' },
+      { path: '/api/metadata/refresh', method: 'POST' },
+    ] as const;
+    for (const request of legacyRequests) {
+      const response = await ctx.app.request(request.path, {
+        method: request.method,
+        ...(request.method === 'POST'
+          ? {
+              headers: { 'content-type': 'application/json' },
+              body: '{}',
+            }
+          : {}),
+      });
+      expect(response.status).toBe(404);
+    }
   });
 
-  it('GET schemas/tables/table detail/sample', async () => {
+  it('serves cache on the second catalogs call', async () => {
     const ctx = await createTestContext({ scenarios });
+    const path = `/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`;
+    await ctx.app.request(path);
+    const second = catalogsResponseSchema.parse(await (await ctx.app.request(path)).json());
+    expect(second.source).toBe('cache');
+  });
+
+  it('serves schemas, tables, table detail, and samples on scoped routes', async () => {
+    const ctx = await createTestContext({ scenarios });
+    const base = `/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`;
 
     const schemas = schemasResponseSchema.parse(
-      await (await ctx.app.request('/api/catalogs/tpch/schemas')).json(),
+      await (await ctx.app.request(`${base}/tpch/schemas`)).json(),
     );
-    expect(schemas.items.map((s) => s.name)).toEqual(['tiny', 'sf1']);
+    expect(schemas.items.map((schema) => schema.name)).toEqual(['tiny', 'sf1']);
 
     const tables = tablesResponseSchema.parse(
-      await (await ctx.app.request('/api/catalogs/tpch/schemas/tiny/tables')).json(),
+      await (await ctx.app.request(`${base}/tpch/schemas/tiny/tables`)).json(),
     );
     expect(tables.items[0]).toEqual({ name: 'nation', type: 'BASE TABLE' });
 
-    const detailRes = await ctx.app.request('/api/catalogs/tpch/schemas/tiny/tables/nation');
-    const detail = tableDetailSchema.parse(await detailRes.json());
+    const detail = tableDetailSchema.parse(
+      await (await ctx.app.request(`${base}/tpch/schemas/tiny/tables/nation`)).json(),
+    );
     expect(detail.columns).toEqual([
       { name: 'nationkey', type: 'bigint' },
       { name: 'name', type: 'varchar(25)', comment: 'the name' },
     ]);
 
     const sample = sampleRowsResponseSchema.parse(
-      await (await ctx.app.request('/api/catalogs/tpch/schemas/tiny/tables/nation/sample')).json(),
+      await (await ctx.app.request(`${base}/tpch/schemas/tiny/tables/nation/sample`)).json(),
     );
     expect(sample.rows).toEqual([[0], [1]]);
     expect(sample.source).toBe('live');
-  });
-
-  it('serves cache on the second catalogs call', async () => {
-    const ctx = await createTestContext({ scenarios });
-    await ctx.app.request('/api/catalogs');
-    const second = catalogsResponseSchema.parse(
-      await (await ctx.app.request('/api/catalogs')).json(),
-    );
-    expect(second.source).toBe('cache');
+    await ctx.services.shutdown();
   });
 
   it('GET /api/datasources/:id/catalogs returns datasource-scoped metadata', async () => {
@@ -147,7 +163,7 @@ describe('metadata endpoints', () => {
 
   it('POST /api/datasources/:id/metadata/refresh re-fetches the selected datasource', async () => {
     const ctx = await createTestContext({ scenarios });
-    await ctx.app.request('/api/catalogs');
+    await ctx.app.request(`/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`);
     const before = ctx.fake.requests.filter((r) => r.method === 'POST').length;
     const datasourceId = ctx.services.defaultDatasourceId;
     const res = await ctx.app.request(`/api/datasources/${datasourceId}/metadata/refresh`, {
@@ -171,7 +187,9 @@ describe('metadata principal impersonation', () => {
       remoteAddress: () => '127.0.0.1',
       scenarios,
     });
-    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('alice@corp.com') });
+    await ctx.app.request(`/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`, {
+      headers: ssoHeaders('alice@corp.com'),
+    });
     const metaReq = ctx.fake.requests.find(
       (r) => r.headers['x-trino-source'] === 'hubble-metadata',
     );
@@ -184,14 +202,15 @@ describe('metadata principal impersonation', () => {
       remoteAddress: () => '127.0.0.1',
       scenarios,
     });
-    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('alice@corp.com') });
+    const path = `/api/datasources/${ctx.services.defaultDatasourceId}/catalogs`;
+    await ctx.app.request(path, { headers: ssoHeaders('alice@corp.com') });
     const alicePosts = ctx.fake.requests.filter((r) => r.method === 'POST').length;
 
-    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('bob@corp.com') });
+    await ctx.app.request(path, { headers: ssoHeaders('bob@corp.com') });
     const bobPosts = ctx.fake.requests.filter((r) => r.method === 'POST').length;
     expect(bobPosts).toBeGreaterThan(alicePosts);
 
-    await ctx.app.request('/api/catalogs', { headers: ssoHeaders('alice@corp.com') });
+    await ctx.app.request(path, { headers: ssoHeaders('alice@corp.com') });
     const aliceAgainPosts = ctx.fake.requests.filter((r) => r.method === 'POST').length;
     expect(aliceAgainPosts).toBe(bobPosts);
   });

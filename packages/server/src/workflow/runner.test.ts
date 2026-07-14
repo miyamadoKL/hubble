@@ -31,6 +31,14 @@ const VALIDATE_OK: FakeScenario = {
   pages: [{ columns: [{ name: 'result', type: 'boolean' }], data: [[true]] }],
 };
 
+const TEST_RBAC: LoadedRbac = {
+  roles: new Map([
+    ['unrestricted', { permissions: new Set(['query.write', 'ai.use']), datasources: ['*'] }],
+  ]),
+  assignments: [],
+  defaultRole: 'unrestricted',
+};
+
 function ioPlan(rows: number): string {
   return JSON.stringify({
     inputTableColumnInfos: [
@@ -178,7 +186,7 @@ async function makeHarness(
     engines,
     defaultDatasourceId,
     estimate,
-    getRbac: getRbac ?? (() => loadRbac({})),
+    getRbac: getRbac ?? (() => TEST_RBAC),
     guardConfig: {
       mode: configOverrides.guardMode ?? 'warn',
       maxScanBytes: 0,

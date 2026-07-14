@@ -58,9 +58,10 @@ spec:
             limits:
               memory: 1Gi
           volumeMounts:
-            - name: datasources
-              mountPath: /etc/hubble/datasources.yaml
-              subPath: datasources.yaml
+            # ConfigMap の更新を kubelet の投影更新で反映するため、subPath を使わず
+            # datasources.yaml と rbac.yaml を同じディレクトリへマウントする。
+            - name: config
+              mountPath: /etc/hubble
               readOnly: true
             # Non-production 向け: SQLite (DB_PATH + PVC、pvc.yaml) を使う場合は
             # 下記を有効化する。
@@ -71,12 +72,14 @@ spec:
             #   mountPath: /etc/hubble/secrets
             #   readOnly: true
       volumes:
-        - name: datasources
+        - name: config
           configMap:
             name: hubble-config
             items:
               - key: datasources.yaml
                 path: datasources.yaml
+              - key: rbac.yaml
+                path: rbac.yaml
         # Non-production 向け: SQLite (DB_PATH) を使う場合は下記の PVC ボリューム
         # (pvc.yaml) を有効化する。
         # - name: data

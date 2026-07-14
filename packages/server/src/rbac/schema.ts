@@ -53,8 +53,7 @@ const roleDatasourcesSchema = z
       }
       seen.add(entry);
     }
-  })
-  .optional();
+  });
 
 const roleDefinitionSchema = z
   .object({

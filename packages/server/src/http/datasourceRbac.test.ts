@@ -214,16 +214,6 @@ describe('role.datasources enforcement', () => {
       configOverrides: { defaults: { catalog: 'tpch', schema: 'tiny', limit: 1000 } },
     });
 
-    const legacyAllowed = await ctx.app.request('/api/catalogs', {
-      headers: proxyHeaders('trino-user'),
-    });
-    expect(legacyAllowed.status).toBe(200);
-
-    const legacyDenied = await ctx.app.request('/api/catalogs', {
-      headers: proxyHeaders('blocked-user'),
-    });
-    expect(legacyDenied.status).toBe(404);
-
     const scoped = await ctx.app.request('/api/datasources/mysql-analytics/catalogs', {
       headers: proxyHeaders('trino-user'),
     });
