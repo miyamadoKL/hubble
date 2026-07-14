@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { QueryColumn, ResultSearchRequest } from '@hubble/contracts';
 import { profileRowsStream, searchRowsStream } from './exploration';
+import type { ResultStoreMetric } from '../resultStore/observability';
 
 const COLUMNS: QueryColumn[] = [
   { name: 'id', type: 'bigint' },
@@ -46,6 +47,76 @@ describe('searchRowsStream', () => {
     expect(totalMatched).toBe(5);
     expect(totalRows).toBe(5);
     expect(rows).toHaveLength(5);
+  });
+
+  it('records persisted search rows, offset, and duration', async () => {
+    const events: ResultStoreMetric[] = [];
+    let now = 0;
+    const result = await searchRowsStream(COLUMNS, ROWS, req({ offset: 2, limit: 2 }), {
+      observer: (event) => events.push(event),
+      clock: () => ++now,
+    });
+
+    expect(result.rows).toHaveLength(2);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'read',
+        operation: 'search',
+        scannedRows: ROWS.length,
+        offset: 2,
+        outcome: 'success',
+      }),
+    );
+    const event = events.find((entry) => entry.kind === 'read');
+    if (!event || event.kind !== 'read') throw new Error('search event was not recorded');
+    expect(event.durationMs).toBeGreaterThan(0);
+  });
+
+  it('records abort after a persisted search source stops yielding', async () => {
+    const controller = new AbortController();
+    const events: ResultStoreMetric[] = [];
+    async function* rows(): AsyncGenerator<unknown[]> {
+      yield ROWS[0]!;
+      controller.abort();
+      yield ROWS[1]!;
+    }
+
+    await expect(
+      searchRowsStream(COLUMNS, rows(), req(), {
+        signal: controller.signal,
+        observer: (event) => events.push(event),
+        clock: () => 1,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'read',
+        operation: 'search',
+        outcome: 'abort',
+        scannedRows: 1,
+      }),
+    );
+  });
+
+  it('does not let an observer failure break profile processing', async () => {
+    const events: ResultStoreMetric[] = [];
+    const result = await profileRowsStream(COLUMNS, ROWS, {
+      observer: (event) => {
+        events.push(event);
+        throw new Error('observer failed');
+      },
+      clock: () => 1,
+    });
+
+    expect(result.rowCount).toBe(ROWS.length);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'read',
+        operation: 'profile',
+        scannedRows: ROWS.length,
+        outcome: 'success',
+      }),
+    );
   });
 
   it('filters with search across all columns (case insensitive)', async () => {

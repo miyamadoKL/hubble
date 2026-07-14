@@ -22,7 +22,8 @@ export function DocumentShareBadge({
   myPermission?: MyPermission;
   className?: string;
 }) {
-  if (!isSharedWithMe(myPermission) || !owner) return null;
+  // permission が欠落した保存済み応答は共有表示を推測せず、そのまま隠す。
+  if (myPermission === undefined || !isSharedWithMe(myPermission) || !owner) return null;
   const permission = myPermission === 'edit' ? 'edit' : 'view';
   return (
     <span

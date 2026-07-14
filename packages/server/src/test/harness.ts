@@ -11,6 +11,7 @@ import type { AuthVariables, RemoteAddressFn } from '../auth/middleware';
 import type { FakeScenario } from './fakeTrino';
 import { FakeTrino } from './fakeTrino';
 import type { ResultStore } from '../resultStore';
+import type { ResultStoreClock, ResultStoreObserver } from '../resultStore';
 import type { AiProvider } from '../ai/provider';
 
 /**
@@ -78,6 +79,34 @@ function ensureTestRbacFile(
   );
 }
 
+/** 通常の API テストへ、ブラウザーと同じ同一 origin ヘッダーを補う。 */
+function installSameOriginRequestDefaults(
+  app: Hono<{ Variables: AuthVariables }>,
+  enabled: boolean,
+): void {
+  if (!enabled) return;
+  const request = app.request.bind(app);
+  app.request = ((input: Request | string | URL, init?: RequestInit) => {
+    const method = (
+      init?.method ?? (input instanceof Request ? input.method : 'GET')
+    ).toUpperCase();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return request(input, init);
+
+    const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+    const path = new URL(url, 'http://hubble.example').pathname;
+    if (!path.startsWith('/api/')) return request(input, init);
+
+    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+    if (!headers.has('Origin') && !headers.has('Sec-Fetch-Site')) {
+      headers.set('Origin', 'http://localhost');
+      headers.set('Sec-Fetch-Site', 'same-origin');
+      return request(input, { ...init, headers });
+    }
+    return request(input, init);
+  }) as typeof app.request;
+}
+
 /**
  * server パッケージの結合テストで共通利用する「テストコンテキスト構築」を
  * 提供するファイル。インメモリ SQLite + `FakeTrino` (fakeTrino.ts) を使い、
@@ -134,6 +163,8 @@ export async function createTestContext(
     reloadLogError?: (message: string, err: unknown) => void;
     reloadLogWarn?: (message: string) => void;
     resultStore?: ResultStore;
+    resultStoreObserver?: ResultStoreObserver;
+    resultStoreClock?: ResultStoreClock;
     resultStoreLogWarn?: (message: string, err?: unknown) => void;
     sheetsClientFactory?: import('../query/exportSheets').SheetsClientFactory;
     /** Override fetch for non-Trino HTTP (e.g. GitHub API). When set, used instead of fake.fetch. */
@@ -142,6 +173,8 @@ export async function createTestContext(
     githubClient?: import('../github/client').GithubClient;
     /** テスト注入用の AI provider。 */
     aiProvider?: AiProvider;
+    /** unsafe API の既定ヘッダーを無効化する直接 CSRF テスト向け設定。 */
+    defaultSameOriginHeaders?: boolean;
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
@@ -202,6 +235,8 @@ export async function createTestContext(
     reloadLogError: options.reloadLogError,
     reloadLogWarn: options.reloadLogWarn,
     resultStore: options.resultStore,
+    resultStoreObserver: options.resultStoreObserver,
+    resultStoreClock: options.resultStoreClock,
     resultStoreLogWarn: options.resultStoreLogWarn,
     resultCleanupSetTimer: () => ({ clear: () => {} }),
     aiProvider: options.aiProvider,
@@ -216,6 +251,7 @@ export async function createTestContext(
     remoteAddress: options.remoteAddress,
     sheetsClientFactory: options.sheetsClientFactory,
   });
+  installSameOriginRequestDefaults(app, options.defaultSameOriginHeaders ?? true);
   return { app, services, fake, db };
 }
 

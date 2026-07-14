@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  notebookSchema,
+  notebookResponseSchema,
   notebookListItemSchema,
-  savedQuerySchema,
+  savedQueryResponseSchema,
   historyResponseSchema,
   listDocumentSharesResponseSchema,
 } from '@hubble/contracts';
@@ -40,7 +40,7 @@ describe('notebook CRUD', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'Analysis', description: 'sales' }),
       }),
-      notebookSchema,
+      notebookResponseSchema,
     );
     expect(created.id).toMatch(/^nb_/);
     expect(created.cells).toEqual([]);
@@ -52,7 +52,10 @@ describe('notebook CRUD', () => {
     );
     expect(list).toHaveLength(1);
 
-    const got = await json(await ctx.app.request(`/api/notebooks/${created.id}`), notebookSchema);
+    const got = await json(
+      await ctx.app.request(`/api/notebooks/${created.id}`),
+      notebookResponseSchema,
+    );
     expect(got.name).toBe('Analysis');
 
     const updated = await json(
@@ -68,7 +71,7 @@ describe('notebook CRUD', () => {
           context: { catalog: 'tpch' },
         }),
       }),
-      notebookSchema,
+      notebookResponseSchema,
     );
     expect(updated.name).toBe('Renamed');
     expect(updated.cells).toHaveLength(1);
@@ -92,7 +95,7 @@ describe('notebook CRUD', () => {
       error: { code: 'NOTEBOOK_REVISION_CONFLICT' },
     });
     expect(
-      await json(await ctx.app.request(`/api/notebooks/${created.id}`), notebookSchema),
+      await json(await ctx.app.request(`/api/notebooks/${created.id}`), notebookResponseSchema),
     ).toMatchObject({ name: 'Renamed', revision: 2 });
 
     const search = await json(
@@ -152,15 +155,18 @@ describe('saved-query CRUD', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'favorite', statement: 'SELECT 2', isFavorite: true }),
       }),
-      savedQuerySchema,
+      savedQueryResponseSchema,
     );
 
-    const list = await json(await ctx.app.request('/api/saved-queries'), arrayOf(savedQuerySchema));
+    const list = await json(
+      await ctx.app.request('/api/saved-queries'),
+      arrayOf(savedQueryResponseSchema),
+    );
     expect(list[0]!.id).toBe(fav.id); // favorite first
 
     const search = await json(
       await ctx.app.request('/api/saved-queries?query=SELECT%202'),
-      arrayOf(savedQuerySchema),
+      arrayOf(savedQueryResponseSchema),
     );
     expect(search).toHaveLength(1);
 
@@ -175,7 +181,7 @@ describe('saved-query CRUD', () => {
           isFavorite: false,
         }),
       }),
-      savedQuerySchema,
+      savedQueryResponseSchema,
     );
     expect(updated.statement).toBe('SELECT 3');
     expect(updated.isFavorite).toBe(false);
@@ -273,7 +279,7 @@ describe('document sharing', () => {
         headers: { 'content-type': 'application/json', ...alice },
         body: JSON.stringify({ name: 'shared', statement: 'SELECT 1' }),
       }),
-      savedQuerySchema,
+      savedQueryResponseSchema,
     );
 
     const bobGetShares = await ctx.app.request(`/api/saved-queries/${created.id}/shares`, {
@@ -337,7 +343,7 @@ describe('document sharing', () => {
         headers: { 'content-type': 'application/json', ...alice },
         body: JSON.stringify({ name: 'mine', statement: 'SELECT 1', isFavorite: true }),
       }),
-      savedQuerySchema,
+      savedQueryResponseSchema,
     );
 
     await json(
@@ -353,14 +359,14 @@ describe('document sharing', () => {
 
     const bobList = await json(
       await ctx.app.request('/api/saved-queries', { headers: bob }),
-      arrayOf(savedQuerySchema),
+      arrayOf(savedQueryResponseSchema),
     );
     expect(bobList).toHaveLength(1);
     expect(bobList[0]).toMatchObject({ owner: 'alice', myPermission: 'view' });
 
     const bobGet = await json(
       await ctx.app.request(`/api/saved-queries/${created.id}`, { headers: bob }),
-      savedQuerySchema,
+      savedQueryResponseSchema,
     );
     expect(bobGet.myPermission).toBe('view');
 
@@ -398,7 +404,7 @@ describe('document sharing', () => {
           isFavorite: false,
         }),
       }),
-      savedQuerySchema,
+      savedQueryResponseSchema,
     );
     expect(bobUpdated.statement).toBe('SELECT 9');
     expect(bobUpdated.isFavorite).toBe(true);
@@ -421,7 +427,7 @@ describe('document sharing', () => {
         headers: { 'content-type': 'application/json', ...alice },
         body: JSON.stringify({ name: 'Team nb' }),
       }),
-      notebookSchema,
+      notebookResponseSchema,
     );
 
     await json(

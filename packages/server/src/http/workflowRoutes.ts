@@ -367,11 +367,12 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
     const offset = Math.max(intParam(c.req.query('offset'), 0), 0);
     const limit = Math.min(Math.max(intParam(c.req.query('limit'), 100), 1), 1000);
     const persisted = await readPersistedRowsPage(
-      await services.resultStore.getStream(stepRun.resultObjectKey),
+      await services.resultStore.getStream(stepRun.resultObjectKey, c.req.raw.signal),
       offset,
       limit,
       {
         ...(stepRun.rowCount !== null ? { totalRows: stepRun.rowCount } : {}),
+        signal: c.req.raw.signal,
       },
     );
     return c.json(
@@ -412,7 +413,8 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
     return stream(c, async (rawStream) => {
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
-      await pipeWorkflowZip(rawStream, services, resolved.zipEntries, ac.signal);
+      const signal = AbortSignal.any([c.req.raw.signal, ac.signal]);
+      await pipeWorkflowZip(rawStream, services, resolved.zipEntries, signal);
     });
   });
 
@@ -445,21 +447,24 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
     return stream(c, async (rawStream) => {
       const ac = new AbortController();
       rawStream.onAbort(() => ac.abort());
+      const signal = AbortSignal.any([c.req.raw.signal, ac.signal]);
       const xlsx = new PassThrough();
       const sheets = resolved.sheets.map(({ step, name }) => ({
         name,
         // 各 worksheet の消費開始時まで ResultStore stream を開かない。
-        events: async (signal?: AbortSignal) =>
-          streamPersistedResultEvents(
-            await services.resultStore.getStream(step.resultObjectKey),
-            signal,
-          ),
+        events: async (sheetSignal?: AbortSignal) => {
+          const effectiveSignal = sheetSignal ?? signal;
+          return streamPersistedResultEvents(
+            await services.resultStore.getStream(step.resultObjectKey, effectiveSignal),
+            effectiveSignal,
+          );
+        },
       }));
-      const writer = writeXlsxWorkbook(sheets, xlsx, { signal: ac.signal }).catch((err) => {
+      const writer = writeXlsxWorkbook(sheets, xlsx, { signal }).catch((err) => {
         xlsx.destroy(err instanceof Error ? err : new Error(String(err)));
         throw err;
       });
-      await Promise.all([pipeNodeReadable(rawStream, xlsx, ac.signal), writer]);
+      await Promise.all([pipeNodeReadable(rawStream, xlsx, signal), writer]);
     });
   });
 
@@ -475,13 +480,19 @@ export function workflowRunRoutes(services: Services, options: WorkflowRunRoutes
     const sheets = resolved.sheets.map(({ step, name }) => ({
       name,
       // Sheets API が対象 sheet を処理する直前にだけ ResultStore stream を開く。
-      events: async () =>
-        streamPersistedResultEvents(await services.resultStore.getStream(step.resultObjectKey)),
+      events: async (signal?: AbortSignal) => {
+        const effectiveSignal = signal ?? c.req.raw.signal;
+        return streamPersistedResultEvents(
+          await services.resultStore.getStream(step.resultObjectKey, effectiveSignal),
+          effectiveSignal,
+        );
+      },
     }));
     const response = await exporter.exportMultiSheet({
       title,
       email: principal.email,
       sheets,
+      signal: c.req.raw.signal,
     });
 
     await services.audit.record({
@@ -525,7 +536,8 @@ async function pipeWorkflowZip(
 
   for (const entry of entries) {
     const csv = streamPersistedCsv(
-      await services.resultStore.getStream(entry.step.resultObjectKey),
+      await services.resultStore.getStream(entry.step.resultObjectKey, signal),
+      { signal },
     );
     const source = Readable.from(csvBytes(csv, signal));
     sources.push(source);

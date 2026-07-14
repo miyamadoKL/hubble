@@ -12,15 +12,15 @@
 
 import { z } from 'zod';
 import {
-  notebookSchema,
+  notebookResponseSchema,
   notebookListItemSchema,
   apiRoutes,
   listDocumentSharesResponseSchema,
   type CreateNotebookRequest,
   type DocumentShare,
   type ListDocumentSharesResponse,
-  type Notebook,
   type NotebookListItem,
+  type NotebookResponse,
   type UpdateNotebookRequest,
   type UpdateSharesRequest,
 } from '@hubble/contracts';
@@ -55,8 +55,8 @@ export function listNotebooks(query?: string): Promise<NotebookListItem[]> {
  * @throws {ApiClientError} リクエスト失敗時（存在しない ID を含む）、
  *                           またはレスポンスがスキーマに一致しない場合。
  */
-export function getNotebook(id: string): Promise<Notebook> {
-  return apiFetch(notebookSchema, apiRoutes.notebook(id));
+export function getNotebook(id: string): Promise<NotebookResponse> {
+  return apiFetch(notebookResponseSchema, apiRoutes.notebook(id));
 }
 
 /**
@@ -68,8 +68,8 @@ export function getNotebook(id: string): Promise<Notebook> {
  * @throws {ApiClientError} バリデーションエラーとリクエスト失敗時、
  *                           またはレスポンスがスキーマに一致しない場合。
  */
-export function createNotebook(body: CreateNotebookRequest): Promise<Notebook> {
-  return apiFetch(notebookSchema, apiRoutes.notebooks(), { method: 'POST', body });
+export function createNotebook(body: CreateNotebookRequest): Promise<NotebookResponse> {
+  return apiFetch(notebookResponseSchema, apiRoutes.notebooks(), { method: 'POST', body });
 }
 
 /**
@@ -82,8 +82,8 @@ export function createNotebook(body: CreateNotebookRequest): Promise<Notebook> {
  * @throws {ApiClientError} バリデーションエラー、存在しない ID、リクエスト失敗時、
  *                           またはレスポンスがスキーマに一致しない場合。
  */
-export function updateNotebook(id: string, body: UpdateNotebookRequest): Promise<Notebook> {
-  return apiFetch(notebookSchema, apiRoutes.notebook(id), { method: 'PUT', body });
+export function updateNotebook(id: string, body: UpdateNotebookRequest): Promise<NotebookResponse> {
+  return apiFetch(notebookResponseSchema, apiRoutes.notebook(id), { method: 'PUT', body });
 }
 
 /**

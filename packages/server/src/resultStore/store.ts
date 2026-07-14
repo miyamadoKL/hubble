@@ -21,7 +21,7 @@ export interface ResultStore {
   /** zstd 圧縮 JSONL artifact を key に保存する。 */
   put(key: string, body: Readable): Promise<void>;
   /** 指定 key の圧縮 JSONL 読み取りストリームを返す。 */
-  getStream(key: string): Promise<Readable>;
+  getStream(key: string, signal?: AbortSignal): Promise<Readable>;
   /** 指定 key のオブジェクトを削除する。 */
   delete(key: string): Promise<void>;
   /** 期限切れ候補を削除し、削除できた key と失敗した key を返す。 */

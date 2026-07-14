@@ -46,6 +46,14 @@ export const savedQuerySchema = z.object({
 /** 保存済みクエリの推論型。 */
 export type SavedQuery = z.infer<typeof savedQuerySchema>;
 
+/** サーバーが返す保存済みクエリ。所有者と effective permission を必須にする。 */
+export const savedQueryResponseSchema = savedQuerySchema.extend({
+  owner: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  myPermission: myPermissionSchema,
+});
+/** サーバーから返される保存済みクエリの推論型。 */
+export type SavedQueryResponse = z.infer<typeof savedQueryResponseSchema>;
+
 /**
  * Request body for `POST /api/saved-queries`.
  * `POST /api/saved-queries`（新規保存）のリクエストボディ。

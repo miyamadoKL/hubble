@@ -30,6 +30,7 @@ function makeNotebook(over: Partial<Notebook> = {}): Notebook {
     context: { catalog: 'tpch', schema: 'sf1' },
     createdAt: now,
     updatedAt: now,
+    myPermission: 'owner',
     ...over,
     revision: over.revision ?? 1,
   };
@@ -978,7 +979,7 @@ describe('workspace persistence', () => {
     expect(localStorage.getItem('hubble-draft:new-0')).not.toBeNull();
   });
 
-  test('revisionがない旧draftをrevision 0として復元する', () => {
+  test('revisionがないdraftを破損として復元対象から外す', () => {
     const legacy = { ...makeNotebook({ id: 'legacy' }) } as Partial<Notebook>;
     delete legacy.revision;
     localStorage.setItem(
@@ -992,10 +993,7 @@ describe('workspace persistence', () => {
     );
     localStorage.setItem('hubble-draft:legacy', JSON.stringify(legacy));
 
-    expect(readDraftRestoreResult()).toMatchObject({
-      drafts: [expect.objectContaining({ id: 'legacy', revision: 0 })],
-      corruptIds: [],
-    });
+    expect(readDraftRestoreResult()).toMatchObject({ drafts: [], corruptIds: ['legacy'] });
   });
 });
 

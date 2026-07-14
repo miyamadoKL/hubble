@@ -32,6 +32,7 @@ import {
 import type { AuditJson, AuditLogger } from '../audit';
 import type { ResultStore } from '../resultStore';
 import { ResultJsonlCapture } from '../resultStore/jsonl';
+import type { ResultStoreClock, ResultStoreObserver } from '../resultStore/observability';
 import {
   cleanupUnlinkedResultObject,
   type ResultObjectDeletionQueue,
@@ -74,6 +75,8 @@ export interface WorkflowRunnerDeps {
   admission: JobAdmissionController;
   config: WorkflowRunnerConfig;
   now?: () => number;
+  resultStoreObserver?: ResultStoreObserver;
+  resultStoreClock?: ResultStoreClock;
   sleep?: (ms: number) => Promise<void>;
   setTimer?: (fn: () => void, ms: number) => { clear: () => void };
 }
@@ -772,6 +775,10 @@ export class WorkflowRunner {
     return new ResultJsonlCapture(
       this.deps.resultStore,
       `${prefix}workflow/${runId}/${stepRunId}.jsonl.zst`,
+      {
+        observer: this.deps.resultStoreObserver,
+        clock: this.deps.resultStoreClock,
+      },
     );
   }
 

@@ -87,12 +87,14 @@ export function fetchQueryRows(
 export function searchQueryRows(
   queryId: string,
   request: ResultSearchRequestInput,
+  signal?: AbortSignal,
 ): Promise<ResultSearchPage> {
   // 送信前に zod で検証し、default（offset/limit）も適用する。
   const body = resultSearchRequestSchema.parse(request);
   return apiFetch(resultSearchPageSchema, apiRoutes.queryRowsSearch(queryId), {
     method: 'POST',
     body,
+    signal,
   });
 }
 
@@ -103,8 +105,8 @@ export function searchQueryRows(
  * @param queryId - 対象クエリ id。
  * @returns 列ごとのプロファイル。
  */
-export function fetchQueryProfile(queryId: string): Promise<ResultProfile> {
-  return apiFetch(resultProfileSchema, apiRoutes.queryProfile(queryId));
+export function fetchQueryProfile(queryId: string, signal?: AbortSignal): Promise<ResultProfile> {
+  return apiFetch(resultProfileSchema, apiRoutes.queryProfile(queryId), { signal });
 }
 
 /**

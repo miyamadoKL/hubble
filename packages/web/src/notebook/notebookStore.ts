@@ -42,7 +42,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { z } from 'zod';
 import {
-  notebookSchema,
+  notebookStoredSchema,
   type Cell,
   type CellKind,
   type CellResultMeta,
@@ -432,7 +432,7 @@ const notebookJournalSchema = z
     id: z.string(),
     baseRevision: z.number().int().nonnegative(),
     editGeneration: z.number().int().nonnegative(),
-    notebook: notebookSchema,
+    notebook: notebookStoredSchema,
   })
   .refine(
     (journal) =>
@@ -535,11 +535,7 @@ function readDraft(id: string): DraftReadResult {
   if (!raw) return { kind: 'missing' };
   try {
     const value: unknown = JSON.parse(raw);
-    const migrated =
-      typeof value === 'object' && value !== null && !('revision' in value)
-        ? { ...value, revision: 0 }
-        : value;
-    const parsed = notebookSchema.safeParse(migrated);
+    const parsed = notebookStoredSchema.safeParse(value);
     if (parsed.success && parsed.data.id === id) return { kind: 'valid', draft: parsed.data };
   } catch {
     // JSONとして壊れている場合も破損状態として扱う。

@@ -17,9 +17,25 @@ import {
   type ResultFilterOp,
   type ResultSearchRequest,
 } from '@hubble/contracts';
+import { createSqlAbortError } from '../engine/sql/abort';
+import {
+  defaultResultStoreClock,
+  elapsedResultStoreMs,
+  resultStoreErrorOutcome,
+  safeNotifyResultStoreObserver,
+  type ResultStoreClock,
+  type ResultStoreObserver,
+} from '../resultStore/observability';
 
 /** searchRowsStream が受け付ける行ソース。同期配列と非同期ストリームの両対応。 */
 export type RowSource = Iterable<unknown[]> | AsyncIterable<unknown[]>;
+
+/** 探索処理へ渡す任意の中断と計測依存。 */
+export interface ResultExplorationOptions {
+  signal?: AbortSignal;
+  observer?: ResultStoreObserver;
+  clock?: ResultStoreClock;
+}
 
 /**
  * search の offset + limit の上限。
@@ -234,6 +250,41 @@ export async function searchRowsStream(
   columns: QueryColumn[],
   rows: RowSource,
   request: ResultSearchRequest,
+  options: ResultExplorationOptions = {},
+): Promise<{ rows: unknown[][]; totalMatched: number; totalRows: number }> {
+  if (!options.observer) {
+    return searchRowsStreamImpl(columns, rows, request, options.signal);
+  }
+
+  const clock = options.clock ?? defaultResultStoreClock;
+  const startedAt = clock();
+  let scannedRows = 0;
+  let outcome: 'success' | 'failure' | 'abort' = 'success';
+  try {
+    return await searchRowsStreamImpl(columns, rows, request, options.signal, () => {
+      scannedRows += 1;
+    });
+  } catch (error) {
+    outcome = resultStoreErrorOutcome(error, options.signal);
+    throw error;
+  } finally {
+    safeNotifyResultStoreObserver(options.observer, {
+      kind: 'read',
+      operation: 'search',
+      scannedRows,
+      durationMs: elapsedResultStoreMs(clock, startedAt),
+      outcome,
+      offset: request.offset,
+    });
+  }
+}
+
+async function searchRowsStreamImpl(
+  columns: QueryColumn[],
+  rows: RowSource,
+  request: ResultSearchRequest,
+  signal?: AbortSignal,
+  onScannedRow?: () => void,
 ): Promise<{ rows: unknown[][]; totalMatched: number; totalRows: number }> {
   const filters = request.filters ?? [];
   const needle = (request.search ?? '').trim().toLowerCase();
@@ -258,6 +309,8 @@ export async function searchRowsStream(
   };
 
   for await (const row of rows) {
+    if (signal?.aborted) throw createSqlAbortError();
+    onScannedRow?.();
     totalRows += 1;
     if (!rowMatchesFilters(row, columns, filters)) continue;
     if (needle && !rowMatchesSearch(row, needle)) continue;
@@ -279,6 +332,7 @@ export async function searchRowsStream(
     }
   }
 
+  if (signal?.aborted) throw createSqlAbortError();
   if (!sort) {
     return { rows: pageRows, totalMatched, totalRows };
   }
@@ -328,6 +382,39 @@ interface ColumnProfileState {
 export async function profileRowsStream(
   columns: QueryColumn[],
   rows: RowSource,
+  options: ResultExplorationOptions = {},
+): Promise<{ profiles: ResultColumnProfile[]; rowCount: number }> {
+  if (!options.observer) {
+    return profileRowsStreamImpl(columns, rows, options.signal);
+  }
+
+  const clock = options.clock ?? defaultResultStoreClock;
+  const startedAt = clock();
+  let scannedRows = 0;
+  let outcome: 'success' | 'failure' | 'abort' = 'success';
+  try {
+    return await profileRowsStreamImpl(columns, rows, options.signal, () => {
+      scannedRows += 1;
+    });
+  } catch (error) {
+    outcome = resultStoreErrorOutcome(error, options.signal);
+    throw error;
+  } finally {
+    safeNotifyResultStoreObserver(options.observer, {
+      kind: 'read',
+      operation: 'profile',
+      scannedRows,
+      durationMs: elapsedResultStoreMs(clock, startedAt),
+      outcome,
+    });
+  }
+}
+
+async function profileRowsStreamImpl(
+  columns: QueryColumn[],
+  rows: RowSource,
+  signal?: AbortSignal,
+  onScannedRow?: () => void,
 ): Promise<{ profiles: ResultColumnProfile[]; rowCount: number }> {
   const states: ColumnProfileState[] = columns.map(() => ({
     nullCount: 0,
@@ -342,6 +429,8 @@ export async function profileRowsStream(
 
   let rowCount = 0;
   for await (const row of rows) {
+    if (signal?.aborted) throw createSqlAbortError();
+    onScannedRow?.();
     rowCount += 1;
     for (let colIndex = 0; colIndex < columns.length; colIndex++) {
       const state = states[colIndex]!;
@@ -377,6 +466,7 @@ export async function profileRowsStream(
     }
   }
 
+  if (signal?.aborted) throw createSqlAbortError();
   const profiles = columns.map((col, colIndex) => {
     const state = states[colIndex]!;
     const topValues = [...state.counts.entries()]

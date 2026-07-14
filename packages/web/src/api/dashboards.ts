@@ -6,12 +6,12 @@
 import { z } from 'zod';
 import {
   apiRoutes,
-  dashboardSchema,
+  dashboardResponseSchema,
   dashboardListItemSchema,
   listDocumentSharesResponseSchema,
   type CreateDashboardRequest,
-  type Dashboard,
   type DashboardListItem,
+  type DashboardResponse,
   type DocumentShare,
   type ListDocumentSharesResponse,
   type UpdateDashboardRequest,
@@ -42,8 +42,8 @@ export function listDashboards(query?: string): Promise<DashboardListItem[]> {
  * @returns ダッシュボード全体。
  * @throws {ApiClientError} 存在しない id やリクエスト失敗時。
  */
-export function getDashboard(id: string): Promise<Dashboard> {
-  return apiFetch(dashboardSchema, apiRoutes.dashboard(id));
+export function getDashboard(id: string): Promise<DashboardResponse> {
+  return apiFetch(dashboardResponseSchema, apiRoutes.dashboard(id));
 }
 
 /**
@@ -52,8 +52,8 @@ export function getDashboard(id: string): Promise<Dashboard> {
  * @returns 永続化されたダッシュボード (サーバー採番の id を含む)。
  * @throws {ApiClientError} バリデーションエラーとリクエスト失敗時。
  */
-export function createDashboard(body: CreateDashboardRequest): Promise<Dashboard> {
-  return apiFetch(dashboardSchema, apiRoutes.dashboards(), { method: 'POST', body });
+export function createDashboard(body: CreateDashboardRequest): Promise<DashboardResponse> {
+  return apiFetch(dashboardResponseSchema, apiRoutes.dashboards(), { method: 'POST', body });
 }
 
 /**
@@ -63,8 +63,11 @@ export function createDashboard(body: CreateDashboardRequest): Promise<Dashboard
  * @returns 更新後のダッシュボード。
  * @throws {ApiClientError} バリデーションエラーとリクエスト失敗時。
  */
-export function updateDashboard(id: string, body: UpdateDashboardRequest): Promise<Dashboard> {
-  return apiFetch(dashboardSchema, apiRoutes.dashboard(id), { method: 'PUT', body });
+export function updateDashboard(
+  id: string,
+  body: UpdateDashboardRequest,
+): Promise<DashboardResponse> {
+  return apiFetch(dashboardResponseSchema, apiRoutes.dashboard(id), { method: 'PUT', body });
 }
 
 /**

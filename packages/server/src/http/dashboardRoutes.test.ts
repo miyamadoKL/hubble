@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   dashboardListItemSchema,
-  dashboardSchema,
+  dashboardResponseSchema,
   listDocumentSharesResponseSchema,
 } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
@@ -39,7 +39,7 @@ describe('dashboard routes', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'Sales board', description: 'q3 metrics' }),
       }),
-      dashboardSchema,
+      dashboardResponseSchema,
     );
     expect(created.id).toMatch(/^dsh_/);
     expect(created.widgets).toEqual([]);
@@ -51,7 +51,10 @@ describe('dashboard routes', () => {
     expect(list).toHaveLength(1);
     expect(list[0]!.widgetCount).toBe(0);
 
-    const got = await json(await ctx.app.request(`/api/dashboards/${created.id}`), dashboardSchema);
+    const got = await json(
+      await ctx.app.request(`/api/dashboards/${created.id}`),
+      dashboardResponseSchema,
+    );
     expect(got.name).toBe('Sales board');
 
     const updated = await json(
@@ -71,7 +74,7 @@ describe('dashboard routes', () => {
           ],
         }),
       }),
-      dashboardSchema,
+      dashboardResponseSchema,
     );
     expect(updated.name).toBe('Renamed board');
     expect(updated.widgets).toHaveLength(1);
@@ -99,7 +102,7 @@ describe('dashboard routes', () => {
         headers: { ...alice, 'content-type': 'application/json' },
         body: JSON.stringify({ name: 'Shared dash', description: 'd' }),
       }),
-      dashboardSchema,
+      dashboardResponseSchema,
     );
 
     await json(

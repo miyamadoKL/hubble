@@ -9,8 +9,8 @@ import {
 } from './documentShare';
 
 describe('isDocumentOwner', () => {
-  test('treats undefined as owner (legacy data)', () => {
-    expect(isDocumentOwner(undefined)).toBe(true);
+  test('rejects missing permission', () => {
+    expect(isDocumentOwner(undefined)).toBe(false);
   });
 
   test('recognizes owner permission', () => {
@@ -74,7 +74,7 @@ describe('canPersistNotebookToServer', () => {
   test('allows edit and owner saved notebooks', () => {
     expect(canPersistNotebookToServer({ draft: false, myPermission: 'edit' })).toBe(true);
     expect(canPersistNotebookToServer({ draft: false, myPermission: 'owner' })).toBe(true);
-    expect(canPersistNotebookToServer({ draft: false, myPermission: undefined })).toBe(true);
+    expect(canPersistNotebookToServer({ draft: false, myPermission: undefined })).toBe(false);
   });
 });
 

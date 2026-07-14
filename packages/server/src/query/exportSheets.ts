@@ -200,6 +200,8 @@ export class SheetsExporter {
     title: string;
     email?: string;
     sheets: ReadonlyArray<{ name: string; events: QueryResultEventInput }>;
+    /** HTTP 切断等で全 sheet の lazy reader を中断する signal。 */
+    signal?: AbortSignal;
   }): Promise<{ spreadsheetId: string; url: string }> {
     const credentialsFile = this.config.credentialsFile;
     if (!credentialsFile) {
@@ -237,7 +239,7 @@ export class SheetsExporter {
           chunk = [];
         };
 
-        for await (const event of await openQueryResultEvents(sheet.events)) {
+        for await (const event of await openQueryResultEvents(sheet.events, input.signal)) {
           if (event.type === 'columns') {
             columns = event.columns;
             totalCells += event.columns.length;

@@ -29,10 +29,16 @@ import {
   variableSchema,
   cellSchema,
   notebookSchema,
+  notebookListItemSchema,
+  notebookStoredSchema,
+  notebookResponseSchema,
   createNotebookRequestSchema,
   updateNotebookRequestSchema,
   createDashboardRequestSchema,
+  dashboardListItemSchema,
+  dashboardResponseSchema,
   savedQuerySchema,
+  savedQueryResponseSchema,
   createSavedQueryRequestSchema,
   queryHistoryEntrySchema,
   historyResponseSchema,
@@ -48,6 +54,9 @@ import {
   apiRoutes,
   MAX_DASHBOARD_WIDGETS,
   MAX_CHART_SERIES,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_NAME_LENGTH,
   MAX_NOTEBOOK_CELLS,
   MAX_SESSION_PROPERTIES,
   MAX_SQL_LENGTH,
@@ -665,6 +674,44 @@ describe('notebook', () => {
     expect(notebookSchema.parse(notebook)).toEqual(notebook);
   });
 
+  it('requires permission metadata and bounds saved notebook responses', () => {
+    const response = { ...notebook, owner: 'alice', myPermission: 'owner' as const };
+    expect(notebookResponseSchema.parse(response)).toEqual(response);
+    expect(notebookResponseSchema.safeParse({ ...response, myPermission: undefined }).success).toBe(
+      false,
+    );
+    expect(
+      notebookStoredSchema.safeParse({
+        ...notebook,
+        cells: [{ ...cell, source: 'x'.repeat(MAX_SQL_LENGTH + 1) }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('applies scalar bounds to notebook list responses', () => {
+    const item = {
+      id: 'nb1',
+      name: 'Notebook',
+      description: 'Description',
+      createdAt: ISO,
+      updatedAt: ISO,
+      owner: 'alice',
+      myPermission: 'owner' as const,
+    };
+    expect(notebookListItemSchema.parse(item)).toEqual(item);
+    for (const invalid of [
+      { ...item, id: '' },
+      { ...item, id: 'x'.repeat(MAX_IDENTIFIER_LENGTH + 1) },
+      { ...item, name: '' },
+      { ...item, name: 'x'.repeat(MAX_NAME_LENGTH + 1) },
+      { ...item, description: 'x'.repeat(MAX_DESCRIPTION_LENGTH + 1) },
+      { ...item, owner: '' },
+      { ...item, owner: 'x'.repeat(MAX_IDENTIFIER_LENGTH + 1) },
+    ]) {
+      expect(notebookListItemSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
   it('parses a CreateNotebookRequest with only a name', () => {
     expect(createNotebookRequestSchema.safeParse({ name: 'New' }).success).toBe(true);
   });
@@ -736,6 +783,14 @@ describe('savedQuery', () => {
     expect(savedQuerySchema.parse(value)).toEqual(value);
   });
 
+  it('requires permission metadata in saved query responses', () => {
+    const response = { ...value, owner: 'alice', myPermission: 'owner' as const };
+    expect(savedQueryResponseSchema.parse(response)).toEqual(response);
+    expect(
+      savedQueryResponseSchema.safeParse({ ...response, myPermission: undefined }).success,
+    ).toBe(false);
+  });
+
   it('rejects a create request with an empty statement', () => {
     expect(createSavedQueryRequestSchema.safeParse({ name: 'x', statement: '' }).success).toBe(
       false,
@@ -753,6 +808,61 @@ describe('savedQuery', () => {
 });
 
 describe('dashboard input limits', () => {
+  it('requires permission metadata and applies input bounds to saved responses', () => {
+    const response = {
+      id: 'dsh_1',
+      name: 'dashboard',
+      description: '',
+      widgets: [
+        {
+          id: 'text_1',
+          kind: 'text' as const,
+          position: { col: 0, row: 0, sizeX: 1, sizeY: 1 },
+          text: 'text',
+        },
+      ],
+      createdAt: ISO,
+      updatedAt: ISO,
+      owner: 'alice',
+      myPermission: 'owner' as const,
+    };
+    expect(dashboardResponseSchema.parse(response)).toEqual(response);
+    expect(
+      dashboardResponseSchema.safeParse({ ...response, myPermission: undefined }).success,
+    ).toBe(false);
+    expect(
+      dashboardResponseSchema.safeParse({
+        ...response,
+        widgets: [{ ...response.widgets[0], text: 'x'.repeat(MAX_SQL_LENGTH + 1) }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('applies scalar bounds to dashboard list responses', () => {
+    const item = {
+      id: 'dsh1',
+      name: 'Dashboard',
+      description: 'Description',
+      widgetCount: 1,
+      createdAt: ISO,
+      updatedAt: ISO,
+      owner: 'alice',
+      myPermission: 'owner' as const,
+    };
+    expect(dashboardListItemSchema.parse(item)).toEqual(item);
+    for (const invalid of [
+      { ...item, id: '' },
+      { ...item, id: 'x'.repeat(MAX_IDENTIFIER_LENGTH + 1) },
+      { ...item, name: '' },
+      { ...item, name: 'x'.repeat(MAX_NAME_LENGTH + 1) },
+      { ...item, description: 'x'.repeat(MAX_DESCRIPTION_LENGTH + 1) },
+      { ...item, owner: '' },
+      { ...item, owner: 'x'.repeat(MAX_IDENTIFIER_LENGTH + 1) },
+    ]) {
+      expect(dashboardListItemSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
   it('rejects oversized text and widget collections', () => {
     expect(
       createDashboardRequestSchema.safeParse({

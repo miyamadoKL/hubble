@@ -7,8 +7,11 @@
  * ここではクエリ実行エンドポイントを提供しない。
  */
 import { Hono } from 'hono';
+import { z } from 'zod';
 import {
   createDashboardRequestSchema,
+  dashboardListItemSchema,
+  dashboardResponseSchema,
   listDocumentSharesResponseSchema,
   updateDashboardRequestSchema,
   updateSharesRequestSchema,
@@ -22,6 +25,8 @@ import type { ShareAccessor, StoreForbidden } from '../store/documentShares';
 import { parseJsonBody } from './validate';
 
 type App = Hono<{ Variables: AuthVariables }>;
+
+const dashboardListResponseSchema = z.array(dashboardListItemSchema);
 
 /** principal から共有 permission 解決用 accessor を組み立てる。 */
 function toShareAccessor(principal: Principal): ShareAccessor {
@@ -100,12 +105,19 @@ export function dashboardRoutes(services: Services): App {
 
   app.get('/', async (c) => {
     const accessor = toShareAccessor(c.var.principal);
-    return c.json(await services.dashboards.list(accessor, c.req.query('query')));
+    return c.json(
+      dashboardListResponseSchema.parse(
+        await services.dashboards.list(accessor, c.req.query('query')),
+      ),
+    );
   });
 
   app.post('/', async (c) => {
     const body = await parseJsonBody(c, createDashboardRequestSchema);
-    return c.json(await services.dashboards.create(c.var.principal.user, body), 201);
+    return c.json(
+      dashboardResponseSchema.parse(await services.dashboards.create(c.var.principal.user, body)),
+      201,
+    );
   });
 
   app.get('/:id/shares', async (c) => {
@@ -147,7 +159,7 @@ export function dashboardRoutes(services: Services): App {
     const accessor = toShareAccessor(c.var.principal);
     const dashboard = await services.dashboards.get(accessor, c.req.param('id'));
     if (!dashboard) throw AppError.notFound(`Dashboard ${c.req.param('id')} not found`);
-    return c.json(dashboard);
+    return c.json(dashboardResponseSchema.parse(dashboard));
   });
 
   app.put('/:id', async (c) => {
@@ -158,7 +170,7 @@ export function dashboardRoutes(services: Services): App {
       await services.dashboards.update(accessor, id, body),
       `Dashboard ${id} not found`,
     );
-    return c.json(updated);
+    return c.json(dashboardResponseSchema.parse(updated));
   });
 
   app.delete('/:id', async (c) => {
