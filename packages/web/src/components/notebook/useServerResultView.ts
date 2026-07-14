@@ -6,7 +6,7 @@
  * 指定されたとき、`POST /api/queries/:id/rows/search` をデバウンス付きで
  * 呼び出し、サーバー側で絞り込んだページを返す。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type { ResultSort } from '@hubble/contracts';
 import { searchQueryRows } from '../../execution/api';
 import type { ResultRow } from '../../execution';
@@ -28,21 +28,27 @@ export interface ServerResultView {
   error?: string;
 }
 
-/** 検索条件ごとに保存するレスポンス（key は条件の識別子）。 */
-interface StoredResult {
-  key: string;
-  rows: ResultRow[];
-  totalMatched: number;
-  error?: string;
-}
-
 const EMPTY: ServerResultView = { rows: [], totalMatched: 0, loading: false };
+
+/** React Query のキャンセルに追従しながら検索開始を遅延させる。 */
+function waitForDebounce(signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason ?? new DOMException('The request was aborted.', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, DEBOUNCE_MS);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
 
 /**
  * server-side filter / sort の結果ページを取得するフック。
- *
- * loading は「保存済みレスポンスの条件 key が現在の条件と一致しない」ことから
- * 導出する（effect 内で同期的に setState しないための構造）。
  *
  * @param queryId - 対象クエリ id（未確定なら undefined）。
  * @param active - server-side モードが有効で、かつ filter か sort が指定されているとき true。
@@ -57,69 +63,34 @@ export function useServerResultView(
   sort: ResultSort | null,
 ): ServerResultView {
   const search = filter.trim();
-  const sortKey = sort ? `${sort.columnIndex}:${sort.dir}` : '';
-  // 現在の検索条件の識別子。レスポンスの取捨と loading の導出に使う。
-  const key = `${queryId ?? ''}|${search}|${sortKey}`;
-
-  const [result, setResult] = useState<StoredResult>({ key: '', rows: [], totalMatched: 0 });
-  // 遅れて届いた古いレスポンスを捨てるため、最新の条件 key を ref に持つ。
-  // render 中の書き換えは禁止されているため、effect 内で更新する。
-  const keyRef = useRef(key);
-
-  useEffect(() => {
-    keyRef.current = key;
-    if (!active || queryId === undefined) return;
-    const requestKey = key;
-    const controller = new AbortController();
-    // filter のタイプ中に毎キー発火しないよう、デバウンスしてから検索する。
-    const timer = setTimeout(() => {
-      searchQueryRows(
-        queryId,
+  const query = useQuery({
+    queryKey: ['server-result-view', active, queryId ?? '', search, sort?.columnIndex, sort?.dir],
+    queryFn: async ({ signal }) => {
+      await waitForDebounce(signal);
+      return searchQueryRows(
+        queryId as string,
         {
           ...(search !== '' ? { search } : {}),
           ...(sort !== null ? { sort } : {}),
           offset: 0,
           limit: SEARCH_PAGE_LIMIT,
         },
-        controller.signal,
-      )
-        .then((page) => {
-          // 条件が変わった後に届いたレスポンスは破棄する。
-          if (controller.signal.aborted || keyRef.current !== requestKey) return;
-          setResult({
-            key: requestKey,
-            rows: page.rows as ResultRow[],
-            totalMatched: page.totalMatched,
-          });
-        })
-        .catch((err: unknown) => {
-          if (controller.signal.aborted || keyRef.current !== requestKey) return;
-          setResult({
-            key: requestKey,
-            rows: [],
-            totalMatched: 0,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-    }, DEBOUNCE_MS);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-    // sort オブジェクトは呼び出し側で毎レンダー新しい参照になりうるため、
-    // 値ベースの key を依存に使う。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryId, active, key]);
+        signal,
+      );
+    },
+    enabled: active && queryId !== undefined,
+    placeholderData: (previous) => previous,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: 'always',
+  });
 
   if (!active || queryId === undefined) return EMPTY;
-  if (result.key === key) {
-    return {
-      rows: result.rows,
-      totalMatched: result.totalMatched,
-      loading: false,
-      ...(result.error !== undefined ? { error: result.error } : {}),
-    };
-  }
-  // 現在の条件に対するレスポンスが未着: 前回の行を出しつつ loading を立てる。
-  return { rows: result.rows, totalMatched: result.totalMatched, loading: true };
+  return {
+    rows: query.isError ? [] : ((query.data?.rows ?? []) as ResultRow[]),
+    totalMatched: query.isError ? 0 : (query.data?.totalMatched ?? 0),
+    loading: query.isFetching,
+    ...(query.error ? { error: query.error.message } : {}),
+  };
 }
