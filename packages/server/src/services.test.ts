@@ -13,6 +13,25 @@ import { buildServices } from './services';
 import { createTestContext } from './test/harness';
 
 describe('Services shutdown', () => {
+  it('createTestContextの構築失敗時はfactoryが開いたDBを閉じる', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'hubble-factory-rbac-'));
+    const db = await openMemoryDatabase();
+    const close = vi.spyOn(db, 'close');
+    try {
+      await expect(
+        createTestContext({
+          databaseFactory: async () => db,
+          cwd,
+          env: { RBAC_PATH: join(cwd, 'missing-rbac.yaml') },
+        }),
+      ).rejects.toThrow(/rbac file .* cannot be read/);
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      close.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('RBAC ファイルがない場合はサービス起動に失敗する', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'hubble-missing-rbac-'));
     const db = await openMemoryDatabase();

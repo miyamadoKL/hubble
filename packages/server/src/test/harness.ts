@@ -137,7 +137,9 @@ export interface TestContext {
  *      scheduler はデフォルトで tick ループを無効化する (`startScheduler` が
  *      true でない限り) ことで、ルート/CRUD テストが背後の非同期発火に
  *      影響されず決定的に動くようにする。
- *   3. インメモリ SQLite を開き、`buildServices` でサービス層一式を構築する。
+ *   3. config構築後に `options.databaseFactory` を呼び、未指定ならインメモリ
+ *      SQLiteを開いて `buildServices` でサービス層一式を構築する。factoryが
+ *      返したDBの所有権はServicesへ移り、`services.shutdown()` がDBを閉じる。
  *      `fetchImpl` は fake.fetch (実ネットワークなしで応答)、`sleepImpl`/
  *      `schedulerSleep` は既定で即座に resolve するダミーにして、バックオフ待ちの
  *      せいでテストが遅くならないようにする。
@@ -150,6 +152,8 @@ export async function createTestContext(
     scenarios?: FakeScenario[];
     configOverrides?: Partial<ServerConfig>;
     env?: Record<string, string | undefined>;
+    /** config構築後にDBを開くfactory。未指定時はSQLiteを開く。 */
+    databaseFactory?: () => Promise<SqlDatabase>;
     /** Override backoff sleep (e.g. to record requested delays). Defaults to a no-op. */
     sleepImpl?: (ms: number) => Promise<void>;
     /** Override the peer address the auth middleware sees (proxy-mode tests). */
@@ -218,41 +222,53 @@ export async function createTestContext(
     ai: options.configOverrides?.ai ?? baseConfig.ai,
   };
 
-  const db = await openMemoryDatabase();
-  const cwd = resolveTestDatasourcesCwd(options.cwd, options.env);
-  ensureTestRbacFile(cwd, options.env);
-  const services = await buildServices(config, db, {
-    env: options.env,
-    cwd,
-    now: options.now,
-    fetchImpl: options.fetchImpl ?? fake.fetch,
-    githubClient: options.githubClient,
-    // 日本語: 既定では待たずに即 resolve するので、バックオフ待ちが原因で
-    // テストが遅くなることはない。実際の待ち時間を検証したいテストのみ
-    // sleepImpl を渡して記録し、制御する。
-    sleepImpl: options.sleepImpl ?? (() => Promise.resolve()),
-    schedulerSleep: () => Promise.resolve(),
-    reloadLogError: options.reloadLogError,
-    reloadLogWarn: options.reloadLogWarn,
-    resultStore: options.resultStore,
-    resultStoreObserver: options.resultStoreObserver,
-    resultStoreClock: options.resultStoreClock,
-    resultStoreLogWarn: options.resultStoreLogWarn,
-    resultCleanupSetTimer: () => ({ clear: () => {} }),
-    aiProvider: options.aiProvider,
-  });
-  // 日本語: enabled=false でもクラッシュ復旧 (abortOrphans) は必ず走るため、
-  // tick ループを使わないテストでも start() は呼んでおく必要がある。
-  await services.scheduler.start();
-  await services.alertEvaluator.start();
-  await services.workflowRunner.start();
-  const app = createApp({
-    services,
-    remoteAddress: options.remoteAddress,
-    sheetsClientFactory: options.sheetsClientFactory,
-  });
-  installSameOriginRequestDefaults(app, options.defaultSameOriginHeaders ?? true);
-  return { app, services, fake, db };
+  const db = await (options.databaseFactory?.() ?? openMemoryDatabase());
+  let services: Services | undefined;
+  try {
+    const cwd = resolveTestDatasourcesCwd(options.cwd, options.env);
+    ensureTestRbacFile(cwd, options.env);
+    services = await buildServices(config, db, {
+      env: options.env,
+      cwd,
+      now: options.now,
+      fetchImpl: options.fetchImpl ?? fake.fetch,
+      githubClient: options.githubClient,
+      // 日本語: 既定では待たずに即 resolve するので、バックオフ待ちが原因で
+      // テストが遅くなることはない。実際の待ち時間を検証したいテストのみ
+      // sleepImpl を渡して記録し、制御する。
+      sleepImpl: options.sleepImpl ?? (() => Promise.resolve()),
+      schedulerSleep: () => Promise.resolve(),
+      reloadLogError: options.reloadLogError,
+      reloadLogWarn: options.reloadLogWarn,
+      resultStore: options.resultStore,
+      resultStoreObserver: options.resultStoreObserver,
+      resultStoreClock: options.resultStoreClock,
+      resultStoreLogWarn: options.resultStoreLogWarn,
+      resultCleanupSetTimer: () => ({ clear: () => {} }),
+      aiProvider: options.aiProvider,
+    });
+    // 日本語: enabled=false でもクラッシュ復旧 (abortOrphans) は必ず走るため、
+    // tick ループを使わないテストでも start() は呼んでおく必要がある。
+    await services.scheduler.start();
+    await services.alertEvaluator.start();
+    await services.workflowRunner.start();
+    const app = createApp({
+      services,
+      remoteAddress: options.remoteAddress,
+      sheetsClientFactory: options.sheetsClientFactory,
+    });
+    installSameOriginRequestDefaults(app, options.defaultSameOriginHeaders ?? true);
+    return { app, services, fake, db };
+  } catch (error) {
+    // DBを開いた後の構築失敗でも、Servicesの所有権移譲前ならここで閉じる。
+    if (services === undefined) {
+      await db.close().catch(() => undefined);
+    } else {
+      // Services構築後はshutdownにDBを含む全所有資源の解放を任せる。
+      await services.shutdown().catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 /** Poll until a query reaches a terminal state (test convenience). */

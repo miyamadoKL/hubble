@@ -116,6 +116,11 @@ const postgresBackend: DbBackend | undefined = TEST_PG_URL
     }
   : undefined;
 
+/** API結合テスト用DBを開く。接続先、worker schema、ケース間cleanupは隠蔽する。 */
+export function openTestDatabase(): Promise<SqlDatabase> {
+  return (postgresBackend ?? sqliteBackend).open();
+}
+
 /**
  * リポジトリテストをパラメータ化するバックエンド一覧。
  * `describe.each(dbBackends)` のようにテストスイート側で使うことを想定し、
