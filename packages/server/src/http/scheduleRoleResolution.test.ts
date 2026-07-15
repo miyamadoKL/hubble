@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { scheduleRunsResponseSchema, scheduleSchema } from '@hubble/contracts';
+import { openTestDatabase } from '../test/dbBackends';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 
@@ -67,6 +68,7 @@ async function createSnapshotSchedule(
   const cwd = makeTempDir();
   writeRbac(cwd, assignment);
   return createTestContext({
+    databaseFactory: openTestDatabase,
     cwd,
     scenarios: [VALIDATE_OK, SELECT_SNAPSHOT],
     env: { AUTH_MODE: 'proxy', AUTH_USER_MAPPING: 'email-localpart' },
