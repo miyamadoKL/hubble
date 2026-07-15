@@ -1,4 +1,5 @@
 import { openMemoryDatabase, openDatabase } from '../db';
+import { openPostgres } from '../db/postgresAdapter';
 import type { SqlDatabase } from '../db/sqlDatabase';
 
 /**
@@ -13,15 +14,11 @@ import type { SqlDatabase } from '../db/sqlDatabase';
  * `TEST_DATABASE_URL` を設定すれば pg 実装も同じテストスイートで検証できる。
  */
 
-/**
- * A persistence backend under test. SQLite always runs; PostgreSQL runs only
- * when `TEST_DATABASE_URL` is set (mirrors the `RUN_TRINO_IT` gating used by
- * realTrino.it.test.ts). This lets the same repository suite exercise both
- * dialects, while keeping a developer's `pnpm test` (no pg) fully green.
- */
+/** テスト対象の永続化バックエンド。SQLite は常に、PostgreSQL は環境変数が
+ * 設定されている場合だけ実行し、両方の方言で同じリポジトリ契約を検証する。 */
 export interface DbBackend {
   name: 'sqlite' | 'postgres';
-  /** Open a fresh, migrated database, isolated from prior test data. */
+  /** 既存データから隔離した、マイグレーション済みのDBを開く。 */
   open(): Promise<SqlDatabase>;
 }
 
@@ -29,7 +26,7 @@ export interface DbBackend {
 // PostgreSQL バックエンドのテストも走らせる。未設定なら pg 関連テストはスキップ。
 const TEST_PG_URL = process.env.TEST_DATABASE_URL;
 
-/** All tables a repository test may touch; truncated between pg test cases. */
+/** リポジトリテストが触れる全テーブル。PostgreSQLではケース間に削除する。 */
 // 日本語: リポジトリテストが読み書きしうる全テーブル名。pg バックエンドでは
 // テストケースごとにこれらを TRUNCATE してデータを空にし、テスト間の
 // 干渉を防ぐ (SQLite は毎回新規のインメモリ DB を開くため不要)。
@@ -52,45 +49,83 @@ const OWNED_TABLES = [
   'document_git_links',
 ] as const;
 
-// 日本語: SQLite バックエンド定義。open() のたびに新規のインメモリ DB を
+// SQLite バックエンド定義。open() のたびに新規のインメモリ DB を
 // 生成するため、テストケース間の分離は自然に得られる (マイグレーションも
 // openMemoryDatabase 内で適用される)。
 const sqliteBackend: DbBackend = {
   name: 'sqlite',
-  // A fresh in-memory database per test gives natural isolation.
+  // テストごとに新しいインメモリDBを開くため、自然に状態が分離される。
   open: () => openMemoryDatabase(),
 };
 
-// 日本語: TEST_PG_URL が設定されている場合のみ PostgreSQL バックエンド定義を
-// 生成する (未設定なら undefined のままとなり、以降 dbBackends/pgEnabled から
-// 除外される)。open() は共有 DB への接続を開いたのち、前のテストケースが
-// 残したデータを TRUNCATE で除去してから返す (マイグレーション管理テーブル
-// 自体はここでは触らない)。
+const WORKER_SCHEMA_PREFIX = 'hubble_test_worker_';
+const FALLBACK_WORKER_ID = '0';
+
+function workerId(poolId: string | undefined): string {
+  return poolId !== undefined && /^\d+$/.test(poolId) ? poolId : FALLBACK_WORKER_ID;
+}
+
+/** Vitest workerごとの安全なPostgreSQL schema名を返す。 */
+export function postgresWorkerSchema(poolId = process.env.VITEST_POOL_ID): string {
+  return `${WORKER_SCHEMA_PREFIX}${workerId(poolId)}`;
+}
+
+/** 既存の接続 options を保ったまま worker schema を search_path の末尾に指定する。 */
+export function postgresWorkerUrl(
+  connectionString: string,
+  poolId = process.env.VITEST_POOL_ID,
+): string {
+  const url = new URL(connectionString);
+  const existingOptions = url.searchParams.get('options')?.trim();
+  const searchPath = `-c search_path=${postgresWorkerSchema(poolId)}`;
+  url.searchParams.set(
+    'options',
+    [existingOptions, searchPath].filter((value): value is string => Boolean(value)).join(' '),
+  );
+  return url.toString();
+}
+
+/** worker schemaを作成してから、同schemaへ接続しマイグレーションを適用する。 */
+export async function openPostgresWorkerDatabase(
+  connectionString: string,
+  poolId = process.env.VITEST_POOL_ID,
+): Promise<SqlDatabase> {
+  const schema = postgresWorkerSchema(poolId);
+  const bootstrap = openPostgres(connectionString);
+  try {
+    await bootstrap.run(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+  } finally {
+    await bootstrap.close();
+  }
+  return openDatabase({
+    kind: 'postgres',
+    url: postgresWorkerUrl(connectionString, poolId),
+  });
+}
+
+// TEST_PG_URL が設定されている場合のみ PostgreSQL バックエンド定義を生成する。
+// workerごとに schema を分け、同一 worker 内だけ TRUNCATE する。
 const postgresBackend: DbBackend | undefined = TEST_PG_URL
   ? {
       name: 'postgres',
       async open() {
-        const db = await openDatabase({ kind: 'postgres', url: TEST_PG_URL });
-        // Isolate each test: a shared pg database persists across cases, so wipe
-        // the user tables (migrations / schema_migrations stay intact).
-        await db.run(`TRUNCATE ${OWNED_TABLES.join(', ')}`);
+        const db = await openPostgresWorkerDatabase(TEST_PG_URL);
+        await db.run(`TRUNCATE ${OWNED_TABLES.map((table) => `"${table}"`).join(', ')}`);
         return db;
       },
     }
   : undefined;
 
 /**
- * The backends to parameterize a repository suite over. SQLite is always
- * present; PostgreSQL is appended only when `TEST_DATABASE_URL` is set.
- *
- * 日本語: `describe.each(dbBackends)` のようにテストスイート側で使うことを
- * 想定した配列。SQLite は必ず含まれ、pg は環境が整っている場合のみ追加される。
+ * リポジトリテストをパラメータ化するバックエンド一覧。
+ * `describe.each(dbBackends)` のようにテストスイート側で使うことを想定し、
+ * SQLite は必ず含め、PostgreSQL は環境が整っている場合だけ追加する。
  */
 export const dbBackends: DbBackend[] = postgresBackend
   ? [sqliteBackend, postgresBackend]
   : [sqliteBackend];
 
-/** True when the pg-gated suites should run (TEST_DATABASE_URL is set). */
-// 日本語: pg 専用のテスト (dbBackends に頼らず個別に pg のみ実行したいケース) が
-// 自身をスキップするかどうかの判定に使うフラグ。
+/** PostgreSQL 専用テストを実行できる環境かどうかを示すフラグ。 */
+// dbBackends に頼らず PostgreSQL だけを実行するテストが、自身をスキップするか
+// どうかの判定に使う。
 export const pgEnabled = postgresBackend !== undefined;

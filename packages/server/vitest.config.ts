@@ -3,18 +3,14 @@ import { defineConfig } from 'vitest/config';
 /**
  * server パッケージの Vitest 設定。
  *
- * PostgreSQL バックエンドのテストは単一の共有 DB を `TRUNCATE` で分離する
- * (`src/test/dbBackends.ts`)。Vitest がテストファイルを並列実行すると、別ファイルの
- * TRUNCATE が実行中のファイルの行をテスト途中で消し、owner スコープの検証が
- * 非決定的に失敗する。そこで共有 postgres バックエンドが有効なとき
- * (`TEST_DATABASE_URL` 設定時、主に CI)はファイル並列を無効化して直列実行する。
- * SQLite のみのローカル実行はファイルごとに新規のインメモリ DB を開くため、
- * 並列のままで衝突しない。
+ * PostgreSQL のテストは `src/test/dbBackends.ts` が workerごとに schema を分け、
+ * 同一 worker 内のケースだけを TRUNCATE で初期化する。migration のglobal advisory
+ * lockは既存の安全性を保つため維持し、PostgreSQL 使用時もファイル並列を有効にする。
  */
 export default defineConfig({
   test: {
     // 過去 build の ignored dist が残っていても、生成済み test を重複実行しない。
     include: ['src/**/*.test.ts'],
-    fileParallelism: process.env.TEST_DATABASE_URL ? false : true,
+    fileParallelism: true,
   },
 });
