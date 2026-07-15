@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { ApiError } from '@hubble/contracts';
 import { WRITE_NOT_ALLOWED } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
+import { openTestDatabase } from '../test/dbBackends';
 import type { FakeScenario } from '../test/fakeTrino';
 
 const VALIDATE_OK: FakeScenario = {
@@ -111,6 +112,7 @@ async function rbacCtx(options: Parameters<typeof createTestContext>[0] = {}) {
   const cwd = options.cwd ?? rbacDir();
   return createTestContext({
     ...options,
+    databaseFactory: openTestDatabase,
     cwd,
     env: { AUTH_MODE: 'proxy', AUTH_USER_MAPPING: 'user', ...options.env },
     remoteAddress: options.remoteAddress ?? (() => '127.0.0.1'),
