@@ -1,19 +1,11 @@
-/**
- * Alert の state を示すバッジコンポーネント。
- */
+/** Alertの状態を共通バッジで表示する。 */
 import type { AlertState } from '@hubble/contracts';
-import { cn } from '../../utils/cn';
+import { StatusBadge, type StatusBadgeTone } from '../common/StatusBadge';
 
-const stateClasses: Record<AlertState, string> = {
-  ok: 'bg-success-soft text-success',
-  triggered: 'bg-error-soft text-error',
-  unknown: 'bg-surface-inset text-ink-muted',
-};
-
-const dotClasses: Record<AlertState, string> = {
-  ok: 'bg-success',
-  triggered: 'bg-error',
-  unknown: 'bg-ink-subtle',
+const stateTone: Record<AlertState, StatusBadgeTone> = {
+  ok: 'success',
+  triggered: 'error',
+  unknown: 'neutral',
 };
 
 const stateLabels: Record<AlertState, string> = {
@@ -22,19 +14,7 @@ const stateLabels: Record<AlertState, string> = {
   unknown: 'Unknown',
 };
 
-/** Alert state バッジ。 */
+/** Alertの状態バッジ。 */
 export function AlertStateBadge({ state, className }: { state: AlertState; className?: string }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5',
-        'font-mono text-2xs font-medium tracking-wide uppercase',
-        stateClasses[state],
-        className,
-      )}
-    >
-      <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', dotClasses[state])} />
-      {stateLabels[state]}
-    </span>
-  );
+  return <StatusBadge tone={stateTone[state]} label={stateLabels[state]} className={className} />;
 }
