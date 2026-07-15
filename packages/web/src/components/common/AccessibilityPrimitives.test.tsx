@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi 
 import { Dropdown } from './Dropdown';
 import { Modal } from './Modal';
 import { Tabs } from './Tabs';
-import { toast, ToastViewport, useToastStore } from './Toast';
+import { toast, ToastViewport } from './Toast';
 
 beforeAll(() => {
   (
@@ -30,9 +30,9 @@ describe('共通UI primitiveのアクセシビリティ', () => {
   });
 
   afterEach(() => {
+    act(() => toast.dismiss());
     act(() => root.unmount());
     container.remove();
-    useToastStore.setState({ toasts: [] });
     vi.useRealTimers();
   });
 
@@ -221,16 +221,46 @@ describe('共通UI primitiveのアクセシビリティ', () => {
     expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, -1, 0]);
   });
 
-  test('error toastはassertive alertとして手動dismissまで保持する', () => {
+  test('successとinfo toastはpolite statusとして表示する', async () => {
+    vi.useFakeTimers();
+    act(() => root.render(<ToastViewport />));
+    act(() => {
+      toast.success('Saved');
+      toast.info('Running', 'The query is still running.');
+    });
+
+    await vi.waitFor(() =>
+      expect(container.querySelectorAll<HTMLElement>('[role="status"]')).toHaveLength(2),
+    );
+    const statuses = container.querySelectorAll<HTMLElement>('[role="status"]');
+    expect(statuses).toHaveLength(2);
+    for (const notification of statuses) {
+      expect(notification.getAttribute('role')).toBe('status');
+      expect(notification.getAttribute('aria-live')).toBe('polite');
+      expect(notification.getAttribute('aria-atomic')).toBe('true');
+    }
+    expect(container.textContent).toContain('Saved');
+    expect(container.textContent).toContain('The query is still running.');
+
+    act(() => vi.advanceTimersByTime(3999));
+    expect(container.querySelectorAll<HTMLElement>('[role="status"]')).toHaveLength(2);
+    act(() => vi.advanceTimersByTime(201));
+    expect(container.querySelectorAll<HTMLElement>('[role="status"]')).toHaveLength(0);
+  });
+
+  test('error toastはassertive alertとして手動dismissまで保持する', async () => {
     vi.useFakeTimers();
     act(() => root.render(<ToastViewport />));
     act(() => {
       toast.error('Query failed', 'Retry after checking the connection.');
     });
 
+    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
     const alert = container.querySelector('[role="alert"]');
+    const notification = alert?.closest('li');
     expect(alert?.getAttribute('aria-live')).toBe('assertive');
     expect(alert?.getAttribute('aria-atomic')).toBe('true');
+    expect(notification?.querySelector('[aria-label="Dismiss notification"]')).not.toBeNull();
     act(() => vi.advanceTimersByTime(10_000));
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });

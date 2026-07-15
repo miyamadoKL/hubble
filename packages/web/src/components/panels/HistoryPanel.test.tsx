@@ -6,7 +6,7 @@ import type { HistoryResponse } from '@hubble/contracts';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { useDatasourceStore } from '../../stores/datasourceStore';
 import { useUiStore } from '../../stores/uiStore';
-import { useToastStore } from '../common/Toast';
+import { toast } from '../common/Toast';
 import { HistoryPanel } from './HistoryPanel';
 
 const notebookActions = vi.hoisted(() => ({
@@ -91,7 +91,6 @@ describe('HistoryPanel Re-run', () => {
         schema: 'shell_schema',
       },
     });
-    useToastStore.setState({ toasts: [] });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -106,8 +105,10 @@ describe('HistoryPanel Re-run', () => {
   });
 
   afterEach(() => {
+    act(() => toast.dismiss());
     act(() => root.unmount());
     container.remove();
+    vi.restoreAllMocks();
     vi.clearAllMocks();
   });
 
@@ -141,6 +142,8 @@ describe('HistoryPanel Re-run', () => {
   });
 
   test('保存結果を復元できない場合は成功通知を出さない', async () => {
+    const errorToast = vi.spyOn(toast, 'error').mockImplementation(() => 0);
+    const successToast = vi.spyOn(toast, 'success').mockImplementation(() => 0);
     executionMocks.restoreCell.mockResolvedValue('unavailable');
     await vi.waitFor(() => expect(container.textContent).toContain('selected_history'));
     const row = [...container.querySelectorAll('button')].find(
@@ -154,11 +157,11 @@ describe('HistoryPanel Re-run', () => {
 
     await act(async () => openResult!.click());
     await vi.waitFor(() =>
-      expect(useToastStore.getState().toasts.at(-1)).toMatchObject({
-        variant: 'error',
-        title: 'Saved result unavailable',
-      }),
+      expect(errorToast).toHaveBeenCalledWith(
+        'Saved result unavailable',
+        'The stored query result could not be loaded.',
+      ),
     );
-    expect(useToastStore.getState().toasts.some((item) => item.variant === 'success')).toBe(false);
+    expect(successToast).not.toHaveBeenCalled();
   });
 });
