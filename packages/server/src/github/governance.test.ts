@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { workflowDefinitionSchema } from '@hubble/contracts';
 import { loadServerConfig } from '../config';
+import type { SqlDatabase } from '../db/sqlDatabase';
 import { NotebookRepository } from '../store/notebooks';
 import { SavedQueryRepository } from '../store/savedQueries';
 import { DocumentShareRepository } from '../store/documentShares';
 import { WorkflowRepository } from '../store/workflows';
-import { dbBackends } from '../test/dbBackends';
+import { openTestDatabase } from '../test/dbBackends';
 import {
   contentHash,
   notebookToContent,
@@ -17,6 +18,7 @@ import { GithubGovernanceService, statementApprovalKey } from './governance';
 
 const KEY = Buffer.alloc(32, 4);
 const GITHUB_ENV = {
+  DATABASE_URL: process.env.TEST_DATABASE_URL,
   GITHUB_REPO: 'acme/hubble-docs',
   GITHUB_APP_CLIENT_ID: 'cid',
   GITHUB_APP_CLIENT_SECRET: 'sec',
@@ -36,7 +38,7 @@ function governanceConfig(governance: 'off' | 'on' = 'on') {
 }
 
 async function buildGovernance(
-  db: Awaited<ReturnType<(typeof dbBackends)[0]['open']>>,
+  db: SqlDatabase,
   options: { governance?: 'off' | 'on'; now?: () => number } = {},
 ) {
   const shares = new DocumentShareRepository(db);
@@ -55,13 +57,13 @@ async function buildGovernance(
   return { service, savedQueries, notebooks, workflows, links };
 }
 
-describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
+describe('GithubGovernanceService', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it('returns true for all checks when governance is disabled', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const { service, workflows } = await buildGovernance(db, { governance: 'off' });
     expect(service.enabled).toBe(false);
     expect(await service.isStatementApproved(approvalContext('SELECT 999'))).toBe(true);
@@ -79,7 +81,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
   });
 
   it('approves statements from approved saved query, notebook cell, and workflow step', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const { service, savedQueries, notebooks, workflows, links } = await buildGovernance(db);
     const accessor = { user: 'alice', groups: [] as string[], role: 'admin' };
 
@@ -127,7 +129,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
   });
 
   it('binds approved notebook statements to the saved execution context', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const { service, notebooks, links } = await buildGovernance(db);
     const accessor = { user: 'alice', groups: [] as string[], role: 'admin' };
     const notebook = await notebooks.create('alice', {
@@ -163,7 +165,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
   });
 
   it('rejects statements after local document modification (once TTL expires)', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     let now = Date.parse('2026-01-01T00:00:00.000Z');
     const { service, savedQueries, links } = await buildGovernance(db, {
       now: () => now,
@@ -194,7 +196,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
   });
 
   it('serves stale cache within TTL and refreshes after TTL', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     let now = Date.parse('2026-01-01T00:00:00.000Z');
     const { service, savedQueries, links } = await buildGovernance(db, {
       now: () => now,
@@ -234,7 +236,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
   });
 
   it('falls back to previous cache when rebuild fails', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     let now = Date.parse('2026-01-01T00:00:00.000Z');
     const { service, savedQueries, links } = await buildGovernance(db, {
       now: () => now,
@@ -260,7 +262,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
   });
 
   it('binds approved saved queries to datasource, catalog, and schema', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const { service, savedQueries, links } = await buildGovernance(db);
     const accessor = { user: 'alice', groups: [] as string[], role: 'admin' };
     const saved = await savedQueries.create('alice', {
@@ -316,7 +318,7 @@ describe.each(dbBackends)('GithubGovernanceService ($name)', ({ open }) => {
   });
 
   it('resolves omitted datasource context with the current default on both sides', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const { service, savedQueries, links } = await buildGovernance(db);
     const accessor = { user: 'alice', groups: [] as string[], role: 'admin' };
     const saved = await savedQueries.create('alice', {

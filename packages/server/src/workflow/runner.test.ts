@@ -146,6 +146,7 @@ async function makeHarness(
   const now = (): number => nowMs;
   const githubConfig = {
     ...loadServerConfig({
+      DATABASE_URL: process.env.TEST_DATABASE_URL,
       GITHUB_REPO: 'acme/hubble-docs',
       GITHUB_APP_CLIENT_ID: 'cid',
       GITHUB_APP_CLIENT_SECRET: 'sec',

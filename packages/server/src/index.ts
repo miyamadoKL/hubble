@@ -25,16 +25,8 @@ import { ShutdownCoordinator } from './shutdown/coordinator';
 // 起動時に一度だけ環境変数から設定を読み込む（以後は不変な設定値として使い回す）。
 const config = loadServerConfig();
 
-// Report the selected persistence backend (DATABASE_URL vs DB_PATH) once at
-// startup, without leaking credentials embedded in a connection string.
-// 日本語: どちらの永続化バックエンドを使っているかを起動ログに残す。
-// 接続文字列にパスワード等が含まれる postgres の場合は URL 自体を出力せず、
-// 種別のみを表示することで認証情報の漏洩を防ぐ。
-if (config.database.kind === 'postgres') {
-  console.log('hubble persistence backend: postgres (DATABASE_URL)');
-} else {
-  console.log(`hubble persistence backend: sqlite (${config.database.path})`);
-}
+// 接続文字列を出力せず、PostgreSQL専用の永続化を選択したことだけを記録する。
+console.log('hubble persistence backend: postgres (DATABASE_URL)');
 
 // Trino クライアント、DB 接続、各リポジトリなど、アプリ全体で共有する
 // サービス群を構築する（services.ts の buildServices を参照）。DB マイグレーション

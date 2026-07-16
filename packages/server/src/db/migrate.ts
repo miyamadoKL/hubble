@@ -13,7 +13,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SqlDatabase } from './sqlDatabase';
 
-/** Structural shape of the pg adapter's advisory-lock helper (no import cycle). */
+/** PostgreSQL adapterのadvisory lock helperの構造型。循環参照を避ける。 */
 // postgresAdapter.ts の `withAdvisoryLock` メソッドの構造的な型のみをここで
 // 定義する。postgresAdapter.ts を直接 import すると循環参照になり得るため、
 // 「このメソッドを持っているかどうか」だけをダックタイピングで判定する。
@@ -22,7 +22,7 @@ interface AdvisoryLockable {
 }
 
 // db が withAdvisoryLock メソッドを持つかどうかを実行時にチェックする型ガード。
-// PostgreSQL アダプターかどうかを判定するのに使う（dialect チェックと併用）。
+// PostgreSQL のマイグレーション advisory lock を提供するか確認する。
 function hasAdvisoryLock(db: SqlDatabase): db is SqlDatabase & AdvisoryLockable {
   return typeof (db as Partial<AdvisoryLockable>).withAdvisoryLock === 'function';
 }
@@ -108,9 +108,7 @@ export async function appliedVersions(db: SqlDatabase): Promise<number[]> {
   const rows = await db.query<{ version: number }>(
     'SELECT version FROM schema_migrations ORDER BY version ASC',
   );
-  // pg returns INTEGER as a JS number; coerce defensively for both dialects.
-  // PostgreSQL は INTEGER 列を JS の number として返すが、念のため両方言で
-  // 挙動を揃えるために Number() を通す。
+  // PostgreSQL は INTEGER 列を JS の number として返すが、入力境界で Number() を通す。
   return rows.map((r) => Number(r.version));
 }
 
@@ -128,12 +126,11 @@ export async function appliedVersions(db: SqlDatabase): Promise<number[]> {
  * 新たに適用されたバージョンの一覧を返す。
  */
 export async function runMigrations(db: SqlDatabase, migrations: Migration[]): Promise<number[]> {
-  // PostgreSQL かつ advisory lock ヘルパーを持つ場合のみロックを取る。
-  // SQLite は単一プロセスかつ単一ファイル前提なのでロックは不要。
-  if (db.dialect === 'postgres' && hasAdvisoryLock(db)) {
-    return db.withAdvisoryLock(MIGRATION_ADVISORY_LOCK_KEY, () => applyMigrations(db, migrations));
+  // PostgreSQLのadvisory lockで起動時のマイグレーション適用を直列化する。
+  if (!hasAdvisoryLock(db)) {
+    throw new Error('PostgreSQL database must provide migration advisory lock support');
   }
-  return applyMigrations(db, migrations);
+  return db.withAdvisoryLock(MIGRATION_ADVISORY_LOCK_KEY, () => applyMigrations(db, migrations));
 }
 
 // runMigrations() の本体。advisory lock の有無に関わらずここで実際の適用を行う。

@@ -1,15 +1,14 @@
 # Hubble SQL Workbench デプロイガイド
 
 このドキュメントは、**Hubble SQL Workbench**（以下 Hubble）を Docker / Docker Compose /
-Kubernetes へデプロイする運用者向けの手順書です。単一プロセス構成、環境変数、SQLite の
+Kubernetes へデプロイする運用者向けの手順書です。単一プロセス構成、環境変数、PostgreSQL の
 永続化といった前提は [`operations.md`](operations.md) を参照してください。環境変数の正本は
 `packages/server/src/config.ts`、一覧は
 [`operations.md` §4](operations.md#4-環境変数リファレンス) です。
 
 > Hubble は **server（Hono BFF）+ web（React）** の単一プロセスアプリです。`STATIC_DIR` に
 > web のビルド成果物を指すと server が静的配信も担うため、コンテナは 1 つで完結します。
-> 永続化は PostgreSQL（`DATABASE_URL`、1st/production 推奨）または SQLite（`DB_PATH`、
-> non-production）、データソースは Trino / MySQL / PostgreSQL のマルチデータソースに
+> 永続化は PostgreSQL（必須の `DATABASE_URL`）、データソースは Trino / MySQL / PostgreSQL のマルチデータソースに
 > 対応します（接続情報は `datasources.yaml`、[`operations.md` §1](operations.md#1-アーキテクチャ概要)）。
 
 ---
@@ -41,7 +40,7 @@ multi-stage の流れ：
 1. **deps** — `pnpm install --frozen-lockfile` で全 workspace を解決。
 2. **builder** — `pnpm --filter web build` で `packages/web/dist` を生成。
 3. **prod-deps** — `pnpm install --prod --filter "@hubble/server..."` で server と
-   contracts の本番依存のみに pruning（`better-sqlite3` のネイティブ addon を含む）。
+   contracts の本番依存のみに pruning。
 4. **runtime** — server / contracts の **TS ソース**（tsx で直接実行）、web の dist、
    本番 `node_modules` を配置。非 root（`node`）で実行。
 
@@ -59,14 +58,11 @@ Parquet の列や変換ジョブテーブルは作成されません。
 | 変数         | 既定（イメージ）         |
 | ------------ | ------------------------ |
 | `STATIC_DIR` | `/app/packages/web/dist` |
-| `DB_PATH`    | `/data/hubble.db`        |
 | `PORT`       | `8080`                   |
 
 イメージは `DATABASE_URL` を既定で設定しないため、単体 `docker run` では
-`DB_PATH`（SQLite、non-production 想定）が使われます。`/data` は `VOLUME` 化されており、
-SQLite に保存された application table がコンテナ再作成をまたいで永続化されます。
-**production では `-e DATABASE_URL=postgres://...` を渡して PostgreSQL に
-してください**（[`operations.md` §9](operations.md#9-データ管理)）。
+`-e DATABASE_URL=postgres://...` を渡してください。`DATABASE_URL` がなければ起動時に停止します
+（[`operations.md` §9](operations.md#9-データ管理)）。
 
 `datasources.yaml` と `rbac.yaml` は必須です。単体 `docker run` では両方をコンテナへマウントし、
 `DATASOURCES_PATH` と `RBAC_PATH` で参照します。
@@ -144,7 +140,7 @@ curl -s http://localhost:8080/api/datasources/trino-default/catalogs       # tpc
 
 ```bash
 docker compose down           # コンテナ停止（ボリュームは保持）
-docker compose down -v        # ボリューム（SQLite データ）も削除
+docker compose down -v        # PostgreSQL データボリュームも削除
 ```
 
 ---
@@ -158,7 +154,6 @@ docker compose down -v        # ボリューム（SQLite データ）も削除
 | `namespace.yaml`  | namespace `hubble`                                                                                                                  |
 | `configmap.yaml`  | 非機密の環境変数 + `datasources.yaml` / `rbac.yaml` 本体（ConfigMap のキーとしてマウント）                                          |
 | `secret.yaml`     | `TRINO_PASSWORD`（`datasources.yaml` の `passwordEnv` 参照先）と `DATABASE_URL`（**いずれもプレースホルダ**。実値に差し替えること） |
-| `pvc.yaml`        | SQLite 用 PVC（`ReadWriteOnce`、`/data` にマウント）。**non-production 向け、既定の `kustomization.yaml` には含まれない**           |
 | `deployment.yaml` | Deployment（**replicas=1**、`Recreate`、`/api/healthz` で liveness、`/api/readyz` で readiness）                                    |
 | `service.yaml`    | Service（`ClusterIP`、`:80` → コンテナ `:8080`）                                                                                    |
 
@@ -172,11 +167,6 @@ docker compose down -v        # ボリューム（SQLite データ）も削除
 stringData:
   DATABASE_URL: postgres://hubble:CHANGE_ME@postgres.hubble.svc:5432/hubble
 ```
-
-non-production で SQLite（`DB_PATH` + PVC）を使う場合は `pvc.yaml` を
-`kustomization.yaml` の `resources` に追加し、`deployment.yaml` の PVC マウント（コメント
-アウト済み）を有効化してください（[§5](#5-永続化バックエンドと-replicas-の制約)）。
-SQLite では、`Recreate` が旧 Pod による `ReadWriteOnce` PVC の解放も保証します。
 
 ### 4.1 レンダリングと検証
 
@@ -249,12 +239,11 @@ sudo k3s ctr images import hubble-0.1.0.tar
 
 ## 5. 永続化バックエンドと replicas の制約
 
-Hubble の永続化は PostgreSQL（`DATABASE_URL`、1st/production 推奨）または SQLite
-（`DB_PATH`、non-production）です。
-どちらも Notebook、Workflow、Schedule、Alert、共有設定、実行履歴などの application table を保持します。
+Hubble の永続化は PostgreSQL（必須の `DATABASE_URL`）のみです。
+Notebook、Workflow、Schedule、Alert、共有設定、実行履歴などの application table を保持します。
 result store を有効にした場合は、保存済み結果の object key も保持します（[`operations.md` §9](operations.md#9-データ管理)）。
 
-### PostgreSQL（既定、production 推奨）
+### PostgreSQL（必須）
 
 PostgreSQL が共有するのは永続データであり、実行中の処理を所有する状態ではありません。
 query registry、SSE の待機状態、AI のレート制限、schedule、workflow、alert、GitHub 同期の状態はプロセス内にあります。
@@ -262,20 +251,7 @@ query registry、SSE の待機状態、AI のレート制限、schedule、workfl
 
 `RollingUpdate` では、新 Pod の起動処理が DB 上の `running` レコードを orphan と判断し、旧 Pod が実行している job を abort する可能性があります。
 リクエストが別の Pod に届くと、SSE の購読や cancel が元の query を見つけられない問題もあります。
-PVC は不要で、バックアップには `pg_dump` / `pg_restore` を使ってください（[`operations.md` §9.1](operations.md#91-postgresql-バックエンド主)）。
-
-### SQLite（non-production 向け）
-
-SQLite は**単一ファイル**（`DB_PATH`）を使うため、複数プロセスから同時に開けません。
-プロセス内状態に関する制約に加えて、次の SQLite 固有の条件があります。
-
-- PVC は `ReadWriteOnce` にし、`pvc.yaml` を `kustomization.yaml` に追加して、
-  `deployment.yaml` のコメントアウト済みマウント設定を有効化します。
-- `Recreate` により、旧 Pod が PVC を解放してから新 Pod が attach する順序を保ちます。
-  SQLite 構成での `RollingUpdate` や `replicas` が 2 以上の構成は、DB 競合や破損の原因です。
-- Hubble は水平スケールしません。負荷はデータソース（Trino 等）側でスケールさせます。
-- バックアップは稼働中ならオンラインバックアップ（`sqlite3 … ".backup"`）が安全です
-  （[`operations.md` §9.2](operations.md#92-sqlitenon-production-向け)）。
+PVC は不要で、バックアップには `pg_dump` / `pg_restore` を使ってください（[`operations.md` §9.1](operations.md#91-postgresql)）。
 
 ### 制約を解除する条件
 

@@ -1,20 +1,14 @@
-/**
- * db パッケージの公開エントリーポイント。SQLite / PostgreSQL いずれかの
- * バックエンドを選び、マイグレーション適用まで済ませた `SqlDatabase` を返す
- * `openDatabase()` を提供する。上位のアプリケーションコードはこのモジュール
- * 経由でのみデータベースを開き、SQLite/PostgreSQL の違いを意識しない。
- */
+/** PostgreSQL接続を開き、マイグレーション適用済みのSqlDatabaseを返す。 */
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadMigrations, runMigrations } from './migrate';
 import type { SqlDatabase } from './sqlDatabase';
-import { openSqlite } from './sqliteAdapter';
 import { openPostgres } from './postgresAdapter';
 import type { PostgresTimeouts } from './postgresTimeouts';
 
 // SqlDatabase まわりの型はこのモジュールからも re-export し、呼び出し側が
 // 個々のファイルパスを意識しなくて済むようにする。
-export type { SqlDatabase, SqlDialect, SqlParam } from './sqlDatabase';
+export type { SqlDatabase, SqlParam } from './sqlDatabase';
 
 // このファイル（src/db/index.ts）が置かれているディレクトリの絶対パス。
 // ESM では __dirname が使えないため import.meta.url から算出する。
@@ -25,33 +19,15 @@ const here = dirname(fileURLToPath(import.meta.url));
 // このファイルからの相対パスで解決できるようにしている。
 export const MIGRATIONS_DIR = resolve(here, '../../migrations');
 
-/** Backend selection: a PostgreSQL connection string or a SQLite file path. */
-/**
- * PostgreSQL の接続文字列と期限設定、または SQLite のファイルパスを指定する
- * 判別可能ユニオン型。
- */
-export type DatabaseSource =
-  | { kind: 'postgres'; url: string; timeouts?: PostgresTimeouts }
-  | { kind: 'sqlite'; path: string };
+/** PostgreSQLの接続文字列と期限設定。 */
+export interface DatabaseSource {
+  url: string;
+  timeouts?: PostgresTimeouts;
+}
 
-/**
- * Open the database for `source`, run pending migrations, and return the async
- * `SqlDatabase`. SQLite is the historical default (file or ':memory:');
- * PostgreSQL is selected when `DATABASE_URL` is set (see config.ts).
- *
- * `source` で指定されたデータベースを開き、未適用のマイグレーションを実行
- * したうえで `SqlDatabase` を返す。SQLite（ファイルまたは ':memory:'）が
- * 歴史的なデフォルトで、`DATABASE_URL` が設定されている場合は PostgreSQL が
- * 選ばれる（config.ts 参照）。マイグレーション適用に失敗した場合は開いた
- * 接続をきちんと閉じてからエラーを再送出する。
- */
+/** PostgreSQLを開き、未適用のマイグレーションを実行して返す。 */
 export async function openDatabase(source: DatabaseSource): Promise<SqlDatabase> {
-  // kind に応じてどちらかのアダプターを使ってコネクション（または接続プール）
-  // を確立する。この時点ではまだマイグレーションは実行されていない。
-  const db =
-    source.kind === 'postgres'
-      ? openPostgres(source.url, source.timeouts)
-      : openSqlite(source.path);
+  const db = openPostgres(source.url, source.timeouts);
   try {
     // migrations/ 配下の SQL ファイルを読み込み、未適用のものを順に適用する。
     await runMigrations(db, loadMigrations(MIGRATIONS_DIR));
@@ -62,12 +38,4 @@ export async function openDatabase(source: DatabaseSource): Promise<SqlDatabase>
     throw err;
   }
   return db;
-}
-
-/** Convenience for tests: an in-memory SQLite database with migrations applied. */
-// テスト用の簡易ヘルパー。':memory:' の SQLite データベースを開き、
-// マイグレーション適用まで済ませた状態で返す。テストごとに独立したDBが
-// 得られるため、テスト間の状態共有を避けられる。
-export function openMemoryDatabase(): Promise<SqlDatabase> {
-  return openDatabase({ kind: 'sqlite', path: ':memory:' });
 }

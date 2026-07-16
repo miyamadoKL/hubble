@@ -7,8 +7,9 @@
 # plus the web build output. With `STATIC_DIR` set, the server also serves the
 # SPA, so one container is enough. See docs/deployment.md and docs/operations.md.
 #
-# Build:   docker build -t hubble:0.1.0 .
-# Run:     docker run --rm -p 8080:8080 -v hubble-data:/data \
+# ビルド:   docker build -t hubble:0.1.0 .
+# 起動例:   docker run --rm -p 8080:8080 \
+#            -e DATABASE_URL=postgres://hubble:hubble@postgres:5432/hubble \
 #            -e TRINO_BASE_URL=http://trino:8080 hubble:0.1.0
 
 # ---------------------------------------------------------------------------
@@ -26,13 +27,6 @@ WORKDIR /app
 # deps: install the full workspace once (cached on lockfile changes)
 # ---------------------------------------------------------------------------
 FROM base AS deps
-# better-sqlite3 builds a native addon; a prebuilt binary is fetched for
-# linux/glibc (node:24-slim is Debian/glibc), but keep build tools available as
-# a fallback in case the prebuilt is unavailable for the platform.
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
-
 # Copy only the manifests first so `pnpm install` is cached unless they change.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/contracts/package.json packages/contracts/package.json
@@ -69,9 +63,8 @@ RUN pnpm install --prod --frozen-lockfile --filter "@hubble/server..."
 FROM base AS runtime
 ENV NODE_ENV=production
 ENV HOME=/home/node
-# Single-process defaults: serve the built SPA and persist SQLite under /data.
+# 単一プロセスの既定値。ビルド済みSPAを配信し、永続化にはPostgreSQLを使う。
 ENV STATIC_DIR=/app/packages/web/dist
-ENV DB_PATH=/data/hubble.db
 ENV PORT=8080
 
 # Workspace metadata (pnpm resolves the workspace graph at runtime for `start`).
@@ -94,10 +87,6 @@ COPY --chown=node:node tsconfig.base.json ./tsconfig.base.json
 
 # Built SPA from the builder stage.
 COPY --from=builder --chown=node:node /app/packages/web/dist ./packages/web/dist
-
-# SQLite lives here; declare it a volume so data survives container restarts.
-RUN mkdir -p /data && chown -R node:node /data
-VOLUME ["/data"]
 
 USER node
 EXPOSE 8080

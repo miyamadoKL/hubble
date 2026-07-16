@@ -3,20 +3,14 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadMigrations, runMigrations, appliedVersions } from './migrate';
-import { openMemoryDatabase, openDatabase, MIGRATIONS_DIR } from './index';
-import { openSqlite } from './sqliteAdapter';
+import { MIGRATIONS_DIR } from './index';
+import { openPostgresWorkerDatabase } from '../test/dbBackends';
 import type { SqlDatabase } from './sqlDatabase';
-import { pgEnabled } from '../test/dbBackends';
 
 async function tableNames(db: SqlDatabase): Promise<string[]> {
-  const rows =
-    db.dialect === 'postgres'
-      ? await db.query<{ name: string }>(
-          "SELECT tablename AS name FROM pg_tables WHERE schemaname = 'public' ORDER BY name",
-        )
-      : await db.query<{ name: string }>(
-          "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-        );
+  const rows = await db.query<{ name: string }>(
+    'SELECT tablename AS name FROM pg_tables WHERE schemaname = current_schema() ORDER BY name',
+  );
   return rows.map((r) => r.name);
 }
 
@@ -32,11 +26,6 @@ function withTempMigrations(files: Record<string, string>, fn: (dir: string) => 
       rmSync(dir, { recursive: true, force: true });
     }
   })();
-}
-
-/** A bare in-memory SQLite handle (no migrations applied yet). */
-function freshSqlite(): SqlDatabase {
-  return openSqlite(':memory:');
 }
 
 describe('loadMigrations', () => {
@@ -63,148 +52,26 @@ describe('loadMigrations', () => {
     }));
 });
 
-describe('runMigrations', () => {
-  it('applies pending migrations once and is idempotent', () =>
-    withTempMigrations(
-      {
-        '0001_a.sql': 'CREATE TABLE a (id INTEGER PRIMARY KEY);',
-        '0002_b.sql': 'CREATE TABLE b (id INTEGER PRIMARY KEY);',
-      },
-      async (dir) => {
-        const db = freshSqlite();
-        const migrations = loadMigrations(dir);
-
-        const first = await runMigrations(db, migrations);
-        expect(first).toEqual([1, 2]);
-        expect(await appliedVersions(db)).toEqual([1, 2]);
-        expect(await tableNames(db)).toContain('a');
-        expect(await tableNames(db)).toContain('b');
-
-        // Re-running applies nothing.
-        const second = await runMigrations(db, migrations);
-        expect(second).toEqual([]);
-        expect(await appliedVersions(db)).toEqual([1, 2]);
-        await db.close();
-      },
-    ));
-
-  it('applies only newly added migrations on a second pass', async () => {
-    const db = freshSqlite();
-    await withTempMigrations({ '0001_a.sql': 'CREATE TABLE a (id INTEGER);' }, async (dir) => {
-      await runMigrations(db, loadMigrations(dir));
-    });
-    expect(await appliedVersions(db)).toEqual([1]);
-
-    await withTempMigrations(
-      {
-        '0001_a.sql': 'CREATE TABLE a (id INTEGER);',
-        '0002_c.sql': 'CREATE TABLE c (id INTEGER);',
-      },
-      async (dir) => {
-        const applied = await runMigrations(db, loadMigrations(dir));
-        expect(applied).toEqual([2]);
-      },
-    );
-    expect(await appliedVersions(db)).toEqual([1, 2]);
-    expect(await tableNames(db)).toContain('c');
-    await db.close();
-  });
-
-  it('rolls back a failing migration (no partial bookkeeping)', () =>
-    withTempMigrations(
-      {
-        '0001_ok.sql': 'CREATE TABLE ok (id INTEGER);',
-        '0002_bad.sql': 'CREATE TABLE bad (id INTEGER); THIS IS NOT SQL;',
-      },
-      async (dir) => {
-        const db = freshSqlite();
-        const migrations = loadMigrations(dir);
-        await expect(runMigrations(db, migrations)).rejects.toThrow();
-        // Migration 1 committed; migration 2 fully rolled back.
-        expect(await appliedVersions(db)).toEqual([1]);
-        expect(await tableNames(db)).toContain('ok');
-        expect(await tableNames(db)).not.toContain('bad');
-        await db.close();
-      },
-    ));
-});
-
 describe('openDatabase with the real initial migration', () => {
-  it('creates notebooks / saved_queries / query_history', async () => {
-    const db = await openMemoryDatabase();
-    const names = await tableNames(db);
-    expect(names).toContain('notebooks');
-    expect(names).toContain('saved_queries');
-    expect(names).toContain('query_history');
-    expect(names).toContain('schema_migrations');
-    expect(await appliedVersions(db)).toContain(1);
-    await db.close();
-  });
-
   it('loads the real migrations directory', () => {
     const migrations = loadMigrations(MIGRATIONS_DIR);
     expect(migrations.map((migration) => migration.version)).toEqual([1]);
     expect(migrations[0]!.name).toBe('0001_baseline.sql');
   });
-
-  it('creates the current schema without legacy compatibility or owner defaults', async () => {
-    const db = await openMemoryDatabase();
-    const columns = await db.query<{ name: string; notnull: number; dflt_value: string | null }>(
-      'PRAGMA table_info(query_history)',
-    );
-    expect(columns.map(({ name }) => name)).toContain('result_columns_json');
-    expect(columns.map(({ name }) => name)).not.toEqual(
-      expect.arrayContaining([
-        'result_format',
-        'parquet_object_key',
-        'parquet_expires_at',
-        'parquet_encoding_version',
-      ]),
-    );
-    for (const table of ['notebooks', 'saved_queries', 'query_history']) {
-      const owner = await db.query<{
-        name: string;
-        notnull: number;
-        dflt_value: string | null;
-      }>(`PRAGMA table_info(${table})`);
-      const ownerColumn = owner.find((column) => column.name === 'owner');
-      expect(ownerColumn).toMatchObject({ notnull: 1, dflt_value: null });
-    }
-    const indexes = await db.query<{ name: string; sql: string }>(
-      `SELECT name, sql FROM sqlite_master
-       WHERE type='index' AND name IN
-         ('idx_query_history_retention', 'idx_query_history_parquet_expiry_cursor',
-          'idx_query_history_parquet_object_key')`,
-    );
-    expect(indexes.map((index) => index.name).sort()).toEqual(['idx_query_history_retention']);
-    expect(indexes.find((index) => index.name === 'idx_query_history_retention')?.sql).toMatch(
-      /result_object_key IS NULL/,
-    );
-    expect(indexes.find((index) => index.name === 'idx_query_history_retention')?.sql).not.toMatch(
-      /parquet_object_key/,
-    );
-    expect(await tableNames(db)).not.toContain('result_parquet_conversion_jobs');
-    await db.close();
-  });
 });
 
-// PostgreSQL-only: idempotent migrations + advisory-lock serialization. Gated on
-// TEST_DATABASE_URL so a developer's default `pnpm test` (no pg) stays green.
-const describePg = pgEnabled ? describe : describe.skip;
-describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
+describe('migrations on postgres (TEST_DATABASE_URL)', () => {
   const url = process.env.TEST_DATABASE_URL!;
-  // Derive the expected set from the real migrations dir so adding a new
-  // migration file doesn't break these assertions.
+  // 実際のマイグレーション一覧から期待値を作り、新しいファイル追加で検証が壊れないようにする。
   const allVersions = loadMigrations(MIGRATIONS_DIR).map((m) => m.version);
 
   it('applies the real migrations and is idempotent', async () => {
-    // First open applies everything; second open should be a no-op (advisory
-    // lock acquired/released cleanly, no duplicate-apply).
-    const db1 = await openDatabase({ kind: 'postgres', url });
+    // 初回openで全てを適用し、2回目はadvisory lockを取得しても重複適用しない。
+    const db1 = await openPostgresWorkerDatabase(url);
     expect(await appliedVersions(db1)).toEqual(allVersions);
     await db1.close();
 
-    const db2 = await openDatabase({ kind: 'postgres', url });
+    const db2 = await openPostgresWorkerDatabase(url);
     expect(await appliedVersions(db2)).toEqual(allVersions);
     expect(await tableNames(db2)).toEqual(
       expect.arrayContaining([
@@ -219,7 +86,7 @@ describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
     const columns = await db2.query<{ column_name: string; column_default: string | null }>(
       `SELECT column_name, column_default
          FROM information_schema.columns
-        WHERE table_schema='public'
+        WHERE table_schema = current_schema()
           AND table_name IN ('notebooks', 'saved_queries', 'query_history')
           AND column_name = 'owner'`,
     );
@@ -228,7 +95,7 @@ describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
     const legacyColumns = await db2.query<{ table_name: string; column_name: string }>(
       `SELECT table_name, column_name
          FROM information_schema.columns
-        WHERE table_schema='public'
+        WHERE table_schema = current_schema()
           AND (column_name IN ('result_format', 'parquet_object_key',
                                'parquet_expires_at', 'parquet_encoding_version')
                OR table_name = 'result_parquet_conversion_jobs')`,
@@ -237,7 +104,7 @@ describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
     const jsonlColumns = await db2.query<{ column_name: string }>(
       `SELECT column_name
          FROM information_schema.columns
-        WHERE table_schema='public'
+        WHERE table_schema = current_schema()
           AND table_name='query_history'
           AND column_name IN ('result_object_key', 'result_expires_at', 'result_columns_json')`,
     );
@@ -246,15 +113,82 @@ describePg('migrations on postgres (TEST_DATABASE_URL)', () => {
   });
 
   it('serializes concurrent startup migrations under the advisory lock', async () => {
-    // Two concurrent opens race for the advisory lock; both must converge to the
-    // same applied set with no error and no duplicate rows.
+    // 2つのopenがadvisory lockを競合しても、同じ適用済み集合へ収束する。
     const [a, b] = await Promise.all([
-      openDatabase({ kind: 'postgres', url }),
-      openDatabase({ kind: 'postgres', url }),
+      openPostgresWorkerDatabase(url),
+      openPostgresWorkerDatabase(url),
     ]);
     expect(await appliedVersions(a)).toEqual(allVersions);
     expect(await appliedVersions(b)).toEqual(allVersions);
     await a.close();
     await b.close();
   });
+
+  it('applies pending migrations incrementally and skips applied versions', async () => {
+    const db = await openPostgresWorkerDatabase(url);
+    const migrations = [
+      {
+        version: 910001,
+        name: '910001_incremental_a.sql',
+        sql: 'CREATE TABLE p2_3a_incremental_a (id INTEGER PRIMARY KEY);',
+      },
+      {
+        version: 910002,
+        name: '910002_incremental_b.sql',
+        sql: 'CREATE TABLE p2_3a_incremental_b (id INTEGER PRIMARY KEY);',
+      },
+    ];
+    try {
+      await cleanupCustomMigrations(db);
+      expect(await runMigrations(db, migrations)).toEqual([910001, 910002]);
+      expect(await runMigrations(db, migrations)).toEqual([]);
+      expect(await appliedVersions(db)).toEqual([...allVersions, 910001, 910002]);
+      expect(await tableNames(db)).toEqual(
+        expect.arrayContaining(['p2_3a_incremental_a', 'p2_3a_incremental_b']),
+      );
+    } finally {
+      await cleanupCustomMigrations(db);
+      await db.close();
+    }
+  });
+
+  it('rolls back a failed migration and keeps its version unapplied', async () => {
+    const db = await openPostgresWorkerDatabase(url);
+    const migrations = [
+      {
+        version: 910003,
+        name: '910003_rollback_ok.sql',
+        sql: 'CREATE TABLE p2_3a_rollback_ok (id INTEGER PRIMARY KEY);',
+      },
+      {
+        version: 910004,
+        name: '910004_rollback_failed.sql',
+        sql: `
+          CREATE TABLE p2_3a_rollback_failed (id INTEGER PRIMARY KEY);
+          INSERT INTO p2_3a_missing (id) VALUES (1);
+        `,
+      },
+    ];
+    try {
+      await cleanupCustomMigrations(db);
+      await expect(runMigrations(db, migrations)).rejects.toThrow(/p2_3a_missing/);
+      expect(await appliedVersions(db)).toEqual([...allVersions, 910003]);
+      const tables = await tableNames(db);
+      expect(tables).toContain('p2_3a_rollback_ok');
+      expect(tables).not.toContain('p2_3a_rollback_failed');
+    } finally {
+      await cleanupCustomMigrations(db);
+      await db.close();
+    }
+  });
 });
+
+async function cleanupCustomMigrations(db: SqlDatabase): Promise<void> {
+  await db.run('DELETE FROM schema_migrations WHERE version BETWEEN 910001 AND 910004');
+  await db.exec(`
+    DROP TABLE IF EXISTS p2_3a_incremental_a;
+    DROP TABLE IF EXISTS p2_3a_incremental_b;
+    DROP TABLE IF EXISTS p2_3a_rollback_ok;
+    DROP TABLE IF EXISTS p2_3a_rollback_failed;
+  `);
+}

@@ -6,7 +6,6 @@ import { ReadinessService } from './readiness';
 
 function database(query: (...args: never[]) => Promise<unknown>): SqlDatabase {
   return {
-    dialect: 'sqlite',
     query: query as unknown as SqlDatabase['query'],
     run: vi.fn(),
     exec: vi.fn(),

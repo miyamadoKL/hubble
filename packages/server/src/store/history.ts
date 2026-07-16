@@ -292,9 +292,7 @@ export class HistoryRepository {
       `SELECT COUNT(*) AS c FROM query_history ${where}`,
       params,
     );
-    // PostgreSQL returns COUNT(*) as a bigint string; SQLite returns a number.
-    // PostgreSQL は COUNT(*) を bigint の文字列で返すことがあるため、
-    // SQLite の数値と挙動を揃えるために Number() を通す。
+    // PostgreSQL は COUNT(*) を bigint の文字列で返すことがあるため Number() を通す。
     const total = Number(countRows[0]?.c ?? 0);
 
     const rows = await this.db.query<HistoryRow>(

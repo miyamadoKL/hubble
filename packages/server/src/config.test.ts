@@ -1,12 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { loadServerConfig } from './config';
+import { loadServerConfig as loadConfig, resolveDatabaseConfig } from './config';
+
+const loadServerConfig = (env: Record<string, string | undefined> = {}) =>
+  loadConfig({
+    DATABASE_URL: process.env.TEST_DATABASE_URL ?? 'postgres://hubble:test@localhost/hubble',
+    ...env,
+  });
 
 describe('loadServerConfig integer bounds', () => {
+  it('requires a PostgreSQL DATABASE_URL', () => {
+    expect(() => resolveDatabaseConfig({})).toThrow(/DATABASE_URL is required/);
+    expect(() => resolveDatabaseConfig({ DATABASE_URL: 'sqlite:///tmp/hubble.db' })).toThrow(
+      /only postgres/,
+    );
+  });
+
   it('loads finite PostgreSQL persistence timeout defaults', () => {
     expect(
       loadServerConfig({ DATABASE_URL: 'postgres://hubble:secret@db/hubble' }).database,
     ).toEqual({
-      kind: 'postgres',
       url: 'postgres://hubble:secret@db/hubble',
       timeouts: {
         connectionMs: 10_000,

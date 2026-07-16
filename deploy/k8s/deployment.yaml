@@ -8,7 +8,6 @@ spec:
   replicas: 1
   strategy:
     # 実行中の処理を所有する旧 Pod を停止してから新 Pod を起動する。
-    # SQLite 構成では、旧 Pod が RWO PVC を解放してから新 Pod が attach する役割も持つ。
     type: Recreate
   selector:
     matchLabels:
@@ -21,9 +20,7 @@ spec:
       # engine lease の既定 drain 55秒と所有資源closeの猶予を確保する。
       terminationGracePeriodSeconds: 70
       securityContext:
-        # Match the image's non-root `node` user (uid/gid 1000)。SQLite 構成
-        # (non-production、下記コメント参照) では /data ボリュームへの書き込みに
-        # この uid/gid が必要になる。
+        # Match the image's non-root `node` user (uid/gid 1000)。
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
@@ -63,10 +60,6 @@ spec:
             - name: config
               mountPath: /etc/hubble
               readOnly: true
-            # Non-production 向け: SQLite (DB_PATH + PVC、pvc.yaml) を使う場合は
-            # 下記を有効化する。
-            # - name: data
-            #   mountPath: /data
             # passwordFile 方式の例 (Secret をファイルマウントする場合):
             # - name: datasource-secrets
             #   mountPath: /etc/hubble/secrets
@@ -80,11 +73,6 @@ spec:
                 path: datasources.yaml
               - key: rbac.yaml
                 path: rbac.yaml
-        # Non-production 向け: SQLite (DB_PATH) を使う場合は下記の PVC ボリューム
-        # (pvc.yaml) を有効化する。
-        # - name: data
-        #   persistentVolumeClaim:
-        #     claimName: hubble-data
         # passwordFile 用 Secret ボリュームの例:
         # - name: datasource-secrets
         #   secret:

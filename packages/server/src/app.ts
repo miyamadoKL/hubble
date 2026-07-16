@@ -69,8 +69,8 @@ function crossSiteRequestError(): AppError {
  * default (env-derived) config, applying migrations. Convenience for
  * `index.ts`.
  *
- * 日本語: 環境変数から `ServerConfig` を読み込み、設定された永続化バックエンド
- * （SQLite または PostgreSQL）で DB 接続を開いてマイグレーションを適用したうえで、
+ * 日本語: 環境変数から `ServerConfig` を読み込み、PostgreSQLで DB 接続を開いて
+ * マイグレーションを適用したうえで、
  * `buildServices` に委譲して Services グラフを構築する。`index.ts` から呼ばれる
  * 便利関数（本番起動用のデフォルト経路）。
  */

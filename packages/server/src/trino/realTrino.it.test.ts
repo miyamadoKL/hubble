@@ -13,7 +13,11 @@ const RUN = process.env.RUN_TRINO_IT === '1';
 const describeIt = RUN ? describe : describe.skip;
 
 async function makeApp(env: Record<string, string | undefined> = {}) {
-  const config = loadServerConfig({ ...process.env, ...env });
+  const config = loadServerConfig({
+    ...process.env,
+    ...env,
+    DATABASE_URL: env.DATABASE_URL ?? process.env.TEST_DATABASE_URL,
+  });
   const db = await openTestDatabase();
   const services = await buildServices(config, db);
   // 各テストが保持するServicesとDBをテスト終了時に中央で解放する。
