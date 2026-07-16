@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { openMemoryDatabase } from '../db';
+import { describe, it, expect, onTestFinished } from 'vitest';
 import { loadServerConfig } from '../config';
 import { buildServices } from '../services';
 import { createApp } from '../app';
+import { openTestDatabase } from '../test/dbBackends';
 import type { EstimateResult, QuerySnapshot } from '@hubble/contracts';
 
 /**
@@ -14,8 +14,10 @@ const describeIt = RUN ? describe : describe.skip;
 
 async function makeApp(env: Record<string, string | undefined> = {}) {
   const config = loadServerConfig({ ...process.env, ...env });
-  const db = await openMemoryDatabase();
+  const db = await openTestDatabase();
   const services = await buildServices(config, db);
+  // 各テストが保持するServicesとDBをテスト終了時に中央で解放する。
+  onTestFinished(() => services.shutdown());
   return { app: createApp({ services }), services };
 }
 

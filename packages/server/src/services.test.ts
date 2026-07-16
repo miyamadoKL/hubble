@@ -5,17 +5,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { openMemoryDatabase } from './db';
 import { loadServerConfig } from './config';
 import { NotificationService } from './notification/service';
 import { NoneResultStore } from './resultStore';
 import { buildServices } from './services';
+import { openTestDatabase } from './test/dbBackends';
 import { createTestContext } from './test/harness';
 
 describe('Services shutdown', () => {
   it('createTestContextの構築失敗時はfactoryが開いたDBを閉じる', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'hubble-factory-rbac-'));
-    const db = await openMemoryDatabase();
+    const db = await openTestDatabase();
     const close = vi.spyOn(db, 'close');
     try {
       await expect(
@@ -34,7 +34,7 @@ describe('Services shutdown', () => {
 
   it('RBAC ファイルがない場合はサービス起動に失敗する', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'hubble-missing-rbac-'));
-    const db = await openMemoryDatabase();
+    const db = await openTestDatabase();
     try {
       await expect(
         buildServices(loadServerConfig({}), db, {

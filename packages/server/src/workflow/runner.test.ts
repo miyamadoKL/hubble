@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { workflowDefinitionSchema } from '@hubble/contracts';
-import { openMemoryDatabase } from '../db';
+import { openTestDatabase } from '../test/dbBackends';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { EstimateService } from '../query/estimateService';
 import { WorkflowRepository, WorkflowRunRepository } from '../store/workflows';
@@ -131,7 +131,7 @@ async function makeHarness(
   resultStore?: ResultStore,
   onSleep?: () => void | Promise<void>,
 ): Promise<Harness> {
-  const db = await openMemoryDatabase();
+  const db = await openTestDatabase();
   const fake = new FakeTrino(scenarios);
   const { engines, defaultDatasourceId } = makeEnginesMap(fake);
   const workflows = new WorkflowRepository(db);

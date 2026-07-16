@@ -1,14 +1,14 @@
 /**
  * Phase 2: QueryEngine 抽象化とデータソースルーティングの統合テスト。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createTestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 import { deriveTrinoSourceTags } from './trino';
-import { openMemoryDatabase } from '../db';
+import { openTestDatabase } from '../test/dbBackends';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
 import { Scheduler } from '../schedule/scheduler';
 import { JobAdmissionController } from '../schedule/admission';
@@ -282,7 +282,8 @@ describe('datasource routing (HTTP)', () => {
 
 describe('schedule datasource persistence', () => {
   it('records failure when the persisted datasource is no longer configured', async () => {
-    const db = await openMemoryDatabase();
+    const db = await openTestDatabase();
+    onTestFinished(() => db.close());
     const fake = new FakeTrino([VALIDATE_OK, fast]);
     const { engines, defaultDatasourceId } = makeEnginesMap(fake);
     const schedules = new ScheduleRepository(db);
@@ -340,7 +341,5 @@ describe('schedule datasource persistence', () => {
     expect(recorded[0]!.id).toBe(runId);
     expect(recorded[0]!.status).toBe('failed');
     expect(recorded[0]!.errorMessage).toContain("Datasource 'removed-ds' is not configured");
-
-    await db.close();
   });
 });
