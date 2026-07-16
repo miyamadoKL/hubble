@@ -191,6 +191,7 @@ describe('CSV full-result re-execution (C-2)', () => {
     const { queryId } = (await res.json()) as { queryId: string };
     const exec = ctx.services.registry.get(queryId)!;
     await exec.settled;
+    await ctx.services.queries.drain();
     expect(exec.truncated).toBe(true);
     expect(exec.bufferedCount).toBe(5);
 
