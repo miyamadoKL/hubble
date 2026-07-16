@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, onTestFinished } from 'vitest';
 import type { AlertTriggeredNotificationInput } from '../notification/service';
-import { openMemoryDatabase } from '../db';
+import { openTestDatabase } from '../test/dbBackends';
 import { AlertDeliveryRepository } from '../store/alertDeliveries';
 import { AlertDeliveryWorker } from './deliveryWorker';
 
@@ -42,7 +42,8 @@ function payload(): AlertTriggeredNotificationInput {
 
 describe('AlertDeliveryWorker', () => {
   it('marks success sent, retries failures with backoff, then moves them to dead', async () => {
-    const db = await openMemoryDatabase();
+    const db = await openTestDatabase();
+    onTestFinished(() => db.close());
     const deliveries = new AlertDeliveryRepository(db);
     let now = Date.parse('2026-01-01T00:00:00.000Z');
     const dueAt = new Date(now).toISOString();
@@ -97,6 +98,5 @@ describe('AlertDeliveryWorker', () => {
     now += 60_000;
     await worker.tick();
     expect(sendChannel).toHaveBeenCalledTimes(3);
-    await db.close();
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { openMemoryDatabase } from '../db';
+import { openTestDatabase } from '../test/dbBackends';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { EstimateService } from '../query/estimateService';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
@@ -94,7 +94,7 @@ async function makeHarness(
   getRbac?: () => LoadedRbac,
   notificationSender?: FailureNotificationSender,
 ): Promise<Harness> {
-  const db = await openMemoryDatabase();
+  const db = await openTestDatabase();
   const fake = new FakeTrino(scenarios);
   const { engines, defaultDatasourceId } = makeEnginesMap(fake);
   const schedules = new ScheduleRepository(db);

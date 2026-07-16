@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { openMemoryDatabase } from '../db';
+import { openTestDatabase } from '../test/dbBackends';
 import { AuditLogger, AuditRepository } from './index';
 
 describe('AuditLogger', () => {
@@ -60,7 +61,7 @@ describe('AuditLogger', () => {
   });
 
   it('searches with filters and a stable compound cursor', async () => {
-    const db = await openMemoryDatabase();
+    const db = await openTestDatabase();
     try {
       const repo = new AuditRepository(db);
       await repo.record({
