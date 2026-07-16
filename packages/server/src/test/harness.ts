@@ -2,14 +2,15 @@ import type { Hono } from 'hono';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { onTestFinished } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
-import { openMemoryDatabase } from '../db';
 import { loadServerConfig, type ServerConfig } from '../config';
 import { buildServices, type Services } from '../services';
 import { createApp } from '../app';
 import type { AuthVariables, RemoteAddressFn } from '../auth/middleware';
 import type { FakeScenario } from './fakeTrino';
 import { FakeTrino } from './fakeTrino';
+import { openTestDatabase } from './dbBackends';
 import type { ResultStore } from '../resultStore';
 import type { ResultStoreClock, ResultStoreObserver } from '../resultStore';
 import type { AiProvider } from '../ai/provider';
@@ -109,8 +110,8 @@ function installSameOriginRequestDefaults(
 
 /**
  * server パッケージの結合テストで共通利用する「テストコンテキスト構築」を
- * 提供するファイル。インメモリ SQLite + `FakeTrino` (fakeTrino.ts) を使い、
- * 実際の DB/Trino を起動せずに `createApp()` で組み立てた完全な Hono アプリを
+ * 提供するファイル。テスト用DB + `FakeTrino` (fakeTrino.ts) を使い、
+ * 実Trinoを起動せずに `createApp()` で組み立てた完全な Hono アプリを
  * 得られるようにする。ルートハンドラの結合テスト (app.test.ts,
  * *Routes.test.ts 等) はほぼ全てこの `createTestContext` を起点にしている。
  */
@@ -125,8 +126,8 @@ export interface TestContext {
 }
 
 /**
- * Build a fully-wired app backed by an in-memory SQLite db and a fake Trino.
- * Backoff sleeps resolve immediately so tests run fast.
+ * テスト用DBとfake Trinoで完全なアプリを構築する。
+ * バックオフ待ちは即座に解決してテストを高速化する。
  *
  * 日本語: 実施内容は次の通り。
  *   1. `options.scenarios` を積んだ `FakeTrino` を生成する (Trino の代わり)。
@@ -137,9 +138,10 @@ export interface TestContext {
  *      scheduler はデフォルトで tick ループを無効化する (`startScheduler` が
  *      true でない限り) ことで、ルート/CRUD テストが背後の非同期発火に
  *      影響されず決定的に動くようにする。
- *   3. config構築後に `options.databaseFactory` を呼び、未指定ならインメモリ
- *      SQLiteを開いて `buildServices` でサービス層一式を構築する。factoryが
- *      返したDBの所有権はServicesへ移り、`services.shutdown()` がDBを閉じる。
+ *   3. config構築後に `options.databaseFactory` を呼び、未指定ならテスト用DBを
+ *      開いて `buildServices` でサービス層一式を構築する。TEST_DATABASE_URL設定時
+ *      はPostgreSQL、未設定時はSQLiteを開く。factoryが返したDBの所有権はServicesへ
+ *      移り、`services.shutdown()` がDBを閉じる。
  *      `fetchImpl` は fake.fetch (実ネットワークなしで応答)、`sleepImpl`/
  *      `schedulerSleep` は既定で即座に resolve するダミーにして、バックオフ待ちの
  *      せいでテストが遅くならないようにする。
@@ -152,7 +154,7 @@ export async function createTestContext(
     scenarios?: FakeScenario[];
     configOverrides?: Partial<ServerConfig>;
     env?: Record<string, string | undefined>;
-    /** config構築後にDBを開くfactory。未指定時はSQLiteを開く。 */
+    /** config構築後にDBを開くfactory。未指定時はテスト用DBを開く。 */
     databaseFactory?: () => Promise<SqlDatabase>;
     /** Override backoff sleep (e.g. to record requested delays). Defaults to a no-op. */
     sleepImpl?: (ms: number) => Promise<void>;
@@ -222,7 +224,7 @@ export async function createTestContext(
     ai: options.configOverrides?.ai ?? baseConfig.ai,
   };
 
-  const db = await (options.databaseFactory?.() ?? openMemoryDatabase());
+  const db = await (options.databaseFactory?.() ?? openTestDatabase());
   let services: Services | undefined;
   try {
     const cwd = resolveTestDatasourcesCwd(options.cwd, options.env);
@@ -258,6 +260,17 @@ export async function createTestContext(
       sheetsClientFactory: options.sheetsClientFactory,
     });
     installSameOriginRequestDefaults(app, options.defaultSameOriginHeaders ?? true);
+    const originalShutdown = services.shutdown;
+    let shutdownCalled = false;
+    services.shutdown = () => {
+      shutdownCalled = true;
+      return originalShutdown();
+    };
+    // TestContextが保持するServicesの所有資源を、明示的なshutdownがない場合も
+    // テスト終了時に解放する。明示呼出時は元の冪等処理を再利用して二重closeを防ぐ。
+    onTestFinished(async () => {
+      if (!shutdownCalled) await originalShutdown();
+    });
     return { app, services, fake, db };
   } catch (error) {
     // DBを開いた後の構築失敗でも、Servicesの所有権移譲前ならここで閉じる。

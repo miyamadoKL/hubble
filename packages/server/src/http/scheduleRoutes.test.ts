@@ -340,17 +340,26 @@ describe('schedule routes', () => {
       ).json(),
     );
 
-    // After create's validation has completed, hold all subsequent advances so
-    // the first run stays in flight and the second is a conflict.
-    ctx.fake.holdAdvance = new Promise(() => {});
-
-    const first = await ctx.app.request(`/api/schedules/${created.id}/run`, { method: 'POST' });
-    expect(first.status).toBe(202);
-    const second = await ctx.app.request(`/api/schedules/${created.id}/run`, { method: 'POST' });
-    expect(second.status).toBe(409);
-    const body = (await second.json()) as { error: { code: string } };
-    expect(body.error.code).toBe('CONFLICT');
-    // Note: do not call shutdown() here — it would await the held run forever.
+    // 作成時の検証が完了した後、後続のadvanceをすべて止める。
+    // これで最初の実行を処理中に保ち、2回目を競合にする。
+    const holdAdvance = Promise.withResolvers<void>();
+    ctx.fake.holdAdvance = holdAdvance.promise;
+    try {
+      const first = await ctx.app.request(`/api/schedules/${created.id}/run`, {
+        method: 'POST',
+      });
+      expect(first.status).toBe(202);
+      const second = await ctx.app.request(`/api/schedules/${created.id}/run`, {
+        method: 'POST',
+      });
+      expect(second.status).toBe(409);
+      const body = (await second.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('CONFLICT');
+    } finally {
+      holdAdvance.resolve();
+      await ctx.services.scheduler.whenIdle();
+      await ctx.services.shutdown();
+    }
   });
 
   it('does not report a database failure as a run conflict', async () => {

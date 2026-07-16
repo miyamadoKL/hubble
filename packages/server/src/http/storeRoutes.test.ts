@@ -213,8 +213,8 @@ describe('history auto-record', () => {
     });
     const { queryId } = (await res.json()) as { queryId: string };
     await ctx.services.registry.get(queryId)!.settled;
-    // Allow the settled.then() history update microtask to flush.
-    await new Promise((r) => setTimeout(r, 0));
+    // settled後の履歴更新を完了させる。
+    await ctx.services.queries.drain();
 
     const history = await json(await ctx.app.request('/api/history'), historyResponseSchema);
     expect(history.total).toBe(1);
@@ -247,7 +247,7 @@ describe('history auto-record', () => {
       ids.push(((await res.json()) as { queryId: string }).queryId);
     }
     await Promise.all(ids.map((id) => ctx.services.registry.get(id)!.settled));
-    await new Promise((r) => setTimeout(r, 0));
+    await ctx.services.queries.drain();
 
     const failed = await json(
       await ctx.app.request('/api/history?state=failed'),

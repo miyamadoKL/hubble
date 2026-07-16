@@ -372,12 +372,22 @@ describe('workflow routes', () => {
       }),
     });
     const workflow = workflowSchema.parse(await createRes.json()) as Workflow;
-    ctx.fake.holdAdvance = new Promise(() => {});
-
-    const first = await ctx.app.request(`/api/workflows/${workflow.id}/run`, { method: 'POST' });
-    expect(first.status).toBe(202);
-    const second = await ctx.app.request(`/api/workflows/${workflow.id}/run`, { method: 'POST' });
-    expect(second.status).toBe(409);
+    const holdAdvance = Promise.withResolvers<void>();
+    ctx.fake.holdAdvance = holdAdvance.promise;
+    try {
+      const first = await ctx.app.request(`/api/workflows/${workflow.id}/run`, {
+        method: 'POST',
+      });
+      expect(first.status).toBe(202);
+      const second = await ctx.app.request(`/api/workflows/${workflow.id}/run`, {
+        method: 'POST',
+      });
+      expect(second.status).toBe(409);
+    } finally {
+      holdAdvance.resolve();
+      await ctx.services.workflowRunner.whenIdle();
+      await ctx.services.shutdown();
+    }
   });
 });
 
@@ -495,12 +505,21 @@ describe('workflow run bulk export routes', () => {
       }),
     });
     const workflow = workflowSchema.parse(await createRes.json()) as Workflow;
-    ctx.fake.holdAdvance = new Promise(() => {});
-    const runRes = await ctx.app.request(`/api/workflows/${workflow.id}/run`, { method: 'POST' });
-    const { runId } = (await runRes.json()) as { runId: string };
+    const holdAdvance = Promise.withResolvers<void>();
+    ctx.fake.holdAdvance = holdAdvance.promise;
+    try {
+      const runRes = await ctx.app.request(`/api/workflows/${workflow.id}/run`, {
+        method: 'POST',
+      });
+      const { runId } = (await runRes.json()) as { runId: string };
 
-    const res = await ctx.app.request(`/api/workflow-runs/${runId}/download.zip`);
-    expect(res.status).toBe(409);
+      const res = await ctx.app.request(`/api/workflow-runs/${runId}/download.zip`);
+      expect(res.status).toBe(409);
+    } finally {
+      holdAdvance.resolve();
+      await ctx.services.workflowRunner.whenIdle();
+      await ctx.services.shutdown();
+    }
   });
 
   it('returns RESULT_NOT_PERSISTED when no persisted results exist', async () => {

@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiRoutes, type ApiError } from '@hubble/contracts';
 import { createTestContext, waitForTerminal } from '../test/harness';
-import { openTestDatabase } from '../test/dbBackends';
 import type { FakeScenario } from '../test/fakeTrino';
 
 const slowScenario: FakeScenario = {
@@ -80,7 +79,6 @@ async function adminCtx() {
   tempDir = mkdtempSync(join(tmpdir(), 'hubble-rbac-c-'));
   writeRbac(tempDir);
   return createTestContext({
-    databaseFactory: openTestDatabase,
     cwd: tempDir,
     env: { AUTH_MODE: 'proxy', AUTH_USER_MAPPING: 'user' },
     remoteAddress: () => '127.0.0.1',
