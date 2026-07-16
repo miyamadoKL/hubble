@@ -256,7 +256,7 @@ export class ScheduleRepository {
   /** owner が所有する全スケジュールを更新日時の新しい順に返す。 */
   async list(owner: string): Promise<ScheduleRecord[]> {
     const rows = await this.db.query<ScheduleRow>(
-      'SELECT * FROM schedules WHERE owner = ? ORDER BY updated_at DESC',
+      'SELECT * FROM schedules WHERE owner = $1 ORDER BY updated_at DESC',
       [owner],
     );
     return rows.map(rowToSchedule);
@@ -265,7 +265,7 @@ export class ScheduleRepository {
   /** owner が所有する単一スケジュールを id で取得する。存在しなければ undefined。 */
   async get(owner: string, id: string): Promise<ScheduleRecord | undefined> {
     const rows = await this.db.query<ScheduleRow>(
-      'SELECT * FROM schedules WHERE id = ? AND owner = ?',
+      'SELECT * FROM schedules WHERE id = $1 AND owner = $2',
       [id, owner],
     );
     return rows[0] ? rowToSchedule(rows[0]) : undefined;
@@ -275,7 +275,7 @@ export class ScheduleRepository {
   // owner による絞り込みなしで id のみでスケジュールを取得する。
   // スケジューラー内部（tick 処理）専用で、ルート層からは使わないこと。
   async getById(id: string): Promise<ScheduleRecord | undefined> {
-    const rows = await this.db.query<ScheduleRow>('SELECT * FROM schedules WHERE id = ?', [id]);
+    const rows = await this.db.query<ScheduleRow>('SELECT * FROM schedules WHERE id = $1', [id]);
     return rows[0] ? rowToSchedule(rows[0]) : undefined;
   }
 
@@ -321,7 +321,7 @@ export class ScheduleRepository {
          (id, owner, name, statement, catalog, schema, cron, enabled,
           retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
           notifications, datasource_id, principal_snapshot, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       insertParams(record),
     );
     return record;
@@ -359,10 +359,10 @@ export class ScheduleRepository {
     };
     await this.db.run(
       `UPDATE schedules SET
-         name = ?, statement = ?, catalog = ?, schema = ?, cron = ?, enabled = ?,
-         retry_max_attempts = ?, retry_backoff_seconds = ?, retry_backoff_multiplier = ?,
-         notifications = ?, datasource_id = ?, principal_snapshot = ?, updated_at = ?
-       WHERE id = ? AND owner = ?`,
+         name = $1, statement = $2, catalog = $3, schema = $4, cron = $5, enabled = $6,
+         retry_max_attempts = $7, retry_backoff_seconds = $8, retry_backoff_multiplier = $9,
+         notifications = $10, datasource_id = $11, principal_snapshot = $12, updated_at = $13
+       WHERE id = $14 AND owner = $15`,
       [
         merged.name,
         merged.statement,
@@ -389,14 +389,14 @@ export class ScheduleRepository {
   async delete(owner: string, id: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const deleted = await tx.query<{ id: string }>(
-        'DELETE FROM schedules WHERE id = ? AND owner = ? RETURNING id',
+        'DELETE FROM schedules WHERE id = $1 AND owner = $2 RETURNING id',
         [id, owner],
       );
       if (deleted.length === 0) return false;
       // App-side cascade (no FK ON DELETE; see migration 0003).
       // 外部キーの ON DELETE CASCADE を使っていない（migration 0003 参照）ため、
       // 同じ transaction で schedule_runs を削除してカスケードを模倣する。
-      await tx.run('DELETE FROM schedule_runs WHERE schedule_id = ?', [id]);
+      await tx.run('DELETE FROM schedule_runs WHERE schedule_id = $1', [id]);
       return true;
     });
   }
@@ -544,7 +544,7 @@ export class ScheduleRunRepository {
     const inserted = await this.db.query<{ id: string }>(
       `INSERT INTO schedule_runs
          (id, schedule_id, owner, status, attempt, scheduled_for, started_at)
-       VALUES (?, ?, ?, 'running', 0, ?, ?)
+       VALUES ($1, $2, $3, 'running', 0, $4, $5)
        ON CONFLICT (schedule_id) WHERE status = 'running' DO NOTHING
        RETURNING id`,
       [id, input.scheduleId, input.owner, input.scheduledFor, input.startedAt],
@@ -561,9 +561,9 @@ export class ScheduleRunRepository {
   async finish(runId: string, scheduleId: string, input: FinishRunInput): Promise<void> {
     await this.db.run(
       `UPDATE schedule_runs SET
-         status = ?, attempt = ?, trino_query_id = ?, error_type = ?, error_message = ?,
-         row_count = ?, elapsed_ms = ?, finished_at = ?
-       WHERE id = ?`,
+         status = $1, attempt = $2, trino_query_id = $3, error_type = $4, error_message = $5,
+         row_count = $6, elapsed_ms = $7, finished_at = $8
+       WHERE id = $9`,
       [
         input.status,
         input.attempt,
@@ -584,8 +584,8 @@ export class ScheduleRunRepository {
   // 最大 limit 件返す。
   async list(scheduleId: string, limit: number): Promise<ScheduleRunRecord[]> {
     const rows = await this.db.query<ScheduleRunRow>(
-      `SELECT * FROM schedule_runs WHERE schedule_id = ?
-       ORDER BY started_at DESC, id DESC LIMIT ?`,
+      `SELECT * FROM schedule_runs WHERE schedule_id = $1
+       ORDER BY started_at DESC, id DESC LIMIT $2`,
       [scheduleId, limit],
     );
     return rows.map(rowToRun);
@@ -604,7 +604,7 @@ export class ScheduleRunRepository {
     const result = new Map<string, ScheduleRunRecord>();
     for (let offset = 0; offset < scheduleIds.length; offset += SQL_ID_CHUNK_SIZE) {
       const chunk = scheduleIds.slice(offset, offset + SQL_ID_CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(', ');
+      const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
       const rows = await this.db.query<ScheduleRunRow>(
         `SELECT * FROM (
            SELECT schedule_runs.*,
@@ -626,7 +626,7 @@ export class ScheduleRunRepository {
   // 同一スケジュールの多重実行を防ぐためのチェックに使われる想定。
   async hasRunning(scheduleId: string): Promise<boolean> {
     const rows = await this.db.query<{ id: string }>(
-      "SELECT id FROM schedule_runs WHERE schedule_id = ? AND status = 'running' LIMIT 1",
+      "SELECT id FROM schedule_runs WHERE schedule_id = $1 AND status = 'running' LIMIT 1",
       [scheduleId],
     );
     return rows.length > 0;
@@ -642,7 +642,7 @@ export class ScheduleRunRepository {
    */
   async abortOrphans(finishedAt: string): Promise<number> {
     const rows = await this.db.query<{ id: string }>(
-      "UPDATE schedule_runs SET status = 'aborted', finished_at = ? WHERE status = 'running' RETURNING id",
+      "UPDATE schedule_runs SET status = 'aborted', finished_at = $1 WHERE status = 'running' RETURNING id",
       [finishedAt],
     );
     return rows.length;
@@ -660,10 +660,10 @@ export class ScheduleRunRepository {
     if (this.retention <= 0) return;
     await this.db.run(
       `DELETE FROM schedule_runs
-       WHERE schedule_id = ?
+       WHERE schedule_id = $1
          AND id NOT IN (
-           SELECT id FROM schedule_runs WHERE schedule_id = ?
-           ORDER BY started_at DESC, id DESC LIMIT ?
+           SELECT id FROM schedule_runs WHERE schedule_id = $2
+           ORDER BY started_at DESC, id DESC LIMIT $3
          )`,
       [scheduleId, scheduleId, this.retention],
     );

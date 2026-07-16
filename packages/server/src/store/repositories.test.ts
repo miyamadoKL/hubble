@@ -157,7 +157,7 @@ describe('repositories', () => {
       await db.run(
         `INSERT INTO document_shares
              (id, document_type, document_id, subject_type, subject_value, permission, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           'shr_invalid_permission',
           'notebook',
@@ -373,7 +373,7 @@ describe('repositories', () => {
       await repo.clearResultObjects(['jsonl-result']);
       expect(
         await db.query(
-          'SELECT result_object_key, result_columns_json FROM query_history WHERE id=?',
+          'SELECT result_object_key, result_columns_json FROM query_history WHERE id=$1',
           ['h_json'],
         ),
       ).toEqual([

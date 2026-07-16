@@ -194,22 +194,22 @@ export class AlertRepository {
 
   async list(owner: string): Promise<AlertRecord[]> {
     const rows = await this.db.query<AlertRow>(
-      'SELECT * FROM alerts WHERE owner = ? ORDER BY updated_at DESC',
+      'SELECT * FROM alerts WHERE owner = $1 ORDER BY updated_at DESC',
       [owner],
     );
     return rows.map(rowToAlert);
   }
 
   async get(owner: string, id: string): Promise<AlertRecord | undefined> {
-    const rows = await this.db.query<AlertRow>('SELECT * FROM alerts WHERE id = ? AND owner = ?', [
-      id,
-      owner,
-    ]);
+    const rows = await this.db.query<AlertRow>(
+      'SELECT * FROM alerts WHERE id = $1 AND owner = $2',
+      [id, owner],
+    );
     return rows[0] ? rowToAlert(rows[0]) : undefined;
   }
 
   async getById(id: string): Promise<AlertRecord | undefined> {
-    const rows = await this.db.query<AlertRow>('SELECT * FROM alerts WHERE id = ?', [id]);
+    const rows = await this.db.query<AlertRow>('SELECT * FROM alerts WHERE id = $1', [id]);
     return rows[0] ? rowToAlert(rows[0]) : undefined;
   }
 
@@ -251,7 +251,7 @@ export class AlertRepository {
          (id, owner, name, saved_query_id, column_name, op, value, selector,
           rearm, muted, cron, state, last_triggered_at, notifications,
           principal_snapshot, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       insertParams(record),
     );
     return record;
@@ -287,11 +287,11 @@ export class AlertRepository {
     };
     await this.db.run(
       `UPDATE alerts SET
-         name = ?, saved_query_id = ?, column_name = ?, op = ?, value = ?,
-         selector = ?, rearm = ?, muted = ?, cron = ?, state = ?,
-         last_triggered_at = ?, notifications = ?, principal_snapshot = ?,
-         updated_at = ?
-       WHERE id = ? AND owner = ?`,
+         name = $1, saved_query_id = $2, column_name = $3, op = $4, value = $5,
+         selector = $6, rearm = $7, muted = $8, cron = $9, state = $10,
+         last_triggered_at = $11, notifications = $12, principal_snapshot = $13,
+         updated_at = $14
+       WHERE id = $15 AND owner = $16`,
       [
         merged.name,
         merged.savedQueryId,
@@ -316,7 +316,7 @@ export class AlertRepository {
 
   async delete(owner: string, id: string): Promise<boolean> {
     const deleted = await this.db.query<{ id: string }>(
-      'DELETE FROM alerts WHERE id = ? AND owner = ? RETURNING id',
+      'DELETE FROM alerts WHERE id = $1 AND owner = $2 RETURNING id',
       [id, owner],
     );
     return deleted.length > 0;

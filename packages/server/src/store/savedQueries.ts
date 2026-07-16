@@ -113,7 +113,7 @@ export class SavedQueryRepository {
     });
     await this.db.run(
       `INSERT INTO saved_queries (id, name, description, statement, catalog, schema, datasource_id, is_favorite, owner, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       insertParams(saved, owner),
     );
     return withAccessMeta(saved, owner, 'owner');
@@ -166,7 +166,7 @@ export class SavedQueryRepository {
 
     return this.db.transaction(async (tx) => {
       const deleted = await tx.query<{ id: string }>(
-        'DELETE FROM saved_queries WHERE id = ? AND owner = ? RETURNING id',
+        'DELETE FROM saved_queries WHERE id = $1 AND owner = $2 RETURNING id',
         [id, accessor.user],
       );
       if (deleted.length === 0) return false;
@@ -178,7 +178,7 @@ export class SavedQueryRepository {
   /** ドキュメント id から owner user id を返す。存在しなければ undefined。 */
   async getOwner(id: string): Promise<string | undefined> {
     const rows = await this.db.query<{ owner: string }>(
-      'SELECT owner FROM saved_queries WHERE id = ?',
+      'SELECT owner FROM saved_queries WHERE id = $1',
       [id],
     );
     return rows[0]?.owner;
@@ -188,24 +188,24 @@ export class SavedQueryRepository {
     if (query && query.trim() !== '') {
       return this.db.query<SavedQueryRow>(
         `SELECT * FROM saved_queries
-         WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR statement LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+         WHERE owner = $1 AND (name LIKE $2 ESCAPE '\\' OR statement LIKE $3 ESCAPE '\\' OR description LIKE $4 ESCAPE '\\')
          ORDER BY is_favorite DESC, updated_at DESC`,
         [owner, likeParam(query), likeParam(query), likeParam(query)],
       );
     }
     return this.db.query<SavedQueryRow>(
-      `SELECT * FROM saved_queries WHERE owner = ? ORDER BY is_favorite DESC, updated_at DESC`,
+      `SELECT * FROM saved_queries WHERE owner = $1 ORDER BY is_favorite DESC, updated_at DESC`,
       [owner],
     );
   }
 
   private async fetchRowsByIds(ids: readonly string[], query?: string): Promise<SavedQueryRow[]> {
     if (ids.length === 0) return [];
-    const placeholders = ids.map(() => '?').join(', ');
+    const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
     const params: SqlParam[] = [...ids];
     let sql = `SELECT * FROM saved_queries WHERE id IN (${placeholders})`;
     if (query && query.trim() !== '') {
-      sql += ` AND (name LIKE ? ESCAPE '\\' OR statement LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')`;
+      sql += ` AND (name LIKE $${params.length + 1} ESCAPE '\\' OR statement LIKE $${params.length + 2} ESCAPE '\\' OR description LIKE $${params.length + 3} ESCAPE '\\')`;
       params.push(likeParam(query), likeParam(query), likeParam(query));
     }
     return this.db.query<SavedQueryRow>(sql, params);
@@ -213,14 +213,14 @@ export class SavedQueryRepository {
 
   private async getOwnedRow(id: string, owner: string): Promise<SavedQueryRow | undefined> {
     const rows = await this.db.query<SavedQueryRow>(
-      'SELECT * FROM saved_queries WHERE id = ? AND owner = ?',
+      'SELECT * FROM saved_queries WHERE id = $1 AND owner = $2',
       [id, owner],
     );
     return rows[0];
   }
 
   private async getRowById(id: string): Promise<SavedQueryRow | undefined> {
-    const rows = await this.db.query<SavedQueryRow>('SELECT * FROM saved_queries WHERE id = ?', [
+    const rows = await this.db.query<SavedQueryRow>('SELECT * FROM saved_queries WHERE id = $1', [
       id,
     ]);
     return rows[0];
@@ -246,9 +246,9 @@ export class SavedQueryRepository {
       updatedAt: new Date().toISOString(),
     });
     await this.db.run(
-      `UPDATE saved_queries SET name=?, description=?, statement=?,
-         catalog=?, schema=?, datasource_id=?, is_favorite=?, updated_at=?
-       WHERE id=? AND owner=?`,
+      `UPDATE saved_queries SET name=$1, description=$2, statement=$3,
+         catalog=$4, schema=$5, datasource_id=$6, is_favorite=$7, updated_at=$8
+       WHERE id=$9 AND owner=$10`,
       [
         updated.name,
         updated.description,

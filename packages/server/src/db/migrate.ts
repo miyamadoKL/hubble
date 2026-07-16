@@ -151,11 +151,10 @@ async function applyMigrations(db: SqlDatabase, migrations: Migration[]): Promis
       // SQL 適用の直後、同じトランザクション内で schema_migrations に
       // 記録行を追加する。これにより「SQL は成功したが記録は失敗した」
       // という不整合が起きない。
-      await tx.run('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [
-        migration.version,
-        migration.name,
-        new Date().toISOString(),
-      ]);
+      await tx.run(
+        'INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, $3)',
+        [migration.version, migration.name, new Date().toISOString()],
+      );
     });
     applied.push(migration.version);
   }

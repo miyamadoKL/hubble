@@ -47,7 +47,7 @@ export class DocumentShareRepository {
     const rows = await this.db.query<DocumentShareRow>(
       `SELECT subject_type, subject_value, permission, created_at
        FROM document_shares
-       WHERE document_type = ? AND document_id = ?
+       WHERE document_type = $1 AND document_id = $2
        ORDER BY created_at ASC, id ASC`,
       [type, documentId],
     );
@@ -69,7 +69,7 @@ export class DocumentShareRepository {
   ): Promise<DocumentShare[]> {
     const nowIso = new Date().toISOString();
     return this.db.transaction(async (tx) => {
-      await tx.run('DELETE FROM document_shares WHERE document_type = ? AND document_id = ?', [
+      await tx.run('DELETE FROM document_shares WHERE document_type = $1 AND document_id = $2', [
         type,
         documentId,
       ]);
@@ -77,7 +77,7 @@ export class DocumentShareRepository {
         await tx.run(
           `INSERT INTO document_shares
              (id, document_type, document_id, subject_type, subject_value, permission, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             newId('shr_'),
             type,
@@ -119,8 +119,8 @@ export class DocumentShareRepository {
     const rows = await this.db.query<{ document_id: string; permission: string }>(
       `SELECT document_id, permission
        FROM document_shares
-       WHERE document_type = ? AND (${sql})`,
-      [type, ...params],
+       WHERE (${sql}) AND document_type = $${params.length + 1}`,
+      [...params, type],
     );
     const result = new Map<string, SharePermission>();
     for (const row of rows) {
@@ -134,7 +134,7 @@ export class DocumentShareRepository {
 
   /** ドキュメント削除時に紐づく共有エントリをすべて削除する。 */
   async deleteForDocument(type: DocumentType, documentId: string): Promise<void> {
-    await this.db.run('DELETE FROM document_shares WHERE document_type = ? AND document_id = ?', [
+    await this.db.run('DELETE FROM document_shares WHERE document_type = $1 AND document_id = $2', [
       type,
       documentId,
     ]);
@@ -149,8 +149,9 @@ export class DocumentShareRepository {
     return this.db.query<{ permission: string }>(
       `SELECT permission
        FROM document_shares
-       WHERE document_type = ? AND document_id = ? AND (${sql})`,
-      [type, documentId, ...params],
+       WHERE (${sql}) AND document_type = $${params.length + 1}
+         AND document_id = $${params.length + 2}`,
+      [...params, type, documentId],
     );
   }
 }
@@ -160,17 +161,21 @@ export function documentShareAccessorMatchClause(accessor: ShareAccessor): {
   sql: string;
   params: SqlParam[];
 } {
-  const parts: string[] = ["(subject_type = 'user' AND subject_value = ?)"];
+  const userParameter = 1;
+  const parts: string[] = [`(subject_type = 'user' AND subject_value = $${userParameter})`];
   const params: SqlParam[] = [accessor.user];
 
   const groups = accessor.groups.filter((group) => group.length > 0);
   if (groups.length > 0) {
-    const placeholders = groups.map(() => 'LOWER(?)').join(', ');
+    const groupOffset = userParameter + 1;
+    const placeholders = groups.map((_, index) => `LOWER($${groupOffset + index})`).join(', ');
     parts.push(`(subject_type = 'group' AND LOWER(subject_value) IN (${placeholders}))`);
     params.push(...groups.map((group) => group.toLowerCase()));
   }
 
-  parts.push("(subject_type = 'role' AND LOWER(subject_value) = LOWER(?))");
+  parts.push(
+    `(subject_type = 'role' AND LOWER(subject_value) = LOWER($${userParameter + 1 + groups.length}))`,
+  );
   params.push(accessor.role);
 
   return { sql: parts.join(' OR '), params };

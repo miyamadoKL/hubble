@@ -104,7 +104,7 @@ export class DashboardRepository {
     });
     await this.db.run(
       `INSERT INTO dashboards (id, name, description, data, owner, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         dashboard.id,
         dashboard.name,
@@ -156,7 +156,7 @@ export class DashboardRepository {
 
     return this.db.transaction(async (tx) => {
       const deleted = await tx.query<{ id: string }>(
-        'DELETE FROM dashboards WHERE id = ? AND owner = ? RETURNING id',
+        'DELETE FROM dashboards WHERE id = $1 AND owner = $2 RETURNING id',
         [id, accessor.user],
       );
       if (deleted.length === 0) return false;
@@ -168,7 +168,7 @@ export class DashboardRepository {
   /** ドキュメント id から owner user id を返す。存在しなければ undefined。 */
   async getOwner(id: string): Promise<string | undefined> {
     const rows = await this.db.query<{ owner: string }>(
-      'SELECT owner FROM dashboards WHERE id = ?',
+      'SELECT owner FROM dashboards WHERE id = $1',
       [id],
     );
     return rows[0]?.owner;
@@ -178,14 +178,14 @@ export class DashboardRepository {
     if (query && query.trim() !== '') {
       return this.db.query<DashboardListRow>(
         `SELECT id, name, description, data, owner, created_at, updated_at FROM dashboards
-         WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+         WHERE owner = $1 AND (name LIKE $2 ESCAPE '\\' OR description LIKE $3 ESCAPE '\\')
          ORDER BY updated_at DESC`,
         [owner, likeParam(query), likeParam(query)],
       );
     }
     return this.db.query<DashboardListRow>(
       `SELECT id, name, description, data, owner, created_at, updated_at FROM dashboards
-       WHERE owner = ? ORDER BY updated_at DESC`,
+       WHERE owner = $1 ORDER BY updated_at DESC`,
       [owner],
     );
   }
@@ -195,11 +195,11 @@ export class DashboardRepository {
     query?: string,
   ): Promise<DashboardListRow[]> {
     if (ids.length === 0) return [];
-    const placeholders = ids.map(() => '?').join(', ');
+    const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
     const params: SqlParam[] = [...ids];
     let sql = `SELECT id, name, description, data, owner, created_at, updated_at FROM dashboards WHERE id IN (${placeholders})`;
     if (query && query.trim() !== '') {
-      sql += ` AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')`;
+      sql += ` AND (name LIKE $${params.length + 1} ESCAPE '\\' OR description LIKE $${params.length + 2} ESCAPE '\\')`;
       params.push(likeParam(query), likeParam(query));
     }
     return this.db.query<DashboardListRow>(sql, params);
@@ -207,14 +207,14 @@ export class DashboardRepository {
 
   private async getOwnedRow(id: string, owner: string): Promise<DashboardRow | undefined> {
     const rows = await this.db.query<DashboardRow>(
-      'SELECT * FROM dashboards WHERE id = ? AND owner = ?',
+      'SELECT * FROM dashboards WHERE id = $1 AND owner = $2',
       [id, owner],
     );
     return rows[0];
   }
 
   private async getRowById(id: string): Promise<DashboardRow | undefined> {
-    const rows = await this.db.query<DashboardRow>('SELECT * FROM dashboards WHERE id = ?', [id]);
+    const rows = await this.db.query<DashboardRow>('SELECT * FROM dashboards WHERE id = $1', [id]);
     return rows[0];
   }
 
@@ -232,8 +232,8 @@ export class DashboardRepository {
       updatedAt: new Date().toISOString(),
     });
     await this.db.run(
-      `UPDATE dashboards SET name = ?, description = ?, data = ?, updated_at = ?
-       WHERE id = ? AND owner = ?`,
+      `UPDATE dashboards SET name = $1, description = $2, data = $3, updated_at = $4
+       WHERE id = $5 AND owner = $6`,
       [
         updated.name,
         updated.description,

@@ -43,7 +43,7 @@ export class ResultObjectDeletionRepository {
       await this.db.run(
         `INSERT INTO result_object_deletions
            (object_key, attempts, next_attempt_at, last_error, created_at, updated_at)
-         VALUES (?, 0, ?, NULL, ?, ?)
+         VALUES ($1, 0, $2, NULL, $3, $4)
          ON CONFLICT (object_key) DO NOTHING`,
         [key, nowIso, nowIso, nowIso],
       );
@@ -55,10 +55,10 @@ export class ResultObjectDeletionRepository {
     const rows = await this.db.query<{ object_key: string }>(
       `SELECT object_key FROM (
          SELECT result_object_key AS object_key
-         FROM query_history WHERE result_object_key = ?
+         FROM query_history WHERE result_object_key = $1
          UNION ALL
          SELECT result_object_key AS object_key
-         FROM workflow_step_runs WHERE result_object_key = ?
+         FROM workflow_step_runs WHERE result_object_key = $2
        ) AS live_result_refs
        LIMIT 1`,
       [key, key],
@@ -74,9 +74,9 @@ export class ResultObjectDeletionRepository {
   async claimDue(nowIso: string, limit: number): Promise<ResultObjectDeletionJob[]> {
     const rows = await this.db.query<ResultObjectDeletionRow>(
       `SELECT * FROM result_object_deletions
-       WHERE next_attempt_at <= ?
+       WHERE next_attempt_at <= $1
        ORDER BY next_attempt_at ASC, object_key ASC
-       LIMIT ?`,
+       LIMIT $2`,
       [nowIso, limit],
     );
     return rows.map(rowToJob);
@@ -85,7 +85,7 @@ export class ResultObjectDeletionRepository {
   /** 削除に成功したジョブを完了として取り除く。 */
   async complete(keys: readonly string[]): Promise<void> {
     for (const key of new Set(keys)) {
-      await this.db.run('DELETE FROM result_object_deletions WHERE object_key = ?', [key]);
+      await this.db.run('DELETE FROM result_object_deletions WHERE object_key = $1', [key]);
     }
   }
 
@@ -99,8 +99,8 @@ export class ResultObjectDeletionRepository {
   ): Promise<void> {
     await this.db.run(
       `UPDATE result_object_deletions
-       SET attempts = ?, next_attempt_at = ?, last_error = ?, updated_at = ?
-       WHERE object_key = ?`,
+       SET attempts = $1, next_attempt_at = $2, last_error = $3, updated_at = $4
+       WHERE object_key = $5`,
       [attempts, nextAttemptAtIso, error, nowIso, key],
     );
   }
