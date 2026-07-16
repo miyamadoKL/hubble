@@ -2,7 +2,6 @@
  * PostgreSQL エンジンの統合テスト(TEST_DATABASE_URL 設定時のみ実行)。
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { pgEnabled } from '../../test/dbBackends';
 import type { ResolvedPostgresqlDatasource } from '../../datasource/types';
 import { TrinoQueryError } from '../../errors';
 import { emptySessionMutations } from '../../trino/types';
@@ -27,7 +26,7 @@ function datasourceFromEnv(): ResolvedPostgresqlDatasource {
   };
 }
 
-describe.skipIf(!pgEnabled)('postgresql engine integration', () => {
+describe('postgresql engine integration', () => {
   let ds!: ResolvedPostgresqlDatasource;
   let engine!: ReturnType<typeof createPostgresqlEngine>;
 

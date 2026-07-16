@@ -21,9 +21,7 @@ jobs:
     # 15 min is comfortably above the expected runtime while still failing fast on hangs.
     timeout-minutes: 15
 
-    # PostgreSQL for the backend-parameterized store/migrate tests. They are
-    # gated on TEST_DATABASE_URL (test/dbBackends.ts) and skip locally when it is
-    # unset; in CI we point them at this service so the pg path runs for real.
+    # serverの永続化テストが必須とするPostgreSQL。TEST_DATABASE_URLで接続する。
     services:
       postgres:
         image: postgres:17-alpine
@@ -73,9 +71,7 @@ jobs:
       - name: Format check
         run: pnpm format:check
 
-      # Unit tests for contracts, server and web. These use a fake Trino, so no
-      # external services are required. TEST_DATABASE_URL additionally enables
-      # the PostgreSQL-backed store/migrate tests against the service above.
+      # contracts、server、webのテスト。serverの永続化テストは上記PostgreSQLを使う。
       #
       # Intentionally NOT run here (both need a real Trino instance):
       #   - RUN_TRINO_IT=1 pnpm --filter server test  (server integration tests)

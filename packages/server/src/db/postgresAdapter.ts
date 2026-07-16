@@ -3,11 +3,10 @@
  *
  * `pg` パッケージの接続プールをラップし、`SqlDatabase` インターフェースが
  * 要求する `query` / `run` / `exec` / `transaction` / `close` を提供する。
- * リポジトリ層は SQLite 用に書かれた `?` プレースホルダを使うため、このモジュール
- * では `toPgPlaceholders()` で `$1..$n` 形式へ変換してから発行する。加えて、
- * マイグレーション適用を複数プロセス間で直列化するための PostgreSQL 固有の
- * advisory lock（`withAdvisoryLock`）もここで実装する（SQLite アダプターには
- * 存在しない、PostgreSQL 固有の拡張）。
+ * リポジトリ層が使う `?` プレースホルダは、このモジュールの
+ * `toPgPlaceholders()` で PostgreSQL の `$1..$n` 形式へ変換してから発行する。加えて、
+ * マイグレーション適用を複数プロセス間で直列化する advisory lock
+ * （`withAdvisoryLock`）もここで実装する。
  */
 // `pg` is CommonJS: import the default and destructure so the named exports
 // resolve under Node's ESM loader (tsx runtime) as well as the test bundler.
@@ -36,8 +35,8 @@ const POOL_MAX = 5;
  * never contains a literal `?` inside a string literal (enforced by review),
  * so a straight left-to-right substitution is safe.
  *
- * SQLite 方言の位置プレースホルダ `?` を PostgreSQL の `$1..$n` 形式へ書き
- * 換える。リポジトリ層の SQL 文字列リテラル中には `?` が現れない前提（コード
+ * リポジトリ層の位置プレースホルダ `?` を PostgreSQL の `$1..$n` 形式へ書き
+ * 換える。SQL 文字列リテラル中には `?` が現れない前提（コード
  * レビューで担保）なので、出現順に単純に `$1`, `$2`, ... と振っていくだけで
  * 安全に変換できる。
  */
@@ -144,8 +143,6 @@ export async function runPostgresTransaction<T>(
 // レベル）と、トランザクション中に1つのクライアントへピン留めされたインス
 // タンス（transaction() 内で生成）の2種類の使われ方をする。
 class PostgresDatabase implements SqlDatabase {
-  readonly dialect = 'postgres' as const;
-
   constructor(
     private readonly executor: PgExecutor,
     /** Present on the pool-backed instance; absent on a transaction handle. */

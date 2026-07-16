@@ -139,8 +139,7 @@ export interface TestContext {
  *      true でない限り) ことで、ルート/CRUD テストが背後の非同期発火に
  *      影響されず決定的に動くようにする。
  *   3. config構築後に `options.databaseFactory` を呼び、未指定ならテスト用DBを
- *      開いて `buildServices` でサービス層一式を構築する。TEST_DATABASE_URL設定時
- *      はPostgreSQL、未設定時はSQLiteを開く。factoryが返したDBの所有権はServicesへ
+ *      開いて `buildServices` でサービス層一式を構築する。factoryが返したDBの所有権はServicesへ
  *      移り、`services.shutdown()` がDBを閉じる。
  *      `fetchImpl` は fake.fetch (実ネットワークなしで応答)、`sleepImpl`/
  *      `schedulerSleep` は既定で即座に resolve するダミーにして、バックオフ待ちの
@@ -184,7 +183,11 @@ export async function createTestContext(
   } = {},
 ): Promise<TestContext> {
   const fake = new FakeTrino(options.scenarios ?? []);
-  const baseConfig = loadServerConfig(options.env ?? {});
+  const configEnv = {
+    ...options.env,
+    DATABASE_URL: options.env?.DATABASE_URL ?? process.env.TEST_DATABASE_URL,
+  };
+  const baseConfig = loadServerConfig(configEnv);
   // 日本語: 各セクションごとにベース設定と configOverrides をマージする。
   // Trino 接続先(baseUrl)は datasources.yaml 側の責務になったため、ここでは
   // config.trino(横断設定、user のみ)への configOverrides.trino の上書きだけを行う。

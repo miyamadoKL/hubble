@@ -4,7 +4,7 @@
  * - `WorkflowRepository`: `workflows` テーブルに対する owner スコープ CRUD。
  * - `WorkflowRunRepository`: `workflow_runs` / `workflow_step_runs` の実行記録。
  *
- * SQLite / PostgreSQL の両方言で同じ SQL が動くことを想定する。
+ * PostgreSQL の `SqlDatabase` を通じて永続化する。
  */
 import type {
   RetryPolicy,

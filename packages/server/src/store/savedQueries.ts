@@ -286,9 +286,7 @@ function rowToSavedQuery(row: SavedQueryRow): SavedQuery {
     name: row.name,
     description: row.description,
     statement: row.statement,
-    // SQLite stores 0/1; PostgreSQL's INTEGER column round-trips the same value.
-    // SQLite は 0/1 で保持し、PostgreSQL の INTEGER 列も同じ値を往復するため
-    // Number() で数値化してから 0 かどうかで真偽値化する。
+    // PostgreSQLのINTEGER列を数値化してから 0 かどうかで真偽値化する。
     isFavorite: Number(row.is_favorite) !== 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

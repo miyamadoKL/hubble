@@ -37,7 +37,7 @@ describe('Services shutdown', () => {
     const db = await openTestDatabase();
     try {
       await expect(
-        buildServices(loadServerConfig({}), db, {
+        buildServices(loadServerConfig({ DATABASE_URL: process.env.TEST_DATABASE_URL }), db, {
           cwd,
           env: { RBAC_PATH: join(cwd, 'missing-rbac.yaml') },
         }),

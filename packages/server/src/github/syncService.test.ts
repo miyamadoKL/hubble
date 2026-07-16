@@ -9,7 +9,7 @@ import { DocumentShareRepository } from '../store/documentShares';
 import { WorkflowRepository } from '../store/workflows';
 import { AlertRepository } from '../store/alerts';
 import type { LoadedRbac } from '../rbac/types';
-import { dbBackends } from '../test/dbBackends';
+import { openTestDatabase } from '../test/dbBackends';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import {
   alertToContent,
@@ -122,7 +122,7 @@ class FakeGithubClient implements GithubClient {
 }
 
 function buildService(
-  db: Awaited<ReturnType<(typeof dbBackends)[0]['open']>>,
+  db: SqlDatabase,
   client: FakeGithubClient,
   now = () => Date.now(),
   configOverrides: Partial<ReturnType<typeof loadServerConfig>['github']> = {},
@@ -138,6 +138,7 @@ function buildService(
   const connections = new GithubConnectionRepository(db);
   const links = new DocumentGitLinkRepository(db);
   const baseConfig = loadServerConfig({
+    DATABASE_URL: process.env.TEST_DATABASE_URL,
     GITHUB_REPO: REPO,
     GITHUB_APP_CLIENT_ID: 'cid',
     GITHUB_APP_CLIENT_SECRET: 'sec',
@@ -183,7 +184,6 @@ const accessorAlice = { user: 'alice', groups: [] as string[], role: 'admin' };
 
 function failDocumentGitLinkWrites(db: SqlDatabase): SqlDatabase {
   return {
-    dialect: db.dialect,
     query: db.query.bind(db),
     run: db.run.bind(db),
     exec: db.exec.bind(db),
@@ -191,7 +191,6 @@ function failDocumentGitLinkWrites(db: SqlDatabase): SqlDatabase {
     transaction: (fn) =>
       db.transaction((tx) =>
         fn({
-          dialect: tx.dialect,
           query: tx.query.bind(tx),
           run: async (sql, params) => {
             if (/\b(?:INSERT INTO|UPDATE) document_git_links\b/.test(sql)) {
@@ -207,9 +206,9 @@ function failDocumentGitLinkWrites(db: SqlDatabase): SqlDatabase {
   };
 }
 
-describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
+describe('GithubSyncService', () => {
   it('connects and disconnects GitHub account', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -220,7 +219,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('rewraps a token encrypted by an old key without refreshing it', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const oldKey = Buffer.alloc(32, 4);
     const keys = new Map([
@@ -246,7 +245,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('pushes saved query to feature branch and updates existing file sha', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -271,7 +270,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('reports status transitions and uses TTL cache', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     let now = Date.parse('2026-01-01T00:00:00.000Z');
     const { service, savedQueries } = buildService(db, client, () => now);
@@ -320,7 +319,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('skips verification when not connected but still returns status', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links } = buildService(db, client);
     const saved = await savedQueries.create('alice', {
@@ -339,7 +338,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('creates PR and falls back to existing open PR on 422', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -355,7 +354,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('rejects push from non-owner shared accessor', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, shares } = buildService(db, client);
     await service.connect('bob', 'oauth-code');
@@ -381,7 +380,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('requires connection before push', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries } = buildService(db, client);
     const saved = await savedQueries.create('alice', {
@@ -396,7 +395,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('rejects newline metadata before writing a Git file', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -415,7 +414,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('pullDocument overwrites local content and preserves isFavorite', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -462,7 +461,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('rolls back the document update when the link update fails', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links } = buildService(
       db,
@@ -492,7 +491,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('pullDocument rejects non-owner and missing link or file', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links, shares } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -540,7 +539,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('pullDocument preserves workflow enabled flag', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, workflows, links } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -573,7 +572,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('pullDocument preserves an alert webhook URL while applying public notification fields', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, alerts, links } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -622,7 +621,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('pullDocument rejects an alert update after saved-query access is revoked', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, alerts, links, shares } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -667,7 +666,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('pullDocument assigns new notebook cell ids', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, notebooks, links } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -697,7 +696,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('pullDocument assigns new dashboard widget ids and accepts missing savedQueryId refs', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, dashboards, links } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -747,7 +746,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('syncAll pulls unchanged local when main advanced', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -780,7 +779,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('syncAll skips locally modified documents', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links } = buildService(db, client);
     await service.connect('alice', 'oauth-code');
@@ -812,7 +811,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('syncAll skips when owner is not connected and no sync token', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links } = buildService(db, client);
     const saved = await savedQueries.create('alice', {
@@ -834,7 +833,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('syncAll uses GITHUB_SYNC_TOKEN when owner is not connected', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links } = buildService(db, client, () => Date.now(), {
       syncToken: 'server-token',
@@ -859,7 +858,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('syncAll counts parse failures and continues', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, notebooks, links } = buildService(db, client, () => Date.now(), {
       syncToken: 'server-token',
@@ -880,7 +879,7 @@ describe.each(dbBackends)('GithubSyncService ($name)', ({ open }) => {
   });
 
   it('syncAll does nothing when main is unchanged', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     const client = new FakeGithubClient();
     const { service, savedQueries, links } = buildService(db, client);
     await service.connect('alice', 'oauth-code');

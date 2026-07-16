@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { openPostgres } from '../db/postgresAdapter';
-import {
-  openPostgresWorkerDatabase,
-  pgEnabled,
-  postgresWorkerSchema,
-  postgresWorkerUrl,
-} from './dbBackends';
+import { openPostgresWorkerDatabase, postgresWorkerSchema, postgresWorkerUrl } from './dbBackends';
 import type { SqlDatabase } from '../db/sqlDatabase';
 
 describe('PostgreSQL worker backend', () => {
@@ -29,7 +24,7 @@ describe('PostgreSQL worker backend', () => {
   });
 });
 
-describe.skipIf(!pgEnabled)('PostgreSQL worker schema integration', () => {
+describe('PostgreSQL worker schema integration', () => {
   const url = process.env.TEST_DATABASE_URL!;
   const schemaA = postgresWorkerSchema('9001');
   const schemaB = postgresWorkerSchema('9002');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AlertTriggeredNotificationInput } from '../notification/service';
-import { dbBackends } from '../test/dbBackends';
+import { openTestDatabase } from '../test/dbBackends';
 import { AlertDeliveryRepository } from './alertDeliveries';
 
 function payload(): AlertTriggeredNotificationInput {
@@ -39,9 +39,9 @@ function payload(): AlertTriggeredNotificationInput {
   };
 }
 
-describe.each(dbBackends)('AlertDeliveryRepository ($name)', ({ open }) => {
+describe('AlertDeliveryRepository', () => {
   it('claims only due pending jobs and preserves retry, sent, and dead states', async () => {
-    const db = await open();
+    const db = await openTestDatabase();
     await db.run('DELETE FROM alert_deliveries');
     const repository = new AlertDeliveryRepository(db);
     const dueAt = '2026-01-01T00:00:00.000Z';

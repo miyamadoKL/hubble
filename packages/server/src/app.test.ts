@@ -1,7 +1,7 @@
 /**
  * app.ts (createApp) の疎通テスト。
  *
- * `test/harness.ts` の `createTestContext` でフェイク Trino + インメモリ SQLite を
+ * `test/harness.ts` の `createTestContext` でフェイク Trino + PostgreSQL worker schema を
  * 使ったテスト用アプリを構築し、app.ts で配線した「骨格」部分（healthz / config /
  * 未知ルートの 404 エラーエンベロープ）が期待通り機能することを確認する。
  * 各ドメインルーター自体の詳細な挙動は http/*.test.ts 側の責務。

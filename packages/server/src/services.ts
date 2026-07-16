@@ -3,8 +3,8 @@
  *
  * `app.ts` の `defaultServices()` や各テストハーネス（test/harness.ts）から
  * `buildServices(config, db, options)` が呼ばれ、QueryEngine、メタデータ
- * サービス、クエリレジストリ/サービス、Query Guard 見積もりサービス、各 SQLite/
- * PostgreSQL リポジトリ、スケジューラーをすべて生成し、依存関係を配線したうえで
+ * サービス、クエリレジストリ/サービス、Query Guard 見積もりサービス、各 PostgreSQL
+ * リポジトリ、スケジューラーをすべて生成し、依存関係を配線したうえで
  * ひとつの `Services` オブジェクトとして返す。
  */
 import type { SqlDatabase } from './db/sqlDatabase';

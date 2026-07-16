@@ -2,7 +2,13 @@
  * Webhook egress 設定の環境変数解決を確認する。
  */
 import { describe, expect, it } from 'vitest';
-import { loadServerConfig } from '../config';
+import { loadServerConfig as loadConfig } from '../config';
+
+const loadServerConfig = (env: Record<string, string | undefined> = {}) =>
+  loadConfig({
+    DATABASE_URL: process.env.TEST_DATABASE_URL ?? 'postgres://hubble:test@localhost/hubble',
+    ...env,
+  });
 
 describe('webhook notification config', () => {
   it('uses secure defaults', () => {

@@ -82,7 +82,7 @@ A pnpm-workspace monorepo, TypeScript throughout:
 ```
 packages/
   contracts/   # zod schemas + types — the API/type contract; server & web depend on it
-  server/      # Hono BFF: multi-datasource query proxy (Trino / MySQL / PostgreSQL), SSE, CSV stream, PostgreSQL/SQLite persistence
+  server/      # Hono BFF: multi-datasource query proxy (Trino / MySQL / PostgreSQL), SSE, CSV stream, PostgreSQL persistence
   web/         # React 19 + Vite + Tailwind v4; Monaco editor; ECharts; zustand + TanStack Query
 e2e/           # Playwright E2E suites (editor / execution / results / notebook / panels / chart / app) against a live Trino (tpch)
 ```
@@ -92,7 +92,7 @@ e2e/           # Playwright E2E suites (editor / execution / results / notebook 
 - **State**: zustand stores (`ui`, `notebook`, `execution`, chart config) + TanStack
   Query for server state. Components stay presentational.
 - **Results stay in memory by default**: with `RESULT_STORE=none`, rows live in
-  server memory + SSE; PostgreSQL (or SQLite) persists only summaries
+  server memory + SSE; PostgreSQL persists only summaries
   (notebooks, saved queries, history, per-cell `resultMeta`). With
   `RESULT_STORE=s3`, completed results are stored in S3 and the DB records only
   the object key and expiry timestamp.
@@ -120,7 +120,7 @@ docker compose up --build
 ```
 
 To run server/web individually against your own Node, prepare
-`datasources.yaml` and PostgreSQL (or SQLite) first.
+`datasources.yaml` and PostgreSQL first.
 
 ```bash
 pnpm install
@@ -137,7 +137,7 @@ datasources:
 EOF
 cp deploy/compose/rbac.yaml rbac.yaml
 
-# Terminal 1 — the BFF (Hono) on :8080 (falls back to SQLite if DATABASE_URL is unset)
+# Terminal 1 — the BFF (Hono) on :8080 (PostgreSQL is required)
 PORT=8080 DATABASE_URL=postgres://hubble:hubble@localhost:5432/hubble \
   pnpm --filter @hubble/server dev
 
@@ -323,48 +323,47 @@ that requirement.
 
 ### Environment variables (server)
 
-| Variable                          | Default              | Description                                                                                                                                               |
-| --------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATASOURCES_PATH`                | —                    | Path to the datasource definition YAML (effectively required). If unset, looks for `./datasources.yaml`; if neither exists, this is a startup error       |
-| `RBAC_PATH`                       | —                    | Path to the RBAC definition YAML. If unset, looks for `./rbac.yaml`; if absent, startup fails                                                             |
-| `CONFIG_RELOAD_INTERVAL_SECONDS`  | `30`                 | Polling interval (seconds) for hot-reloading `datasources.yaml` / `rbac.yaml`. `0` disables polling (SIGHUP only)                                         |
-| `PORT`                            | `8080`               | HTTP port the BFF listens on                                                                                                                              |
-| `DATABASE_URL`                    | —                    | `postgres://` / `postgresql://` connection string (1st/production-recommended). When set, persistence uses PostgreSQL and takes precedence over `DB_PATH` |
-| `DB_PATH`                         | `./data/hubble.db`   | SQLite database file (for non-production use; used only when `DATABASE_URL` is unset)                                                                     |
-| `STATIC_DIR`                      | —                    | Built web app dir (e.g. `packages/web/dist`); serves it + SPA fallback                                                                                    |
-| `TRINO_USER`                      | `admin`              | `X-Trino-User` shared by all Trino datasources (impersonation user). Also the `AUTH_MODE=none` principal                                                  |
-| `DEFAULT_CATALOG`                 | —                    | Initial catalog for new notebooks                                                                                                                         |
-| `DEFAULT_SCHEMA`                  | —                    | Initial schema for new notebooks                                                                                                                          |
-| `DEFAULT_LIMIT`                   | `5000`               | Auto-`LIMIT` appended to `SELECT`s without one                                                                                                            |
-| `QUERY_MAX_ROWS`                  | `100000`             | Cap on rows buffered server-side per query                                                                                                                |
-| `QUERY_CONCURRENCY`               | `5`                  | Max concurrently-tracked queries                                                                                                                          |
-| `QUERY_TTL_MINUTES`               | `30`                 | Retention of a finished query before sweep                                                                                                                |
-| `QUERY_OVERFLOW_MODE`             | `truncate`           | Behavior when `QUERY_MAX_ROWS` is exceeded (`truncate` or `cancel`)                                                                                       |
-| `METADATA_TTL_SECONDS`            | `300`                | Metadata cache TTL                                                                                                                                        |
-| `EXPORT_S3_BUCKET`                | —                    | Bucket name for result-pane S3 export. When unset, the S3 export API rejects requests with HTTP 501                                                       |
-| `EXPORT_S3_PREFIX`                | `hubble-exports/`    | Object key prefix for S3 export. The final key is `<prefix>/<owner>/<queryId>-<timestamp>.<ext>`                                                          |
-| `EXPORT_S3_REGION`                | —                    | Region for the S3 export client                                                                                                                           |
-| `EXPORT_S3_ENDPOINT`              | —                    | S3-compatible endpoint. When set, path-style requests are used                                                                                            |
-| `EXPORT_SHEETS_CREDENTIALS_FILE`  | —                    | Path to the service-account JSON used for Google Sheets export. When unset, the Google Sheets export API rejects requests with HTTP 501                   |
-| `APP_VERSION`                     | `0.1.0`              | Version returned by `GET /api/config`                                                                                                                     |
-| `QUERY_GUARD_MODE`                | `warn`               | Query Guard mode (`off` disables / `warn` shows the estimate only / `enforce` rejects over-limit queries with HTTP 422)                                   |
-| `QUERY_GUARD_MAX_SCAN_BYTES`      | `0` (unlimited)      | Scan-bytes limit (0 = no limit)                                                                                                                           |
-| `QUERY_GUARD_MAX_SCAN_ROWS`       | `0` (unlimited)      | Scan-rows limit (0 = no limit)                                                                                                                            |
-| `QUERY_GUARD_ON_UNKNOWN`          | `warn`               | Behavior when scan cost can't be estimated due to missing statistics (`allow` / `warn` / `block`)                                                         |
-| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000`               | EXPLAIN timeout in ms                                                                                                                                     |
-| `QUERY_GUARD_CACHE_TTL_SECONDS`   | `30`                 | Estimate-result cache TTL in seconds                                                                                                                      |
-| `QUERY_GUARD_BYTES_PER_SECOND`    | `0` (no hint)        | Cluster throughput estimate (bytes/s); when > 0 the UI shows an estimated duration                                                                        |
-| `SCHEDULER_ENABLED`               | `true`               | Set to `false` to stop the scheduler tick loop (API stays live)                                                                                           |
-| `SCHEDULER_TICK_SECONDS`          | `15`                 | Interval in seconds between due-schedule scans                                                                                                            |
-| `SCHEDULER_MAX_CONCURRENT`        | `2`                  | Max schedules running concurrently across the scheduler                                                                                                   |
-| `SCHEDULER_RUNS_RETENTION`        | `50`                 | Per-schedule cap on retained run-history rows (older rows are auto-pruned)                                                                                |
-| `NOTIFY_SLACK_WEBHOOK_URL`        | —                    | Slack incoming webhook URL for final schedule-failure notifications                                                                                       |
-| `NOTIFY_SMTP_HOST`                | —                    | SMTP host for final schedule-failure notifications                                                                                                        |
-| `NOTIFY_SMTP_PORT`                | `587`                | SMTP port. `465` uses implicit TLS; other ports use STARTTLS when available                                                                               |
-| `NOTIFY_SMTP_USER`                | —                    | SMTP auth user                                                                                                                                            |
-| `NOTIFY_SMTP_PASSWORD_ENV`        | —                    | Environment variable name that contains the SMTP password                                                                                                 |
-| `NOTIFY_SMTP_FROM`                | —                    | SMTP From address                                                                                                                                         |
-| `AUTH_SSO_HEADER_GROUPS`          | `x-forwarded-groups` | SSO group-membership header name (used by `rbac.yaml`'s `group` assignment)                                                                               |
+| Variable                          | Default              | Description                                                                                                                                         |
+| --------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATASOURCES_PATH`                | —                    | Path to the datasource definition YAML (effectively required). If unset, looks for `./datasources.yaml`; if neither exists, this is a startup error |
+| `RBAC_PATH`                       | —                    | Path to the RBAC definition YAML. If unset, looks for `./rbac.yaml`; if absent, startup fails                                                       |
+| `CONFIG_RELOAD_INTERVAL_SECONDS`  | `30`                 | Polling interval (seconds) for hot-reloading `datasources.yaml` / `rbac.yaml`. `0` disables polling (SIGHUP only)                                   |
+| `PORT`                            | `8080`               | HTTP port the BFF listens on                                                                                                                        |
+| `DATABASE_URL`                    | —                    | `postgres://` / `postgresql://` connection string (required); Hubble persistence uses PostgreSQL only                                               |
+| `STATIC_DIR`                      | —                    | Built web app dir (e.g. `packages/web/dist`); serves it + SPA fallback                                                                              |
+| `TRINO_USER`                      | `admin`              | `X-Trino-User` shared by all Trino datasources (impersonation user). Also the `AUTH_MODE=none` principal                                            |
+| `DEFAULT_CATALOG`                 | —                    | Initial catalog for new notebooks                                                                                                                   |
+| `DEFAULT_SCHEMA`                  | —                    | Initial schema for new notebooks                                                                                                                    |
+| `DEFAULT_LIMIT`                   | `5000`               | Auto-`LIMIT` appended to `SELECT`s without one                                                                                                      |
+| `QUERY_MAX_ROWS`                  | `100000`             | Cap on rows buffered server-side per query                                                                                                          |
+| `QUERY_CONCURRENCY`               | `5`                  | Max concurrently-tracked queries                                                                                                                    |
+| `QUERY_TTL_MINUTES`               | `30`                 | Retention of a finished query before sweep                                                                                                          |
+| `QUERY_OVERFLOW_MODE`             | `truncate`           | Behavior when `QUERY_MAX_ROWS` is exceeded (`truncate` or `cancel`)                                                                                 |
+| `METADATA_TTL_SECONDS`            | `300`                | Metadata cache TTL                                                                                                                                  |
+| `EXPORT_S3_BUCKET`                | —                    | Bucket name for result-pane S3 export. When unset, the S3 export API rejects requests with HTTP 501                                                 |
+| `EXPORT_S3_PREFIX`                | `hubble-exports/`    | Object key prefix for S3 export. The final key is `<prefix>/<owner>/<queryId>-<timestamp>.<ext>`                                                    |
+| `EXPORT_S3_REGION`                | —                    | Region for the S3 export client                                                                                                                     |
+| `EXPORT_S3_ENDPOINT`              | —                    | S3-compatible endpoint. When set, path-style requests are used                                                                                      |
+| `EXPORT_SHEETS_CREDENTIALS_FILE`  | —                    | Path to the service-account JSON used for Google Sheets export. When unset, the Google Sheets export API rejects requests with HTTP 501             |
+| `APP_VERSION`                     | `0.1.0`              | Version returned by `GET /api/config`                                                                                                               |
+| `QUERY_GUARD_MODE`                | `warn`               | Query Guard mode (`off` disables / `warn` shows the estimate only / `enforce` rejects over-limit queries with HTTP 422)                             |
+| `QUERY_GUARD_MAX_SCAN_BYTES`      | `0` (unlimited)      | Scan-bytes limit (0 = no limit)                                                                                                                     |
+| `QUERY_GUARD_MAX_SCAN_ROWS`       | `0` (unlimited)      | Scan-rows limit (0 = no limit)                                                                                                                      |
+| `QUERY_GUARD_ON_UNKNOWN`          | `warn`               | Behavior when scan cost can't be estimated due to missing statistics (`allow` / `warn` / `block`)                                                   |
+| `QUERY_GUARD_ESTIMATE_TIMEOUT_MS` | `3000`               | EXPLAIN timeout in ms                                                                                                                               |
+| `QUERY_GUARD_CACHE_TTL_SECONDS`   | `30`                 | Estimate-result cache TTL in seconds                                                                                                                |
+| `QUERY_GUARD_BYTES_PER_SECOND`    | `0` (no hint)        | Cluster throughput estimate (bytes/s); when > 0 the UI shows an estimated duration                                                                  |
+| `SCHEDULER_ENABLED`               | `true`               | Set to `false` to stop the scheduler tick loop (API stays live)                                                                                     |
+| `SCHEDULER_TICK_SECONDS`          | `15`                 | Interval in seconds between due-schedule scans                                                                                                      |
+| `SCHEDULER_MAX_CONCURRENT`        | `2`                  | Max schedules running concurrently across the scheduler                                                                                             |
+| `SCHEDULER_RUNS_RETENTION`        | `50`                 | Per-schedule cap on retained run-history rows (older rows are auto-pruned)                                                                          |
+| `NOTIFY_SLACK_WEBHOOK_URL`        | —                    | Slack incoming webhook URL for final schedule-failure notifications                                                                                 |
+| `NOTIFY_SMTP_HOST`                | —                    | SMTP host for final schedule-failure notifications                                                                                                  |
+| `NOTIFY_SMTP_PORT`                | `587`                | SMTP port. `465` uses implicit TLS; other ports use STARTTLS when available                                                                         |
+| `NOTIFY_SMTP_USER`                | —                    | SMTP auth user                                                                                                                                      |
+| `NOTIFY_SMTP_PASSWORD_ENV`        | —                    | Environment variable name that contains the SMTP password                                                                                           |
+| `NOTIFY_SMTP_FROM`                | —                    | SMTP From address                                                                                                                                   |
+| `AUTH_SSO_HEADER_GROUPS`          | `x-forwarded-groups` | SSO group-membership header name (used by `rbac.yaml`'s `group` assignment)                                                                         |
 
 ## Documentation
 
@@ -377,22 +376,26 @@ that requirement.
 ```bash
 pnpm typecheck   # tsc across contracts / server / web / e2e
 pnpm lint        # eslint + ast-grep (no raw hex, etc.)
-pnpm test        # vitest across contracts / server / web
+TEST_DATABASE_URL=postgres://hubble:hubble@localhost:5432/hubble_test pnpm test
 pnpm --filter web build
 
-# End-to-end against a live Trino (tpch). Starts the server (in-memory DB) + web
-# automatically; needs a reachable Trino on :30080.
+# E2E requires separate PostgreSQL URLs for the normal and proxy-auth BFFs.
+export E2E_DATABASE_URL=postgres://hubble:hubble@localhost:5432/hubble_e2e
+export E2E_AUTH_DATABASE_URL=postgres://hubble:hubble@localhost:5432/hubble_e2e_auth
+# End-to-end against a live Trino (tpch). Starts the PostgreSQL server + web automatically.
 pnpm --filter @hubble/e2e test
 
 # Multi-datasource E2E (optional; does not run in the default command above)
-# Start demo DBs: docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d demo-mysql demo-postgres
+# Start demo DBs first: docker compose -f docker-compose.yml -f docker-compose.demo.yml --profile demo up -d demo-mysql demo-postgres
 MULTI_DS_E2E=1 pnpm --filter @hubble/e2e test tests/datasources.spec.ts
 ```
 
 The E2E suite (35 tests across editor / execution / results / notebook / panels /
 chart / app) runs against a real Trino with deterministic `tpch.tiny` / `tpch.sf1`
-data. It uses an in-memory SQLite (`DB_PATH=:memory:`) so it never touches your own
-notebooks, and `QUERY_MAX_ROWS=10000` to exercise the truncation path.
+data. It uses a PostgreSQL test database supplied through `E2E_DATABASE_URL` or
+`TEST_DATABASE_URL`, and `QUERY_MAX_ROWS=10000` to exercise the truncation path.
+The proxy-auth BFF used by `auth.spec.ts` requires a separate PostgreSQL database
+through `E2E_AUTH_DATABASE_URL`.
 
 ## Keyboard shortcuts
 

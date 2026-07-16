@@ -8,8 +8,7 @@
  *   実行結果（成功/失敗、行数、経過時間など）を記録し、スケジュールごとの
  *   保持件数（retention）を超えた古い行を間引く。
  *
- * SQLite / PostgreSQL の両方言で同じ SQL が動くことを想定しており、真偽値は
- * 0/1 の INTEGER として、日時は ISO 8601 文字列として保存する。
+ * PostgreSQLで真偽値は 0/1 の INTEGER として、日時は ISO 8601 文字列として保存する。
  * アーキテクチャ上は packages/server/src/db/ の `SqlDatabase` 抽象の上に乗る
  * リポジトリ層であり、上位の routes 層が契約型 `Schedule`（`nextRunAt` /
  * `lastRun` の付与）への変換や、cron スケジューラーのポーリングを担当する。
@@ -124,8 +123,8 @@ export interface UpdateScheduleInput {
 }
 
 /**
- * `schedules` テーブルの行を SQL ドライバがそのまま返す形。SQLite/PostgreSQL
- * 双方で列名は snake_case、`enabled` は 0/1 の INTEGER、リトライポリシーは
+ * `schedules` テーブルの行を PostgreSQL がそのまま返す形。列名は snake_case、
+ * `enabled` は 0/1 の INTEGER、リトライポリシーは
  * `retry_*` の3列に分割して保存されている（ドメイン上は `RetryPolicy` object）。
  */
 interface ScheduleRow {
@@ -224,9 +223,7 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
     catalog: row.catalog ?? null,
     schema: row.schema ?? null,
     cron: row.cron,
-    // SQLite stores 0/1; PostgreSQL's INTEGER round-trips the same value.
-    // SQLite は 0/1 で保持し、PostgreSQL の INTEGER 列も同じ値を往復するため
-    // Number() で数値化してから 0 かどうかで真偽値化する。
+    // PostgreSQLのINTEGER列を数値化してから 0 かどうかで真偽値化する。
     enabled: Number(row.enabled) !== 0,
     // retry_max_attempts / retry_backoff_seconds / retry_backoff_multiplier の
     // 3列を RetryPolicy object にまとめ、スキーマでバリデーションする。
@@ -653,11 +650,11 @@ export class ScheduleRunRepository {
 
   /**
    * Keep only the newest `retention` runs for a schedule; delete the rest. The
-   * subquery selects the ids to keep (works on both SQLite and PostgreSQL).
+   * サブクエリで残すidを選び、PostgreSQLのNOT INでそれ以外を削除する。
    *
    * 指定スケジュールについて最新 `retention` 件のみを残し、それより古い行を
    * 削除する。サブクエリで「残すべき id」を選び、`NOT IN` でそれ以外を消す
-   * 方式のため SQLite / PostgreSQL のどちらでも同じ SQL が動く。
+   * 方式のため、保持件数を超えた行だけを削除できる。
    */
   private async prune(scheduleId: string): Promise<void> {
     if (this.retention <= 0) return;

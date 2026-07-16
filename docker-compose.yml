@@ -10,8 +10,7 @@
 # Trino に接続する場合は、そのファイルの baseUrl / username / passwordEnv を
 # 書き換えるか、DATASOURCES_PATH で別ファイルを指す。
 #
-# 永続化は PostgreSQL (DATABASE_URL) が既定 (下記 postgres サービス)。SQLite
-# (DB_PATH) で動かす non-production 向けの構成は本ファイル末尾のコメントを参照。
+# 永続化は PostgreSQL (DATABASE_URL) のみを使用する (下記 postgres サービス)。
 services:
   hubble:
     build: .
@@ -36,8 +35,8 @@ services:
       TRINO_USER: ${TRINO_USER:-admin}
       DEFAULT_CATALOG: ${DEFAULT_CATALOG:-tpch}
       DEFAULT_SCHEMA: ${DEFAULT_SCHEMA:-tiny}
-      # 永続化バックエンド。postgres:// を渡すと DATABASE_URL が DB_PATH より
-      # 優先される。既定パスワードは開発専用のプレースホルダ (本番では .env で上書き)。
+      # PostgreSQL 永続化バックエンド。既定パスワードは開発専用のプレースホルダ
+      # (本番では .env で上書き)。
       DATABASE_URL: ${DATABASE_URL:-postgres://hubble:hubble-dev@postgres:5432/hubble}
     # Optional: a local .env supplies/overrides any variable (incl. secrets like
     # TRINO_PASSWORD). The file is git-ignored; absence is tolerated.
@@ -49,9 +48,6 @@ services:
       - ./deploy/compose/datasources.yaml:/etc/hubble/datasources.yaml:ro
       # 明示的な demo RBAC 定義を読み取り専用でマウント。
       - ./deploy/compose/rbac.yaml:/etc/hubble/rbac.yaml:ro
-      # Non-production 向け: SQLite で動かす場合はここで hubble-data を /data に
-      # マウントし、DATABASE_URL を外して DB_PATH (既定 /data/hubble.db) を使う。
-      # - hubble-data:/data
     depends_on:
       trino:
         condition: service_healthy
@@ -98,6 +94,3 @@ services:
 volumes:
   # PostgreSQL の永続化ボリューム (既定の DATABASE_URL バックエンド)。
   hubble-postgres-data:
-  # Non-production 向け: SQLite (DB_PATH) を使う場合にマウントするボリューム。
-  # 上の hubble.volumes のコメントアウトと合わせて有効化する。
-  hubble-data:

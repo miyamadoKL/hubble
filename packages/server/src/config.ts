@@ -51,18 +51,11 @@ export interface AuthConfig {
   userMapping: UserMapping;
 }
 
-/**
- * Selected persistence backend. `sqlite` is the historical
- * default (`DB_PATH`); `postgres` is selected when `DATABASE_URL` is a
- * `postgres://` / `postgresql://` URL.
- *
- * 選択された永続化バックエンド。判別共用体になっており、
- * `kind` の値によって `path`（SQLite のファイルパス）と `url`（PostgreSQL の接続文字列）
- * のどちらを持つかが決まる。PostgreSQL の場合はアプリ永続化専用の期限設定も持つ。
- */
-export type DatabaseConfig =
-  | { kind: 'sqlite'; path: string }
-  | { kind: 'postgres'; url: string; timeouts: PostgresTimeouts };
+/** PostgreSQL専用の永続化設定。 */
+export interface DatabaseConfig {
+  url: string;
+  timeouts: PostgresTimeouts;
+}
 
 /** クエリ結果保存バックエンド設定。 */
 export type ResultStoreConfig =
@@ -104,9 +97,7 @@ export interface ServerConfig {
     /** `HTTP_MAX_BODY_BYTES`。API request body 全体の最大 byte 数。 */
     maxBodyBytes: number;
   };
-  /** Resolved persistence backend (DATABASE_URL takes precedence over DB_PATH). */
-  /** 日本語: `DATABASE_URL`（postgres://.. なら PostgreSQL）を優先し、未設定なら
-   * `DB_PATH`（既定 `./data/hubble.db`）を使う SQLite にフォールバックする。 */
+  /** 日本語: 必須の `DATABASE_URL` で指定するPostgreSQL接続設定。 */
   database: DatabaseConfig;
   /**
    * Directory of the built web app to serve (e.g. `web/dist`). When set, the
@@ -410,64 +401,50 @@ function envEnum<T extends string>(env: Env, key: string, allowed: readonly T[],
   );
 }
 
-/**
- * Resolve the persistence backend. `DATABASE_URL` (a `postgres://` /
- * `postgresql://` URL) selects PostgreSQL and takes precedence over `DB_PATH`
- * (SQLite, the default). An unset/empty `DATABASE_URL` falls back to SQLite. A
- * `DATABASE_URL` with any other scheme is a startup error.
- *
- * 日本語: 永続化バックエンドを決定する。`DATABASE_URL` が設定されていれば
- * （スキームが postgres:// / postgresql:// であることを検証したうえで）PostgreSQL を
- * 選び、`DB_PATH` より優先する。`DATABASE_URL` が未設定/空文字なら SQLite
- * （`DB_PATH`、既定 `./data/hubble.db`）にフォールバックする。サポート外スキームは
- * 起動時エラーとして即座に検出する。
- */
+/** 必須のDATABASE_URLを検証し、PostgreSQLの永続化設定を構築する。 */
 export function resolveDatabaseConfig(env: Env): DatabaseConfig {
   const url = envOptional(env, 'DATABASE_URL');
-  if (url !== undefined) {
-    let scheme: string;
-    try {
-      scheme = new URL(url).protocol.replace(/:$/, '');
-    } catch {
-      throw new Error(`Invalid DATABASE_URL: ${JSON.stringify(url)} is not a valid URL`);
-    }
-    // postgres:// / postgresql:// 以外のスキームは想定外の設定ミスとして拒否する。
-    if (scheme !== 'postgres' && scheme !== 'postgresql') {
-      throw new Error(
-        `Unsupported DATABASE_URL scheme ${JSON.stringify(scheme)}: ` +
-          'only postgres:// / postgresql:// (PostgreSQL) or DB_PATH (SQLite) are supported',
-      );
-    }
-    return {
-      kind: 'postgres',
-      url,
-      timeouts: {
-        connectionMs: envTimeoutMs(
-          env,
-          'DATABASE_CONNECT_TIMEOUT_MS',
-          DEFAULT_POSTGRES_TIMEOUTS.connectionMs,
-        ),
-        statementMs: envTimeoutMs(
-          env,
-          'DATABASE_STATEMENT_TIMEOUT_MS',
-          DEFAULT_POSTGRES_TIMEOUTS.statementMs,
-        ),
-        lockMs: envTimeoutMs(env, 'DATABASE_LOCK_TIMEOUT_MS', DEFAULT_POSTGRES_TIMEOUTS.lockMs),
-        idleTransactionMs: envTimeoutMs(
-          env,
-          'DATABASE_IDLE_TX_TIMEOUT_MS',
-          DEFAULT_POSTGRES_TIMEOUTS.idleTransactionMs,
-        ),
-        transactionMs: envTimeoutMs(
-          env,
-          'DATABASE_TRANSACTION_TIMEOUT_MS',
-          DEFAULT_POSTGRES_TIMEOUTS.transactionMs,
-        ),
-      },
-    };
+  if (url === undefined) {
+    throw new Error('DATABASE_URL is required and must use postgres:// or postgresql://');
   }
-  // DATABASE_URL 未設定時は歴史的デフォルトである SQLite を使う。
-  return { kind: 'sqlite', path: envStr(env, 'DB_PATH', './data/hubble.db') };
+  let scheme: string;
+  try {
+    scheme = new URL(url).protocol.replace(/:$/, '');
+  } catch {
+    throw new Error(`Invalid DATABASE_URL: ${JSON.stringify(url)} is not a valid URL`);
+  }
+  if (scheme !== 'postgres' && scheme !== 'postgresql') {
+    throw new Error(
+      `Unsupported DATABASE_URL scheme ${JSON.stringify(scheme)}: ` +
+        'only postgres:// / postgresql:// (PostgreSQL) is supported',
+    );
+  }
+  return {
+    url,
+    timeouts: {
+      connectionMs: envTimeoutMs(
+        env,
+        'DATABASE_CONNECT_TIMEOUT_MS',
+        DEFAULT_POSTGRES_TIMEOUTS.connectionMs,
+      ),
+      statementMs: envTimeoutMs(
+        env,
+        'DATABASE_STATEMENT_TIMEOUT_MS',
+        DEFAULT_POSTGRES_TIMEOUTS.statementMs,
+      ),
+      lockMs: envTimeoutMs(env, 'DATABASE_LOCK_TIMEOUT_MS', DEFAULT_POSTGRES_TIMEOUTS.lockMs),
+      idleTransactionMs: envTimeoutMs(
+        env,
+        'DATABASE_IDLE_TX_TIMEOUT_MS',
+        DEFAULT_POSTGRES_TIMEOUTS.idleTransactionMs,
+      ),
+      transactionMs: envTimeoutMs(
+        env,
+        'DATABASE_TRANSACTION_TIMEOUT_MS',
+        DEFAULT_POSTGRES_TIMEOUTS.transactionMs,
+      ),
+    },
+  };
 }
 
 /** RESULT_STORE 関連の環境変数を解決する。 */

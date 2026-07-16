@@ -44,40 +44,25 @@ function writeSingleDatasourceYaml(baseUrl: string): string {
 const e2eTrinoBaseUrl = process.env.E2E_TRINO_BASE_URL ?? 'http://127.0.0.1:30080';
 const singleDsConfigPath = writeSingleDatasourceYaml(e2eTrinoBaseUrl);
 
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL ?? '';
+const e2eAuthDatabaseUrl = process.env.E2E_AUTH_DATABASE_URL ?? '';
+if (e2eDatabaseUrl && e2eAuthDatabaseUrl && e2eDatabaseUrl === e2eAuthDatabaseUrl) {
+  throw new Error('E2E_AUTH_DATABASE_URL must be different from the main E2E database URL');
+}
+
 /**
- * Playwright config. Starts the BFF server (port 8081) and the
- * web dev server (port 5173), then runs the P6 E2E suites against a real Trino
- * (tpch catalog). The suites assume a live Trino at
- * `E2E_TRINO_BASE_URL` (default http://127.0.0.1:30080, admin / empty
- * password) — an E2E-harness-only variable used to generate a throwaway
- * `datasources.yaml` for the server under test (the server itself no longer
- * reads a `TRINO_BASE_URL` environment variable).
+ * Playwright設定。BFFサーバー（ポート8081）とweb開発サーバー（ポート5173）を起動し、
+ * 実際のTrino（tpchカタログ）に対してP6のE2Eスイートを実行する。スイートは
+ * `E2E_TRINO_BASE_URL`（既定値 http://127.0.0.1:30080、ユーザーadmin、パスワード空文字）
+ * に接続できることを前提とする。この値はE2Eハーネス専用で、テスト対象server用の
+ * 使い捨て `datasources.yaml` の生成に使う（server本体は `TRINO_BASE_URL` を読まない）。
  *
- * Determinism + isolation:
- *  - `DB_PATH=:memory:` gives the server a throwaway SQLite — notebooks / saved
- *    queries / history created by tests never touch the developer's own DB.
- *  - `QUERY_MAX_ROWS=10000` bounds the server-side row buffer. The virtual-scroll
- *    test loads 5000 rows (under the cap), while the truncation test asks for
- *    12000 (over it) to drive the "result truncated" warning deterministically
- *    without a second server.
- *
- * Hubble の E2E テスト (Playwright) 実行設定ファイル。
- * BFF server（ポート 8081）と web の開発サーバー（ポート 5173）を自動起動したうえで、
- * 実際に稼働している Trino（tpch カタログ）に対して P6 の E2E テスト群を実行する。
- * 各テストスイートは `E2E_TRINO_BASE_URL`（既定値 http://127.0.0.1:30080、
- * ユーザー admin / パスワード空文字)に生きた Trino が存在することを前提とする。
- * この変数は E2E ハーネス専用であり、サーバー本体は直接読まない
- * (`datasources.yaml` が必須化されたため、この値は下記で生成する使い捨ての
- * YAML に埋め込んだうえで `DATASOURCES_PATH` 経由でサーバーへ渡す)。
- *
- * 決定性と独立性の確保:
- *  - `DB_PATH=:memory:` により server にインメモリの使い捨て SQLite を与える。
- *    テストが作成するノートブック / 保存済みクエリ / 履歴が、開発者本人の
- *    実際の DB に影響を与えることは決してない。
- *  - `QUERY_MAX_ROWS=10000` で server 側の行バッファ上限を制御する。
- *    仮想スクロールのテストは上限未満の 5000 行を、切り詰め警告のテストは
- *    上限超過の 12000 行をそれぞれ要求することで、2 つ目の server を
- *    用意せずとも「結果が切り詰められた」警告を決定的に発生させられる。
+ * 決定性と分離:
+ *  - `E2E_DATABASE_URL` または `TEST_DATABASE_URL` で通常BFF専用のPostgreSQL DBを指定する。
+ *  - `E2E_AUTH_DATABASE_URL` でproxy認証BFF専用の別PostgreSQL DBを指定する。2つのURLは一致させない。
+ *  - `QUERY_MAX_ROWS=10000` でserver側の行バッファ上限を設定する。仮想スクロールのテストは
+ *    上限未満の5000行、切り詰め警告のテストは上限超過の12000行を要求するため、別serverなしで
+ *    警告を決定的に発生させられる。
  */
 // web 開発サーバー（Vite）のポート番号。
 const WEB_PORT = Number(process.env.CAPTURE_WEB_PORT ?? 5173);
@@ -86,16 +71,11 @@ const WEB_PORT = Number(process.env.CAPTURE_WEB_PORT ?? 5173);
 const SERVER_PORT = Number(process.env.CAPTURE_SERVER_PORT ?? 8081);
 const captureMode = process.env.CAPTURE === '1';
 /**
- * A second BFF on a separate port running `AUTH_MODE=proxy`.
- * `auth.spec.ts` drives it directly over HTTP with injected SSO headers — no
- * real oauth2-proxy needed (localhost is inside the default trusted CIDR). The
- * default browser suite keeps using the none-mode server on SERVER_PORT.
- *
- * `AUTH_MODE=proxy` で稼働する、別ポート上の 2 つ目の BFF サーバー用ポート番号。
+ * `AUTH_MODE=proxy` で稼働する、別ポート上の2つ目のBFFサーバー。
  * `auth.spec.ts` はこのサーバーに対して SSO ヘッダーを注入した HTTP リクエストを
  * 直接送ることで認証フローを検証する。localhost は既定の信頼済み CIDR に
  * 含まれるため、実際の oauth2-proxy は不要。既定のブラウザテスト群は
- * 引き続き none モードの SERVER_PORT のサーバーを使う。
+ * 引き続き SERVER_PORT のnone認証モードサーバーを使う。
  */
 const AUTH_SERVER_PORT = 8082;
 const reuseExistingServer = !captureMode && !process.env.CI && !multiDsE2e;
@@ -156,8 +136,7 @@ export default defineConfig({
       timeout: 60_000,
       env: {
         PORT: String(SERVER_PORT),
-        // インメモリ SQLite でテスト専用の使い捨て DB を使う。
-        DB_PATH: ':memory:',
+        DATABASE_URL: e2eDatabaseUrl,
         // 結果行バッファの上限（切り詰めテストの決定性確保のため）。
         QUERY_MAX_ROWS: '10000',
         ...(multiDsE2e
@@ -186,7 +165,7 @@ export default defineConfig({
             env: {
               PORT: String(AUTH_SERVER_PORT),
               AUTH_MODE: 'proxy',
-              DB_PATH: ':memory:',
+              DATABASE_URL: e2eAuthDatabaseUrl,
               QUERY_MAX_ROWS: '10000',
               ...(multiDsE2e
                 ? {
