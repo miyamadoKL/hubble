@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { FieldPacket } from 'mysql2/promise';
 import type { FieldDef } from 'pg';
 import { CSV_REEXEC_HEADER } from '../query/csv';
-import { openTestDatabase } from '../test/dbBackends';
 import { createTestContext } from '../test/harness';
 import { emptySessionMutations } from '../trino/types';
 import { createMysqlEngine } from '../engine/mysql/engine';
@@ -149,7 +148,6 @@ describe('CSV download write enforcement', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'hubble-rbac-csv-'));
     writeRbac(tempDir);
     const ctx = await createTestContext({
-      databaseFactory: openTestDatabase,
       cwd: tempDir,
       env: { AUTH_MODE: 'proxy', AUTH_USER_MAPPING: 'user' },
       remoteAddress: () => '127.0.0.1',

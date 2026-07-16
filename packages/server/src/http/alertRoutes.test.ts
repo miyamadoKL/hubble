@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { alertEvalResponseSchema, alertSchema, type Alert } from '@hubble/contracts';
 import { createTestContext } from '../test/harness';
+import { AlertDeliveryRepository } from '../store/alertDeliveries';
 import type { FakeScenario } from '../test/fakeTrino';
 
 const QUERY_OK: FakeScenario = {
@@ -407,37 +408,41 @@ describe('alert routes', () => {
       }),
     });
     const created = alertSchema.parse(await createRes.json()) as Alert;
-    await ctx.db.exec(`CREATE TRIGGER fail_alert_delivery
-      BEFORE INSERT ON alert_deliveries
-      BEGIN
-        SELECT RAISE(FAIL, 'injected delivery failure');
-      END`);
+    const insertFailure = vi
+      .spyOn(AlertDeliveryRepository.prototype, 'insert')
+      .mockRejectedValueOnce(new Error('injected delivery failure'));
+    try {
+      const failedEval = await ctx.app.request(`/api/alerts/${created.id}/eval`, {
+        method: 'POST',
+      });
+      expect(alertEvalResponseSchema.parse(await failedEval.json())).toMatchObject({
+        notified: false,
+        errorType: 'DELIVERY_ENQUEUE_FAILED',
+      });
+      const afterFailure = alertSchema.parse(
+        await (await ctx.app.request(`/api/alerts/${created.id}`)).json(),
+      );
+      expect(afterFailure.state).not.toBe('triggered');
+      expect(afterFailure.lastTriggeredAt).toBeNull();
+      expect(await ctx.services.alertDeliveries.listForTest()).toHaveLength(0);
 
-    const failedEval = await ctx.app.request(`/api/alerts/${created.id}/eval`, { method: 'POST' });
-    expect(alertEvalResponseSchema.parse(await failedEval.json())).toMatchObject({
-      notified: false,
-      errorType: 'DELIVERY_ENQUEUE_FAILED',
-    });
-    const afterFailure = alertSchema.parse(
-      await (await ctx.app.request(`/api/alerts/${created.id}`)).json(),
-    );
-    expect(afterFailure.state).not.toBe('triggered');
-    expect(afterFailure.lastTriggeredAt).toBeNull();
-    expect(await ctx.services.alertDeliveries.listForTest()).toHaveLength(0);
-
-    await ctx.db.exec('DROP TRIGGER fail_alert_delivery');
-    const retriedEval = await ctx.app.request(`/api/alerts/${created.id}/eval`, { method: 'POST' });
-    expect(alertEvalResponseSchema.parse(await retriedEval.json())).toMatchObject({
-      state: 'triggered',
-      notified: true,
-    });
-    expect(await ctx.services.alertDeliveries.listForTest()).toHaveLength(2);
-    const afterRetry = alertSchema.parse(
-      await (await ctx.app.request(`/api/alerts/${created.id}`)).json(),
-    );
-    expect(afterRetry.state).toBe('triggered');
-    expect(afterRetry.lastTriggeredAt).not.toBeNull();
-
-    await ctx.services.shutdown();
+      insertFailure.mockRestore();
+      const retriedEval = await ctx.app.request(`/api/alerts/${created.id}/eval`, {
+        method: 'POST',
+      });
+      expect(alertEvalResponseSchema.parse(await retriedEval.json())).toMatchObject({
+        state: 'triggered',
+        notified: true,
+      });
+      expect(await ctx.services.alertDeliveries.listForTest()).toHaveLength(2);
+      const afterRetry = alertSchema.parse(
+        await (await ctx.app.request(`/api/alerts/${created.id}`)).json(),
+      );
+      expect(afterRetry.state).toBe('triggered');
+      expect(afterRetry.lastTriggeredAt).not.toBeNull();
+    } finally {
+      insertFailure.mockRestore();
+      await ctx.services.shutdown();
+    }
   });
 });

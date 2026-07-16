@@ -3,7 +3,6 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { workflowDefinitionSchema } from '@hubble/contracts';
-import { openTestDatabase } from '../test/dbBackends';
 import { createTestContext } from '../test/harness';
 import { DEFAULT_DATASOURCE_ID } from '../test/testEngine';
 import { JobAdmissionRejectedError } from './admission';
@@ -17,7 +16,6 @@ describe('shared job admission wiring', () => {
   it('rejects workflow and alert manual or cron triggers while a schedule holds the only slot', async () => {
     let now = Date.parse('2026-07-12T00:00:00.000Z');
     const ctx = await createTestContext({
-      databaseFactory: openTestDatabase,
       scenarios: [
         VALIDATE_OK,
         {
