@@ -4,6 +4,8 @@
  * 全体では固定数を超える query を同時に開始しない。
  */
 import type { QueryColumn, QuerySnapshot, SavedQuery } from '@hubble/contracts';
+import { QueryClient, QueryObserver, type QueryObserverResult } from '@tanstack/react-query';
+import PQueue from 'p-queue';
 import { getSavedQuery } from '../../api/savedQueries';
 import { cancelQuery, createQuery, fetchQueryRows, fetchQuerySnapshot } from '../../execution/api';
 import type { ResultRow } from '../../execution';
@@ -162,27 +164,6 @@ function isTerminal(snapshot: QuerySnapshot): boolean {
   );
 }
 
-type Listener = (state: SharedWidgetQueryState) => void;
-type EntryStatus = 'idle' | 'queued' | 'running';
-
-interface QueryEntry {
-  savedQueryId: string;
-  state: SharedWidgetQueryState;
-  listeners: Set<Listener>;
-  status: EntryStatus;
-  controller: AbortController | null;
-  version: number;
-  rerun: boolean;
-}
-
-const initialState = (): SharedWidgetQueryState => ({
-  loading: true,
-  error: null,
-  columns: [],
-  rows: [],
-  queryName: null,
-});
-
 /** 本番 API を使い、coordinator の進捗 callback へ query 名を渡す既定 executor。 */
 const defaultExecutor = (
   savedQueryId: string,
@@ -190,24 +171,53 @@ const defaultExecutor = (
   onQueryName?: (queryName: string) => void,
 ) => executeWidgetQuery(savedQueryId, signal, defaultApi, onQueryName);
 
-/** dashboard 単位で query の共有、queue、cancel を管理する。 */
+type Listener = (state: SharedWidgetQueryState) => void;
+type QueryResult = Omit<SharedWidgetQueryState, 'loading' | 'error'>;
+type WidgetQueryKey = readonly ['dashboard-widget', string];
+const emptyQueryResult: QueryResult = { columns: [], rows: [], queryName: null };
+
+function toSharedState(result: QueryObserverResult<QueryResult>): SharedWidgetQueryState {
+  return {
+    loading: result.isPending || result.isFetching,
+    error:
+      result.isFetching || !result.error
+        ? null
+        : result.error instanceof Error
+          ? result.error.message
+          : String(result.error),
+    columns: result.data?.columns ?? [],
+    rows: result.data?.rows ?? [],
+    queryName: result.data?.queryName ?? null,
+  };
+}
+
+/** TanStack Queryを状態所有者、p-queueをdashboard内の同時実行制御として使う。 */
 export class DashboardQueryCoordinator {
-  private readonly maxConcurrency: number;
   private readonly executor: (
     savedQueryId: string,
     signal: AbortSignal,
     onQueryName?: (queryName: string) => void,
-  ) => Promise<Omit<SharedWidgetQueryState, 'loading' | 'error'>>;
-  private readonly entries = new Map<string, QueryEntry>();
-  private readonly queue: QueryEntry[] = [];
-  private activeCount = 0;
+  ) => Promise<QueryResult>;
+  private readonly queryClient: QueryClient;
+  private readonly queue: PQueue;
   private disposed = false;
-  private lifecycle = 0;
   private ownerEpoch = 0;
 
   constructor(maxConcurrency = DASHBOARD_QUERY_CONCURRENCY, executor = defaultExecutor) {
-    this.maxConcurrency = maxConcurrency;
     this.executor = executor;
+    this.queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          gcTime: Infinity,
+          refetchOnMount: false,
+          refetchOnReconnect: false,
+          refetchOnWindowFocus: false,
+          retry: false,
+          staleTime: Infinity,
+        },
+      },
+    });
+    this.queue = new PQueue({ concurrency: maxConcurrency });
   }
 
   /** StrictMode の effect 再 setup で同じ owner が coordinator を再利用可能にする。 */
@@ -227,49 +237,45 @@ export class DashboardQueryCoordinator {
   /** savedQueryId の共有状態を購読し、解除関数を返す。 */
   subscribe(savedQueryId: string, listener: Listener): () => void {
     if (this.disposed) throw new Error('Dashboard query coordinator is disposed');
-    let entry = this.entries.get(savedQueryId);
-    if (!entry) {
-      entry = {
-        savedQueryId,
-        state: initialState(),
-        listeners: new Set(),
-        status: 'idle',
-        controller: null,
-        version: 0,
-        rerun: false,
-      };
-      this.entries.set(savedQueryId, entry);
-    }
-    entry.listeners.add(listener);
-    listener(entry.state);
-    if (entry.state.loading) this.enqueue(entry);
-
-    let subscribed = true;
+    const queryKey: WidgetQueryKey = ['dashboard-widget', savedQueryId];
+    const observer = new QueryObserver<QueryResult>(this.queryClient, {
+      queryFn: ({ signal }) => {
+        this.queryClient.setQueryData<QueryResult>(
+          queryKey,
+          (current) => current ?? emptyQueryResult,
+        );
+        return this.queue.add(
+          ({ signal: queueSignal }) =>
+            this.executor(savedQueryId, queueSignal ?? signal, (queryName) => {
+              this.queryClient.setQueryData<QueryResult>(queryKey, (current) => ({
+                columns: current?.columns ?? [],
+                rows: current?.rows ?? [],
+                queryName,
+              }));
+            }),
+          { signal },
+        );
+      },
+      queryKey,
+    });
+    const notify = (result: QueryObserverResult<QueryResult> = observer.getCurrentResult()) => {
+      if (!this.disposed) listener(toSharedState(result));
+    };
+    notify();
+    const unsubscribe = observer.subscribe(notify);
     return () => {
-      if (!subscribed) return;
-      subscribed = false;
-      entry!.listeners.delete(listener);
-      if (entry!.listeners.size > 0) return;
-      if (entry!.status === 'running') entry!.controller?.abort();
-      if (entry!.status === 'queued') entry!.status = 'idle';
-      if (entry!.state.loading && entry!.status !== 'running') {
-        this.entries.delete(savedQueryId);
-      }
+      unsubscribe();
+      observer.destroy();
     };
   }
 
   /** 同じ savedQueryId を購読する全 widget の query を再実行する。 */
   refresh(savedQueryId: string): void {
-    const entry = this.entries.get(savedQueryId);
-    if (!entry) return;
-    entry.state = { ...entry.state, loading: true, error: null };
-    this.notify(entry);
-    if (entry.status === 'running') {
-      entry.rerun = true;
-      entry.controller?.abort();
-      return;
-    }
-    this.enqueue(entry);
+    if (this.disposed) return;
+    void this.queryClient.refetchQueries(
+      { queryKey: ['dashboard-widget', savedQueryId], type: 'active' },
+      { cancelRefetch: true },
+    );
   }
 
   /** dashboard 破棄時に queue と全 active query を終了する。 */
@@ -277,104 +283,12 @@ export class DashboardQueryCoordinator {
     if (this.disposed) return;
     this.disposed = true;
     this.ownerEpoch += 1;
-    this.lifecycle += 1;
-    for (const entry of this.entries.values()) {
-      entry.controller?.abort();
-      entry.listeners.clear();
-    }
-    this.entries.clear();
-    this.queue.length = 0;
-    this.activeCount = 0;
-  }
-
-  /** idle entry を実行 queue へ一度だけ追加する。 */
-  private enqueue(entry: QueryEntry): void {
-    if (this.disposed || entry.listeners.size === 0 || entry.status !== 'idle') return;
-    entry.status = 'queued';
-    this.queue.push(entry);
-    this.pump();
-  }
-
-  /** concurrency 枠が空いている間だけ queue を開始する。 */
-  private pump(): void {
-    while (!this.disposed && this.activeCount < this.maxConcurrency) {
-      const entry = this.queue.shift();
-      if (!entry) return;
-      if (entry.status !== 'queued' || entry.listeners.size === 0) continue;
-      this.start(entry);
-    }
-  }
-
-  /** entry 一件を開始し、完了後に次の queue を処理する。 */
-  private start(entry: QueryEntry): void {
-    const controller = new AbortController();
-    const version = ++entry.version;
-    const lifecycle = this.lifecycle;
-    entry.status = 'running';
-    entry.controller = controller;
-    this.activeCount += 1;
-
-    void this.executor(entry.savedQueryId, controller.signal, (queryName) => {
-      if (
-        this.disposed ||
-        this.lifecycle !== lifecycle ||
-        entry.version !== version ||
-        controller.signal.aborted
-      ) {
-        return;
-      }
-      entry.state = { ...entry.state, queryName };
-      this.notify(entry);
-    })
-      .then((result) => {
-        if (
-          this.disposed ||
-          this.lifecycle !== lifecycle ||
-          entry.version !== version ||
-          controller.signal.aborted
-        ) {
-          return;
-        }
-        entry.state = { loading: false, error: null, ...result };
-        this.notify(entry);
-      })
-      .catch((error: unknown) => {
-        if (
-          this.disposed ||
-          this.lifecycle !== lifecycle ||
-          entry.version !== version ||
-          controller.signal.aborted
-        ) {
-          return;
-        }
-        entry.state = {
-          ...entry.state,
-          loading: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-        this.notify(entry);
-      })
-      .finally(() => {
-        if (this.lifecycle !== lifecycle) return;
-        this.activeCount -= 1;
-        if (entry.controller === controller) entry.controller = null;
-        if (entry.status === 'running') entry.status = 'idle';
-        if (this.disposed) return;
-        const rerun = entry.rerun;
-        entry.rerun = false;
-        if (entry.listeners.size === 0) {
-          if (entry.state.loading) this.entries.delete(entry.savedQueryId);
-        } else if (rerun || controller.signal.aborted) {
-          entry.state = { ...entry.state, loading: true, error: null };
-          this.notify(entry);
-          this.enqueue(entry);
-        }
-        this.pump();
-      });
-  }
-
-  /** 現在の state を購読中 widget へ同期通知する。 */
-  private notify(entry: QueryEntry): void {
-    for (const listener of entry.listeners) listener(entry.state);
+    this.queue.pause();
+    const canceling = this.queryClient.cancelQueries();
+    this.queryClient.clear();
+    void canceling.then(
+      () => this.queue.clear(),
+      () => this.queue.clear(),
+    );
   }
 }

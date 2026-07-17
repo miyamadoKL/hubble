@@ -36,6 +36,21 @@ describe('DashboardQueryCoordinator', () => {
     coordinator.dispose();
   });
 
+  test('異なるdashboard scopeのcoordinatorは同じsavedQueryIdを共有しない', async () => {
+    const firstExecutor = vi.fn(() => Promise.resolve(result('First scope')));
+    const secondExecutor = vi.fn(() => Promise.resolve(result('Second scope')));
+    const firstCoordinator = new DashboardQueryCoordinator(1, firstExecutor);
+    const secondCoordinator = new DashboardQueryCoordinator(1, secondExecutor);
+
+    firstCoordinator.subscribe('saved-1', () => undefined);
+    secondCoordinator.subscribe('saved-1', () => undefined);
+
+    expect(firstExecutor).toHaveBeenCalledOnce();
+    expect(secondExecutor).toHaveBeenCalledOnce();
+    firstCoordinator.dispose();
+    secondCoordinator.dispose();
+  });
+
   test('dashboardの同時実行数を上限内に保つ', async () => {
     const executions = new Map<string, PromiseWithResolvers<ReturnType<typeof result>>>();
     let active = 0;
@@ -81,6 +96,25 @@ describe('DashboardQueryCoordinator', () => {
     coordinator.dispose();
   });
 
+  test('disposeでactive queryを中断し遅延結果を通知しない', async () => {
+    const execution = Promise.withResolvers<ReturnType<typeof result>>();
+    let receivedSignal: AbortSignal | undefined;
+    const executor = vi.fn((_id: string, signal: AbortSignal) => {
+      receivedSignal = signal;
+      return execution.promise;
+    });
+    const coordinator = new DashboardQueryCoordinator(1, executor);
+    const states: SharedWidgetQueryState[] = [];
+    coordinator.subscribe('saved-1', (state) => states.push(state));
+
+    coordinator.dispose();
+    expect(receivedSignal?.aborted).toBe(true);
+    execution.resolve(result('Late result'));
+    await execution.promise;
+    await Promise.resolve();
+    expect(states.some((state) => state.queryName === 'Late result')).toBe(false);
+  });
+
   test('失敗した実行が枠を解放して次のqueued queryを開始する', async () => {
     const first = Promise.withResolvers<ReturnType<typeof result>>();
     const second = Promise.withResolvers<ReturnType<typeof result>>();
@@ -98,6 +132,98 @@ describe('DashboardQueryCoordinator', () => {
 
     expect(states.at(-1)?.error).toBe('poll failed');
     second.resolve(result('B'));
+    coordinator.dispose();
+  });
+
+  test('refreshは共有queryを一度だけ再実行する', async () => {
+    const first = Promise.withResolvers<ReturnType<typeof result>>();
+    const second = Promise.withResolvers<ReturnType<typeof result>>();
+    const executor = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const coordinator = new DashboardQueryCoordinator(1, executor);
+    const states: SharedWidgetQueryState[] = [];
+    coordinator.subscribe('saved-1', (state) => states.push(state));
+
+    first.resolve(result('First run'));
+    await vi.waitFor(() => expect(states.at(-1)?.loading).toBe(false));
+    coordinator.refresh('saved-1');
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledTimes(2));
+
+    expect(states.at(-1)?.loading).toBe(true);
+    second.resolve(result('Second run'));
+    await vi.waitFor(() => expect(states.at(-1)?.queryName).toBe('Second run'));
+    coordinator.dispose();
+  });
+
+  test('queryName取得前のrefreshも初回実行を中断して再実行する', async () => {
+    const second = Promise.withResolvers<ReturnType<typeof result>>();
+    let firstSignal: AbortSignal | undefined;
+    const executor = vi.fn((_id: string, signal: AbortSignal) => {
+      if (executor.mock.calls.length === 1) {
+        firstSignal = signal;
+        return new Promise<ReturnType<typeof result>>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      }
+      return second.promise;
+    });
+    const coordinator = new DashboardQueryCoordinator(1, executor);
+    const states: SharedWidgetQueryState[] = [];
+    coordinator.subscribe('saved-1', (state) => states.push(state));
+
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce());
+    coordinator.refresh('saved-1');
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledTimes(2));
+
+    expect(firstSignal?.aborted).toBe(true);
+    second.resolve(result('Second run'));
+    await vi.waitFor(() => expect(states.at(-1)?.queryName).toBe('Second run'));
+    expect(states.some((state) => state.queryName === 'First run')).toBe(false);
+    coordinator.dispose();
+  });
+
+  test('queued queryのrefreshは再実行を二重に追加しない', async () => {
+    const first = Promise.withResolvers<ReturnType<typeof result>>();
+    const second = Promise.withResolvers<ReturnType<typeof result>>();
+    const executor = vi.fn((savedQueryId: string) =>
+      savedQueryId === 'first' ? first.promise : second.promise,
+    );
+    const coordinator = new DashboardQueryCoordinator(1, executor);
+    coordinator.subscribe('first', () => undefined);
+    coordinator.subscribe('second', () => undefined);
+
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce());
+    coordinator.refresh('second');
+    first.resolve(result('First run'));
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledTimes(2));
+    expect(executor.mock.calls.map(([savedQueryId]) => savedQueryId)).toEqual(['first', 'second']);
+    second.resolve(result('Second run'));
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledTimes(2));
+    coordinator.dispose();
+  });
+
+  test('error cacheの再購読はqueryを再実行しない', async () => {
+    const executor = vi.fn(async () => {
+      throw new Error('cached failure');
+    });
+    const coordinator = new DashboardQueryCoordinator(1, executor);
+    const firstStates: SharedWidgetQueryState[] = [];
+    const unsubscribeFirst = coordinator.subscribe('saved-error', (state) =>
+      firstStates.push(state),
+    );
+
+    await vi.waitFor(() => expect(firstStates.at(-1)?.error).toBe('cached failure'));
+    unsubscribeFirst();
+
+    const secondStates: SharedWidgetQueryState[] = [];
+    const unsubscribeSecond = coordinator.subscribe('saved-error', (state) =>
+      secondStates.push(state),
+    );
+    expect(executor).toHaveBeenCalledOnce();
+    expect(secondStates.at(-1)).toMatchObject({ loading: false, error: 'cached failure' });
+    unsubscribeSecond();
     coordinator.dispose();
   });
 
