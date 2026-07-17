@@ -106,20 +106,14 @@ export interface ExpiredHistoryResultCursor {
 const STATEMENT_MAX = 2000;
 
 /**
- * Query history (Hue's `is_history` equivalent). A row is inserted on submit
- * and updated when the query settles.
- *
  * クエリ実行履歴（Hue の `is_history` 相当）のリポジトリ。行はクエリ投入時に
  * 挿入され、クエリが確定（settle）したタイミングで更新される。
  */
 export class HistoryRepository {
   constructor(private readonly db: SqlDatabase) {}
 
-  /** Insert a history row at submission time. */
   // クエリ投入時に履歴行を1件挿入する。
   async insert(entry: HistoryInsert): Promise<void> {
-    // Literal NULL/0 for the columns set at settle time (trino_query_id,
-    // row_count, elapsed_ms, error_message); the rest are bound positionally.
     // settle 時に確定する列（trino_query_id, row_count, elapsed_ms,
     // error_message）は SQL リテラルで NULL/0 を埋め、それ以外は
     // プレースホルダで位置バインドする。statement は STATEMENT_MAX で切り詰める。

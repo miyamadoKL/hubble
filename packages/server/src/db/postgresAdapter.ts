@@ -7,8 +7,6 @@
  * マイグレーション適用を複数プロセス間で直列化する advisory lock
  * （`withAdvisoryLock`）もここで実装する。
  */
-// `pg` is CommonJS: import the default and destructure so the named exports
-// resolve under Node's ESM loader (tsx runtime) as well as the test bundler.
 // `pg` は CommonJS パッケージのため、default export をいったん受けてから
 // 分割代入する。こうすることで Node の ESM ローダー（tsx ランタイム）でも
 // テストバンドラーでも named export として解決できるようにしている。
@@ -24,7 +22,6 @@ type Pool = pg.Pool;
 // そのプロパティを公開していないため、実装が受け付ける設定だけを補う。
 type PoolConfigWithLockTimeout = pg.PoolConfig & { lock_timeout: number };
 
-/** Single-process default; one server process never needs a large pool. */
 // 1サーバープロセスあたりのコネクションプール上限。Hubble は単一プロセスの
 // サーバーであり大きなプールを必要としないため、控えめな値にしている。
 const POOL_MAX = 5;
@@ -127,7 +124,6 @@ export async function runPostgresTransaction<T>(
 class PostgresDatabase implements SqlDatabase {
   constructor(
     private readonly executor: PgExecutor,
-    /** Present on the pool-backed instance; absent on a transaction handle. */
     // pool はプール直結インスタンスにのみ存在し、トランザクションハンドル
     // （子インスタンス）には存在しない。これにより「自分がトップレベルの
     // ハンドルかどうか」を判定できる。
@@ -157,7 +153,6 @@ class PostgresDatabase implements SqlDatabase {
 
   async transaction<T>(fn: (tx: SqlDatabase) => Promise<T>): Promise<T> {
     if (!this.pool) {
-      // Already inside a transaction (nested) — reuse the pinned client.
       // 既にトランザクション中（ネストした呼び出し）の場合は、新たに
       // BEGIN/COMMIT せず自分自身（同じピン留めクライアント）をそのまま
       // 使い回す。PostgreSQL はネストしたトランザクションを直接サポート
@@ -182,11 +177,6 @@ class PostgresDatabase implements SqlDatabase {
   }
 
   /**
-   * Hold a session-level advisory lock on a single pinned connection while
-   * `fn` runs, then release it. Used to serialize concurrent startup
-   * migrations. The lock and unlock must share one connection, so this cannot
-   * go through the pool-per-call `run`.
-   *
    * `fn` の実行中、1本のコネクションに固定したままセッションレベルの
    * advisory lock を保持し続け、実行後に解放する。複数プロセスが同時に
    * 起動してマイグレーションを実行しようとしたときに、その適用処理を
@@ -251,9 +241,6 @@ export function createPostgresPool(
 }
 
 /**
- * Open a PostgreSQL-backed SqlDatabase from a connection string. Caller is
- * responsible for running migrations (under an advisory lock).
- *
  * 接続文字列から PostgreSQL 版の `SqlDatabase` を開く。コネクションプールを
  * 生成し、プールに直結した `PostgresDatabase` インスタンスを返す。呼び出し
  * 側（db/index.ts の `openDatabase`）が、advisory lock 下でのマイグレーション

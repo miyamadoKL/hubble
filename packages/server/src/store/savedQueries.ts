@@ -37,9 +37,6 @@ interface SavedQueryRow {
 }
 
 /**
- * CRUD for saved queries with a `?query=` LIKE search over name/statement.
- * Every operation is scoped to an accessor (owner or shared permission).
- *
  * 保存済みクエリに対する CRUD と、name/statement/description を対象にした
  * `?query=` の LIKE 検索を提供するリポジトリ。全操作は accessor でスコープされ、
  * 所有分に加え document_shares 経由で共有されたクエリも参照できる。

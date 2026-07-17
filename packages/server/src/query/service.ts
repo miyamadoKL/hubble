@@ -68,9 +68,6 @@ export interface SubmitQueryParams {
 }
 
 /**
- * Bridges the query registry and history persistence: records a history row on
- * submit and updates it when the query settles.
- *
  * クエリレジストリと履歴永続化を橋渡しするサービス。クエリ提出時に履歴行を
  * 記録し、クエリが終端状態に達した時点でその行を更新する。
  */

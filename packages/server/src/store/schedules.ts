@@ -41,9 +41,6 @@ export const schedulePrincipalSnapshotSchema = z.object({
 export type SchedulePrincipalSnapshot = z.infer<typeof schedulePrincipalSnapshotSchema>;
 
 /**
- * A schedule as stored, without the response-only derived fields (`nextRunAt`,
- * `lastRun`). The route layer enriches this into the contract `Schedule`.
- *
  * DB に保存されているスケジュールそのものの形。レスポンス専用の派生フィールド
  * （`nextRunAt`, `lastRun`）は含まれない。これらは routes 層で契約型 `Schedule`
  * へ変換する際に付与される。
@@ -78,8 +75,6 @@ export interface ScheduleRecord {
 }
 
 /**
- * Fields a caller may set when creating a schedule.
- *
  * スケジュール作成時に呼び出し元が指定できるフィールド。省略可能なものは
  * `create()` 内で既定値（enabled=true, retry=デフォルトポリシー）が補われる。
  */
@@ -100,8 +95,6 @@ export interface CreateScheduleInput {
 }
 
 /**
- * Partial update; only provided keys are applied.
- *
  * スケジュール更新用の部分入力。指定されたキーのみが既存値を上書きする
  * （undefined のフィールドは既存値を維持）。
  */
@@ -241,10 +234,6 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
 }
 
 /**
- * CRUD for schedules (Query Scheduling feature). Every operation is scoped to an
- * `owner` principal. The unscoped `listAllEnabled` is used by
- * the in-process scheduler tick to find due work across all owners.
- *
  * スケジュール（Query Scheduling 機能）に対する CRUD リポジトリ。ほぼ全ての
  * 操作は `owner` principal で絞り込まれる。例外は
  * `listAllEnabled` で、これは全 owner を横断して有効なスケジュールを探す
@@ -384,8 +373,7 @@ export class ScheduleRepository {
     return merged;
   }
 
-  /** Delete a schedule and all of its runs. Returns true if it existed. */
-  // スケジュール本体とその実行履歴を全て削除する。存在しなければ false。
+  /** スケジュール本体とその実行履歴を全て削除する。存在しなければ false。 */
   async delete(owner: string, id: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const deleted = await tx.query<{ id: string }>(
@@ -393,7 +381,6 @@ export class ScheduleRepository {
         [id, owner],
       );
       if (deleted.length === 0) return false;
-      // App-side cascade (no FK ON DELETE; see migration 0003).
       // 外部キーの ON DELETE CASCADE を使っていない（migration 0003 参照）ため、
       // 同じ transaction で schedule_runs を削除してカスケードを模倣する。
       await tx.run('DELETE FROM schedule_runs WHERE schedule_id = $1', [id]);
@@ -425,9 +412,8 @@ function insertParams(s: ScheduleRecord): SqlParam[] {
 }
 
 // ---------------------------------------------------------------------------
-// Schedule runs
+// schedule_runs テーブル（スケジュールの個々の実行履歴）
 // ---------------------------------------------------------------------------
-// ここから下は schedule_runs テーブル（スケジュールの個々の実行履歴）を扱う。
 
 /**
  * `schedule_runs` テーブルの行を SQL ドライバがそのまま返す形。1行が1回の
@@ -452,8 +438,6 @@ interface ScheduleRunRow {
 }
 
 /**
- * Fields recorded when a run starts.
- *
  * 実行開始時に記録するフィールド。この時点では結果はまだ分からないため
  * status は常に `running` で挿入される。
  */
@@ -475,8 +459,6 @@ export class ScheduleRunClaimConflictError extends Error {
 }
 
 /**
- * Fields recorded when a run finishes (one run per row).
- *
  * 実行終了時に記録するフィールド。1回の実行につき1行を更新する。
  */
 export interface FinishRunInput {
@@ -518,10 +500,6 @@ function rowToRun(row: ScheduleRunRow): ScheduleRunRecord {
 }
 
 /**
- * Persistence for individual scheduled runs (Query Scheduling feature). A run is
- * inserted in `running` state when it starts and updated to its terminal state
- * when it finishes; older rows beyond the retention cap are pruned per schedule.
- *
  * スケジュール実行1回1回の永続化を担う（Query Scheduling 機能）。実行開始時に
  * `running` 状態で1行 INSERT し、終了時にその行を終端状態（success/failed/
  * aborted 等）へ UPDATE する。スケジュールごとの保持上限（retention）を
@@ -530,7 +508,6 @@ function rowToRun(row: ScheduleRunRow): ScheduleRunRecord {
 export class ScheduleRunRepository {
   constructor(
     private readonly db: SqlDatabase,
-    /** Per-schedule cap on retained run rows. */
     // スケジュール1件あたりに保持する実行履歴行数の上限。0以下なら間引きを行わない。
     private readonly retention: number,
   ) {}
@@ -622,7 +599,6 @@ export class ScheduleRunRepository {
     return result;
   }
 
-  /** True if a run for this schedule is currently in `running` state. */
   // 同一スケジュールの多重実行を防ぐためのチェックに使われる想定。
   async hasRunning(scheduleId: string): Promise<boolean> {
     const rows = await this.db.query<{ id: string }>(
@@ -633,9 +609,6 @@ export class ScheduleRunRepository {
   }
 
   /**
-   * Crash recovery: mark any run still `running` (left over from a previous
-   * process that exited mid-run) as `aborted`. Returns the number updated.
-   *
    * クラッシュリカバリ用。前回プロセスが実行途中で異常終了して `running` の
    * まま残った行を、プロセス起動時などに一括で `aborted` へ遷移させる。
    * 更新した行数を返す。
@@ -649,9 +622,6 @@ export class ScheduleRunRepository {
   }
 
   /**
-   * Keep only the newest `retention` runs for a schedule; delete the rest. The
-   * サブクエリで残すidを選び、PostgreSQLのNOT INでそれ以外を削除する。
-   *
    * 指定スケジュールについて最新 `retention` 件のみを残し、それより古い行を
    * 削除する。サブクエリで「残すべき id」を選び、`NOT IN` でそれ以外を消す
    * 方式のため、保持件数を超えた行だけを削除できる。
