@@ -1,16 +1,13 @@
-/** A bound parameter value. JSON payloads are passed as strings (TEXT columns). */
 // バインドパラメータとして許容される値の型。JSON を保存する場合は
 // JSON.stringify() した文字列として渡す（TEXT 列に保存される）。
 export type SqlParam = string | number | boolean | null;
 
 /** repositoryとmigrationが依存するPostgreSQL用の非同期データベース操作。 */
 export interface SqlDatabase {
-  /** Run a query returning rows. `T` is the row shape (snake_case columns). */
   // 行を返すクエリ（主に SELECT）を実行する。`T` は列が snake_case の
   // 行オブジェクトの型で、呼び出し側が期待する形を型引数として渡す。
   query<T = Record<string, unknown>>(sql: string, params?: readonly SqlParam[]): Promise<T[]>;
 
-  /** Run a single statement for its side effects (INSERT / UPDATE / DELETE). */
   // 副作用のための単一文（INSERT / UPDATE / DELETE）を実行する。戻り値の行は
   // 使わない場合に使う（行を受け取りたい場合は RETURNING 付きで query を使う）。
   run(sql: string, params?: readonly SqlParam[]): Promise<void>;
@@ -19,10 +16,6 @@ export interface SqlDatabase {
   exec(sql: string): Promise<void>;
 
   /**
-   * Run `fn` inside a single transaction. The callback receives a database
-   * handle bound to the transaction; statements issued through it are atomic.
-   * Rolls back if `fn` throws.
-   *
    * `fn` を1つのトランザクションの中で実行する。コールバックにはそのトラン
    * ザクションに束縛されたデータベースハンドルが渡され、それを通じて発行
    * された文は原子的（atomic）に扱われる。`fn` が例外を投げた場合はロール

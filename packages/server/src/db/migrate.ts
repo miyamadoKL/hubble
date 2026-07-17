@@ -27,11 +27,9 @@ function hasAdvisoryLock(db: SqlDatabase): db is SqlDatabase & AdvisoryLockable 
   return typeof (db as Partial<AdvisoryLockable>).withAdvisoryLock === 'function';
 }
 
-/** A single migration: a numbered SQL file. */
 // 1つのマイグレーションファイルを表す。ファイル名の先頭の数字が version、
 // ファイル名そのものが name、ファイルの中身（複数の SQL 文を含み得る）が sql。
 export interface Migration {
-  /** Zero-padded sequence number parsed from the filename (e.g. 1, 2, ...). */
   // ファイル名の先頭から解析した連番（例: 1, 2, ...）。ゼロ埋めされていても
   // 数値として解釈される。
   version: number;
@@ -44,9 +42,6 @@ export interface Migration {
 const MIGRATION_FILE_RE = /^(\d+)[._-].*\.sql$/;
 
 /**
- * A stable 64-bit-ish key for pg_advisory_lock so concurrent server startups
- * serialize their migrations. Arbitrary constant unique to Hubble migrations.
- *
  * pg_advisory_lock 用の固定キー。複数のサーバープロセスが同時に起動しても
  * マイグレーション適用が直列化されるようにするためのもの。Hubble の
  * マイグレーション専用として決めた任意の定数値であり、他の用途とキーが
@@ -54,7 +49,6 @@ const MIGRATION_FILE_RE = /^(\d+)[._-].*\.sql$/;
  */
 const MIGRATION_ADVISORY_LOCK_KEY = 4_021_980_513;
 
-/** Load migrations from a directory, sorted by their numeric prefix. */
 // 指定ディレクトリからマイグレーションファイルを読み込み、ファイル名先頭の
 // 数値プレフィックスの昇順にソートして返す。重複バージョンがあれば例外を
 // 投げて早期に検出する。
@@ -63,7 +57,6 @@ export function loadMigrations(dir: string): Migration[] {
   const files = readdirSync(dir).filter((f) => MIGRATION_FILE_RE.test(f));
   const migrations = files.map((file) => {
     const match = MIGRATION_FILE_RE.exec(file);
-    // Guarded by the filter above, but keep TS strict happy.
     // 上の filter で正規表現にマッチすることは保証済みだが、TS の strict
     // モードを満たすためにフォールバック処理を書いている。
     const version = match ? Number.parseInt(match[1]!, 10) : NaN;
@@ -75,7 +68,6 @@ export function loadMigrations(dir: string): Migration[] {
   });
   migrations.sort((a, b) => a.version - b.version);
 
-  // Detect duplicate version numbers early.
   // 同じバージョン番号を持つファイルが複数あると適用順序が不定になるため、
   // ロード時点で検出してエラーにする。
   const seen = new Set<number>();
@@ -100,7 +92,6 @@ async function ensureMigrationsTable(db: SqlDatabase): Promise<void> {
   `);
 }
 
-/** Versions already applied, ascending. */
 // 既に適用済みのマイグレーションバージョンを昇順で返す。呼び出し前に
 // schema_migrations テーブルの存在を保証する。
 export async function appliedVersions(db: SqlDatabase): Promise<number[]> {
@@ -113,11 +104,6 @@ export async function appliedVersions(db: SqlDatabase): Promise<number[]> {
 }
 
 /**
- * Apply all pending migrations in order. Each migration runs inside a
- * transaction together with its `schema_migrations` bookkeeping row. On
- * PostgreSQL the whole pass is serialized with a session advisory lock so
- * concurrent startups don't race. Returns the list of versions newly applied.
- *
  * 未適用のマイグレーションを順番に全て適用する。各マイグレーションは
  * `schema_migrations` への記録行 INSERT と同じトランザクション内で実行
  * されるため、SQL の適用と記録が食い違うことはない。PostgreSQL では、
@@ -144,7 +130,6 @@ async function applyMigrations(db: SqlDatabase, migrations: Migration[]): Promis
     // 適用済みならスキップ（冪等性の担保）。
     if (already.has(migration.version)) continue;
     await db.transaction(async (tx) => {
-      // Each migration file may contain multiple statements; run as one script.
       // 1つのマイグレーションファイルには複数の SQL 文が含まれ得るため、
       // パラメータ無しのスクリプトとして exec() で一括実行する。
       await tx.exec(migration.sql);

@@ -217,8 +217,7 @@ export async function createTestContext(
     },
     scheduler: {
       ...baseConfig.scheduler,
-      // Default: tick loop off so route/CRUD tests are deterministic.
-      // 日本語: startScheduler を明示的に true にしない限り、スケジューラーの
+      // startScheduler を明示的に true にしない限り、スケジューラーの
       // tick タイマーは起動しない。これにより時間経過に依存しないテストになる。
       enabled: options.startScheduler ?? false,
       ...options.configOverrides?.scheduler,

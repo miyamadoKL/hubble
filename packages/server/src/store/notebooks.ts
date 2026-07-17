@@ -52,11 +52,6 @@ interface AccessibleNotebookListRow extends NotebookListRow {
 }
 
 /**
- * CRUD for notebooks. The full `Notebook` (cells/variables/context) is stored
- * as JSON in `data`; `name`/`description` are also extracted for search. Every
- * operation is scoped to an accessor: a user can see / mutate their own
- * notebooks plus documents shared with them.
- *
  * ノートブックに対する CRUD リポジトリ。`Notebook`（セル/変数/コンテキスト）
  * 全体は `data` 列に JSON として保存し、`name`/`description` は検索用に別列
  * へも抽出する。全操作は accessor でスコープされ、所有分に加え
