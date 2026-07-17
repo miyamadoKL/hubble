@@ -71,7 +71,7 @@ export class AlertDeliveryRepository {
       `INSERT INTO alert_deliveries
        (id, alert_id, owner, channel, payload, status, attempts, next_attempt_at,
         last_error, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         id,
         input.alertId,
@@ -96,9 +96,9 @@ export class AlertDeliveryRepository {
   async claimDue(nowIso: string, limit: number): Promise<AlertDeliveryJob[]> {
     const rows = await this.db.query<AlertDeliveryRow>(
       `SELECT * FROM alert_deliveries
-       WHERE status = ? AND next_attempt_at <= ?
+       WHERE status = $1 AND next_attempt_at <= $2
        ORDER BY next_attempt_at ASC, id ASC
-       LIMIT ?`,
+       LIMIT $3`,
       ['pending', nowIso, limit],
     );
     return rows.map(rowToJob);
@@ -108,8 +108,8 @@ export class AlertDeliveryRepository {
   async markSent(id: string, nowIso: string): Promise<void> {
     await this.db.run(
       `UPDATE alert_deliveries
-       SET status = ?, last_error = NULL, updated_at = ?
-       WHERE id = ? AND status = ?`,
+       SET status = $1, last_error = NULL, updated_at = $2
+       WHERE id = $3 AND status = $4`,
       ['sent', nowIso, id, 'pending'],
     );
   }
@@ -124,8 +124,8 @@ export class AlertDeliveryRepository {
   ): Promise<void> {
     await this.db.run(
       `UPDATE alert_deliveries
-       SET attempts = ?, next_attempt_at = ?, last_error = ?, updated_at = ?
-       WHERE id = ? AND status = ?`,
+       SET attempts = $1, next_attempt_at = $2, last_error = $3, updated_at = $4
+       WHERE id = $5 AND status = $6`,
       [attempts, nextAttemptAtIso, error, nowIso, id, 'pending'],
     );
   }
@@ -134,8 +134,8 @@ export class AlertDeliveryRepository {
   async markDead(id: string, attempts: number, error: string, nowIso: string): Promise<void> {
     await this.db.run(
       `UPDATE alert_deliveries
-       SET status = ?, attempts = ?, last_error = ?, updated_at = ?
-       WHERE id = ? AND status = ?`,
+       SET status = $1, attempts = $2, last_error = $3, updated_at = $4
+       WHERE id = $5 AND status = $6`,
       ['dead', attempts, error, nowIso, id, 'pending'],
     );
   }
@@ -146,9 +146,9 @@ export class AlertDeliveryRepository {
       `DELETE FROM alert_deliveries
        WHERE id IN (
          SELECT id FROM alert_deliveries
-         WHERE status IN ('sent', 'dead') AND updated_at < ?
+         WHERE status IN ('sent', 'dead') AND updated_at < $1
          ORDER BY updated_at ASC, id ASC
-         LIMIT ?
+         LIMIT $2
        )
        RETURNING id`,
       [cutoffIso, limit],

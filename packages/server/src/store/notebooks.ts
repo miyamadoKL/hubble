@@ -76,9 +76,10 @@ export class NotebookRepository {
    */
   async list(accessor: ShareAccessor, query?: string): Promise<NotebookListItem[]> {
     const { sql: accessorSql, params: accessorParams } = documentShareAccessorMatchClause(accessor);
+    const ownerParameter = accessorParams.length + 1;
     const searchSql =
       query && query.trim() !== ''
-        ? ` AND (n.name LIKE ? ESCAPE '\\' OR n.description LIKE ? ESCAPE '\\')`
+        ? ` AND (n.name LIKE $${ownerParameter + 1} ESCAPE '\\' OR n.description LIKE $${ownerParameter + 2} ESCAPE '\\')`
         : '';
     const searchParams = query && query.trim() !== '' ? [likeParam(query), likeParam(query)] : [];
     const rows = await this.db.query<AccessibleNotebookListRow>(
@@ -89,7 +90,7 @@ export class NotebookRepository {
        LEFT JOIN document_shares ds
          ON ds.document_type = 'notebook' AND ds.document_id = n.id
         AND ds.permission IN ('view', 'edit') AND (${accessorSql})
-       WHERE (n.owner = ? OR ds.id IS NOT NULL)${searchSql}
+       WHERE (n.owner = $${ownerParameter} OR ds.id IS NOT NULL)${searchSql}
        GROUP BY n.id, n.name, n.description, n.owner, n.created_at, n.updated_at
        ORDER BY n.updated_at DESC`,
       [...accessorParams, accessor.user, ...searchParams],
@@ -143,7 +144,7 @@ export class NotebookRepository {
     });
     await this.db.run(
       `INSERT INTO notebooks (id, name, description, data, owner, created_at, updated_at, revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         notebook.id,
         notebook.name,
@@ -197,7 +198,7 @@ export class NotebookRepository {
 
     return this.db.transaction(async (tx) => {
       const deleted = await tx.query<{ id: string }>(
-        'DELETE FROM notebooks WHERE id = ? AND owner = ? RETURNING id',
+        'DELETE FROM notebooks WHERE id = $1 AND owner = $2 RETURNING id',
         [id, accessor.user],
       );
       if (deleted.length === 0) return false;
@@ -209,7 +210,7 @@ export class NotebookRepository {
   /** ドキュメント id から owner user id を返す。存在しなければ undefined。 */
   async getOwner(id: string): Promise<string | undefined> {
     const rows = await this.db.query<{ owner: string }>(
-      'SELECT owner FROM notebooks WHERE id = ?',
+      'SELECT owner FROM notebooks WHERE id = $1',
       [id],
     );
     return rows[0]?.owner;
@@ -217,14 +218,14 @@ export class NotebookRepository {
 
   private async getOwnedRow(id: string, owner: string): Promise<NotebookRow | undefined> {
     const rows = await this.db.query<NotebookRow>(
-      'SELECT * FROM notebooks WHERE id = ? AND owner = ?',
+      'SELECT * FROM notebooks WHERE id = $1 AND owner = $2',
       [id, owner],
     );
     return rows[0];
   }
 
   private async getRowById(id: string): Promise<NotebookRow | undefined> {
-    const rows = await this.db.query<NotebookRow>('SELECT * FROM notebooks WHERE id = ?', [id]);
+    const rows = await this.db.query<NotebookRow>('SELECT * FROM notebooks WHERE id = $1', [id]);
     return rows[0];
   }
 
@@ -246,9 +247,9 @@ export class NotebookRepository {
       revision: req.revision + 1,
     });
     const rows = await this.db.query<NotebookRow>(
-      `UPDATE notebooks SET name = ?, description = ?, data = ?, updated_at = ?,
+      `UPDATE notebooks SET name = $1, description = $2, data = $3, updated_at = $4,
        revision = revision + 1
-       WHERE id = ? AND owner = ? AND revision = ?
+       WHERE id = $5 AND owner = $6 AND revision = $7
        RETURNING *`,
       [
         updated.name,

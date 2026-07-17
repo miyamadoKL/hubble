@@ -191,14 +191,14 @@ export class WorkflowRepository {
     if (trimmed) {
       const rows = await this.db.query<WorkflowRow>(
         `SELECT * FROM workflows
-         WHERE owner = ? AND (name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
+         WHERE owner = $1 AND (name LIKE $2 ESCAPE '\\' OR description LIKE $3 ESCAPE '\\')
          ORDER BY updated_at DESC`,
         [owner, likeParam(trimmed), likeParam(trimmed)],
       );
       return rows.map(rowToWorkflow);
     }
     const rows = await this.db.query<WorkflowRow>(
-      'SELECT * FROM workflows WHERE owner = ? ORDER BY updated_at DESC',
+      'SELECT * FROM workflows WHERE owner = $1 ORDER BY updated_at DESC',
       [owner],
     );
     return rows.map(rowToWorkflow);
@@ -206,14 +206,14 @@ export class WorkflowRepository {
 
   async get(owner: string, id: string): Promise<WorkflowRecord | undefined> {
     const rows = await this.db.query<WorkflowRow>(
-      'SELECT * FROM workflows WHERE id = ? AND owner = ?',
+      'SELECT * FROM workflows WHERE id = $1 AND owner = $2',
       [id, owner],
     );
     return rows[0] ? rowToWorkflow(rows[0]) : undefined;
   }
 
   async getById(id: string): Promise<WorkflowRecord | undefined> {
-    const rows = await this.db.query<WorkflowRow>('SELECT * FROM workflows WHERE id = ?', [id]);
+    const rows = await this.db.query<WorkflowRow>('SELECT * FROM workflows WHERE id = $1', [id]);
     return rows[0] ? rowToWorkflow(rows[0]) : undefined;
   }
 
@@ -252,7 +252,7 @@ export class WorkflowRepository {
       `INSERT INTO workflows
          (id, name, description, stages, datasource_id, cron, enabled, retry,
           owner, principal_snapshot, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         record.id,
         record.name,
@@ -295,9 +295,9 @@ export class WorkflowRepository {
     };
     await this.db.run(
       `UPDATE workflows SET
-         name = ?, description = ?, stages = ?, datasource_id = ?, cron = ?, enabled = ?,
-         retry = ?, principal_snapshot = ?, updated_at = ?
-       WHERE id = ? AND owner = ?`,
+         name = $1, description = $2, stages = $3, datasource_id = $4, cron = $5, enabled = $6,
+         retry = $7, principal_snapshot = $8, updated_at = $9
+       WHERE id = $10 AND owner = $11`,
       [
         merged.name,
         merged.description,
@@ -319,13 +319,13 @@ export class WorkflowRepository {
   async delete(owner: string, id: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const deleted = await tx.query<{ id: string }>(
-        'DELETE FROM workflows WHERE id = ? AND owner = ? RETURNING id',
+        'DELETE FROM workflows WHERE id = $1 AND owner = $2 RETURNING id',
         [id, owner],
       );
       if (deleted.length === 0) return false;
       const resultRows = await tx.query<{ result_object_key: string | null }>(
         `DELETE FROM workflow_step_runs
-         WHERE workflow_id = ?
+         WHERE workflow_id = $1
          RETURNING result_object_key`,
         [id],
       );
@@ -335,7 +335,7 @@ export class WorkflowRepository {
         ),
         new Date().toISOString(),
       );
-      await tx.run('DELETE FROM workflow_runs WHERE workflow_id = ?', [id]);
+      await tx.run('DELETE FROM workflow_runs WHERE workflow_id = $1', [id]);
       return true;
     });
   }
@@ -487,7 +487,7 @@ export class WorkflowRunRepository {
     await this.db.transaction(async (tx) => {
       // delete と同じ workflow row の write lock を取り、古い WorkflowRecord からの再生成を防ぐ。
       const targets = await tx.query<{ id: string }>(
-        'UPDATE workflows SET id = id WHERE id = ? AND owner = ? RETURNING id',
+        'UPDATE workflows SET id = id WHERE id = $1 AND owner = $2 RETURNING id',
         [workflow.id, workflow.owner],
       );
       if (targets.length === 0) {
@@ -496,7 +496,7 @@ export class WorkflowRunRepository {
       const inserted = await tx.query<{ id: string }>(
         `INSERT INTO workflow_runs
            (id, workflow_id, owner, status, trigger, scheduled_for, started_at)
-         VALUES (?, ?, ?, 'running', ?, ?, ?)
+         VALUES ($1, $2, $3, 'running', $4, $5, $6)
          ON CONFLICT (workflow_id) WHERE status = 'running' DO NOTHING
          RETURNING id`,
         [runId, workflow.id, workflow.owner, trigger, scheduledFor, startedAt],
@@ -510,7 +510,10 @@ export class WorkflowRunRepository {
         const stage = workflow.stages[stageIndex]!;
         for (const step of stage.steps) {
           const stepRunId = newId('wfs_');
-          placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, 0, ?)');
+          const parameterOffset = stepParams.length;
+          placeholders.push(
+            `($${parameterOffset + 1}, $${parameterOffset + 2}, $${parameterOffset + 3}, $${parameterOffset + 4}, $${parameterOffset + 5}, $${parameterOffset + 6}, $${parameterOffset + 7}, $${parameterOffset + 8}, 0, $${parameterOffset + 9})`,
+          );
           stepParams.push(
             stepRunId,
             runId,
@@ -539,7 +542,7 @@ export class WorkflowRunRepository {
 
   async markStepRunning(stepRunId: string, startedAt: string): Promise<void> {
     await this.db.run(
-      `UPDATE workflow_step_runs SET status = 'running', started_at = ? WHERE id = ?`,
+      `UPDATE workflow_step_runs SET status = 'running', started_at = $1 WHERE id = $2`,
       [startedAt, stepRunId],
     );
   }
@@ -548,10 +551,10 @@ export class WorkflowRunRepository {
     await this.db.transaction(async (tx) => {
       const updated = await tx.query<{ id: string }>(
         `UPDATE workflow_step_runs SET
-           status = ?, attempt = ?, row_count = ?, elapsed_ms = ?,
-           error_type = ?, error_message = ?, result_object_key = ?, result_expires_at = ?,
-           finished_at = ?
-         WHERE id = ?
+           status = $1, attempt = $2, row_count = $3, elapsed_ms = $4,
+           error_type = $5, error_message = $6, result_object_key = $7, result_expires_at = $8,
+           finished_at = $9
+         WHERE id = $10
          RETURNING id`,
         [
           input.status,
@@ -578,28 +581,28 @@ export class WorkflowRunRepository {
 
   async skipRemaining(runId: string, fromStageIndex: number, finishedAt: string): Promise<void> {
     await this.db.run(
-      `UPDATE workflow_step_runs SET status = 'skipped', finished_at = ?
-       WHERE run_id = ? AND status = 'pending' AND stage_index >= ?`,
+      `UPDATE workflow_step_runs SET status = 'skipped', finished_at = $1
+       WHERE run_id = $2 AND status = 'pending' AND stage_index >= $3`,
       [finishedAt, runId, fromStageIndex],
     );
   }
 
   async finishRun(runId: string, workflowId: string, input: FinishWorkflowRunInput): Promise<void> {
     await this.db.run(
-      `UPDATE workflow_runs SET status = ?, finished_at = ?, elapsed_ms = ? WHERE id = ?`,
+      `UPDATE workflow_runs SET status = $1, finished_at = $2, elapsed_ms = $3 WHERE id = $4`,
       [input.status, input.finishedAt, input.elapsedMs, runId],
     );
     await this.prune(workflowId);
   }
 
   async getRun(runId: string): Promise<WorkflowRunDetail | undefined> {
-    const rows = await this.db.query<WorkflowRunRow>('SELECT * FROM workflow_runs WHERE id = ?', [
+    const rows = await this.db.query<WorkflowRunRow>('SELECT * FROM workflow_runs WHERE id = $1', [
       runId,
     ]);
     const row = rows[0];
     if (!row) return undefined;
     const stepRows = await this.db.query<WorkflowStepRunRow>(
-      `SELECT * FROM workflow_step_runs WHERE run_id = ?
+      `SELECT * FROM workflow_step_runs WHERE run_id = $1
        ORDER BY stage_index ASC, step_id ASC`,
       [runId],
     );
@@ -614,8 +617,8 @@ export class WorkflowRunRepository {
 
   async listRuns(workflowId: string, limit: number): Promise<WorkflowRunRecord[]> {
     const runRows = await this.db.query<WorkflowRunRow>(
-      `SELECT * FROM workflow_runs WHERE workflow_id = ?
-       ORDER BY started_at DESC, id DESC LIMIT ?`,
+      `SELECT * FROM workflow_runs WHERE workflow_id = $1
+       ORDER BY started_at DESC, id DESC LIMIT $2`,
       [workflowId, limit],
     );
     const stepRowsByRun = await this.loadStepRowsByRun(runRows.map((row) => row.id));
@@ -637,7 +640,7 @@ export class WorkflowRunRepository {
     const runRows: WorkflowRunRow[] = [];
     for (let offset = 0; offset < workflowIds.length; offset += SQL_ID_CHUNK_SIZE) {
       const chunk = workflowIds.slice(offset, offset + SQL_ID_CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(', ');
+      const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
       runRows.push(
         ...(await this.db.query<WorkflowRunRow>(
           `SELECT * FROM (
@@ -668,7 +671,7 @@ export class WorkflowRunRepository {
 
   async hasRunning(workflowId: string): Promise<boolean> {
     const rows = await this.db.query<{ id: string }>(
-      "SELECT id FROM workflow_runs WHERE workflow_id = ? AND status = 'running' LIMIT 1",
+      "SELECT id FROM workflow_runs WHERE workflow_id = $1 AND status = 'running' LIMIT 1",
       [workflowId],
     );
     return rows.length > 0;
@@ -676,18 +679,18 @@ export class WorkflowRunRepository {
 
   async abortOrphans(finishedAt: string): Promise<number> {
     const runs = await this.db.query<{ id: string }>(
-      "UPDATE workflow_runs SET status = 'aborted', finished_at = ? WHERE status = 'running' RETURNING id",
+      "UPDATE workflow_runs SET status = 'aborted', finished_at = $1 WHERE status = 'running' RETURNING id",
       [finishedAt],
     );
     await this.db.run(
-      "UPDATE workflow_step_runs SET status = 'aborted', finished_at = ? WHERE status = 'running'",
+      "UPDATE workflow_step_runs SET status = 'aborted', finished_at = $1 WHERE status = 'running'",
       [finishedAt],
     );
     if (runs.length > 0) {
       const ids = runs.map((r) => r.id);
-      const placeholders = ids.map(() => '?').join(', ');
+      const placeholders = ids.map((_, index) => `$${index + 2}`).join(', ');
       await this.db.run(
-        `UPDATE workflow_step_runs SET status = 'skipped', finished_at = ?
+        `UPDATE workflow_step_runs SET status = 'skipped', finished_at = $1
          WHERE status = 'pending' AND run_id IN (${placeholders})`,
         [finishedAt, ...ids],
       );
@@ -704,7 +707,7 @@ export class WorkflowRunRepository {
   ): Promise<ExpiredWorkflowStepResult[]> {
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
     const cursorWhere = options.after
-      ? 'AND (result_expires_at > ? OR (result_expires_at = ? AND id > ?))'
+      ? 'AND (result_expires_at > $2 OR (result_expires_at = $3 AND id > $4))'
       : '';
     const params: SqlParam[] = [nowIso];
     if (options.after) {
@@ -718,9 +721,9 @@ export class WorkflowRunRepository {
     }>(
       `SELECT id, result_object_key, result_expires_at FROM workflow_step_runs
        WHERE result_object_key IS NOT NULL AND result_expires_at IS NOT NULL
-         AND result_expires_at <= ? ${cursorWhere}
+         AND result_expires_at <= $1 ${cursorWhere}
        ORDER BY result_expires_at ASC, id ASC
-       LIMIT ?`,
+       LIMIT ${options.after ? '$5' : '$2'}`,
       params,
     );
     return rows.map((row) => ({
@@ -732,7 +735,7 @@ export class WorkflowRunRepository {
 
   async clearResultObjects(keys: string[]): Promise<void> {
     if (keys.length === 0) return;
-    const placeholders = keys.map(() => '?').join(', ');
+    const placeholders = keys.map((_, index) => `$${index + 1}`).join(', ');
     await this.db.run(
       `UPDATE workflow_step_runs
        SET result_object_key = NULL, result_expires_at = NULL
@@ -748,7 +751,7 @@ export class WorkflowRunRepository {
     const grouped = new Map<string, WorkflowStepRunRow[]>();
     for (let offset = 0; offset < runIds.length; offset += SQL_ID_CHUNK_SIZE) {
       const chunk = runIds.slice(offset, offset + SQL_ID_CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(', ');
+      const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
       const rows = await this.db.query<WorkflowStepRunRow>(
         `SELECT * FROM workflow_step_runs
          WHERE run_id IN (${placeholders})
@@ -779,7 +782,7 @@ export class WorkflowRunRepository {
       `SELECT s.*, r.owner
        FROM workflow_step_runs s
        JOIN workflow_runs r ON r.id = s.run_id
-       WHERE s.run_id = ? AND s.id = ?`,
+       WHERE s.run_id = $1 AND s.id = $2`,
       [runId, stepRunId],
     );
     const row = rows[0];
@@ -796,16 +799,16 @@ export class WorkflowRunRepository {
     if (this.retention <= 0) return;
     await this.db.transaction(async (tx) => {
       const oldRuns = await tx.query<{ id: string }>(
-        `SELECT id FROM workflow_runs WHERE workflow_id = ?
+        `SELECT id FROM workflow_runs WHERE workflow_id = $1
            AND id NOT IN (
-             SELECT id FROM workflow_runs WHERE workflow_id = ?
-             ORDER BY started_at DESC, id DESC LIMIT ?
+             SELECT id FROM workflow_runs WHERE workflow_id = $2
+             ORDER BY started_at DESC, id DESC LIMIT $3
            )`,
         [workflowId, workflowId, this.retention],
       );
       if (oldRuns.length === 0) return;
       const ids = oldRuns.map((r) => r.id);
-      const placeholders = ids.map(() => '?').join(', ');
+      const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
       const resultRows = await tx.query<{ result_object_key: string }>(
         `SELECT result_object_key FROM workflow_step_runs
          WHERE run_id IN (${placeholders}) AND result_object_key IS NOT NULL`,

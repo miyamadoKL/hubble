@@ -88,7 +88,7 @@ export class GithubConnectionRepository {
   /** owner に紐づく接続情報を取得する。 */
   async get(owner: string): Promise<GithubConnectionRecord | undefined> {
     const rows = await this.db.query<GithubConnectionRow>(
-      'SELECT * FROM github_connections WHERE owner = ?',
+      'SELECT * FROM github_connections WHERE owner = $1',
       [owner],
     );
     return rows[0] ? rowToConnection(rows[0]) : undefined;
@@ -101,9 +101,9 @@ export class GithubConnectionRepository {
     if (existing) {
       await this.db.run(
         `UPDATE github_connections
-         SET github_login = ?, access_token_enc = ?, refresh_token_enc = ?,
-             token_expires_at = ?, updated_at = ?
-         WHERE owner = ?`,
+         SET github_login = $1, access_token_enc = $2, refresh_token_enc = $3,
+             token_expires_at = $4, updated_at = $5
+         WHERE owner = $6`,
         [
           input.githubLogin,
           input.accessTokenEnc,
@@ -125,7 +125,7 @@ export class GithubConnectionRepository {
     await this.db.run(
       `INSERT INTO github_connections
          (owner, github_login, access_token_enc, refresh_token_enc, token_expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         owner,
         input.githubLogin,
@@ -149,7 +149,7 @@ export class GithubConnectionRepository {
 
   /** 接続情報を削除する。 */
   async delete(owner: string): Promise<void> {
-    await this.db.run('DELETE FROM github_connections WHERE owner = ?', [owner]);
+    await this.db.run('DELETE FROM github_connections WHERE owner = $1', [owner]);
   }
 }
 
@@ -160,7 +160,7 @@ export class DocumentGitLinkRepository {
   /** ドキュメントの Git リンクを取得する。 */
   async get(type: DocumentGitType, id: string): Promise<DocumentGitLinkRecord | undefined> {
     const rows = await this.db.query<DocumentGitLinkRow>(
-      'SELECT * FROM document_git_links WHERE document_type = ? AND document_id = ?',
+      'SELECT * FROM document_git_links WHERE document_type = $1 AND document_id = $2',
       [type, id],
     );
     return rows[0] ? rowToLink(rows[0]) : undefined;
@@ -178,10 +178,10 @@ export class DocumentGitLinkRepository {
       const next = mergeLink(existing, patch, nowIso);
       await this.db.run(
         `UPDATE document_git_links
-         SET path = ?, branch = ?, pr_number = ?, pr_url = ?,
-             last_pushed_commit = ?, last_pushed_hash = ?,
-             approved_hash = ?, approved_commit = ?, checked_at = ?, updated_at = ?
-         WHERE document_type = ? AND document_id = ?`,
+         SET path = $1, branch = $2, pr_number = $3, pr_url = $4,
+             last_pushed_commit = $5, last_pushed_hash = $6,
+             approved_hash = $7, approved_commit = $8, checked_at = $9, updated_at = $10
+         WHERE document_type = $11 AND document_id = $12`,
         linkParams(next, type, id),
       );
       return next;
@@ -210,7 +210,7 @@ export class DocumentGitLinkRepository {
          (document_type, document_id, path, branch, pr_number, pr_url,
           last_pushed_commit, last_pushed_hash, approved_hash, approved_commit, checked_at,
           created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         type,
         id,
@@ -233,7 +233,7 @@ export class DocumentGitLinkRepository {
   /** ドキュメントの Git リンクを削除する。 */
   async delete(type: DocumentGitType, id: string): Promise<void> {
     await this.db.run(
-      'DELETE FROM document_git_links WHERE document_type = ? AND document_id = ?',
+      'DELETE FROM document_git_links WHERE document_type = $1 AND document_id = $2',
       [type, id],
     );
   }

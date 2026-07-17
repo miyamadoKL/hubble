@@ -41,7 +41,7 @@ describe('ResultObjectDeletionRepository', () => {
       `INSERT INTO workflow_step_runs
            (id, run_id, workflow_id, step_id, stage_index, name, datasource_id, status,
             attempt, result_object_key, result_expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         'step_ref',
         'run_ref',

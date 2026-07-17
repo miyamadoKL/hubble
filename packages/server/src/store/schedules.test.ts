@@ -227,7 +227,7 @@ describe('schedule repositories', () => {
 
         principalSnapshot: { user: 'alice' },
       });
-      await db2.run('UPDATE schedules SET principal_snapshot = ? WHERE id = ?', [
+      await db2.run('UPDATE schedules SET principal_snapshot = $1 WHERE id = $2', [
         '{not-json',
         created.id,
       ]);
@@ -253,7 +253,7 @@ describe('schedule repositories', () => {
 
         principalSnapshot: { user: 'alice' },
       });
-      await db2.run('UPDATE schedules SET principal_snapshot = ? WHERE id = ?', [
+      await db2.run('UPDATE schedules SET principal_snapshot = $1 WHERE id = $2', [
         JSON.stringify({ user: '' }),
         created.id,
       ]);

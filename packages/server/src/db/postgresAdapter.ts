@@ -3,8 +3,7 @@
  *
  * `pg` パッケージの接続プールをラップし、`SqlDatabase` インターフェースが
  * 要求する `query` / `run` / `exec` / `transaction` / `close` を提供する。
- * リポジトリ層が使う `?` プレースホルダは、このモジュールの
- * `toPgPlaceholders()` で PostgreSQL の `$1..$n` 形式へ変換してから発行する。加えて、
+ * リポジトリ層の SQL は PostgreSQL の `$1..$n` 形式で記述し、そのまま発行する。加えて、
  * マイグレーション適用を複数プロセス間で直列化する advisory lock
  * （`withAdvisoryLock`）もここで実装する。
  */
@@ -31,29 +30,12 @@ type PoolConfigWithLockTimeout = pg.PoolConfig & { lock_timeout: number };
 const POOL_MAX = 5;
 
 /**
- * Rewrite positional `?` placeholders to PostgreSQL's `$1..$n`. Repository SQL
- * never contains a literal `?` inside a string literal (enforced by review),
- * so a straight left-to-right substitution is safe.
- *
- * リポジトリ層の位置プレースホルダ `?` を PostgreSQL の `$1..$n` 形式へ書き
- * 換える。SQL 文字列リテラル中には `?` が現れない前提（コード
- * レビューで担保）なので、出現順に単純に `$1`, `$2`, ... と振っていくだけで
- * 安全に変換できる。
- */
-export function toPgPlaceholders(sql: string): string {
-  let i = 0;
-  return sql.replace(/\?/g, () => `$${++i}`);
-}
-
-/**
- * A query executor over either the pool (each call grabs a connection) or a
- * single pinned client (inside a transaction). Shared by both code paths so the
- * `?`→`$n` rewrite and row handling live in one place.
+ * プール（呼び出しごとに接続を取得）またはトランザクション中の固定クライアント
+ * 上で SQL を実行する。両方の経路で行の取り扱いを共有する。
  *
  * クエリ実行の抽象。プール経由（呼び出しごとにコネクションを取得して返却）と、
  * トランザクション中に固定された単一クライアント経由のどちらの場合も同じ
- * インターフェースで扱えるようにし、`?`→`$n` の変換や行の取り扱いを1箇所に
- * まとめている。
+ * インターフェースで扱えるようにし、行の取り扱いを1箇所にまとめている。
  */
 interface PgExecutor {
   query(text: string, values: unknown[]): Promise<{ rows: unknown[] }>;
@@ -157,20 +139,19 @@ class PostgresDatabase implements SqlDatabase {
     sql: string,
     params: readonly SqlParam[] = [],
   ): Promise<T[]> {
-    // ? → $n に変換してから実行し、結果行をそのまま T[] として返す。
-    const res = await this.executor.query(toPgPlaceholders(sql), params as SqlParam[]);
+    // 呼び出し側で番号付けした PostgreSQL SQL をそのまま実行し、結果行を返す。
+    const res = await this.executor.query(sql, params as SqlParam[]);
     return res.rows as T[];
   }
 
   async run(sql: string, params: readonly SqlParam[] = []): Promise<void> {
     // query() と同じ実行経路を使うが、戻り値の行は呼び出し側に返さない。
-    await this.executor.query(toPgPlaceholders(sql), params as SqlParam[]);
+    await this.executor.query(sql, params as SqlParam[]);
   }
 
   async exec(sql: string): Promise<void> {
-    // No placeholder rewrite: migration scripts are static DDL with no `?`.
-    // プレースホルダの変換は行わない。マイグレーションスクリプトはパラメータ
-    // を持たない静的な DDL であり `?` を含まない前提のため。
+    // マイグレーションスクリプトはパラメータを持たない静的な DDL のため、
+    // SQL を変換せずに実行する。
     await this.executor.query(sql, []);
   }
 

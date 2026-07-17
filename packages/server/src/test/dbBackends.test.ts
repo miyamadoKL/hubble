@@ -49,7 +49,7 @@ describe('PostgreSQL worker schema integration', () => {
         db.run(
           `INSERT INTO notebooks
              (id, name, description, data, created_at, updated_at, owner)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             id,
             'worker test',

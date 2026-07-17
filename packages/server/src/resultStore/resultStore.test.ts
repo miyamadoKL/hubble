@@ -763,7 +763,7 @@ describe('ResultStore persistence', () => {
     const ctx = await createTestContext({ scenarios: [manyRows(4)], resultStore: store });
     const queryId = await submitPersistQuery(ctx);
     await waitForResultRef(ctx, queryId);
-    await ctx.db.run('UPDATE query_history SET result_columns_json = ? WHERE id = ?', [
+    await ctx.db.run('UPDATE query_history SET result_columns_json = $1 WHERE id = $2', [
       columns,
       queryId,
     ]);

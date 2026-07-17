@@ -125,7 +125,7 @@ export class HistoryRepository {
     // プレースホルダで位置バインドする。statement は STATEMENT_MAX で切り詰める。
     await this.db.run(
       `INSERT INTO query_history (id, statement, catalog, schema, trino_query_id, state, row_count, elapsed_ms, error_message, owner, notebook_id, cell_id, datasource_id, submitted_at)
-       VALUES (?, ?, ?, ?, NULL, ?, 0, 0, NULL, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, NULL, $5, 0, 0, NULL, $6, $7, $8, $9, $10)`,
       [
         entry.id,
         entry.statement.slice(0, STATEMENT_MAX),
@@ -147,8 +147,8 @@ export class HistoryRepository {
   async update(id: string, update: HistoryUpdate): Promise<void> {
     await this.db.run(
       `UPDATE query_history
-       SET state=?, row_count=?, elapsed_ms=?, trino_query_id=?, error_message=?
-       WHERE id=?`,
+       SET state=$1, row_count=$2, elapsed_ms=$3, trino_query_id=$4, error_message=$5
+       WHERE id=$6`,
       [
         update.state,
         update.rowCount,
@@ -171,9 +171,9 @@ export class HistoryRepository {
   ): Promise<void> {
     const updated = await database.query<{ id: string }>(
       `UPDATE query_history
-       SET state=?, row_count=?, elapsed_ms=?, trino_query_id=?, error_message=?,
-           result_object_key=?, result_expires_at=?, result_columns_json=?
-       WHERE id=?
+       SET state=$1, row_count=$2, elapsed_ms=$3, trino_query_id=$4, error_message=$5,
+           result_object_key=$6, result_expires_at=$7, result_columns_json=$8
+       WHERE id=$9
        RETURNING id`,
       [
         update.state,
@@ -195,7 +195,7 @@ export class HistoryRepository {
   /** 指定 key 群の result 参照を NULL に戻す。 */
   async clearResultObjects(keys: string[]): Promise<void> {
     if (keys.length === 0) return;
-    const placeholders = keys.map(() => '?').join(', ');
+    const placeholders = keys.map((_, index) => `$${index + 1}`).join(', ');
     await this.db.run(
       `UPDATE query_history
        SET result_object_key=NULL, result_expires_at=NULL,
@@ -208,7 +208,7 @@ export class HistoryRepository {
   /** owner が所有する単一の履歴エントリを id で取得する。存在しなければ undefined。 */
   async get(owner: string, id: string): Promise<QueryHistoryEntry | undefined> {
     const rows = await this.db.query<HistoryRow>(
-      'SELECT * FROM query_history WHERE id = ? AND owner = ?',
+      'SELECT * FROM query_history WHERE id = $1 AND owner = $2',
       [id, owner],
     );
     return rows[0] ? rowToEntry(rows[0]) : undefined;
@@ -218,7 +218,7 @@ export class HistoryRepository {
   async getResultRef(owner: string, id: string): Promise<HistoryResultRef | undefined> {
     const rows = await this.db.query<HistoryRow>(
       `SELECT * FROM query_history
-       WHERE id = ? AND owner = ? AND result_object_key IS NOT NULL AND result_expires_at IS NOT NULL`,
+       WHERE id = $1 AND owner = $2 AND result_object_key IS NOT NULL AND result_expires_at IS NOT NULL`,
       [id, owner],
     );
     return rows[0] ? rowToResultRef(rows[0]) : undefined;
@@ -231,7 +231,7 @@ export class HistoryRepository {
   ): Promise<ExpiredHistoryResult[]> {
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
     const cursorWhere = options.after
-      ? 'AND (result_expires_at > ? OR (result_expires_at = ? AND id > ?))'
+      ? 'AND (result_expires_at > $2 OR (result_expires_at = $3 AND id > $4))'
       : '';
     const params: SqlParam[] = [nowIso];
     if (options.after) {
@@ -245,9 +245,9 @@ export class HistoryRepository {
     }>(
       `SELECT id, result_object_key, result_expires_at FROM query_history
        WHERE result_object_key IS NOT NULL AND result_expires_at IS NOT NULL
-         AND result_expires_at <= ? ${cursorWhere}
+         AND result_expires_at <= $1 ${cursorWhere}
        ORDER BY result_expires_at ASC, id ASC
-       LIMIT ?`,
+       LIMIT ${options.after ? '$5' : '$2'}`,
       params,
     );
     return rows.map((row) => ({
@@ -261,12 +261,12 @@ export class HistoryRepository {
   async pruneBefore(cutoffIso: string, limit: number): Promise<number> {
     const rows = await this.db.query<{ id: string }>(
       `DELETE FROM query_history
-       WHERE submitted_at < ? AND result_object_key IS NULL
+       WHERE submitted_at < $1 AND result_object_key IS NULL
          AND id IN (
          SELECT id FROM query_history
-         WHERE submitted_at < ? AND result_object_key IS NULL
+         WHERE submitted_at < $2 AND result_object_key IS NULL
          ORDER BY submitted_at ASC, id ASC
-         LIMIT ?
+         LIMIT $3
        )
        RETURNING id`,
       [cutoffIso, cutoffIso, limit],
@@ -285,7 +285,7 @@ export class HistoryRepository {
   ): Promise<HistoryResponse> {
     const offset = Math.max(opts.offset ?? 0, 0);
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
-    const where = opts.state ? 'WHERE owner = ? AND state = ?' : 'WHERE owner = ?';
+    const where = opts.state ? 'WHERE owner = $1 AND state = $2' : 'WHERE owner = $1';
     const params: SqlParam[] = opts.state ? [owner, opts.state] : [owner];
 
     const countRows = await this.db.query<{ c: number | string }>(
@@ -295,13 +295,15 @@ export class HistoryRepository {
     // PostgreSQL は COUNT(*) を bigint の文字列で返すことがあるため Number() を通す。
     const total = Number(countRows[0]?.c ?? 0);
 
+    const limitPlaceholder = `$${params.length + 1}`;
+    const offsetPlaceholder = `$${params.length + 2}`;
     const rows = await this.db.query<HistoryRow>(
       `SELECT id, statement, catalog, schema, trino_query_id, state, row_count,
               elapsed_ms, error_message, notebook_id, cell_id, datasource_id,
               result_object_key, result_expires_at, submitted_at
        FROM query_history ${where}
        ORDER BY submitted_at DESC, id DESC
-       LIMIT ? OFFSET ?`,
+       LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}`,
       [...params, limit, offset],
     );
 

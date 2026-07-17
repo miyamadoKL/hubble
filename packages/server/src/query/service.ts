@@ -195,7 +195,7 @@ export class QueryService {
                 // 残っていれば二重 cleanup を避ける。
                 const linked = await tx.query<{ id: string }>(
                   `SELECT id FROM query_history
-                   WHERE id=? AND result_object_key=? AND result_expires_at IS NOT NULL`,
+                   WHERE id=$1 AND result_object_key=$2 AND result_expires_at IS NOT NULL`,
                   [exec.queryId, resultCapture.key],
                 );
                 if (linked.length === 0) throw error;

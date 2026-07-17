@@ -609,7 +609,7 @@ defaultRole: trino-prod-only
       datasourceId: DEFAULT_DATASOURCE_ID,
       principalSnapshot: { user: 'alice' },
     });
-    await h.db.run('UPDATE schedules SET principal_snapshot = NULL WHERE id = ?', [schedule.id]);
+    await h.db.run('UPDATE schedules SET principal_snapshot = NULL WHERE id = $1', [schedule.id]);
     const historical = await h.schedules.getById(schedule.id);
     expect(historical?.principalSnapshot).toBeNull();
 

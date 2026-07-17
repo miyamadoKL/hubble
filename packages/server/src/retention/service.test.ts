@@ -37,7 +37,7 @@ describe('DataRetentionService', () => {
         `INSERT INTO alert_deliveries
            (id, alert_id, owner, channel, payload, status, attempts, next_attempt_at,
             last_error, created_at, updated_at)
-           VALUES (?, 'alt_1', 'alice', 'slack', '{}', ?, 0, ?, NULL, ?, ?)`,
+           VALUES ($1, 'alt_1', 'alice', 'slack', '{}', $2, 0, $3, NULL, $4, $5)`,
         [id, status, updatedAt, updatedAt, updatedAt],
       );
     }

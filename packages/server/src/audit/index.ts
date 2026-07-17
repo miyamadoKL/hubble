@@ -109,7 +109,7 @@ export class AuditRepository {
     const createdAt = event.createdAt ?? this.now().toISOString();
     await this.db.run(
       `INSERT INTO audit_log (id, actor, action, target, datasource, detail, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         id,
         event.actor,
@@ -129,9 +129,9 @@ export class AuditRepository {
       `DELETE FROM audit_log
        WHERE id IN (
          SELECT id FROM audit_log
-         WHERE created_at < ?
+         WHERE created_at < $1
          ORDER BY created_at ASC, id ASC
-         LIMIT ?
+         LIMIT $2
        )
        RETURNING id`,
       [cutoffIso, limit],
@@ -151,34 +151,38 @@ export class AuditRepository {
     const conditions: string[] = [];
     const params: Array<string | number> = [];
     if (input.actor !== undefined) {
-      conditions.push('actor = ?');
+      conditions.push(`actor = $${params.length + 1}`);
       params.push(input.actor);
     }
     if (input.action !== undefined) {
-      conditions.push('action = ?');
+      conditions.push(`action = $${params.length + 1}`);
       params.push(input.action);
     }
     if (input.datasource !== undefined) {
-      conditions.push('datasource = ?');
+      conditions.push(`datasource = $${params.length + 1}`);
       params.push(input.datasource);
     }
     if (input.from !== undefined) {
-      conditions.push('created_at >= ?');
+      conditions.push(`created_at >= $${params.length + 1}`);
       params.push(input.from);
     }
     if (input.to !== undefined) {
-      conditions.push('created_at <= ?');
+      conditions.push(`created_at <= $${params.length + 1}`);
       params.push(input.to);
     }
     if (input.cursor !== undefined) {
-      conditions.push('(created_at < ? OR (created_at = ? AND id < ?))');
+      const cursorOffset = params.length + 1;
+      conditions.push(
+        `(created_at < $${cursorOffset} OR (created_at = $${cursorOffset + 1} AND id < $${cursorOffset + 2}))`,
+      );
       params.push(input.cursor.createdAt, input.cursor.createdAt, input.cursor.id);
     }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limitPlaceholder = `$${params.length + 1}`;
     const rows = await this.db.query<AuditLogDbRow>(
       `SELECT * FROM audit_log ${where}
        ORDER BY created_at DESC, id DESC
-       LIMIT ?`,
+       LIMIT ${limitPlaceholder}`,
       [...params, input.limit + 1],
     );
     const page = rows.slice(0, input.limit).map(rowToAuditLog);

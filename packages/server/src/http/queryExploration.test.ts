@@ -363,7 +363,7 @@ describe('persisted result exploration (rows beyond QUERY_MAX_ROWS)', () => {
     const { ctx, queryId } = await persistedCtx();
     const first = await ctx.app.request(apiRoutes.queryRows(queryId));
     const etag = first.headers.get('etag');
-    await ctx.db.run('UPDATE query_history SET result_expires_at = ? WHERE id = ?', [
+    await ctx.db.run('UPDATE query_history SET result_expires_at = $1 WHERE id = $2', [
       '2000-01-01T00:00:00.000Z',
       queryId,
     ]);
