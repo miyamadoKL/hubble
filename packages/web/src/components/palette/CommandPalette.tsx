@@ -35,14 +35,6 @@ import { listNotebooks, getNotebook } from '../../api/notebooks';
 import { formatRelativeTime } from '../../utils/format';
 
 /**
- * Command palette (Ctrl+K). P4b completes it: navigation entries
- * use `gotoSidebar` (switch tab + expand + focus its search), a "Open notebook…"
- * entry drops into a searchable notebook list, and the action set is organised as
- * a registry built from injected handlers so new actions are easy to add.
- *
- * The content is split into a freshly-mounted inner component so each open starts
- * with clean query/selection state (no reset-in-effect).
- *
  * コマンドパレットは Ctrl+K の完成形 (P4b) である。ナビゲーション
  * 系のエントリは `gotoSidebar` (タブ切り替え + 展開 + 検索欄へのフォーカス) を
  * 使い、「ノートブックを開く…」エントリは検索可能なノートブック一覧のサブ
@@ -73,9 +65,17 @@ interface Command {
 /** パレットの表示モード。通常のコマンド一覧か、ノートブックを開くサブモードか。 */
 type PaletteMode = 'commands' | 'open-notebook';
 
+// 2026年7月18日に cmdk (v1.1.1, MIT license) への置き換えを read-only preflight
+// で検証した。cmdk の Command.Dialog は Radix Dialog を compose し、overlay を
+// 常に描画し既定で body へ portal する仕様のため、AppShell 内 DOM や z-index、
+// click-away、既存の focus 契約を保つには adapter が必要になる。加えて Cmd/Ctrl+K
+// の購読は cmdk 側の仕様上も利用側で行うため、capture phase の
+// useGlobalShortcuts はどのみち残る。以下の buildCommands（14件の command id と
+// 動的な theme/presentation ラベルを組み立てる部分、141実装行）は既存の
+// command id、label、group、icon、handler を維持する必要があり削減対象にできず、
+// 手動 filter や active index 管理を cmdk 側に移しても保守的な正味削減は
+// 60〜70実装行に留まり、75行の削減ゲートに届かないため見送った。
 /**
- * Build the command registry from injected handlers.
- *
  * 注入されたハンドラー群から、パレットに表示するコマンド一覧 (registry) を
  * 組み立てる。呼び出し元のコンポーネント
  * が保持する状態やストアの操作関数を deps として受け取り、コマンドオブジェクトの
@@ -296,7 +296,7 @@ function PaletteContent({
     inputRef.current?.focus();
   }, []);
 
-  // 注入されたハンドラー・状態から、コマンド一覧を組み立てる。
+  // 注入されたハンドラーと状態から、コマンド一覧を組み立てる。
   // 依存する値（テーマやプレゼンテーションモードなど）が変わった場合のみ再計算する。
   const commands = useMemo(
     () =>
@@ -338,7 +338,6 @@ function PaletteContent({
     return commands.filter((c) => c.label.toLowerCase().includes(needle));
   }, [commands, query]);
 
-  // Notebook list for "Open notebook…" mode (server search, only while active).
   // 「ノートブックを開く」モードのときのみ有効化される、サーバー側検索によるノートブック一覧取得。
   const notebooks = useQuery({
     queryKey: ['notebooks', 'list', query.trim()],
@@ -408,7 +407,7 @@ function PaletteContent({
         const cmd = filteredCommands[safeIndex];
         if (cmd) {
           cmd.run();
-          // Commands that switch to a sub-mode shouldn't close the palette.
+          // サブモードへ遷移するコマンド（open-notebook）はパレットを閉じない。
           if (cmd.id !== 'open-notebook') onClose();
         }
       } else {

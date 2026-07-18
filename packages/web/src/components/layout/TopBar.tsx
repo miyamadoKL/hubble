@@ -35,12 +35,6 @@ import { hasPermission } from '../../permissions';
 import type { ExecutionContext } from '../../stores/datasourceStore';
 
 /**
- * TopBar: logo · notebook tabs (open/close/new/rename) ·
- * catalog.schema selector · Run all / Save · command palette · theme toggle.
- * Notebook state comes from the notebook store; run state from the execution
- * store (so the Run button flips to Stop while cells stream).
- */
-/**
  * TopBar 本体コンポーネント。
  * ノートブック関連の状態は notebook store から、実行中かどうかは execution store から
  * それぞれ購読する。context（catalog/schema）と defaultLimit は AppShell から props で
@@ -84,8 +78,6 @@ export function TopBar({
     useShallow((s) => (activeId ? (s.open[activeId]?.notebook.cells.map((c) => c.id) ?? []) : [])),
   );
 
-  // Reactively derive whether the active notebook has a running cell. Subscribe
-  // to the cells map (stable reference between updates) and compute in render.
   // アクティブなノートブックのいずれかのセルが実行中かどうかを毎レンダーで計算する
   // （Run ボタンを Stop 表示に切り替えるための派生値）。
   const execCells = useExecutionStore((s) => s.cells);

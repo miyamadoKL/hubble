@@ -32,16 +32,6 @@ import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
 import { invalidateEditorSchemaCache } from '../../editor/EditorRuntime';
 
-/**
- * Data browser tree: catalog → schema → table → column, lazy-
- * loaded on expand (TanStack Query, stale 5 min). A client-side filter narrows
- * already-loaded nodes and auto-expands matched paths; unloaded branches are
- * left collapsed (the filter can't reach them, which is fine). Clicking a table
- * inserts its context-relative name at the caret; clicking a column inserts its
- * name. A per-row info button opens the table detail popover; a header button
- * refreshes the server cache and invalidates the tree.
- */
-
 /*
  * このファイルの責務:
  * アシストサイドバーの「データブラウザ」タブ本体。catalog → schema → table → column
@@ -70,7 +60,7 @@ export interface SchemaTreeContext {
   schema?: string;
 }
 
-// ---- Generic row -----------------------------------------------------------
+// ---- 汎用行 -----------------------------------------------------------------
 
 // ツリーの1行を汎用的に描画するための props。catalog/schema/table/column いずれの
 // 階層でも共通の見た目（インデント、アイコン、ラベル、展開矢印）を出すために使う。
@@ -160,7 +150,7 @@ function TreeRow({
   );
 }
 
-/** A small inline status line (loading / error / empty) under an open node. */
+/** 展開中ノードの直下に表示する簡易ステータス行（loading / error / empty）。 */
 function NodeStatus({
   depth,
   state,
@@ -204,7 +194,7 @@ function NodeStatus({
   );
 }
 
-// ---- Column list (under an expanded table) ---------------------------------
+// ---- カラム一覧（展開済みテーブル配下） --------------------------------------
 
 // 展開されたテーブルの下に並ぶカラム一覧。テーブル詳細（columns）はすでに取得済みの
 // データを渡されるだけで、ここでは検索フィルタの適用と行の描画だけを行う。
@@ -238,7 +228,7 @@ function ColumnList({
   );
 }
 
-// ---- Table node ------------------------------------------------------------
+// ---- テーブルノード -----------------------------------------------------------
 
 // テーブル1件分のツリーノード。展開されるとカラム一覧を遅延取得して表示する。
 // クリックでコンテキスト相対のテーブル名をカーソル位置へ挿入し、行右端の
@@ -338,7 +328,7 @@ function TableNode({
   );
 }
 
-// ---- Schema node -----------------------------------------------------------
+// ---- スキーマノード -----------------------------------------------------------
 
 // スキーマ1件分のツリーノード。展開されるとそのスキーマ配下のテーブル一覧を遅延取得し、
 // 検索フィルタで絞り込んだうえで各テーブルを TableNode として描画する。
@@ -432,7 +422,7 @@ function SchemaNode({
   );
 }
 
-// ---- Catalog node ----------------------------------------------------------
+// ---- カタログノード -----------------------------------------------------------
 
 // ツリーの最上位ノード（catalog）。展開されるとスキーマ一覧を遅延取得し、
 // 各スキーマを SchemaNode として描画する。expandedKeys / toggle はそのまま
@@ -516,7 +506,7 @@ function CatalogNode({
   );
 }
 
-// ---- Root ------------------------------------------------------------------
+// ---- ルート ------------------------------------------------------------------
 
 /**
  * データブラウザのツリー本体（サイドバーの「データ」タブから使われるエクスポート）。
@@ -582,11 +572,11 @@ export function SchemaTree({
   // 検索文字列を正規化（前後空白除去、小文字化）してから各ノードへ配る。
   const needle = filter.trim().toLowerCase();
 
-  // While filtering, auto-expand already-loaded branches that contain a match so
-  // the matched table/column surfaces without manual clicking (マッチパスは自動展開).
-  // Unloaded branches are untouched — the filter can't see
-  // into them, and that's acceptable. The auto-expand math lives in the pure
-  // `treeFilter` module (unit-tested); here we just feed it the cached tree.
+  // フィルタ中は、マッチを含む既読み込みブランチを自動展開し、手動クリックなしで
+  // マッチしたテーブル/カラムが見えるようにする。未読み込みのブランチはフィルタが
+  // 中を見られないためそのまま（それで問題ない）。自動展開の判定ロジック自体は
+  // ユニットテスト済みの純粋関数モジュール treeFilter にあり、ここではキャッシュ済み
+  // ツリーを渡すだけ。
   const effectiveExpanded = useMemo(() => {
     // needle がなければ自動展開は不要のため、手動展開集合をそのまま使う。
     if (!needle) return expanded;
@@ -617,8 +607,8 @@ export function SchemaTree({
     }
     // 実際の自動展開判定はテスト済みの純粋関数（treeFilter）に委譲する。
     return expandedForFilter(expanded, needle, loaded);
-    // queryClient cache reads are snapshot-in-render; recompute when the needle,
-    // the loaded catalogs, or the explicit expansion set changes.
+    // queryClient のキャッシュ読み取りはレンダー時点のスナップショットなので、
+    // needle、読み込み済み catalog 一覧、手動展開集合のいずれかが変わるたびに再計算する。
   }, [needle, expanded, catalogs.data, queryClient, datasourceId]);
 
   return (

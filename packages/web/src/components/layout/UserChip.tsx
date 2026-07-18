@@ -14,12 +14,6 @@ import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
 
 /**
- * Current-user chip for the TopBar. Shows the resolved principal. Hidden
- * entirely in `authMode === 'none'`, where there is no meaningful user identity.
- * Clicking it opens a compact popover with the effective RBAC role,
- * permissions, and datasources.
- */
-/**
  * 現在ログイン中のユーザーを示すチップを描画する。props は取らず、
  * `useMe` フックでサーバーから解決済みの principal 情報を取得して表示する。
  * 未取得時、または authMode が 'none'（認証なし運用）の場合は何も描画しない。

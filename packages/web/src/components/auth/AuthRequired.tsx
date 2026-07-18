@@ -10,11 +10,6 @@ import { EmptyState } from '../common/EmptyState';
 import { Button } from '../common/Button';
 
 /**
- * Full-screen "authentication required" state. Shown when an
- * API request returns 401 UNAUTHENTICATED — i.e. direct access outside the
- * oauth2-proxy, or an expired SSO session. Reuses the EmptyState tone and the
- * design tokens only (no raw hex). Reloading re-enters the proxy's auth flow.
- *
  * 全画面表示の「認証が必要です」状態を表すコンポーネント。
  * API リクエストが 401 UNAUTHENTICATED を返した場合、すなわち
  * oauth2-proxy を経由しない直接アクセスや SSO セッションの期限切れが

@@ -1,19 +1,14 @@
-// Pure tree-filtering logic for the Data browser (検索フィルタ,
-// マッチパスは自動展開). Lifted out of the React component so the lazy-load
-// expansion behaviour is unit-testable without rendering Monaco / TanStack.
-//
-// The browser lazy-loads children on expand, so a filter can only "see into"
-// branches whose children are already cached. `expandedForFilter` augments the
-// user's manual expansion set with any already-loaded catalog/schema that
-// contains a matching table — so the match surfaces — while leaving unloaded
-// branches untouched (the filter genuinely can't reach them, and that's fine).
-
 /*
  * このファイルの責務:
  * SchemaTree の検索フィルタに関する純粋関数を集約する。React 非依存の
  * ロジックとして切り出すことで、Monaco / TanStack Query をレンダリングせずに
  * ユニットテストできるようにしている。画面上は、データブラウザ上部の検索ボックスに
  * 入力した文字列が、ツリーの表示絞り込みと自動展開の両方に反映される仕組みを支える。
+ * ツリーは展開時に子要素を遅延取得するため、フィルタは既にキャッシュ済みの子要素を
+ * 持つブランチしか「見る」ことができない。`expandedForFilter` はユーザーの手動展開
+ * 集合に、マッチするテーブルを含む既読み込みの catalog/schema を追加してマッチを
+ * 可視化する一方、未読み込みのブランチには手を付けない（フィルタが実際に中を
+ * 見られないので、それで構わない）。
  */
 
 /**
@@ -21,10 +16,8 @@
  * フィルタは、この構造に含まれる catalog/schema/table しか「見る」ことができない。
  */
 export interface LoadedTree {
-  /** schema names by catalog, for catalogs whose schema list is cached. */
   /** catalog 名 → 読み込み済みスキーマ名一覧。まだ展開されていない catalog は含まれない。 */
   schemasByCatalog: Map<string, string[]>;
-  /** table names by `${catalog}::${schema}`, for cached table lists. */
   /** `catalog::schema` キー → 読み込み済みテーブル名一覧。まだ展開されていない schema は含まれない。 */
   tablesBySchema: Map<string, string[]>;
 }
@@ -41,8 +34,6 @@ export function schemaKey(catalog: string, schema: string): string {
 }
 
 /**
- * Case-insensitive substring match (empty needle matches everything).
- *
  * 大文字小文字を無視した部分一致判定。needle が空文字なら常に true を返す
  * （フィルタ未入力時は全件表示にするため）。
  * @param value 検査対象の文字列（テーブル名、カラム名など）。
@@ -55,14 +46,6 @@ export function matchesNeedle(value: string, needle: string): boolean {
 }
 
 /**
- * Given the user's explicit `expanded` set, a `needle`, and the currently-loaded
- * tree, return the set of node keys that should render as expanded. With no
- * needle the explicit set is returned unchanged. With a needle, any loaded
- * catalog/schema that (transitively) contains a matching table is added so the
- * match is visible.
- *
- * Node keys: a catalog is keyed by its name; a schema by `catalog::schema`.
- *
  * ユーザーの手動展開集合 `expanded` に、検索文字列 `needle` にマッチするテーブルを
  * 含む「既に読み込み済みの」catalog/schema を自動的に追加した展開集合を返す。
  * needle が空なら手動展開集合をそのまま返す。まだ読み込まれていないブランチは
@@ -104,10 +87,6 @@ export function expandedForFilter(
 }
 
 /**
- * Filter a node's children by the needle. With no needle, the list is returned
- * as-is; otherwise only matching names survive. Shared by table and column
- * lists so filtering stays consistent.
- *
  * ツリーの子要素一覧（テーブル一覧、カラム一覧など）を検索文字列で絞り込む汎用関数。
  * needle が空ならフィルタせずそのまま返す。テーブル/カラムなど異なる型の一覧で
  * 同じフィルタ挙動を再利用できるよう、要素から比較対象の文字列を取り出す

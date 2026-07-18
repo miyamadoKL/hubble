@@ -3,15 +3,6 @@ import { isoTimestamp } from './common';
 import { MAX_IDENTIFIER_LENGTH, MAX_NAME_LENGTH, MAX_SQL_LENGTH } from './limits';
 
 /**
- * Query scheduling models (Query Scheduling feature).
- *
- * A `Schedule` runs a saved statement on a cron schedule. Each firing produces a
- * `ScheduleRun` row recording the outcome of that run (one row per run, even if
- * the run retried internally — see `RetryPolicy`). The statement is validated
- * with Trino's `EXPLAIN (TYPE VALIDATE)` at create/update time and again
- * immediately before every execution, so syntactically invalid queries never
- * reach the cluster as a real run.
- *
  * クエリスケジューリング（cron による定期実行）機能の契約を定義するファイル。
  * `Schedule` は cron 式に従って保存済みの SQL 文を定期実行する設定であり、
  * 発火のたびに実行結果を記録した `ScheduleRun` レコードが 1 件作られる
@@ -22,7 +13,6 @@ import { MAX_IDENTIFIER_LENGTH, MAX_NAME_LENGTH, MAX_SQL_LENGTH } from './limits
  */
 
 /**
- * Terminal status of a single scheduled run.
  * 1 回のスケジュール実行の終端ステータス。
  * running（実行中）/ success（成功）/ failed（失敗）/ aborted（中断）/
  * blocked（Query Guard によりブロック）のいずれか。
@@ -38,13 +28,6 @@ export const scheduleRunStatusSchema = z.enum([
 export type ScheduleRunStatus = z.infer<typeof scheduleRunStatusSchema>;
 
 /**
- * A 5-field standard cron expression (`minute hour day-of-month month
- * day-of-week`). Validated structurally here; semantic parsing (and the actual
- * next-run computation) happens server-side with `cron-parser`. The fields may
- * use `*`, ranges (`1-5`), lists (`1,15`), step values, and the usual
- * combinations; this regex rejects obvious garbage early so the contract stays
- * the single source of truth for the shape.
- *
  * 標準的な 5 フィールド cron 式（`分 時 日 月 曜日`）を表す zod スキーマ。
  * ここでは構造的な妥当性のみを検証し、意味的な解析（実際の次回実行時刻の
  * 計算）は server 側で `cron-parser` を使って行う。各フィールドは `*`、
@@ -63,13 +46,6 @@ export const cronExpression = z
   );
 
 /**
- * Retry policy for a schedule (Query Scheduling feature). Applied only to
- * non-deterministic failures (transport faults, non-USER_ERROR engine
- * failures). Deterministic failures — a `USER_ERROR` from `EXPLAIN VALIDATE` or
- * the run itself, or a Query Guard block — are never retried.
- *
- * Backoff before the Nth retry is `backoffSeconds * backoffMultiplier^(n-1)`.
- *
  * スケジュールのリトライポリシー。非決定的な失敗（通信障害や USER_ERROR
  * 以外のエンジン障害）にのみ適用される。決定的な失敗（`EXPLAIN VALIDATE`
  * や実行自体で発生した `USER_ERROR`、Query Guard によるブロック）は
@@ -77,23 +53,17 @@ export const cronExpression = z
  * N 回目のリトライ前の待機時間は `backoffSeconds * backoffMultiplier^(n-1)` で算出される。
  */
 export const retryPolicySchema = z.object({
-  /** Total attempts including the first (1 disables retries). */
   // 初回実行を含む総試行回数（1 に設定するとリトライが無効になる）。
   maxAttempts: z.number().int().min(1).max(10).default(3),
-  /** Base delay before the first retry, in seconds. */
   // 最初のリトライまでの基本待機時間（秒）。
   backoffSeconds: z.number().int().min(1).max(3600).default(60),
-  /** Geometric backoff multiplier applied per subsequent retry. */
   // 2 回目以降のリトライに適用される幾何級数的なバックオフ倍率。
   backoffMultiplier: z.number().int().min(1).max(10).default(2),
 });
 /** リトライポリシーの推論型。 */
 export type RetryPolicy = z.infer<typeof retryPolicySchema>;
 
-/**
- * Default retry policy (used when a request omits it).
- * リクエストで省略された場合に使われる既定のリトライポリシー。
- */
+/** リクエストで省略された場合に使われる既定のリトライポリシー。 */
 export const defaultRetryPolicy: RetryPolicy = retryPolicySchema.parse({});
 
 /** 通知の送信先チャネル。 */
@@ -135,7 +105,6 @@ export const defaultScheduleNotifications: ScheduleNotifications =
   scheduleNotificationsSchema.parse({});
 
 /**
- * Compact summary of the most recent run, embedded in a `Schedule` response.
  * 直近実行の簡易サマリ。`Schedule` レスポンスに埋め込んで一覧表示などに使う。
  */
 export const scheduleRunSummarySchema = z.object({
@@ -166,7 +135,6 @@ export const scheduleRunSummarySchema = z.object({
 export type ScheduleRunSummary = z.infer<typeof scheduleRunSummarySchema>;
 
 /**
- * A full run record (`GET /api/schedules/:id/runs`).
  * `GET /api/schedules/:id/runs` が返す run のフルレコード。
  * サマリにどのスケジュールに属する run かを表す scheduleId を加えたもの。
  */
@@ -177,10 +145,6 @@ export const scheduleRunSchema = scheduleRunSummarySchema.extend({
 export type ScheduleRun = z.infer<typeof scheduleRunSchema>;
 
 /**
- * A scheduled query (Query Scheduling feature).
- * `nextRunAt` is computed from the cron expression at response time (null when
- * disabled or uncomputable); `lastRun` summarizes the most recent run.
- *
  * スケジュール本体のスキーマ。`nextRunAt` はレスポンス生成時に cron 式から
  * 都度計算される（無効化されている場合や計算不能な場合は null）。
  * `lastRun` は直近実行のサマリを埋め込んだもの。
@@ -208,23 +172,17 @@ export const scheduleSchema = z.object({
   createdAt: isoTimestamp,
   // 最終更新日時。
   updatedAt: isoTimestamp,
-  /** Next computed fire time (ISO), or null when disabled / uncomputable. */
   // 次回発火予定時刻（計算済み）。無効化されている場合や計算不能な場合は null。
   nextRunAt: isoTimestamp.nullable(),
-  /** Most recent run, or null if the schedule has never run. */
   // 直近の実行サマリ。一度も実行されていない場合は null。
   lastRun: scheduleRunSummarySchema.nullable(),
-  /** Datasource this schedule executes against (resolved at create/update time). */
   // 実行先データソース id（作成/更新時に解決して永続化）。
   datasourceId: z.string(),
 });
 /** スケジュール全体の推論型。 */
 export type Schedule = z.infer<typeof scheduleSchema>;
 
-/**
- * Request body for `POST /api/schedules`.
- * `POST /api/schedules`（新規作成）のリクエストボディ。
- */
+/** `POST /api/schedules`（新規作成）のリクエストボディ。 */
 export const createScheduleRequestSchema = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH),
   statement: z.string().min(1).max(MAX_SQL_LENGTH),
@@ -237,7 +195,6 @@ export const createScheduleRequestSchema = z.object({
   retry: retryPolicySchema.optional(),
   // 省略時は通知しない。
   notifications: scheduleNotificationsSchema.optional(),
-  /** Target datasource id. Omitted = default at create time. */
   // 実行先データソース id。省略時は作成時に既定データソースを保存する。
   datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
 });
@@ -245,10 +202,6 @@ export const createScheduleRequestSchema = z.object({
 export type CreateScheduleRequest = z.infer<typeof createScheduleRequestSchema>;
 
 /**
- * Request body for `PATCH /api/schedules/:id`. Every field is optional; only the
- * provided fields are updated. Changing `statement`, `catalog`, `schema`, or
- * `cron` re-validates the statement with `EXPLAIN (TYPE VALIDATE)`.
- *
  * `PATCH /api/schedules/:id` のリクエストボディ。すべてのフィールドが
  * 省略可能で、渡されたフィールドのみが更新される（部分更新）。
  * `statement` / `catalog` / `schema` / `cron` を変更すると、
@@ -271,10 +224,7 @@ export const updateScheduleRequestSchema = z
 /** スケジュール更新リクエストの推論型。 */
 export type UpdateScheduleRequest = z.infer<typeof updateScheduleRequestSchema>;
 
-/**
- * Response for `GET /api/schedules/:id/runs?limit=`.
- * `GET /api/schedules/:id/runs` のレスポンス。指定スケジュールの実行履歴一覧を返す。
- */
+/** `GET /api/schedules/:id/runs` のレスポンス。指定スケジュールの実行履歴一覧を返す。 */
 export const scheduleRunsResponseSchema = z.object({
   items: z.array(scheduleRunSchema),
 });

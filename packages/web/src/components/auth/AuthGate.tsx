@@ -27,15 +27,6 @@ interface ReadyIdentity {
 }
 
 /**
- * Gate the app on authentication. `/api/me` is the canonical
- * probe: in `proxy` mode an unauthenticated request (direct access / expired
- * session) returns 401 UNAUTHENTICATED, and we swap the whole UI for the
- * "authentication required" screen. In `none` mode `/api/me` always succeeds,
- * so the gate is transparent.
- *
- * While the probe or principal namespace setup is in flight, the app remains
- * unmounted so no previous user's browser state can be restored.
- *
  * アプリ全体を認証状態に応じて出し分けるコンポーネント。
  * `/api/me` を認証状態の正規のプローブとして扱う。`proxy` モードでは、
  * 直接アクセスやセッション期限切れなど未認証のリクエストは 401

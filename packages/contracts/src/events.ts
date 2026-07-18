@@ -3,9 +3,6 @@ import { queryColumnSchema, queryStatsSchema, queryStateSchema } from './query';
 import { apiErrorDetailSchema } from './error';
 
 /**
- * Server-Sent Events for `GET /api/queries/:id/events`.
- * Discriminated union keyed on `type`. The SSE `event:` name mirrors `type`.
- *
  * クエリ実行の進捗を web にリアルタイム配信する SSE (Server-Sent Events) の契約を
  * 定義するファイル。`type` フィールドを判別子とした discriminated union になっており、
  * SSE の `event:` 名は各スキーマの `type` リテラル値と一致する。
@@ -16,7 +13,6 @@ export const stateEventSchema = z.object({
   type: z.literal('state'),
   // 新しいクエリ状態（queued / running / finished / failed / canceled）。
   state: queryStateSchema,
-  /** Datasource this query runs against (included when known). */
   // 実行先データソース id（判明している場合のみ付与）。
   datasourceId: z.string().optional(),
 });
@@ -28,7 +24,6 @@ export const columnsEventSchema = z.object({
   columns: z.array(queryColumnSchema),
 });
 
-/** A chunk of appended rows. `offset` is the index of the first row in the chunk. */
 // 結果行が追加されたことを通知するイベント。ストリーミングでチャンクごとに届く。
 export const rowsEventSchema = z.object({
   type: z.literal('rows'),
@@ -61,7 +56,6 @@ export const doneEventSchema = z.object({
   rowCount: z.number().int().nonnegative(),
   // maxRows 上限により結果が切り詰められたかどうか。
   truncated: z.boolean(),
-  /** Whether full CSV download may re-execute this statement (see QuerySnapshot). */
   // 全文 CSV ダウンロードのための再実行が許可されるか（QuerySnapshot と同義）。
   csvReexecAllowed: z.boolean().optional(),
 });
@@ -93,7 +87,6 @@ export type DoneEvent = z.infer<typeof doneEventSchema>;
 export type QueryEvent = z.infer<typeof queryEventSchema>;
 
 /**
- * The set of SSE event names, matching the `type` discriminant.
  * SSE イベント名の一覧。各スキーマの `type` 判別子の値と一致する。
  * server 側で `event: <name>` を出力する際や、web 側で `EventSource` の
  * リスナーを登録する際に使う。

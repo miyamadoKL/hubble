@@ -1,11 +1,3 @@
-// Pure helpers for turning a tree node into the text inserted at the caret
-// (table は context を考慮した相対名/FQN、column は名前) and for
-// building a SELECT template (ダブルクリックで SELECT 雛形).
-//
-// Trino identifiers are quoted with double quotes only when they aren't a plain
-// lowercase identifier — this keeps the common tpch case clean (`orders`) while
-// staying correct for mixed-case / reserved-word names (`"My Table"`).
-
 /*
  * このファイルの責務:
  * SchemaTree / TableDetailPopover から挿入、生成する SQL 文字列の組み立てロジックを
@@ -13,6 +5,9 @@
  * catalog.schema.table）の判定と、Trino 識別子のクォート規則、SELECT 雛形の生成を担う。
  * 画面上の位置づけとしては、データブラウザのツリーやテーブル詳細ポップオーバーから
  * 「クリックでエディタに何を挿入するか」を決めるための下請けモジュール。
+ * Trino 識別子は素の小文字識別子でない場合だけダブルクォートで囲む
+ * （tpch の一般的なケース `orders` を読みやすいまま保ちつつ、大文字混在や
+ * 予約語などの識別子 `"My Table"` でも正しく扱えるようにするため）。
  */
 
 // 素の（クォート不要な）Trino 識別子の形: 小文字英字またはアンダースコアで始まり、
@@ -20,8 +15,6 @@
 const PLAIN_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 
 /**
- * Quote a Trino identifier only when it isn't a plain lowercase identifier.
- *
  * Trino 識別子を必要な場合だけダブルクォートで囲む。
  * @param name クォート対象の識別子（テーブル名、カラム名、スキーマ名など）。
  * @returns 素の識別子ならそのまま、それ以外はダブルクォートで囲んだ文字列。
@@ -48,13 +41,6 @@ export interface EditorContext {
 }
 
 /**
- * The name to insert for a table, relative to the active context:
- *   - same catalog + schema → bare `table`
- *   - same catalog, other schema → `schema.table`
- *   - different catalog → fully-qualified `catalog.schema.table`
- *
- * Each part is quoted only when necessary.
- *
  * カーソル位置に挿入するテーブル名を、現在のエディタコンテキストに対して
  * 「どこまで省略できるか」で決定する。同一 catalog/schema ならテーブル名のみ、
  * 同一 catalog だが別 schema なら `schema.table`、catalog も異なるなら
@@ -77,9 +63,6 @@ export function relativeTableName(ref: TableRef, ctx: EditorContext): string {
 }
 
 /**
- * A SELECT template for a table: explicit column list when known,
- * else `*`, qualified by the same relative-name rules, with a LIMIT.
- *
  * テーブル詳細ポップオーバーの「SELECT 雛形を新規セルへ」ボタンから使われる、
  * SELECT 文の雛形生成関数。カラム一覧が既知ならそれを列挙し、未知なら `*` を使う。
  * FROM 句のテーブル名は relativeTableName と同じ相対名規則で組み立てられる。

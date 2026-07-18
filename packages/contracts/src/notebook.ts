@@ -13,16 +13,12 @@ import {
 } from './limits';
 
 /**
- * Notebook model. Hue's `Notebook { snippets[] }` simplified to a
- * single `cells` array (tabs/cells double-holding removed per prior lesson).
- *
  * ノートブック（SQL / Markdown セルの集合）に関する契約を定義するファイル。
  * Hue の `Notebook { snippets[] }` を単純化し、単一の `cells` 配列で表現する
  * （タブとセルを二重に保持する設計は過去の教訓から排除した）。
  */
 
 /**
- * Variable input widget type.
  * ノートブック変数の入力ウィジェット種別。UI 上でどの入力コンポーネントを
  * 表示するかを決める（テキスト欄、数値欄、日付ピッカー、チェックボックス、セレクトなど）。
  */
@@ -37,10 +33,7 @@ export const variableTypeSchema = z.enum([
 /** 変数ウィジェット種別の推論型。 */
 export type VariableType = z.infer<typeof variableTypeSchema>;
 
-/**
- * An option for a 'select' variable.
- * 'select' 型変数における選択肢 1 件分のスキーマ。
- */
+/** 'select' 型変数における選択肢 1 件分のスキーマ。 */
 export const variableOptionSchema = z.object({
   // 選択肢の表示ラベル。
   label: z.string(),
@@ -80,9 +73,6 @@ export const cellKindSchema = z.enum(['sql', 'markdown']);
 export type CellKind = z.infer<typeof cellKindSchema>;
 
 /**
- * Summary of a cell's last execution, persisted with the notebook
- * (full result rows are NOT persisted).
- *
  * セルの直近の実行結果サマリ。ノートブックと一緒に永続化されるが、
  * 結果行そのものは永続化されない（再度実行すれば取得できるため）。
  */
@@ -160,10 +150,7 @@ export const notebookSchema = z.object({
 /** ノートブック全体の推論型。 */
 export type Notebook = z.infer<typeof notebookSchema>;
 
-/**
- * Notebook list item (lightweight, no cells) for `GET /api/notebooks`.
- * `GET /api/notebooks` の一覧表示用の軽量版。セル本文などの重いデータを含まない。
- */
+/** `GET /api/notebooks` の一覧表示用の軽量版。セル本文などの重いデータを含まない。 */
 export const notebookListItemSchema = z.object({
   id: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
   name: z.string().min(1).max(MAX_NAME_LENGTH),
@@ -229,7 +216,6 @@ export const notebookResponseSchema = notebookStoredSchema.extend({
 export type NotebookResponse = z.infer<typeof notebookResponseSchema>;
 
 /**
- * Request body for `POST /api/notebooks`.
  * `POST /api/notebooks`（新規作成）のリクエストボディ。cells / variables / context は
  * 省略可能で、省略時は空のノートブックとして作成される。
  */
@@ -244,7 +230,6 @@ export const createNotebookRequestSchema = z.object({
 export type CreateNotebookRequest = z.infer<typeof createNotebookRequestSchema>;
 
 /**
- * Request body for `PUT /api/notebooks/:id` (full replace of mutable fields).
  * `PUT /api/notebooks/:id` のリクエストボディ。可変フィールドを全置換する
  * （PATCH ではなく PUT なので、すべてのフィールドを毎回渡す必要がある）。
  */

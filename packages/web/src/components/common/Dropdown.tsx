@@ -27,7 +27,6 @@ interface DropdownProps<T extends string> {
   options: DropdownOption<T>[];
   /** 選択肢が変更されたときに呼ばれるコールバック。 */
   onChange: (value: T) => void;
-  /** Optional leading element (icon / label) rendered inside the trigger. */
   /** トリガー（ボタン）内部の先頭に表示する任意の要素（アイコンやラベルなど）。 */
   leading?: ReactNode;
   /** ルート要素に付与する追加の className。 */
@@ -38,15 +37,16 @@ interface DropdownProps<T extends string> {
   ariaLabel?: string;
   /** メニューの表示位置の左右揃え（'start': 左寄せ, 'end': 右寄せ）。 */
   align?: 'start' | 'end';
-  /** Borderless trigger for embedding inside another bordered control. */
   /** 枠線なしのトリガー表示にする場合は true（他の枠付きコントロールの中に埋め込む用途）。 */
   bare?: boolean;
 }
 
+// Radix Primitives（radix-ui@1.6.2）への統合移行を評価したが、この Dropdown は
+// PoC へ進めなかった。trigger の focus 維持と aria-activedescendant（下記の
+// combobox role と aria-activedescendant 属性を参照）による選択肢のハイライトを、
+// Radix の公開 API だけでは固定できないため。Sonner（Toast.tsx）以外の Radix UI
+// primitive 置換は、現行の契約を変更する製品判断がない限り再試行しない。
 /**
- * Custom dropdown/select — styled to the instrument theme rather than the
- * native control. Closes on outside click and Escape; basic arrow-key nav.
- *
  * カスタムのドロップダウン（セレクト）コンポーネント。ネイティブの <select> ではなく
  * 独自にスタイリングしたリストで選択肢を表示する。外側クリックまたは Escape キーで
  * メニューを閉じ、矢印キーによる簡易的な選択肢の移動にも対応する。
@@ -97,7 +97,6 @@ export function Dropdown<T extends string>({
 
   // メニューを開く処理。
   function openMenu() {
-    // Highlight the currently-selected option when the menu opens.
     // 現在選択中の値に対応するインデックスをアクティブにしてからメニューを開く。
     setActiveIndex(
       Math.max(

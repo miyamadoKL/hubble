@@ -13,15 +13,6 @@ import { Spinner } from '../common/Spinner';
 import { cn } from '../../utils/cn';
 
 /**
- * catalog.schema context selector (実 catalogs/schemas
- * からの選択, 検索付きドロップダウン, 最近使った context). A single instrument-
- * style control opens a searchable two-pane popover: pick a catalog (left), then
- * a schema (right). A "Recent" row offers the last few contexts for one-click
- * restore. Selection flows up via `onChange`; the caller persists it to the
- * active notebook + the recent list.
- */
-
-/**
  * ポップオーバーの外側クリックと Escape キーで `onClose` を呼ぶ共通フック。
  * `open` が false の間はイベントリスナーを登録しない。
  *
@@ -74,7 +65,7 @@ export function ContextSelector({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  // Which catalog's schemas are shown in the right pane while picking.
+  // 選択中に右ペインへ表示する schema がどの catalog のものか（ホバー中のプレビュー値）。
   const [pickCatalog, setPickCatalog] = useState(catalog);
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -103,15 +94,15 @@ export function ContextSelector({
     enabled: open && Boolean(datasourceId) && Boolean(pickCatalog),
   });
 
-  // Focus the search once the popover is open (DOM side effect only — no
-  // setState, so it stays clear of the cascading-render rule).
+  // ポップオーバーが開いたら検索欄へフォーカスする（DOM への副作用のみで setState は
+  // 行わないため、連鎖的な再レンダーを起こす禁則には該当しない）。
   useEffect(() => {
     if (!open) return;
     const t = setTimeout(() => searchRef.current?.focus(), 0);
     return () => clearTimeout(t);
   }, [open]);
 
-  /** Open the popover, seeding its transient state from current props. */
+  /** ポップオーバーを開き、現在の props から一時的な状態（最近使った候補、pickCatalog、検索語）を初期化する。 */
   const openPopover = () => {
     setRecents(datasourceId ? readRecentContexts(datasourceId) : []);
     setPickCatalog(catalog);
@@ -210,7 +201,6 @@ export function ContextSelector({
           )}
 
           <div className="grid h-56 grid-cols-2">
-            {/* Catalogs */}
             {/* 左ペイン: catalog 一覧。読み込み中/エラー/一覧をそれぞれ出し分ける。 */}
             <div className="overflow-auto border-r border-border-subtle py-1">
               <p className="px-2.5 pb-1 text-2xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
@@ -244,7 +234,6 @@ export function ContextSelector({
               ))}
             </div>
 
-            {/* Schemas of the hovered/selected catalog */}
             {/* 右ペイン: 左でホバー/選択中の catalog に属する schema 一覧。 */}
             <div className="overflow-auto py-1">
               <p className="px-2.5 pb-1 text-2xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">

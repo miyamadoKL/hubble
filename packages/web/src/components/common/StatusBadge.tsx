@@ -1,4 +1,11 @@
-/** 状態バッジの描画を共通化する。 */
+/**
+ * pill、tone、dot、running時のpulse、追加classの描画を1箇所に集約した共通状態バッジ。
+ *
+ * query、schedule、alert、workflowなど各ドメインの状態からtoneとlabelへの変換は
+ * StateBadge、ScheduleStatusBadge、WorkflowStatusBadge、AlertStateBadgeなど
+ * 呼び出し側（wrapper）に残す。StatusBadge自身はtone/labelを受け取って描画するだけで、
+ * ドメイン語彙（QueryStateやWorkflowRunStatus等）を一切知らない。
+ */
 import { cn } from '../../utils/cn';
 
 /** 状態バッジに使う表示トーン。 */

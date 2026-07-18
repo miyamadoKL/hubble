@@ -15,15 +15,6 @@ import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
 
-/**
- * Table detail popover (カラム一覧 + 型 + コメント + サンプル 10 行).
- * Columns come from the (often already cached) table detail; the sample rows are
- * fetched lazily — only when the popover opens — via `GET .../sample`. A
- * "SELECT 雛形を新規セルへ" button adds a `SELECT col1, col2 … FROM t LIMIT 100`
- * cell. Rendered as a centred floating card with a scrim (the sidebar is too
- * narrow to host it inline).
- */
-
 /*
  * このファイルの責務:
  * SchemaTree のテーブル行にある情報アイコンから開かれる、テーブル詳細ポップオーバー。
@@ -76,10 +67,9 @@ export function TableDetailPopover({
     staleTime: META_STALE_MS,
   });
 
-  // Sample is fetched only while the popover is mounted (開いた時
-  // のみ fetch). It can be slow / large, so a shorter cache window is fine.
   // サンプル行はこのコンポーネントがマウントされている間だけ取得する
-  // （このポップオーバーを開いたときにだけ発火する遅延取得）。
+  // （このポップオーバーを開いたときにだけ発火する遅延取得）。取得結果が重い/大きい
+  // 可能性があるため、キャッシュの有効期間（staleTime）はテーブル詳細より短くしている。
   const sample = useQuery({
     queryKey: metadataQueryKeys.sample(datasourceId, catalog, schema, name),
     queryFn: () => fetchTableSample(datasourceId, catalog, schema, name),
@@ -129,7 +119,7 @@ export function TableDetailPopover({
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-ink-strong/40 animate-[fadeIn_150ms_ease-out]"
       />
-      {/* 画面中央に浮かぶカード本体。ヘッダー・（任意の）コメント行・
+      {/* 画面中央に浮かぶカード本体。ヘッダー、（任意の）コメント行、
           スクロール可能なコンテンツ（Columns / Sample rows）で構成される。 */}
       <div className="relative z-10 flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border-strong bg-surface-overlay shadow-lg animate-[fadeIn_150ms_ease-out]">
         {/* ヘッダー: 完全修飾テーブル名、種別バッジ（table/view）、SELECT 雛形追加
@@ -156,7 +146,6 @@ export function TableDetailPopover({
         )}
 
         <div className="min-h-0 flex-1 overflow-auto">
-          {/* Columns */}
           {/* カラム一覧セクション: 読み込み中/エラー表示のあと、取得済みなら
               各カラムの名前、コメント、型を一覧表示する。 */}
           <section>
@@ -194,7 +183,6 @@ export function TableDetailPopover({
             </ul>
           </section>
 
-          {/* Sample rows */}
           {/* サンプル行セクション: 読み込み中/エラー/0件/データありの4状態を出し分ける。
               データがある場合のみ、カラム一覧をヘッダーに使ったテーブルを描画する。 */}
           <section className="border-t border-border-subtle">

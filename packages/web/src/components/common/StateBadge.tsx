@@ -1,6 +1,8 @@
 /**
  * クエリの実行状態を共通状態バッジで表示する。
  * 履歴一覧や統計ストリップで利用し、QueryStateからトーンと大文字ラベルを決める。
+ * QueryStateからtone/labelへの変換はこのファイルの責務で、StatusBadge自体は
+ * ドメイン語彙（QueryState）を知らず描画のみを行う。
  */
 import type { QueryState } from '@hubble/contracts';
 import { StatusBadge, type StatusBadgeTone } from './StatusBadge';

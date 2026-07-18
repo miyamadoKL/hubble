@@ -43,12 +43,6 @@ import { getNotebook } from '../../api/notebooks';
 import { useNotebookStore } from '../../notebook';
 import { cn } from '../../utils/cn';
 
-/**
- * Sidebar: icon section rail (Data / Notebooks / Saved /
- * History), a per-panel search field, a drag handle to resize, and a collapse
- * control. Width and active tab persist via the UI store.
- */
-
 /** アイコンレールに並べる1項目の定義（タブID、アイコン、アクセシビリティラベル）。 */
 interface RailItem {
   id: SidebarTab;
@@ -134,7 +128,7 @@ export function Sidebar({
   // リサイズハンドルのドラッグ中かどうか。再レンダーを起こしたくないので ref で保持する。
   const draggingRef = useRef(false);
 
-  // Focus the panel search when a "Go to …" command requests it (command palette).
+  // コマンドパレットの「Go to …」コマンドから要求されたとき、パネルの検索欄へフォーカスする。
   useEffect(() => {
     if (focusNonce === 0) return;
     const t = setTimeout(() => searchRef.current?.focus(), 0);
@@ -144,7 +138,7 @@ export function Sidebar({
   const onPointerMove = useCallback(
     (e: PointerEvent) => {
       if (!draggingRef.current) return;
-      // Rail is 44px wide; panel starts after it.
+      // アイコンレールの幅は 44px 固定で、パネルはその右から始まる。
       setWidth(e.clientX - 44);
     },
     [setWidth],
@@ -177,7 +171,6 @@ export function Sidebar({
 
   return (
     <aside className="flex h-full shrink-0">
-      {/* Icon rail */}
       {/* 左端のアイコンレール。タブ切り替えと、同じタブを再クリックしたときの折りたたみを兼ねる。 */}
       <nav className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border-base bg-surface-base py-2">
         {/* RAIL に定義された各タブをアイコンボタンとして描画する。 */}
@@ -211,7 +204,6 @@ export function Sidebar({
         })}
       </nav>
 
-      {/* Panel */}
       {/* 右側のパネル本体。折りたたまれている（collapsed）間はマウントしない。 */}
       {!collapsed && (
         <div
@@ -235,7 +227,6 @@ export function Sidebar({
             </Tooltip>
           </div>
 
-          {/* History filters by state chips, not text — hide the search field. */}
           {/* History タブだけは文字列検索ではなく状態チップで絞り込むため、検索欄自体を出さない。 */}
           {effectiveTab !== 'history' && effectiveTab !== 'operations' && (
             <div className="px-3 pb-2">
@@ -270,7 +261,6 @@ export function Sidebar({
             {effectiveTab === 'operations' && <OperationsPanel />}
           </div>
 
-          {/* Resize handle */}
           {/* パネル右端のリサイズハンドル。ドラッグ（pointerdown 起点）と矢印キーの両方で幅を変更できる。 */}
           <div
             role="separator"
@@ -296,9 +286,9 @@ export function Sidebar({
 }
 
 /**
- * The Notebooks sidebar panel: the saved notebooks from the server
- * (Notebook 一覧 / 検索 / 再オープン). Clicking a row fetches the full notebook and
- * opens it in a tab (the store dedupes if it's already open).
+ * Notebooks サイドバーパネル。サーバー上の保存済みノートブック一覧を検索、表示し、
+ * 行クリックでノートブック全体を取得してタブとして開く（既に開いていれば store 側で
+ * 重複を防ぐ）。
  *
  * @param search - Notebooks パネルの検索文字列。サーバー側の一覧取得に渡す。
  * @param activeNotebookId - 現在アクティブなノートブックID。行のハイライトに使う。
@@ -317,7 +307,7 @@ function NotebooksSidebarPanel({
   });
 
   // ノートブック行クリック時の処理。既に開いていればタブを切り替えるだけ、未オープンなら
-  // サーバーから全文を取得してタブとして開く。取得に失敗した場合（削除済み等）は無視する。
+  // サーバーから全文を取得してタブとして開く。
   const open = async (id: string) => {
     const store = useNotebookStore.getState();
     if (store.open[id]) {
@@ -328,7 +318,7 @@ function NotebooksSidebarPanel({
       const nb = await getNotebook(id);
       store.openNotebook(nb, { draft: false, activate: true });
     } catch {
-      /* gone — ignore */
+      // 取得失敗（削除済み等）は無視し、タブを開かないままにする。
     }
   };
 

@@ -22,7 +22,6 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: ButtonSize;
   /** ラベルと一緒に表示する lucide-react のアイコンコンポーネント。 */
   icon?: LucideIcon;
-  /** Place the icon after the label instead of before. */
   /** アイコンをラベルの後ろに配置したい場合は true にする（デフォルトは前）。 */
   iconAfter?: boolean;
   /** ボタン内に表示する子要素（通常はラベルテキスト）。 */
@@ -39,7 +38,6 @@ const base =
 
 // variant ごとの配色（枠線、背景、文字色、hover/active 時の色）定義。
 const variants: Record<ButtonVariant, string> = {
-  // Accent reserved for primary action (Run).
   // アクセントカラーは「実行」など主要アクションを表す primary バリエーションにのみ使用する。
   primary:
     'border-accent bg-accent text-accent-contrast hover:bg-accent-hover active:bg-accent-active',
