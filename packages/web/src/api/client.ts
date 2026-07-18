@@ -8,6 +8,9 @@
  * 経由してリクエストを送り、レスポンスを @hubble/contracts の zod スキーマで
  * 検証する。これにより、サーバーとクライアントの間で型とスキーマの整合性が
  * 保証される（レスポンスがスキーマに合わない場合は例外として扱われる）。
+ *
+ * `ky` や `ofetch` へは置き換えない。domain 固有のエラー型（ApiClientError）と
+ * zod によるレスポンス検証が残るため、ラッパーの導入は正味の削減にならない。
  */
 import {
   apiErrorSchema,
@@ -21,9 +24,6 @@ import {
 import type { ZodType } from 'zod';
 
 /**
- * Error thrown by the API client. Carries the parsed `{ error }` envelope
- * when the server returns one, plus the HTTP status.
- *
  * API クライアントが送出する共通エラークラス。
  * サーバーが返す `{ error: { code, message, ... } }` 形式のエラーエンベロープ
  * をパースした内容（detail）と、レスポンスの HTTP ステータス
@@ -60,8 +60,7 @@ async function parseErrorBody(res: Response): Promise<ApiErrorDetail> {
     if (parsed.success) return parsed.data.error;
   } catch {
     // JSON パースに失敗した場合（ボディが無い/JSON でない等）は
-    // 何もせず下のフォールバック処理へ進む。
-    // fall through to a synthetic error below
+    // 何もせず下のフォールバック処理（合成エラーの生成）へ進む。
   }
   // サーバー側のエラーエンベロープが得られなかった場合の合成エラー。
   // ステータスコードのみを埋め込んだ汎用メッセージを返す。
@@ -79,8 +78,7 @@ async function parseErrorBody(res: Response): Promise<ApiErrorDetail> {
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
   /** JSON にシリアライズしてリクエストボディとして送る値（省略時は body なし）。 */
   body?: unknown;
-  /** Query-string parameters appended to the path. */
-  // パスの末尾に付与するクエリパラメータ。値が undefined のキーは除外される。
+  /** パスの末尾に付与するクエリパラメータ。値が undefined のキーは除外される。 */
   query?: Record<string, string | number | boolean | undefined>;
 }
 
@@ -101,10 +99,6 @@ function buildUrl(path: string, query?: RequestOptions['query']): string {
 }
 
 /**
- * Typed fetch wrapper. Validates the response against `schema` (a zod schema
- * from @hubble/contracts) and throws `ApiClientError` on non-2xx responses
- * or schema mismatches.
- *
  * 型付き fetch ラッパー本体。全ての API 呼び出し関数はこの関数を介して
  * サーバーと通信する。処理の流れは以下の通り。
  * 1. リクエストオプションを組み立てる（JSON ボディがあれば content-type を設定）。
@@ -178,7 +172,6 @@ export async function apiFetchBlob(path: string): Promise<Blob> {
 }
 
 /**
- * Fetch the public app config.
  * `GET /api/config` を呼び出し、認証不要で公開されているアプリ設定を取得する。
  * @returns アプリ設定（AppConfig）。
  * @throws {ApiClientError} リクエスト失敗時、またはレスポンスがスキーマに一致しない場合。
@@ -188,7 +181,6 @@ export function fetchConfig(): Promise<AppConfig> {
 }
 
 /**
- * Fetch the current authenticated identity.
  * `GET /api/me` を呼び出し、現在リクエストを行っている認証済みユーザーの
  * アイデンティティ情報を取得する。
  * @returns 現在の認証済みユーザー情報（MeResponse）。
