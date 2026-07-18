@@ -51,8 +51,10 @@ type ResultTab = 'grid' | 'chart' | 'explain' | 'details';
 /** ResultPane の props */
 interface ResultPaneProps {
   /** The notebook cell id (keys the per-cell chart config). */
-  // ノートブックのセルID（セルごとのチャート設定を紐付けるキーとして使う）。
+  // ノートブックのセルID（セルごとのチャート設定、結果表示域の高さの紐付けに使う）。
   cellId: string;
+  /** 結果表示域の高さ調整を永続化するためのノートブックID。未確定（context.notebookId 未設定）なら高さ調整は無効化される。 */
+  notebookId?: string;
   // このセルの実行状態全体（列、行、統計、エラー、状態など）を持つレコード。
   cell: CellExecution;
   /** Plain plan text from an EXPLAIN run (single-column rows joined by newline). */
@@ -92,6 +94,7 @@ function DetailRow({ label, value, mono = true }: DetailRowProps) {
  */
 export function ResultPane({
   cellId,
+  notebookId,
   cell,
   explainText,
   explainRunning,
@@ -193,6 +196,8 @@ export function ResultPane({
               queryId={cell.queryId || undefined}
               totalRows={cell.rowCount}
               complete={!running && cell.state === 'finished'}
+              notebookId={notebookId}
+              cellId={cellId}
             />
             <div className="flex items-center justify-between border-t border-border-base bg-surface-base px-3 py-1.5">
               <span className="font-mono text-2xs text-ink-subtle">

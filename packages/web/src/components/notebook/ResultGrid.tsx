@@ -9,7 +9,7 @@
  * クライアントサイドの軽量な操作をサポートする。これらの操作は「現在読み込み済みの行」
  * に対してのみ作用し、ストリーミングで追加される行にも継続して適用される。
  */
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { QueryColumn } from '@hubble/contracts';
 import { ArrowDown, ArrowUp, Columns3, Search, Sigma, X } from 'lucide-react';
@@ -19,6 +19,15 @@ import { formatDecimal, formatInt } from '../../utils/format';
 import type { ResultRow } from '../../execution';
 import { ColumnProfilePanel } from './ColumnProfilePanel';
 import { useServerResultView } from './useServerResultView';
+import {
+  RESULT_HEIGHT_MIN,
+  beginResultHeightResize,
+  clampResultHeight,
+  getResultHeight,
+  resetResultHeight,
+  resultHeightMax,
+  setResultHeight,
+} from '../../notebook/resultHeight';
 
 // @tanstack/react-table への置換は見送っている。2026 年 7 月 18 日の read-only preflight
 // （@tanstack/react-virtual は維持する前提）で計測したところ、本ファイルは 598 物理行/443
@@ -205,6 +214,10 @@ interface ResultGridProps {
   complete?: boolean;
   /** ルート要素に付与する追加の Tailwind クラス。 */
   className?: string;
+  /** 結果表示域の高さ調整を永続化するためのノートブックID。省略時は高さ調整を無効化する。 */
+  notebookId?: string;
+  /** 結果表示域の高さ調整を永続化するためのセルID。省略時は高さ調整を無効化する。 */
+  cellId?: string;
 }
 
 /**
@@ -222,9 +235,46 @@ export function ResultGrid({
   totalRows,
   complete,
   className,
+  notebookId,
+  cellId,
 }: ResultGridProps) {
   // 仮想化スクロールコンテナへの参照。useVirtualizer にスクロール要素として渡す。
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // 明示的に調整された高さ（px）。null なら未調整で、内容に応じて伸びつつ
+  // Tailwind の max-h-96（384px）を上限にする従来どおりの挙動になる。
+  // 初期値は localStorage から一度だけ読み出す（notebookId/cellId 未指定時は常に null）。
+  // 保存後にビューポートが縮んだ、または他のクライアントが異なる上限で保存した等で
+  // 生の保存値が現在の許容範囲外になっている場合があるため、読み出し側（列幅側の
+  // NotebookView と同じ設計）でマウント時点のビューポート高さに応じてクランプする。
+  const [customHeight, setCustomHeight] = useState<number | null>(() => {
+    if (!notebookId || !cellId) return null;
+    const stored = getResultHeight(notebookId, cellId);
+    if (stored === null) return null;
+    return clampResultHeight(stored, typeof window !== 'undefined' ? window.innerHeight : stored);
+  });
+  // 高さドラッグ中の pointer リスナー解除関数。ドラッグ中でなければ null。
+  const heightDragCleanupRef = useRef<(() => void) | null>(null);
+  // unmount 時にドラッグ中のリスナーが残らないようにする。
+  useEffect(() => () => heightDragCleanupRef.current?.(), []);
+  // 未調整時（customHeight === null）のスクロールコンテナの実測高さ。ResizeObserver で
+  // 追跡し、aria-valuenow とキーボード操作の基準値に使う。ResizeObserver が使えない環境
+  // （jsdom 等）やまだ計測前は null にしておき、呼び出し側で下限（RESULT_HEIGHT_MIN）へ
+  // フォールバックさせる。
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
+  // customHeight が null（未調整）の間だけ ResizeObserver を張り、調整済みへ遷移したら
+  // 解除する。unmount 時にも確実に disconnect する。
+  useEffect(() => {
+    if (customHeight !== null) return;
+    if (typeof ResizeObserver === 'undefined') return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height;
+      if (height !== undefined) setMeasuredHeight(height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [customHeight]);
   // 非表示にした列のインデックス集合。
   const [hidden, setHidden] = useState<ReadonlySet<number>>(() => new Set());
   // 列の表示/非表示を切り替えるドロップダウンメニューの開閉状態。
@@ -303,6 +353,36 @@ export function ResultGrid({
       if (prev.dir === 'asc') return { colIndex, dir: 'desc' };
       return null; // 3 回目のクリックで未ソートへ戻す
     });
+  };
+
+  // 高さを変更し、ノートブックID/セルIDが揃っていれば localStorage へ永続化する。
+  // height が null なら「未調整」へ戻す（明示的な高さの解除）。
+  const applyHeight = (height: number | null) => {
+    const clamped = height === null ? null : clampResultHeight(height, window.innerHeight);
+    setCustomHeight(clamped);
+    if (!notebookId || !cellId) return;
+    if (clamped === null) resetResultHeight(notebookId, cellId);
+    else setResultHeight(notebookId, cellId, clamped);
+  };
+
+  // 高さリサイズハンドルの pointerdown で呼ばれる。ドラッグ開始時の高さは、
+  // 未調整であれば現在の実測高さ（内容依存の可変値）から連続的に変化させる。
+  // ドラッグ開始時の pointerId を beginResultHeightResize に渡し、無関係な
+  // ポインタ（マルチタッチ等）からの pointermove/pointerup/pointercancel を無視させる。
+  const startHeightDrag = (e: React.PointerEvent) => {
+    heightDragCleanupRef.current?.();
+    const startHeight =
+      customHeight ?? scrollRef.current?.getBoundingClientRect().height ?? RESULT_HEIGHT_MIN;
+    const cleanup = beginResultHeightResize(
+      e.clientY,
+      startHeight,
+      applyHeight,
+      () => {
+        if (heightDragCleanupRef.current === cleanup) heightDragCleanupRef.current = null;
+      },
+      e.pointerId,
+    );
+    heightDragCleanupRef.current = cleanup;
   };
 
   // グリッドテンプレート（行番号列 + 表示中の各フィールドの列）。
@@ -415,10 +495,19 @@ export function ResultGrid({
         </span>
       </div>
 
-      {/* 仮想化されたスクロール本体。ヘッダー行は sticky で常に上部に固定表示される。 */}
+      {/* 仮想化されたスクロール本体。ヘッダー行は sticky で常に上部に固定表示される。
+          明示的に高さを調整済み（customHeight !== null）の場合は実際の height を
+          インラインスタイルで固定する。max-height ではなく height を使うのは、行数が
+          少ない結果でもユーザーが指定した表示域の高さをそのまま確保するため
+          （max-height だと内容が少ないときドラッグが見た目に反映されない）。
+          未調整のときは従来どおり Tailwind の max-h-96 / min-h-[8rem] にフォールバックする。 */}
       <div
         ref={scrollRef}
-        className="max-h-96 min-h-[8rem] overflow-auto bg-surface-sunken"
+        className={cn(
+          'overflow-auto bg-surface-sunken',
+          customHeight === null && 'max-h-96 min-h-[8rem]',
+        )}
+        style={customHeight !== null ? { height: `${customHeight}px` } : undefined}
         data-testid="result-grid"
       >
         <div style={{ width: 'max-content', minWidth: '100%' }}>
@@ -514,6 +603,40 @@ export function ResultGrid({
             })}
           </div>
         </div>
+      </div>
+
+      {/* 結果表示域の高さ調整ハンドル。スクロールコンテナ下端の水平バー。
+          ドラッグ、ダブルクリックでのリセット（未調整状態に戻す）、フォーカス時の
+          上下矢印キー（16px刻み）による調整に対応する。 */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="結果表示域の高さを調整"
+        // 未調整状態（customHeight === null）では、内容量に応じて128〜384pxの間で
+        // 変動する実際の表示高さ（measuredHeight、ResizeObserver で追跡）を通知する。
+        // 計測前やResizeObserver非対応環境では下限（RESULT_HEIGHT_MIN）にフォールバックする。
+        aria-valuenow={customHeight ?? measuredHeight ?? RESULT_HEIGHT_MIN}
+        aria-valuemin={RESULT_HEIGHT_MIN}
+        aria-valuemax={resultHeightMax(typeof window !== 'undefined' ? window.innerHeight : 0)}
+        tabIndex={0}
+        onPointerDown={startHeightDrag}
+        onDoubleClick={() => applyHeight(null)}
+        onKeyDown={(e) => {
+          // pointerドラッグ側（startHeightDrag）と同じ基準（未調整時は実測高さ）に揃える。
+          const current = customHeight ?? measuredHeight ?? RESULT_HEIGHT_MIN;
+          // ページの矢印キースクロールと同時に発生しないよう、処理した矢印キーは
+          // 既定動作を必ず止める。
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            applyHeight(current - 16);
+          } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            applyHeight(current + 16);
+          }
+        }}
+        className="group flex h-2 shrink-0 cursor-row-resize touch-none items-center justify-center border-b border-border-subtle bg-surface-base"
+      >
+        <span className="h-px w-8 bg-transparent transition-colors group-hover:bg-accent group-focus-visible:bg-accent" />
       </div>
     </div>
   );
