@@ -5,27 +5,29 @@
  * 外部ライブラリに依存しない軽量 Markdown レンダラー。画面上では
  * MarkdownCell（セルのプレビュー表示）と PresentationView（読み取り専用の
  * スライドカード）の双方から呼び出される、純粋な表示コンポーネント。
+ *
+ * 対応する記法は見出し（h1〜h3）、太字/斜体/インラインコード、番号無し/番号付き
+ * リスト、引用、フェンスコードブロック、GitHub 風テーブルに限られる（リンク、
+ * オートリンク、取り消し線、タスクリストは非対応）。
+ *
+ * react-markdown と remark-gfm への置換は見送っている。2026 年 7 月 15 日の PoC で
+ * 4 件の characterization test を固定した上で評価したところ、最小構成でも本ファイルは
+ * 306 行から 141 行までしか減らず、削減量 165 行は採用基準の 190 行を下回った。加えて
+ * inline code の class、task list の literal 表示、escape と壊れた inline 入力の処理が
+ * 現行動作と一致せず、4 fixture 中 3 fixture が失敗した（依存追加も 96 package、
+ * lockfile 869 行増）。互換 adapter を足すとさらに削減が悪化するため、対応記法を
+ * CommonMark/GFM へ拡張する製品判断がない限りこの自前パーサーを維持する。
  */
 import { Fragment, type ReactNode } from 'react';
 import { cn } from '../../utils/cn';
 
-/**
- * Lightweight markdown renderer for markdown-cell previews.
- * Covers the subset a SQL notebook needs: headings (h1–h3), bold / italic /
- * inline code, ordered + unordered lists, blockquotes, fenced code blocks and
- * GitHub-style tables. Deliberately dependency-free (no markdown-it) — the
- * grammar here is small and predictable for notebook notes.
- */
-
-// ---- Inline spans -----------------------------------------------------------
+// ---- インライン span の解析 ---------------------------------------------------
 
 // テキスト中のインライン装飾（`code` / **bold** / *italic* / _italic_）を正規表現で
 // 分割し、対応する React ノード（code / strong / em / 素のテキスト）へ変換する。
 // 見出し、リスト項目、テーブルセルなど複数の呼び出し元から再利用される。
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  // Order matters: inline code first (so `**` inside code stays literal), then
-  // bold (`**`), then italic (`*` / `_`).
   // 分割順が重要: まずインラインコードを切り出す（コード内の `**` を装飾と誤認しないため）。
   // その後に太字、最後に斜体を判定する。
   const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|_[^_]+_)/g;
@@ -64,7 +66,7 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
-// ---- Block parsing ----------------------------------------------------------
+// ---- ブロックの解析 -----------------------------------------------------------
 
 // ソース文字列を1行ずつ走査してブロック単位（コード/テーブル/見出し/リスト/引用/段落）
 // に分類するための内部表現。type タグで判別する判別共用体になっている。
@@ -84,7 +86,6 @@ interface TextBlock {
 }
 type Block = CodeBlock | TableBlock | TextBlock;
 
-/** Split a `| a | b |` row into trimmed cells. */
 // 行頭と行末の `|` を取り除いてから `|` で分割し、各セルの前後空白を落とす。
 function splitRow(line: string): string[] {
   return line
@@ -124,8 +125,7 @@ function parseBlocks(source: string): Block[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
 
-    // Fenced code block: ```lang … ```
-    // フェンスコードブロック開始行。閉じフェンスが見つかるまで本文行をそのまま収集する。
+    // フェンスコードブロック（```lang … ```）の開始行。閉じフェンスが見つかるまで本文行をそのまま収集する。
     const fence = /^```(.*)$/.exec(line);
     if (fence) {
       flushLists();
@@ -140,29 +140,29 @@ function parseBlocks(source: string): Block[] {
       continue;
     }
 
-    // GitHub table: a header row followed by a `---|---` divider.
+    // GitHub 風テーブル（ヘッダ行の次に `---|---` の区切り行が続く形）の開始判定。
     // 現在行がヘッダ行で、次の行が区切り行ならテーブルの開始とみなす。
     if (isTableRow(line) && i + 1 < lines.length && TABLE_DIVIDER.test(lines[i + 1]!)) {
       flushLists();
       const header = splitRow(line);
       const rows: string[][] = [];
-      i += 2; // skip header + divider
+      i += 2; // ヘッダ行と区切り行の分をスキップする
       while (i < lines.length && isTableRow(lines[i]!) && lines[i]!.trim() !== '') {
         rows.push(splitRow(lines[i]!));
         i++;
       }
-      i--; // step back; the for-loop will advance
+      i--; // 1 つ戻す（for ループが再度インクリメントするため）
       blocks.push({ type: 'table', header, rows });
       continue;
     }
 
-    // Unordered list item.
+    // 番号無しリスト項目（-, *）。
     if (/^\s*[-*]\s+/.test(line)) {
       if (ol.length) flushLists();
       ul.push(line.replace(/^\s*[-*]\s+/, ''));
       continue;
     }
-    // Ordered list item.
+    // 番号付きリスト項目（1. 2. …）。
     if (/^\s*\d+\.\s+/.test(line)) {
       if (ul.length) flushLists();
       ol.push(line.replace(/^\s*\d+\.\s+/, ''));
@@ -181,7 +181,7 @@ function parseBlocks(source: string): Block[] {
   return blocks;
 }
 
-// ---- Render -----------------------------------------------------------------
+// ---- 描画 -----------------------------------------------------------------------
 
 /**
  * Markdown ソース文字列をレンダリングするプレゼンテーションコンポーネント。
