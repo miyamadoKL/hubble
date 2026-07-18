@@ -5,6 +5,12 @@
  * `apiFetch`（JSON 一括取得）は使えない。このファイルでは fetch + ReadableStream で
  * SSE フレームを逐次パースし、contracts の `aiAssistEventSchema` で検証した
  * 型付きイベントをハンドラへ渡すストリーミングクライアントを提供する。
+ *
+ * `eventsource-parser` への置き換えは検証済みで採用していない。protocol parsing を
+ * 委譲しても、raw byte 上限（イベント単位、ストリーム単位）、EOF 時の flush、
+ * reader cancel、`data:` 行の連結セマンティクスは呼び出し側の adapter に残る。
+ * サーバー側の `ai/sse.ts` と合わせた PoC では production 行数が減るどころか
+ * 増えたため、自前パーサーを維持する。
  */
 import {
   aiAssistEventSchema,

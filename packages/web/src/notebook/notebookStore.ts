@@ -1,23 +1,4 @@
-// Notebook store. One zustand
-// store owns every *open* notebook (the TopBar tabs), the active id, and each
-// open notebook's dirty / draft / saving state. Cell CRUD, reordering, variable
-// values and the title/description all flow through here.
-//
-// Persistence policy:
-//   - A *saved* notebook (has a server id, `draft === false`) is autosaved with a
-//     2s debounce via PUT, and on an explicit Ctrl/Cmd+S.
-//   - A *draft* notebook (never persisted, `draft === true`) is kept in
-//     localStorage so a reload restores it; the first explicit save POSTs it and
-//     flips it to a saved notebook.
-//   - The set of open tabs + the active id are mirrored to localStorage so a
-//     reload reopens the same workspace.
-//
-// Network calls are injected (`__setPersistence`) so the store is unit-testable
-// with fake timers and no fetch. Components read via the selector hooks at the
-// end; cell-execution lifecycle (clear on delete) is the caller's job — the
-// store stays free of the execution layer to avoid a cycle.
-//
-// ==== ファイルの責務（日本語） ================================================
+// ============================================================================
 // notebook 機能レイヤーの中核となる zustand ストア。
 //   - 「開いている notebook 群」（TopBar のタブ）・アクティブな notebook id・
 //     各 notebook の dirty（未保存変更あり）/ draft（未保存 notebook）/ saving
@@ -59,14 +40,13 @@ import { ApiClientError } from '../api/client';
 import { principalStorageKey } from '../storage/principalStorage';
 import { useDatasourceStore } from '../stores/datasourceStore';
 
-// ---- Persistence injection --------------------------------------------------
+// ---- 永続化の注入 --------------------------------------------------
 
 /**
  * notebook の作成（POST 相当）と更新（PUT 相当）という、ストアが必要とする
  * ネットワーク操作だけを切り出した interface。実装は起動時に注入され、テスト
  * では fetch を使わないスタブに差し替えられる。
  */
-/** The network surface the store needs; injected so tests can stub it. */
 export interface NotebookPersistence {
   create: (nb: Notebook) => Promise<Notebook>;
   update: (id: string, nb: Notebook) => Promise<Notebook>;
@@ -79,17 +59,15 @@ let persistence: NotebookPersistence | null = null;
  * 実際の API 実装（またはテスト用スタブ）をストアに配線する。アプリ起動時に
  * 一度だけ呼び出す想定。
  */
-/** Wire the real API (or a stub in tests). Call once at app start. */
 export function __setPersistence(p: NotebookPersistence | null): void {
   persistence = p;
   if (p === null) resetPersistenceScheduling();
 }
 
 /** オートセーブのデバウンス時間（2 秒でデバウンス）。 */
-/** Autosave debounce window (debounce 2s). */
 export const AUTOSAVE_DEBOUNCE_MS = 2000;
 
-// ---- localStorage keys ------------------------------------------------------
+// ---- localStorage のキー ------------------------------------------------------
 
 // ワークスペース（開いているタブ id 一覧 + アクティブ id）を保存するキー。
 const WORKSPACE_KEY = principalStorageKey('hubble-workspace'); // open tab ids + active id
@@ -99,24 +77,22 @@ const DRAFT_PREFIX = `${principalStorageKey('hubble-draft')}:`; // per-draft not
 const JOURNAL_PREFIX = `${principalStorageKey('hubble-notebook-journal')}:`;
 const ORPHAN_DRAFT_LIMIT = 5;
 
-// ---- Open-notebook record ---------------------------------------------------
+// ---- 開いている notebook のレコード ---------------------------------------------------
 
 /**
  * 「開いている」notebook 1 件分のレコード。notebook 本体（サーバー/契約層の
  * データ形）に、エディタ上の編集状態（dirty/draft/saving）を添えたもの。
  */
-/** An open notebook plus its editing state. */
 export interface OpenNotebook {
   notebook: Notebook;
-  // 直前の永続化以降に未保存の変更があるかどうか。
-  /** Has unsaved changes since the last successful persist. */
+  /** 直前の永続化以降に未保存の変更があるかどうか。 */
   dirty: boolean;
-  // true の間はまだ一度もサーバーに保存されていない draft。保存後は false になり、
-  // 以降は実 id を持って PUT オートセーブの対象になる。
-  /** True until first persisted to the server (then it has a real id + PUTs). */
+  /**
+   * true の間はまだ一度もサーバーに保存されていない draft。保存後は false になり、
+   * 以降は実 id を持って PUT オートセーブの対象になる。
+   */
   draft: boolean;
-  // 保存 API（POST/PUT）が実行中かどうか（保存ボタンのスピナー等に使う）。
-  /** A save (POST/PUT) is in flight. */
+  /** 保存 API（POST/PUT）が実行中かどうか（保存ボタンのスピナー等に使う）。 */
   saving: boolean;
   /** 競合解消まで自動保存を停止する。 */
   conflict: boolean;
@@ -132,16 +108,14 @@ export interface OpenNotebook {
 interface NotebookStoreState {
   // id をキーにした「開いている notebook」の集合。並び順は持たない
   // （タブの表示順は openIds が担う）。
-  /** Open notebooks keyed by id, in no particular order (order is `openIds`). */
   open: Record<string, OpenNotebook>;
   // タブの表示順（左→右）。
-  /** Tab order (left→right). */
   openIds: string[];
   // 現在アクティブな（前面に表示されている）notebook の id。開いている
   // notebook がなければ null。
   activeId: string | null;
 
-  // Lifecycle
+  // ライフサイクル
   // notebook をタブとして開く（既に開いていれば何もしない）。
   openNotebook: (notebook: Notebook, opts?: { draft?: boolean; activate?: boolean }) => void;
   /**
@@ -160,7 +134,7 @@ interface NotebookStoreState {
   // 空の SQL セル 1 つを持つ notebook を新規 draft として開き、その id を返す。
   createBlankNotebook: () => string;
 
-  // Notebook-level edits
+  // notebook 単位の編集
   // notebook のタイトルを変更する（空文字は "Untitled notebook" にフォールバック）。
   renameNotebook: (id: string, name: string) => void;
   // notebook の説明文を変更する。
@@ -168,7 +142,7 @@ interface NotebookStoreState {
   // notebook の実行 context（catalog/schema）を変更する。
   setContext: (id: string, context: NotebookContext) => void;
 
-  // Cell edits
+  // セルの編集
   // 新しいセルを追加し、追加したセルの id を返す。position 未指定なら末尾に追加、
   // { relativeTo, where } 指定なら指定セルの上/下に挿入する。
   addCell: (
@@ -186,17 +160,17 @@ interface NotebookStoreState {
   setCellName: (id: string, cellId: string, name: string) => void;
   // セルの折りたたみ状態をトグルする。
   toggleCellCollapsed: (id: string, cellId: string) => void;
-  /** Write the last-execution summary into a cell (`resultMeta`). */
+  /** セルへ直近の実行結果サマリー（`resultMeta`）を書き込む。 */
   setCellResultMeta: (cellId: string, meta: CellResultMeta) => void;
   // セルのチャート設定を更新する（ユーザーのチャート操作のたびに呼ばれ、
   // notebook 本体と一緒にサーバーへ永続化される）。
   setCellChart: (cellId: string, chart: ChartConfig) => void;
 
-  // Variables
+  // 変数
   // 変数の入力値のみを更新する（SQL 自体は変わらないため変数の再検出は行わない）。
   setVariableValue: (id: string, name: string, value: string) => void;
 
-  // Persistence
+  // 永続化
   // 保存完了後の後処理: dirty/saving をリセットし、POST で id が変わった場合は
   // タブの key を新しい id に付け替える。
   markSaved: (id: string, persisted: Notebook, savedGeneration: number) => void;
@@ -204,7 +178,7 @@ interface NotebookStoreState {
   setSaving: (id: string, saving: boolean) => void;
 }
 
-// ---- Pure helpers (exported for tests) --------------------------------------
+// ---- 純粋ヘルパー（テストから直接呼べるよう export）--------------------------------------
 // ここから下は副作用のない純粋関数群。ストアの action から使われるだけでなく、
 // テストからも直接呼べるよう export されている。
 
@@ -212,7 +186,6 @@ interface NotebookStoreState {
  * 空の SQL セルを 1 つだけ持つ、まっさらな notebook を生成する
  * （初回起動時に使われる形）。id と timestamp はここで払い出す。
  */
-/** A fresh blank notebook with one empty SQL cell. */
 export function blankNotebook(context: NotebookContext = {}): Notebook {
   const now = new Date().toISOString();
   return {
@@ -229,7 +202,6 @@ export function blankNotebook(context: NotebookContext = {}): Notebook {
 }
 
 // 指定した種類（sql/markdown）の空セルを 1 つ生成する内部ヘルパー。
-/** A new empty cell of the given kind with a stable id. */
 function newCell(kind: CellKind): Cell {
   return { id: uid('cell'), kind, source: '' };
 }
@@ -240,7 +212,6 @@ function newCell(kind: CellKind): Cell {
  * `reconcileVariables` 側で名前が一致するものを引き継ぐため失われない。
  * セルのソースを編集するたびに呼ばれる。
  */
-/** Recompute `notebook.variables` from its SQL cells, preserving typed values. */
 export function recomputeVariables(notebook: Notebook): Variable[] {
   const sqlSources = notebook.cells.filter((c) => c.kind === 'sql').map((c) => c.source);
   const detected = detectVariables(sqlSources);
@@ -252,7 +223,6 @@ export function recomputeVariables(notebook: Notebook): Variable[] {
  * （元の配列は変更しない）。範囲外の index は no-op として無視する。
  * セルの並べ替え（moveCell）で使われる。
  */
-/** Move an array element from `from` to `to`, returning a new array. */
 export function moveItem<T>(arr: readonly T[], from: number, to: number): T[] {
   const next = arr.slice();
   if (from < 0 || from >= next.length || to < 0 || to >= next.length) return next;
@@ -261,7 +231,7 @@ export function moveItem<T>(arr: readonly T[], from: number, to: number): T[] {
   return next;
 }
 
-// ---- Draft / workspace persistence (localStorage) ---------------------------
+// ---- draft とワークスペースの永続化（localStorage）---------------------------
 // リロード後の復元用に、ワークスペース（開いているタブ構成）と draft notebook
 // の中身を localStorage に書き出す/読み戻すための一群の関数。
 
@@ -270,7 +240,7 @@ export interface WorkspaceSnapshot {
   version: 1;
   openIds: string[];
   activeId: string | null;
-  /** Which of the open ids are drafts (so we know to load from DRAFT_PREFIX). */
+  /** 開いている id のうち draft であるものの一覧（DRAFT_PREFIX から読むべき対象の判定に使う）。 */
   draftIds: string[];
 }
 
@@ -334,7 +304,7 @@ function writeWorkspace(state: NotebookStoreState): boolean {
     ls.setItem(WORKSPACE_KEY, JSON.stringify(snapshot));
     return true;
   } catch {
-    /* quota / serialization — non-fatal */
+    /* quota 超過やシリアライズ失敗は致命的ではないため無視する */
     return false;
   }
 }
@@ -453,7 +423,7 @@ function writeDraft(notebook: Notebook): boolean {
     ls.setItem(`${DRAFT_PREFIX}${notebook.id}`, JSON.stringify(notebook));
     return true;
   } catch {
-    /* non-fatal */
+    /* 保存失敗は致命的でないため握りつぶす */
     return false;
   }
 }
@@ -580,7 +550,6 @@ export interface DraftRestoreResult {
  * 永続化済みのワークスペーススナップショット（開いていたタブ id 群 +
  * アクティブ id）を読み出す。何もなければ null。アプリ起動時の復元に使う。
  */
-/** The persisted workspace snapshot (open tab ids + active), or null. */
 export function readWorkspaceSnapshot(): WorkspaceSnapshot | null {
   const ls = safeLocalStorage();
   if (!ls) return null;
@@ -623,7 +592,6 @@ function readBackupDraftIds(storage: Storage): string[] {
  * ワークスペーススナップショットに記録された draft id のうち、
  * 復元可能なもの（localStorage に実体が残っているもの）をすべて読み出す。
  */
-/** Read all restorable draft notebooks named in the workspace snapshot. */
 export function readDrafts(): Notebook[] {
   return readDraftRestoreResult().drafts;
 }
@@ -670,10 +638,10 @@ export function readDraftRestoreResult(snapshot = readWorkspaceSnapshot()): Draf
   return { drafts, corruptIds, snapshot: restoredSnapshot };
 }
 
-// ---- Autosave scheduling ----------------------------------------------------
+// ---- オートセーブのスケジューリング ----------------------------------------------------
 
-// Per-notebook debounce timers live outside the reactive store so scheduling a
-// save never triggers a render.
+// notebook ごとのデバウンス timer は reactive なストアの外に持つ。
+// 保存のスケジューリング自体が再レンダーを起こさないようにするため。
 // notebook id → デバウンス用 timer のマップ。zustand の state に入れず
 // モジュールスコープに置くことで、timer のスケジューリング自体が再レンダーの
 // トリガーにならないようにしている。
@@ -729,15 +697,22 @@ function resetPersistenceScheduling(): void {
   saveCoordinators.clear();
 }
 
-// ---- Store ------------------------------------------------------------------
+// ---- ストア本体 ------------------------------------------------------------------
 
 export const useNotebookStore = create<NotebookStoreState>((set, get) => {
   // mutate / afterChange / scheduleAutosave / saveNow は、ほぼすべての
   // notebook 編集 action から呼ばれる共通の下請け関数群。
   // 「notebook を書き換える → 変数を再計算する → dirty にする →
   //  永続化をトリガーする」という一連の流れを 1 箇所にまとめている。
+  //
+  // この mutate を「純粋な編集」と「保存の調停(persistence、autosave timer、
+  // saveCoordinators)」に分離しない。分離しても persistence、restore state、
+  // timer、save coordinator、update tail、Zustand store、StrictMode latch の
+  // state owner を一つも減らせず、updatedAt、変数再計算、dirty と
+  // editGeneration、draft journal、saved autosave、resultMeta の touch なし
+  // 更新を維持するには I/O 境界を別 helper に再実装する必要がある。保守的な
+  // 正味削減上限の見積もりは 60 実装行未満、実際には 30 行未満に留まった。
 
-  /** Replace one open notebook's `notebook`, recompute variables, mark dirty. */
   /** 開いているnotebookを更新し、変数再計算後に未保存状態へ移す。 */
   const mutate = (
     id: string,
@@ -782,7 +757,6 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     });
   };
 
-  /** After any change: persist the draft locally and (if saved) schedule a PUT. */
   /** 編集後にブラウザーへ同期保存し、保存済みならPUTも予約する。 */
   const afterChange = (id: string): void => {
     const entry = get().open[id];
@@ -803,7 +777,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     }
   };
 
-  /** Debounced PUT for a saved notebook (2s debounce). */
+  /** 保存済み notebook 用のデバウンス PUT（2 秒デバウンス）。 */
   const scheduleAutosave = (id: string): void => {
     // 直前の timer を破棄してから新しく張り直す = 連続編集中は PUT が
     // 発火しない（最後の編集から 2 秒静止して初めて保存される）。
@@ -945,8 +919,6 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     },
 
     createBlankNotebook: () => {
-      // Seed the new notebook's context from the active notebook, falling back to
-      // the most-recently-used context.
       // アクティブな notebook が実行contextを持っていればそれを引き継ぎ、
       // 持っていなければ現在のデータソースに対応する直近contextを使う。
       const active = get().activeId ? get().open[get().activeId!]?.notebook.context : undefined;
@@ -1029,7 +1001,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     },
 
     setCellResultMeta: (cellId, meta) => {
-      // Locate the open notebook that owns this cell (cellId is globally unique).
+      // このセルを所有する notebook を探す（cellId はグローバルに一意）。
       // cellId から notebook id への逆引きインデックスは持っていないため、
       // 開いている全 notebook のセルを線形探索して所有者を探す。
       const state = get();
@@ -1042,8 +1014,6 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       const cells = entry.notebook.cells.map((c) =>
         c.id === cellId ? { ...c, resultMeta: meta } : c,
       );
-      // resultMeta is a derived summary, not user content — don't bump updatedAt
-      // or recompute variables. It still rides along on the next persist.
       // （resultMeta は実行結果から派生する情報であり、ユーザーが入力した
       // コンテンツではないため updatedAt や変数再計算の対象にはしない。
       // ただし dirty にはするので、次回の保存には一緒に乗る。）
@@ -1079,8 +1049,8 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
     },
 
     setVariableValue: (id, name, value) => {
-      // A value change doesn't alter the SQL, so skip the variable recompute and
-      // update only the matching variable's value.
+      // 値の変更は SQL 自体を変えないため、変数の再検出はスキップし、
+      // 一致する変数の値だけを更新する。
       // （`mutate` を使わず直接 set しているのは、変数の再検出が不要な
       // 軽量パスであることを明示するため。）
       const entry = get().open[id];
@@ -1113,7 +1083,6 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       const wasDraft = entry.draft;
       const editedDuringSave = entry.editGeneration !== savedGeneration;
       if (!editedDuringSave) clearAutosave(id);
-      // The server may have assigned a new id (POST). Re-key under it.
       // draft の初回保存（POST）ではサーバーが新しい id を発行するため、
       // open/openIds/activeId すべてでキーを古い id → 新しい id に付け替える。
       const newKey = persisted.id;
@@ -1203,7 +1172,6 @@ function settleSaveWaiters(
   coordinator.waiters = remaining;
 }
 
-/** Persist immediately via PUT (saved notebooks only). */
 /** notebook単位のsingle-flightへ保存要求を追加する。 */
 function requestSavedNotebookSave(id: string): Promise<Notebook | null> {
   const entry = useNotebookStore.getState().open[id];
@@ -1335,9 +1303,9 @@ async function runSavedNotebookQueue(id: string, coordinator: SaveCoordinator): 
           settleSaveWaiters(coordinator, generation, null);
         }
       } catch (error) {
-        // Keep dirty; a later edit reschedules. Surface via toast at the call site.
         // 失敗しても dirty のままにしておくことで、次の編集で再スケジュール
         // される（＝リトライの仕組みを別途持たず、自然に再試行される）。
+        // 失敗自体のユーザー通知は呼び出し元（保存ボタン等）が toast で表示する。
         if (coordinator.cancelled) return false;
         const current = useNotebookStore.getState().open[id];
         const sameBase = current?.notebook.revision === baseRevision;
@@ -1384,7 +1352,7 @@ async function runSavedNotebookQueue(id: string, coordinator: SaveCoordinator): 
   if (saveCoordinators.get(id) === coordinator) saveCoordinators.delete(id);
 }
 
-// ---- Imperative save helpers (used by Ctrl+S / Save buttons) ----------------
+// ---- 命令的な保存ヘルパー（Ctrl+S や保存ボタンから使う）----------------
 // ストアの action ではなくモジュール関数として提供しているのは、Ctrl+S や
 // 保存ボタンのハンドラから React の外側（イベントハンドラ）で直接呼びたい
 // ためで、useNotebookStore.getState() を使って imperative にストアへアクセスする。
@@ -1392,12 +1360,7 @@ async function runSavedNotebookQueue(id: string, coordinator: SaveCoordinator): 
 /**
  * まだ一度もサーバーに保存されていない draft notebook を、指定した名前で
  * 初めて永続化（POST 相当）し、保存済み notebook として再登録する。
- * persistence が配線されていなければ null を返す。
- */
-/**
- * Persist a draft notebook for the first time (POST) under a chosen name, then
- * re-key it as a saved notebook. Returns the persisted notebook, or null when
- * persistence isn't wired.
+ * persistence が配線されていない場合、または永続化に失敗した場合は null を返す。
  */
 export async function persistNewNotebook(id: string, name: string): Promise<Notebook | null> {
   if (!persistence) return null;
@@ -1419,10 +1382,7 @@ export async function persistNewNotebook(id: string, name: string): Promise<Note
 /**
  * 既に保存済みの notebook を、オートセーブのデバウンスを待たずに今すぐ
  * 永続化（PUT 相当）する。Ctrl/Cmd+S などの明示的な保存操作から呼ばれる。
- */
-/**
- * Persist an already-saved notebook now (PUT), bypassing the debounce. Returns
- * the persisted notebook, or null on failure / when not wired.
+ * persistence が配線されていない場合、または永続化に失敗した場合は null を返す。
  */
 export async function persistSavedNotebook(id: string): Promise<Notebook | null> {
   const store = useNotebookStore.getState();
@@ -1436,28 +1396,16 @@ export async function persistSavedNotebook(id: string): Promise<Notebook | null>
   return requestSavedNotebookSave(id);
 }
 
-// ---- Selector hooks ---------------------------------------------------------
+// ---- selector hook 群 ---------------------------------------------------------
 // コンポーネントがストアを読み取るための入口。生の useNotebookStore を
 // 各所で直接 select するのではなく、ここに集約しておくことで再レンダリングの
 // 最適化ポイントを一箇所にまとめている。
 
 /** 現在アクティブな開いている notebook。何も開かれていなければ undefined。 */
-/** The currently active open notebook, or undefined. */
 export function useActiveNotebook(): OpenNotebook | undefined {
   return useNotebookStore((s) => (s.activeId ? s.open[s.activeId] : undefined));
 }
 
-/**
- * TopBar 用のタブ記述子（id / name / dirty）を、タブの表示順で返す。
- * `openIds` と `open` という参照が安定した state を `useShallow` で購読し、
- * 表示用オブジェクトはレンダー内で毎回組み立てる。
- */
-/**
- * Tab descriptors for the TopBar (id, name, dirty), in tab order. We subscribe
- * to the stable `openIds` + `open` references with `useShallow` and derive the
- * descriptor objects in render — returning fresh objects from the selector would
- * defeat `useShallow`'s element-wise comparison and loop.
- */
 /**
  * TopBar 用のタブ記述子（id、name、dirty、ブラウザー内永続化エラー）を、
  * タブの表示順で返す。

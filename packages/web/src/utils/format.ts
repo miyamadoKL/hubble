@@ -1,18 +1,17 @@
 /**
- * Formatting helpers for the dense, instrument-like data surfaces. Numbers,
- * durations and byte counts render in IBM Plex Mono with consistent grouping.
- *
  * 数値、所要時間、バイト数などを、画面表示用の読みやすい文字列へ整形する
  * ユーティリティ関数群を定義するファイル。クエリ結果や実行統計のような
  * 密度の高い「計器盤」的な表示（IBM Plex Mono フォントを使用）で、
  * 桁区切りなどの表記を統一するために使う。
+ *
+ * `date-fns` へは置き換えない。現行の各 helper 実装が小さく、ライブラリ導入は
+ * 正味の削減にならない。
  */
 
 // 3桁ごとにカンマ区切りを行うための Intl.NumberFormat インスタンス。
 // 呼び出しごとに生成するとコストがかかるため、モジュールスコープで1つだけ生成し使い回す。
 const numberGrouping = new Intl.NumberFormat('en-US');
 
-/** Group an integer with thousands separators: 1500000 → "1,500,000". */
 /**
  * 整数を3桁区切り（カンマ区切り）の文字列に整形する。
  * 例: `1500000` → `"1,500,000"`
@@ -25,7 +24,6 @@ export function formatInt(value: number): string {
   return numberGrouping.format(Math.round(value));
 }
 
-/** Format a double with fixed decimals and grouping: 173665.47 → "173,665.47". */
 /**
  * 小数を、指定した桁数の固定小数点表記かつ3桁区切りの文字列に整形する。
  * 例: `173665.47` → `"173,665.47"`
@@ -41,7 +39,6 @@ export function formatDecimal(value: number, fractionDigits = 2): string {
   });
 }
 
-/** Human byte count: 28311552 → "27.0 MB". */
 /**
  * バイト数を、人間が読みやすい単位（B/KB/MB/GB/TB）に変換した文字列に整形する。
  * 例: `28311552` → `"27.0 MB"`
@@ -67,7 +64,6 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-/** Compact elapsed time: 412 → "412 ms", 8200 → "8.2 s", 92000 → "1m 32s". */
 /**
  * 経過時間（ミリ秒）を、コンパクトで読みやすい文字列に整形する。
  * 1秒未満は「○ ms」、60秒未満は「○ s」（10秒未満は小数点1桁まで表示）、
@@ -90,7 +86,6 @@ export function formatDuration(ms: number): string {
   return `${m}m ${s.toString().padStart(2, '0')}s`;
 }
 
-/** Relative time for history rows: "3m ago", "2h ago". */
 /**
  * ISO 形式の日時文字列を、現在時刻からの相対時間表記に整形する。
  * 実行履歴一覧などで「3分前」「2時間前」のような表示に使う。

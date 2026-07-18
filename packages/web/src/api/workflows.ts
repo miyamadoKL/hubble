@@ -164,6 +164,7 @@ export function downloadWorkflowRunXlsx(runId: string): Promise<Blob> {
   return apiFetchBlob(workflowRunXlsxUrl(runId));
 }
 
+/** workflow run の 1 ステップ分の実行結果をページ単位で取得する。 */
 export function getWorkflowStepResult(
   runId: string,
   stepRunId: string,

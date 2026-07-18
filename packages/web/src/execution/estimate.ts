@@ -1,19 +1,4 @@
-// Query Guard estimate layer (Query Guard feature).
-//
-// Three concerns, all pure / synchronous except the one fetch helper:
-//   - estimateQuery        : POST /api/queries/estimate (typed, zod-validated)
-//   - resolveEstimateInput : build the *exact* statement the run path will send
-//                            (variable substitution + auto-LIMIT) or a skip
-//                            reason — so the estimate matches the run byte-for-byte
-//                            and hits the server's (principal,…,statement) cache.
-//   - estimatePresentation : map an EstimateResult to a compact UI descriptor
-//                            (tone / label / whether to show / whether to block).
-//   - parseQueryBlocked    : pull the typed { estimate, limits } out of a 422
-//                            QUERY_BLOCKED error's `details` for the ErrorPanel.
-//
-// Everything here is editor-agnostic and exercised directly by vitest.
-//
-// ==== ファイルの責務（日本語） ================================================
+// ==== ファイルの責務 ================================================
 // Query Guard 機能の「見積り (estimate)」レイヤー。実行前に SQL のスキャン量を
 // 見積もり、閾値を超える場合は警告/ブロックする一連のロジックを提供する。
 // 中心となる 4 つの関心事:
@@ -46,7 +31,7 @@ import { withAutoLimit } from './sql';
 import { resolveExecution, type CaretSelection } from './executionUnit';
 
 /**
- * `POST /api/queries/estimate` → an `EstimateResult`.
+ * `POST /api/queries/estimate` を呼び出し、`EstimateResult` を得る。
  * 指定したステートメントのスキャン量見積りをサーバーに問い合わせる。
  */
 export function estimateQuery(request: {
@@ -60,24 +45,19 @@ export function estimateQuery(request: {
 }
 
 /**
- * Inputs that mirror a run, so the estimated statement is identical to it.
  * 実行パスの入力を再現するための情報。ここから組み立てるステートメントは、
  * 実際の実行時に送信されるものと完全に一致させる。
  */
 export interface ResolveEstimateInput {
-  /** The raw statement text of the execution unit (pre-substitution). */
   /** 実行単位の生のステートメントテキスト（変数置換前）。 */
   unitText: string;
-  /** Notebook variable values, name → current value. */
   /** notebook の変数値（変数名 → 現在の入力値）。 */
   variableValues: Record<string, string>;
-  /** Auto-LIMIT toggle + value, exactly as the run path uses them. */
   /** auto-LIMIT の有効/無効とその上限値。実行パスと同じ値を渡す。 */
   autoLimit: boolean;
   limit: number;
 }
 
-/** Why an estimate was skipped (kept out of the request entirely). */
 /** 見積りをスキップした理由（そもそも API を呼ばなかった場合の理由）。 */
 export type EstimateSkipReason = 'empty' | 'missing-variables';
 
@@ -86,11 +66,11 @@ export type ResolveEstimateResult =
   | { ok: false; reason: EstimateSkipReason };
 
 /**
- * Produce the statement that an estimate should be run against — identical to
- * the one the execution store will send (`executionStore.runUnit`): variables
- * substituted first, then `withAutoLimit` applied when the toggle is on. A unit
- * with unresolved `${…}` variables is *not* estimated (the run would be blocked
- * by the same missing-variable check), and neither is an empty unit.
+ * 見積り対象のステートメントを組み立てる。実行ストア（`executionStore.runUnit`）が
+ * 実際に送信するものと同一の手順（変数置換を先に行い、トグルが有効なら
+ * `withAutoLimit` を適用）で組み立てる。未解決の `${…}` 変数を含む場合は
+ * 実行自体が missing-variable チェックでブロックされるため見積りも行わず、
+ * 空のユニットも同様に見積らない。
  */
 export function resolveEstimateInput(input: ResolveEstimateInput): ResolveEstimateResult {
   // 空文字（トリム後）は見積り対象にしない。
@@ -107,43 +87,33 @@ export function resolveEstimateInput(input: ResolveEstimateInput): ResolveEstima
   return { ok: true, statement };
 }
 
-/** Why the live estimate was skipped (so the strip can decide to hide). */
 /**
  * ライブ見積り（キャレット位置に応じてリアルタイムに表示する見積り）を
  * スキップした理由。表示ストリップが「非表示にすべきか」を判断するために使う。
  */
 export type LiveEstimateSkip =
-  | 'guard-off' // mode=off — never call the API
-  | 'empty' // nothing under the caret / selection
-  | 'parse-error' // the unit doesn't parse cleanly yet (user mid-edit)
-  | 'missing-variables'; // unresolved ${…} — the run itself would be blocked
+  | 'guard-off' // mode=off のため、そもそも API を呼ばない
+  | 'empty' // キャレット/選択範囲の下に何もない
+  | 'parse-error' // ユニットがまだクリーンにパースできない（編集途中）
+  | 'missing-variables'; // 未解決の ${…} があり、実行自体がブロックされる
 
 export type LiveEstimateTarget =
   | { estimate: true; statement: string }
   | { estimate: false; reason: LiveEstimateSkip };
 
 export interface LiveEstimateInput {
-  /** Full cell source. */
   /** セル全体のソーステキスト。 */
   source: string;
-  /** Current selection/caret (the run path's `resolveExecution` input). */
   /** 現在の選択範囲/キャレット位置（実行パスの `resolveExecution` と同じ入力）。 */
   selection: CaretSelection;
-  /** Notebook variable values. */
   /** notebook の変数値。 */
   variableValues: Record<string, string>;
-  /** Auto-LIMIT toggle + value, identical to the run path. */
   /** auto-LIMIT の有効/無効と上限値（実行パスと同一の値）。 */
   autoLimit: boolean;
   limit: number;
-  /** Guard mode from /api/config — 'off' skips estimation entirely. */
   /** `/api/config` から取得した Query Guard のモード。'off' なら見積り自体を行わない。 */
   guardMode: 'off' | 'warn' | 'enforce';
   /**
-   * Parse-cleanliness predicate over the *resolved* statement, true when the
-   * ANTLR parser produced no error markers. Injected so this stays pure/testable
-   * (the editor wires in `parseStatement(...).markers.length === 0`).
-   *
    * 「解決済み（変数置換後）のステートメント」がクリーンにパースできるかを
    * 判定する述語。ANTLR パーサーがエラーマーカーを出さなければ true。
    * この関数を純粋かつテスト可能に保つため外部から注入する形にしており、
@@ -153,12 +123,12 @@ export interface LiveEstimateInput {
 }
 
 /**
- * Decide what (if anything) to estimate for the cell's current caret/selection,
- * applying the user's rule "estimate only when it parses": guard on, a non-empty
- * unit, all variables resolved, and the resolved statement parses clean. The
- * statement returned is byte-identical to what the run path would send (variable
- * substitution then auto-LIMIT), so it hits the server's estimate cache and the
- * run-time block is consistent with what the strip showed.
+ * セルの現在のキャレット/選択範囲について、何を見積もるべきか（あるいは何も
+ * 見積もらないか）を決める。「パースできるときだけ見積る」というルールを
+ * 適用する: guard が有効、ユニットが空でない、全変数が解決済み、かつ解決済み
+ * ステートメントがクリーンにパースできること。返すステートメントは実行パスが
+ * 送信するもの（変数置換 + auto-LIMIT）と byte 単位で一致するため、サーバーの
+ * 見積りキャッシュにヒットし、実行時のブロック判定もストリップの表示と一致する。
  */
 export function computeLiveEstimateTarget(input: LiveEstimateInput): LiveEstimateTarget {
   // Query Guard が off なら、そもそも見積り API を呼ばない。
@@ -180,8 +150,6 @@ export function computeLiveEstimateTarget(input: LiveEstimateInput): LiveEstimat
     return { estimate: false, reason: resolved.reason === 'empty' ? 'empty' : 'missing-variables' };
   }
 
-  // Parse the *substituted, pre-auto-LIMIT* unit text — substitution can change
-  // validity (e.g. `${n}` → a number), and the appended LIMIT is always valid.
   // 「変数置換後かつ auto-LIMIT 付与前」のテキストをパースチェックする。変数置換
   // によって構文的な妥当性が変わりうる（例: `${n}` → 数値）ため置換後を見る
   // 必要があり、一方で付与される LIMIT 句は常に妥当なので確認は不要。
@@ -191,36 +159,27 @@ export function computeLiveEstimateTarget(input: LiveEstimateInput): LiveEstimat
   return { estimate: true, statement: resolved.statement };
 }
 
-/** Visual tone of the estimate strip, mapped 1:1 to a design token family. */
 /** 見積りストリップの見た目トーン。デザイントークンのファミリーに 1:1 対応する。 */
 export type EstimateTone = 'info' | 'warning' | 'error' | 'unavailable';
 
-/** Compact UI descriptor derived from an `EstimateResult` + the guard config. */
 /**
  * `EstimateResult` と guard 設定から導出する、コンパクトな UI 用記述子。
  * 見積りストリップの表示に必要な情報をここに集約する。
  */
 export interface EstimatePresentation {
-  /** Whether the strip should render at all. */
   /** ストリップをそもそも描画すべきか。 */
   visible: boolean;
-  /** Tone driving the strip's color (design token family). */
   /** ストリップの色調を決めるトーン。 */
   tone: EstimateTone;
-  /** True when the run must be blocked (decision === 'block'). */
   /** 実行をブロックすべき場合 true（verdict.decision === 'block'）。 */
   blocked: boolean;
-  /** Scan figures to display, when known. */
   /** 表示すべきスキャン行数/バイト数（不明なら null）。 */
   scanRows: number | null;
   scanBytes: number | null;
-  /** Time estimate, only when the server provided one. */
   /** サーバーが返した場合のみ設定される所要時間見積り（秒）。 */
   estimatedSeconds: number | null;
-  /** Short status word shown in the strip ('estimate' | 'estimate unavailable'). */
-  /** ストリップに表示する短いステータス文言。 */
+  /** ストリップに表示する短いステータス文言（'estimate' | 'estimate unavailable'）。 */
   label: string;
-  /** Human-readable reasons (warn/block), surfaced in a tooltip / inline. */
   /** warn/block の理由（人間が読める文字列）。ツールチップ等に表示する。 */
   reasons: string[];
 }
@@ -237,7 +196,6 @@ const HIDDEN: EstimatePresentation = {
   reasons: [],
 };
 
-/** Map a guard decision to the strip's tone. */
 /** guard の判定結果 (GuardDecision) をストリップのトーンへマッピングする。 */
 function toneForDecision(decision: GuardDecision): EstimateTone {
   if (decision === 'block') return 'error';
@@ -246,12 +204,13 @@ function toneForDecision(decision: GuardDecision): EstimateTone {
 }
 
 /**
- * Map an estimate result to its compact strip presentation.
+ * 見積り結果をコンパクトなストリップ表示へ変換する。
  *
- *  - `disabled` / `unsupported`  → hidden (nothing to say).
- *  - `unavailable`               → a muted "estimate unavailable", escalated to
- *                                  warn/block tone when the verdict asks for it.
- *  - `estimated`                 → scan figures + the verdict's tone.
+ *  - `disabled` / `unsupported`  → 非表示（表示すべき情報がない）。
+ *  - `unavailable`               → 控えめな「estimate unavailable」表示。ただし
+ *                                  verdict が要求する場合は warn/block トーンへ
+ *                                  格上げする。
+ *  - `estimated`                 → スキャン量の数値と verdict のトーンを表示する。
  */
 export function estimatePresentation(result: EstimateResult): EstimatePresentation {
   // disabled/unsupported: そもそも見積れない/不要なケースなので何も表示しない。
@@ -277,7 +236,6 @@ export function estimatePresentation(result: EstimateResult): EstimatePresentati
     };
   }
 
-  // status === 'estimated'
   // 見積りに成功: スキャン行数/バイト数と、判定に応じたトーンを表示する。
   return {
     visible: true,
@@ -291,7 +249,6 @@ export function estimatePresentation(result: EstimateResult): EstimatePresentati
   };
 }
 
-/** The structured payload a 422 `QUERY_BLOCKED` error carries in `details`. */
 /** 422 `QUERY_BLOCKED` エラーが `details` に持つ構造化ペイロード。 */
 export interface QueryBlockedDetails {
   estimate: EstimateResult;
@@ -303,10 +260,11 @@ export interface QueryBlockedDetails {
 const partialGuardConfig = guardConfigSchema.partial();
 
 /**
- * Extract a typed `{ estimate, limits }` from a `QUERY_BLOCKED` error detail.
- * Returns undefined for any other error (or a malformed payload), so callers
- * can fall back to the plain message. Tolerant of a partial `limits` snapshot
- * (the server omits `bytesPerSecond` in the block snapshot).
+ * `QUERY_BLOCKED` エラー詳細から型付きの `{ estimate, limits }` を取り出す。
+ * それ以外のエラー（または不正な形のペイロード）では undefined を返し、
+ * 呼び出し側が素のメッセージ表示にフォールバックできるようにする。`limits` が
+ * 部分的なスナップショット（サーバーがブロック時に `bytesPerSecond` を省略する）
+ * であっても許容する。
  */
 export function parseQueryBlocked(error: ApiErrorDetail): QueryBlockedDetails | undefined {
   // QUERY_BLOCKED 以外のエラーコード、または details が無ければ対象外。
@@ -330,7 +288,6 @@ export function parseQueryBlocked(error: ApiErrorDetail): QueryBlockedDetails | 
   };
 }
 
-/** True when an error detail is a Query Guard block (422 QUERY_BLOCKED). */
 /** エラー詳細が Query Guard によるブロック（422 QUERY_BLOCKED）かどうか。 */
 export function isQueryBlocked(error: ApiErrorDetail | undefined): boolean {
   return error?.code === 'QUERY_BLOCKED';

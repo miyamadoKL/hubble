@@ -1,10 +1,3 @@
-// EditorRuntime: the single source of editor-layer dependencies shared by every
-// SqlEditor instance — the SchemaCache (over the API-backed MetadataSource) and
-// the live catalog.schema context. Provided once near the app root so the
-// language registration (which is global to the Monaco namespace) reads live
-// state through stable getters.
-//
-// ---- ファイル概要（日本語） ----
 // すべての SqlEditor インスタンスが共有する「エディター層の依存」を提供する React
 // Context モジュール。具体的には API 経由の MetadataSource 上に構築した SchemaCache
 // （1 つだけ生成しアプリ全体で共有）と、現在の catalog.schema コンテキストを指す。
@@ -25,6 +18,7 @@ import { SchemaCache } from '../trino-lang';
 import { createApiMetadataSource } from '../api/metadata';
 import { useDatasourceStore } from '../stores/datasourceStore';
 
+/** エディターが現在対象としている catalog / schema コンテキスト。未選択時は省略可能。 */
 export interface EditorContextValue {
   catalog?: string;
   schema?: string;
@@ -32,11 +26,11 @@ export interface EditorContextValue {
 
 interface EditorRuntime {
   cache: SchemaCache;
-  /** Stable getter returning the current catalog.schema context. */
+  /** 現在の catalog.schema コンテキストを返す、安定した参照を持つ getter。 */
   getContext: () => EditorContextValue;
-  /** Stable getter returning the selected datasource id. */
+  /** 選択中の datasource id を返す、安定した参照を持つ getter。 */
   getDatasourceId: () => string;
-  /** Stable getter: true when Trino 文法（ANTLR）を有効にする。 */
+  /** Trino 文法（ANTLR）を有効にするかどうかを返す、安定した参照を持つ getter。 */
   isTrinoLanguage: () => boolean;
 }
 
@@ -48,6 +42,16 @@ export function invalidateEditorSchemaCache(datasourceId: string): void {
   activeSchemaCache?.invalidate(datasourceId);
 }
 
+/**
+ * アプリのルート付近に 1 度だけ配置する Provider。SchemaCache を 1 個だけ生成して
+ * アプリ全体で共有し、現在の catalog/schema コンテキストと datasource 種別を
+ * 安定した getter（`useEditorRuntime` が返す関数群）経由で公開する。
+ *
+ * @param context - 現在の catalog / schema コンテキスト（画面遷移で変わる）。
+ * @param datasourceId - 選択中の datasource id（`useDatasourceStore` の値が優先される）。
+ * @param datasourceKind - Trino 文法（ANTLR）を有効にするかどうかの判定に使う種別。
+ * @param children - Provider 配下でこのコンテキストを参照する子要素。
+ */
 export function EditorRuntimeProvider({
   context,
   datasourceId,
@@ -66,9 +70,9 @@ export function EditorRuntimeProvider({
     kindRef.current = datasourceKind;
   }, [datasourceKind]);
 
-  // One SchemaCache for the whole app, built over the API MetadataSource. A
-  // lazy useState initializer constructs it exactly once (no ref read during
-  // render — react-hooks/refs).
+  // アプリ全体で共有する SchemaCache は API 経由の MetadataSource の上に構築する。
+  // useState の lazy initializer で厳密に 1 回だけ生成する
+  // （render 中に ref を読むと react-hooks/refs lint に抵触するため）。
   const [cache] = useState(
     () =>
       new SchemaCache(
@@ -87,8 +91,8 @@ export function EditorRuntimeProvider({
     };
   }, [cache]);
 
-  // Keep the latest context in a ref so the stable getter always reads fresh;
-  // the ref is updated in an effect, never during render.
+  // 安定した getter が常に最新の値を読めるよう、context を ref に保持する。
+  // ref の更新は effect 内でのみ行い、render 中には行わない。
   const contextRef = useRef(context);
   useEffect(() => {
     contextRef.current = context;
@@ -107,6 +111,10 @@ export function EditorRuntimeProvider({
   return <RuntimeContext.Provider value={value}>{children}</RuntimeContext.Provider>;
 }
 
+/**
+ * 最も近い `EditorRuntimeProvider` が公開する SchemaCache と各種 getter を取得する。
+ * Provider の外で呼ばれた場合は例外を投げる（配線漏れを早期に検出するため）。
+ */
 export function useEditorRuntime(): EditorRuntime {
   const ctx = useContext(RuntimeContext);
   if (!ctx) {
