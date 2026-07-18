@@ -54,14 +54,20 @@ const editor = {
   onDidContentSizeChange: vi.fn(() => ({ dispose: vi.fn() })),
   dispose: vi.fn(),
   setValue: vi.fn(),
+  // addAction は Monaco の実 API に合わせ、キーバインド解除用の disposable を返す。
+  addAction: vi.fn(() => ({ dispose: vi.fn() })),
 };
 
+// KeyMod/KeyCode は attachEditorCommands（実装をモックしていない）が
+// addAction 呼び出しに使うため、識別可能な適当な数値を割り当てる。
 const monacoNs = {
   editor: {
     create: vi.fn(() => editor),
     setModelLanguage: vi.fn(),
     setModelMarkers: vi.fn(),
   },
+  KeyMod: { CtrlCmd: 2048, Shift: 1024 },
+  KeyCode: { Enter: 3, KeyI: 39, KeyF: 36 },
 };
 
 function runtime(): ReturnType<typeof useEditorRuntime> {
@@ -119,6 +125,7 @@ function mockLoadMonacoWithLineCount(lineCount: number): void {
     onDidContentSizeChange: vi.fn(() => ({ dispose: vi.fn() })),
     dispose: vi.fn(),
     setValue: vi.fn(),
+    addAction: vi.fn(() => ({ dispose: vi.fn() })),
   };
   const wideMonacoNs = {
     editor: {
@@ -126,6 +133,8 @@ function mockLoadMonacoWithLineCount(lineCount: number): void {
       setModelLanguage: vi.fn(),
       setModelMarkers: vi.fn(),
     },
+    KeyMod: { CtrlCmd: 2048, Shift: 1024 },
+    KeyCode: { Enter: 3, KeyI: 39, KeyF: 36 },
   };
   vi.mocked(loadMonaco).mockResolvedValueOnce(
     wideMonacoNs as unknown as typeof import('monaco-editor'),

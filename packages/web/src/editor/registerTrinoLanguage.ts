@@ -255,16 +255,76 @@ function registerHoverProvider(monacoNs: typeof monaco, getDeps: () => TrinoLang
 }
 
 /**
+ * 言語に依存しないエディターコマンド、Ctrl/Cmd+Enter（実行）と
+ * Ctrl/Cmd+I と Ctrl/Cmd+Shift+F（整形）をバインドする。エディターインスタンスの
+ * 生成直後に一度だけ呼び出すこと。Trino 診断（attachDiagnostics）がアタッチ
+ * されているかどうかに関わらず必ず呼ぶ必要がある。これらのコマンドはどの
+ * SQL 方言でも動作すべきであり、（まだ解決中かもしれない）Trino 言語判定の
+ * 切り替えに依存させてはならない。
+ *
+ * 以前はこの配線が attachDiagnostics（Trino 診断のときだけ呼ばれる）の中に
+ * あったため、Trino 以外のデータソースや、リロード直後で Trino 判定がまだ
+ * 確定していない一瞬の間は Ctrl+Enter が無反応になっていた（グローバル
+ * ショートカット側もエディタにフォーカスがあるときは介入しない設計のため、
+ * ユーザーからは「押しても何も起きない」ように見える）。
+ *
+ * 実行コマンドも format と同じ addAction ベースに揃えている（Monaco の
+ * addCommand は動的キーバインド登録を破棄する disposable を返さないため、
+ * 呼び出すたびに古い登録が蓄積する）。返り値は登録した全 disposable を
+ * まとめた 1 個の disposable で、呼び出し側はエディター破棄時にこれを
+ * dispose してキーバインドとコマンド登録を確実に解除しなければならない。
+ */
+export function attachEditorCommands(
+  monacoNs: typeof monaco,
+  editor: monaco.editor.IStandaloneCodeEditor,
+  deps: Pick<TrinoLanguageDeps, 'onExecute'>,
+): monaco.IDisposable {
+  // Ctrl/Cmd+Enter: 現在のカーソル/選択範囲に基づく実行コマンドを呼び出し元に委譲する。
+  // addCommand ではなく addAction を使うのは、後者だけがキーバインド解除用の
+  // disposable を返すため。
+  const executeAction = editor.addAction({
+    id: 'fable.executeSql',
+    label: 'Run SQL',
+    keybindings: [monacoNs.KeyMod.CtrlCmd | monacoNs.KeyCode.Enter],
+    run: (ed) => {
+      deps.onExecute?.(ed);
+    },
+  });
+  // SQL 整形アクションをコマンドパレット/右クリックメニュー/ショートカットに登録する。
+  const formatAction = editor.addAction({
+    id: 'fable.formatSql',
+    label: 'Format SQL',
+    // Ctrl/Cmd+I と Ctrl/Cmd+Shift+F のどちらでも整形する。
+    keybindings: [
+      monacoNs.KeyMod.CtrlCmd | monacoNs.KeyCode.KeyI,
+      monacoNs.KeyMod.CtrlCmd | monacoNs.KeyMod.Shift | monacoNs.KeyCode.KeyF,
+    ],
+    contextMenuGroupId: 'modification',
+    contextMenuOrder: 1.5,
+    run: async (ed) => {
+      // 整形操作を選んだ時点でだけ sql-formatter の大きな chunk を取得する。
+      const { formatEditor } = await import('./formatter');
+      formatEditor(ed);
+    },
+  });
+
+  return {
+    dispose: () => {
+      executeAction.dispose();
+      formatAction.dispose();
+    },
+  };
+}
+
+/**
  * Attach the debounced parse → marker/decoration loop to one editor. Returns a
  * disposer. Uses a generation counter so a late parse never clobbers a newer
- * one (stale-result guard). Also wires Ctrl/Cmd+Enter execute and
- * the format action (Ctrl/Cmd+I).
+ * one (stale-result guard).
  *
  * 1 つのエディターに「デバウンスした構文解析 → マーカー/装飾更新」ループをアタッチする。
  * 返り値の disposer を呼ぶとループとリソースを解放する。世代カウンタ（generation）を使い、
  * 遅れて完了した古い解析結果が新しい結果を上書きしないようにする（stale-result
- * 対策）。あわせて Ctrl/Cmd+Enter での実行、Ctrl/Cmd+I 等での整形アクションも
- * このエディターに配線する。
+ * 対策）。
  */
 export function attachDiagnostics(
   monacoNs: typeof monaco,
@@ -358,28 +418,6 @@ export function attachDiagnostics(
   };
 
   const changeSub = editor.onDidChangeModelContent(schedule);
-
-  // Ctrl/Cmd+Enter: 現在のカーソル/選択範囲に基づく実行コマンドを呼び出し元に委譲する。
-  editor.addCommand(monacoNs.KeyMod.CtrlCmd | monacoNs.KeyCode.Enter, () => {
-    deps.onExecute?.(editor);
-  });
-  // SQL 整形アクションをコマンドパレット/右クリックメニュー/ショートカットに登録する。
-  editor.addAction({
-    id: 'fable.formatSql',
-    label: 'Format SQL (Trino)',
-    // Ctrl/Cmd+I and Ctrl/Cmd+Shift+F both format.
-    keybindings: [
-      monacoNs.KeyMod.CtrlCmd | monacoNs.KeyCode.KeyI,
-      monacoNs.KeyMod.CtrlCmd | monacoNs.KeyMod.Shift | monacoNs.KeyCode.KeyF,
-    ],
-    contextMenuGroupId: 'modification',
-    contextMenuOrder: 1.5,
-    run: async (ed) => {
-      // 整形操作を選んだ時点でだけ sql-formatter の大きな chunk を取得する。
-      const { formatEditor } = await import('./formatter');
-      formatEditor(ed);
-    },
-  });
 
   // Initial pass.
   // アタッチ直後に一度パースしておき、初期表示からマーカー/装飾が反映された状態にする。

@@ -1,15 +1,11 @@
-// SqlEditor: the Monaco-backed SQL cell editor. Auto-height —
-// grows with content, minimum 4 lines — so notebook cells size to their query.
-// Monaco is loaded lazily (its own chunk) and the Trino language is registered
-// on first mount; diagnostics (markers + decorations + format/execute commands)
-// are attached per editor. The theme tracks the app's light/dark switch.
-//
-// ---- ファイル概要（日本語） ----
 // ノートブックの SQL セルを表す Monaco ベースのエディターコンポーネント。内容量に応じて
 // 高さが自動で伸びる（最小 4 行）ため、セルはクエリの長さに合わせて自然にサイズが決まる。
 // Monaco 本体は初回マウント時に遅延ロード（独自チャンク）され、Trino 言語もこのタイミングで
-// 登録される。診断機能（構文エラーマーカー、テーブル参照の装飾、整形/実行コマンド）は
-// エディターインスタンスごとにアタッチする。テーマはアプリのライト/ダーク切り替えに追従する。
+// 登録される。実行（Ctrl/Cmd+Enter）と整形コマンドは、エディター生成直後に
+// （attachEditorCommands で）無条件に配線する。これによりどの SQL 方言でも動作し、
+// Trino 言語判定の切り替えとレースしない。Trino 診断（構文エラーマーカーやテーブル参照の
+// 装飾）は別系統で、データソースが Trino のときだけアタッチする。テーマはアプリの
+// ライト/ダーク切り替えに追従する。
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type * as monaco from 'monaco-editor';
@@ -17,6 +13,7 @@ import { loadMonaco } from './monacoLoader';
 import {
   registerTrinoLanguage,
   attachDiagnostics,
+  attachEditorCommands,
   TRINO_LANGUAGE_ID,
   TRINO_MARKER_OWNER,
 } from './registerTrinoLanguage';
@@ -164,6 +161,7 @@ export function SqlEditor({
     let editor: monaco.editor.IStandaloneCodeEditor | undefined;
     let changeSub: monaco.IDisposable | undefined;
     let sizeSub: monaco.IDisposable | undefined;
+    let commandsSub: monaco.IDisposable | undefined;
 
     // Monaco を遅延ロードしてからエディターを生成する。ロード完了前にアンマウントされた
     // 場合は disposed フラグで何もしない。
@@ -231,6 +229,19 @@ export function SqlEditor({
         setHeight(Math.min(rawHeight, viewportCap));
       };
 
+      // Ctrl/Cmd+Enter（実行）と Ctrl/Cmd+I 等（整形）は言語判定に関わらず
+      // 常に有効でなければならないため、Trino 診断のアタッチ（trinoLanguage の
+      // 切り替えを追う別 effect）を待たず、エディター生成直後にここで一度だけ
+      // 配線する。ここを Trino 診断側に委ねると、リロード直後で trinoLanguage の
+      // 判定がまだ確定していない間や、非 Trino データソースで Ctrl+Enter が
+      // 無反応になる（グローバルショートカット側もエディタフォーカス中は
+      // 介入しない設計のため、ユーザーからは押しても何も起きないように見える）。
+      // 返り値の disposable はエディター破棄時に必ず dispose する（キーバインド
+      // 登録が蓄積しないようにするため）。
+      commandsSub = attachEditorCommands(monacoNs, editor, {
+        onExecute: (ed) => onExecuteRef.current?.(ed as monaco.editor.IStandaloneCodeEditor),
+      });
+
       // 内容が変わるたびに親へ通知し、高さも再計算する。
       changeSub = editor.onDidChangeModelContent(() => {
         onChangeRef.current?.(editor?.getValue() ?? '');
@@ -248,6 +259,7 @@ export function SqlEditor({
       disposed = true;
       diagnosticsRef.current?.dispose();
       diagnosticsRef.current = undefined;
+      commandsSub?.dispose();
       changeSub?.dispose();
       sizeSub?.dispose();
       editor?.dispose();
