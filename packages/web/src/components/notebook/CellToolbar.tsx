@@ -234,14 +234,13 @@ export function CellToolbar({
 }
 
 /**
- * Inline-editable cell name: double-click (or the placeholder) to rename.
- * セル名をインライン編集できる小さなコンポーネント。ダブルクリックで編集モードに入り、
- * blur / Enter で確定、Escape でキャンセルする。
+ * セル名をインライン編集できる小さなコンポーネント。セル名またはプレースホルダーを
+ * ダブルクリックすると編集モードに入り、blur または Enter で確定、Escape でキャンセルする。
  *
  * @param name - 現在のセル名（未設定なら「Untitled cell」を表示）。
  * @param onRename - 編集内容が確定したときに、トリム済みの新しい名前を渡して呼ばれる。
  */
-function CellName({ name, onRename }: { name?: string; onRename: (name: string) => void }) {
+export function CellName({ name, onRename }: { name?: string; onRename: (name: string) => void }) {
   // editing: 編集モード中かどうか。true のときは <input> を表示する。
   const [editing, setEditing] = useState(false);
   // draft: 編集中の入力値（未確定の下書き）。
@@ -296,10 +295,15 @@ function CellName({ name, onRename }: { name?: string; onRename: (name: string) 
       }}
       title="Double-click to rename"
       className={cn(
-        // pr-0.5: `truncate` clips at the padding edge, and the final italic
-        // glyph of the placeholder leans past its advance width — give the
-        // overhang room so "Untitled cell" doesn't lose the tip of its "l".
-        'truncate pr-0.5 text-xs font-medium',
+        // pr-0.5: `truncate` は padding の内側で文字を切り詰めるが、プレースホルダー末尾の
+        // イタリック体グリフは字送り幅からはみ出す。「Untitled cell」の "l" の先端が
+        // 欠けないよう、右側に余白を確保しておく。
+        // w-40 と text-left: 実ブラウザで計測すると、名前が長いセルでは表示用 <button> が
+        // flex アイテムとして内容幅ぶん伸縮し（truncate はコンテナ側の幅制約がないと効かない）、
+        // 編集用 <input> の固定 w-40 との差が最大で 170px 超になる（Chromium 実測:
+        // 長い名前で表示側 331px、編集側 160px）。button 側にも w-40 を与えて幅を揃え、
+        // <button> の UA デフォルト（text-align: center）も編集側に合わせて左寄せにする。
+        'w-40 truncate pr-0.5 text-left text-xs font-medium',
         name ? 'text-ink-base' : 'text-ink-subtle italic',
       )}
     >
