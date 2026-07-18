@@ -1,7 +1,4 @@
 /**
- * @hubble/contracts — the contract layer.
- * zod schemas + inferred types shared by server and web. Change with care.
- *
  * Hubble の「契約層」パッケージのエントリーポイント。
  * ここでエクスポートされる zod スキーマと、それらから推論される型定義が
  * server (packages/server) と web (packages/web) の間の唯一の正本 (source of truth) となる。

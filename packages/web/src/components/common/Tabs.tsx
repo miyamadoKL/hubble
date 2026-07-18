@@ -35,16 +35,16 @@ interface TabsProps<T extends string> {
   onChange: (id: T) => void;
   /** 追加で付与する className。 */
   className?: string;
-  /** 'underline' for result-pane style, 'segmented' for compact pill style. */
   /** 見た目のバリエーション。'underline' は結果ペイン風、'segmented' はコンパクトなピル型。 */
   variant?: 'underline' | 'segmented';
 }
 
+// Radix Primitives（radix-ui@1.6.2）への統合移行を評価したが、この Tabs は PoC で
+// 撤退した。初期選択済み trigger の tabIndex が Radix では全件 -1 になり、
+// 下の tabStopIndex（選択中または最初の有効タブだけを tabIndex=0 にする roving
+// tabindex）契約と一致しなかったため。手書きの tabIndex と focus 補正を戻すと
+// 状態機械を Radix に移譲したことにならず、依存を追加する意味がない。
 /**
- * Horizontal tabs. The underline variant renders the signature active-tab
- * underline ("記憶に残るディテール"): a 2px accent bar that sits on
- * the container's hairline.
- *
  * 水平タブコンポーネント。variant に応じて "underline"（アクティブなタブの
  * 下に2pxのアクセントバーを表示する、デザインの特徴的なディテール）と
  * "segmented"（枠で囲まれたコンパクトなピル型）のいずれかを描画する。

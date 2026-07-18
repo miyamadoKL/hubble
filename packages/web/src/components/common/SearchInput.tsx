@@ -18,12 +18,10 @@ interface SearchInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, '
   onChange: (value: string) => void;
   /** クリアボタン押下時に追加で呼ばれるコールバック(省略可)。 */
   onClear?: () => void;
-  /** Forwarded to the underlying input (e.g. for programmatic focus). */
   /** 内部の `<input>` 要素に転送する ref。プログラムからフォーカスを当てる場合などに使う。 */
   inputRef?: Ref<HTMLInputElement>;
 }
 
-/** Compact search field for sidebar panels. */
 /**
  * サイドバーパネル向けのコンパクトな検索入力フィールド。
  * 検索アイコンを常に表示し、`value` が空でないときのみクリアボタンを表示する。

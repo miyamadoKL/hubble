@@ -35,13 +35,6 @@ import {
 } from '../../notebook';
 
 /**
- * AppShell: the three-zone instrument layout — TopBar over a
- * hairline, a resizable Sidebar, and the scrolling NotebookView. Owns the shared
- * catalog.schema context, bootstraps the notebook workspace (restoring open
- * tabs + drafts), and hosts the save dialog driven by the UI store's
- * `saveRequest`.
- */
-/**
  * アプリのルートシェルコンポーネント。props は取らず、内部で context（catalog/schema）、
  * ノートブックワークスペース、保存ダイアログ、ヘルプ/プレゼンテーションモードなどの
  * 画面横断状態をすべて所有する。
@@ -56,13 +49,10 @@ export function AppShell() {
   const context = { catalog: executionContext.catalog, schema: executionContext.schema };
   const [search, setSearch] = useState('');
 
-  // Restore the previously-open notebooks (or seed a blank one).
+  // 直前に開いていたノートブック群を復元する（何もなければ空のノートブックを1つ用意する）。
   useNotebookWorkspace(context);
   useGlobalShortcuts();
 
-  // Mirror the live shell context + default limit into the UI store so global
-  // shortcuts (run-active-cell) execute against the same catalog.schema as the
-  // toolbar without prop threading.
   // props のバケツリレーを避けるため、最新の context/defaultLimit を uiStore にも
   // 反映しておく。グローバルショートカット側はこの store 経由で同じ実行条件を参照する。
   const setShellRuntime = useUiStore((s) => s.setShellRuntime);
@@ -73,17 +63,11 @@ export function AppShell() {
   const activeId = useNotebookStore((s) => s.activeId);
   const activeEntry = useActiveNotebook();
 
-  // Sync the shell context from two external sources — the server config and the
-  // active notebook. These effects mirror external state into React (the use-case
-  // the set-state-in-effect rule explicitly allows), and the functional updates
-  // bail out when nothing changed, so there's no cascading-render loop.
   // シェルの context を「サーバー設定」と「アクティブなノートブック」という2つの外部要因に
   // 同期させる2つの useEffect。どちらも外部状態を React state へ反映するだけの用途であり、
   // 変更がなければ同一参照を返す（return cur）ことで無限レンダーループを避けている。
   const activeContext = activeEntry?.notebook.context;
   useEffect(() => {
-    // Adopt config defaults only when the shell still has no context (no recent,
-    // no active-notebook context); never override a user choice.
     // シェルにまだ context がない場合（最近使った履歴もアクティブノートブックの context も
     // ない場合）に限り、サーバー設定のデフォルト値を採用する。ユーザーが既に選択済みの
     // context は絶対に上書きしない。
@@ -101,8 +85,6 @@ export function AppShell() {
   ]);
 
   useEffect(() => {
-    // Adopt the active notebook's saved context when switching tabs, so the
-    // selector + execution reflect the notebook the user is now editing.
     // タブを切り替えたときに、そのノートブックに保存されている context を採用し、
     // セレクター表示とセル実行が「今編集しているノートブック」と一致するようにする。
     if (
@@ -145,8 +127,6 @@ export function AppShell() {
     setExecutionContext,
   ]);
 
-  // Keep the active notebook's context in sync with the shell selector and record
-  // it as most-recently-used (notebook context へ保存 + recent 保持).
   // ContextSelector から呼ばれるハンドラー。シェルの context を更新し、アクティブな
   // ノートブックにも同じ context を書き込み、さらに「最近使った」履歴にも記録する。
   const handleContextChange = (next: { catalog: string; schema: string }) => {
@@ -175,7 +155,6 @@ export function AppShell() {
   const aiPanelOpen = useUiStore((s) => s.aiPanelOpen);
   const showAiPanel = aiPanelOpen && (config?.ai.enabled ?? false) && hasPermission(me, 'ai.use');
 
-  // ---- Help modal + presentation mode ----
   // ---- ヘルプモーダルとプレゼンテーションモード ----
   const workflowView = useUiStore((s) => s.workflowView);
   const dashboardView = useUiStore((s) => s.dashboardView);
@@ -183,7 +162,6 @@ export function AppShell() {
   const setShortcutsHelpOpen = useUiStore((s) => s.setShortcutsHelpOpen);
   const presentationMode = useUiStore((s) => s.presentationMode);
   const togglePresentation = useUiStore((s) => s.togglePresentation);
-  // Escape exits presentation mode.
   // プレゼンテーションモード中のみ Escape キーのリスナーを登録し、押されたらモードを抜ける。
   useEffect(() => {
     if (!presentationMode) return;
@@ -194,7 +172,6 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, [presentationMode, togglePresentation]);
 
-  // ---- Save dialog (driven directly by uiStore.saveRequest) ----
   // ---- 保存ダイアログ（uiStore.saveRequest によって直接駆動される） ----
   const saveRequest = useUiStore((s) => s.saveRequest);
   const clearSaveRequest = useUiStore((s) => s.clearSaveRequest);
@@ -210,7 +187,6 @@ export function AppShell() {
     const mode = saveRequest?.mode;
     closeSaveModal();
     if (mode === 'saveAs') {
-      // Save As: clone the current notebook under a new name as a fresh draft.
       // 「名前を付けて保存」: 現在のノートブックを新しいIDでクローンし、
       // 新規ドラフトとして開いた上でサーバーに保存する。
       const entry = useNotebookStore.getState().open[activeId];
@@ -228,7 +204,6 @@ export function AppShell() {
       else toast.error('Save failed', 'Could not reach the server.');
       return;
     }
-    // First save of a draft (or a draft being named).
     // ドラフトの初回保存、またはドラフトへ名前を付ける操作。ドラフトなら新規作成として
     // 保存し、既存ノートブックであれば改名してから保存する。
     const entry = useNotebookStore.getState().open[activeId];
@@ -249,7 +224,6 @@ export function AppShell() {
         onContextChange={handleContextChange}
         defaultLimit={defaultLimit}
       />
-      {/* Signature hairline under the TopBar (memorable detail). */}
       {/* TopBar 直下の1px の装飾ライン。左端だけアクセントカラーのグラデーションを乗せる。 */}
       <div className="relative h-px shrink-0 bg-border-base">
         <span className="absolute top-0 left-0 h-px w-24 bg-gradient-to-r from-accent/60 to-transparent" />

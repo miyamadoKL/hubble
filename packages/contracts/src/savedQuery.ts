@@ -9,9 +9,6 @@ import {
 } from './limits';
 
 /**
- * SavedQuery model.
- * `SavedQuery { id, name, description, statement, catalog?, schema?, isFavorite, createdAt, updatedAt }`
- *
  * ユーザーが明示的に「保存」した SQL クエリ（お気に入り含む）に関する契約を
  * 定義するファイル。history.ts の自動記録された実行履歴とは異なり、
  * こちらはユーザーが名前を付けて能動的に保存したものを扱う。
@@ -54,10 +51,7 @@ export const savedQueryResponseSchema = savedQuerySchema.extend({
 /** サーバーから返される保存済みクエリの推論型。 */
 export type SavedQueryResponse = z.infer<typeof savedQueryResponseSchema>;
 
-/**
- * Request body for `POST /api/saved-queries`.
- * `POST /api/saved-queries`（新規保存）のリクエストボディ。
- */
+/** `POST /api/saved-queries`（新規保存）のリクエストボディ。 */
 export const createSavedQueryRequestSchema = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH),
   description: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),
@@ -70,10 +64,7 @@ export const createSavedQueryRequestSchema = z.object({
 /** 保存済みクエリ作成リクエストの推論型。 */
 export type CreateSavedQueryRequest = z.infer<typeof createSavedQueryRequestSchema>;
 
-/**
- * Request body for `PUT /api/saved-queries/:id`.
- * `PUT /api/saved-queries/:id`（全置換更新）のリクエストボディ。
- */
+/** `PUT /api/saved-queries/:id`（全置換更新）のリクエストボディ。 */
 export const updateSavedQueryRequestSchema = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH),
   description: z.string().max(MAX_DESCRIPTION_LENGTH),

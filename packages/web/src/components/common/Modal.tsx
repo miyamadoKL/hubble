@@ -102,7 +102,12 @@ function recomputeModalBackground(): void {
   }
 }
 
-/** Centered modal dialog with scrim. Closes on Escape and backdrop click. */
+// Radix Primitives（radix-ui@1.6.2）への統合移行を評価したが、この Modal は PoC へ
+// 進めなかった。下の recomputeModalBackground が data-modal-live-region 属性を
+// 持つ要素（ToastViewport のトースト表示領域）だけを背景化（inert / aria-hidden）
+// の対象から除外する契約を、Radix Dialog の公開 API だけでは固定できないため。
+// Sonner（Toast.tsx）以外の Radix UI primitive 置換は、現行の契約を変更する
+// 製品判断がない限り再試行しない。
 /**
  * 画面中央に表示するモーダルダイアログ。
  * `open` が false の間は何も描画しない。表示中は Escape キー押下や

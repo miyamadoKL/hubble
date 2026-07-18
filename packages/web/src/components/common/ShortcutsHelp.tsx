@@ -8,12 +8,8 @@ import { Kbd } from './Kbd';
 import { SHORTCUTS } from '../../hooks/shortcuts';
 
 /**
- * "Keyboard shortcuts" reference modal. Opened from the command
- * palette; lists the canonical shortcut registry so the keys shown here, in the
- * palette, and the runtime dispatcher all come from one source (`SHORTCUTS`).
- *
  * コマンドパレットから開かれる「キーボードショートカット」参照用モーダル。
- * ショートカットの定義（キー・ラベル）を `SHORTCUTS` レジストリ一箇所に
+ * ショートカットの定義（キーとラベル）を `SHORTCUTS` レジストリ一箇所に
  * 集約しているため、ここでの表示、コマンドパレット、実際のキー入力
  * ディスパッチャの間でショートカット情報がずれることがない。
  *

@@ -19,7 +19,6 @@ export type IconButtonSize = 'sm' | 'md';
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   /** 表示する lucide-react のアイコン。 */
   icon: LucideIcon;
-  /** Accessible label; also used as the tooltip text. */
   /** アクセシビリティ用のラベル文字列。Tooltip のテキストとしても使用される。 */
   label: string;
   /** ボタンの見た目のバリエーション。未指定時は 'ghost'。 */
@@ -28,7 +27,6 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: IconButtonSize;
   /** トグルボタンなどで選択中の状態を表す場合は true。 */
   active?: boolean;
-  /** Suppress the tooltip (e.g. when nested inside another tooltip context). */
   /** ツールチップの表示を抑制したい場合は false にする（別の Tooltip の中にネストする場合など）。 */
   tooltip?: boolean;
 }

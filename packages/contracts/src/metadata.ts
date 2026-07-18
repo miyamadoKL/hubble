@@ -2,10 +2,6 @@ import { z } from 'zod';
 import { isoTimestamp } from './common';
 
 /**
- * Metadata model.
- * `system.metadata.catalogs` / `information_schema.tables` / `information_schema.columns`
- * wrapped by the server with a TTL cache + stale-while-revalidate.
- *
  * カタログ、スキーマ、テーブル、カラムといった Trino のメタデータに関する契約を
  * 定義するファイル。server は Trino の `system.metadata.catalogs` /
  * `information_schema.tables` / `information_schema.columns` を TTL 付きキャッシュ
@@ -25,7 +21,6 @@ export const schemaItemSchema = z.object({
 // テーブル一覧に表示する 1 件分のスキーマ。
 export const tableItemSchema = z.object({
   name: z.string(),
-  /** 'BASE TABLE' | 'VIEW' | ... as reported by information_schema.tables. */
   // information_schema.tables が報告するテーブル種別（'BASE TABLE' | 'VIEW' など）。
   type: z.string().optional(),
 });
@@ -63,7 +58,6 @@ export type Column = z.infer<typeof columnSchema>;
 export type TableDetail = z.infer<typeof tableDetailSchema>;
 
 /**
- * Source of a metadata payload.
  * メタデータ応答がどこから返されたかを示す。'cache'（キャッシュ済み） /
  * 'live'（Trino に問い合わせて取得した最新値）のいずれか。
  */
@@ -72,11 +66,6 @@ export const metadataSourceSchema = z.enum(['cache', 'live']);
 export type MetadataSource = z.infer<typeof metadataSourceSchema>;
 
 /**
- * Generic metadata response envelope:
- * `MetadataResponse<T> = { items, source, stale, lastUpdatedAt }`.
- *
- * Use as a schema factory: `metadataResponseSchema(catalogSchema)`.
- *
  * メタデータ系レスポンスの共通エンベロープを生成するスキーマファクトリ関数。
  * catalogs / schemas / tables などエンドポイントごとに中身の item 型は異なるが、
  * 「一覧 + キャッシュ状態」という外側の形は共通なのでジェネリックにしている。
@@ -90,7 +79,6 @@ export function metadataResponseSchema<T extends z.ZodTypeAny>(item: T) {
     source: metadataSourceSchema,
     // キャッシュが TTL を超過している（更新中だが古いデータを返している）かどうか。
     stale: z.boolean(),
-    /** ISO 8601 timestamp of when the underlying data was last refreshed. */
     // 元データが最後に更新された日時。
     lastUpdatedAt: isoTimestamp,
   });
@@ -104,7 +92,6 @@ export type MetadataResponse<T> = {
   lastUpdatedAt: string;
 };
 
-// Concrete response schemas for each metadata endpoint.
 // 各メタデータエンドポイント用に、ファクトリ関数から具体的なスキーマを生成する。
 /** データソーススコープ付きカタログ一覧のレスポンススキーマ。 */
 export const catalogsResponseSchema = metadataResponseSchema(catalogSchema);
@@ -121,7 +108,7 @@ export type SchemasResponse = z.infer<typeof schemasResponseSchema>;
 export type TablesResponse = z.infer<typeof tablesResponseSchema>;
 
 /**
- * Sample-rows response for `GET .../tables/:t/sample` (10 行サンプル).
+ * `GET .../tables/:t/sample` のレスポンス。
  * テーブルのサンプル行取得エンドポイントのレスポンス（設計上は 10 行程度を想定）。
  */
 export const sampleRowsResponseSchema = z.object({

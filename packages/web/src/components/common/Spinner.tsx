@@ -18,8 +18,6 @@ interface SpinnerProps {
 }
 
 /**
- * Indeterminate spinner (running state). Uses the running semantic color.
- *
  * 進行中であることを示す不確定（indeterminate）スピナー。
  * "running" のセマンティックカラーを使用し、回転アニメーション
  * (`animate-spin`) で処理中であることを視覚的に表現する。

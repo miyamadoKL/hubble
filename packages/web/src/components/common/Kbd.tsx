@@ -16,7 +16,6 @@ interface KbdProps {
   className?: string;
 }
 
-/** Keyboard shortcut chips, e.g. `["Ctrl", "K"]`. Mono, instrument-styled. */
 /**
  * キーボードショートカットのチップ群を表示するコンポーネント。
  * `keys` 配列の各要素を 1 つの `<kbd>` バッジとして横並びに描画する。

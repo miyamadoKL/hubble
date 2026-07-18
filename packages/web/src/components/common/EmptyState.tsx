@@ -18,14 +18,11 @@ interface EmptyStateProps {
   action?: ReactNode;
   /** ルート要素に付与する追加の className。 */
   className?: string;
-  /** Compact variant for narrow sidebar panels. */
   /** 狭いサイドバーパネル向けのコンパクト表示にする場合は true。 */
   compact?: boolean;
 }
 
 /**
- * Empty-state design for sidebar panels and result areas.
- *
  * icon、title、description、action を受け取り、中央揃えの空状態 UI を描画する。
  * compact が true の場合はアイコンや余白のサイズを小さくしたコンパクト表示になる。
  *

@@ -1,7 +1,4 @@
 /**
- * API path constants and type-safe path builders.
- * The single source of truth for endpoint paths shared by server and web.
- *
  * API のエンドポイントパスを一元管理するファイル。server（ルーティング定義）と
  * web（fetch 呼び出し）の両方がここから import することで、パス文字列の
  * ハードコードやタイポによる不一致を防ぐ。動的セグメントを持つパスは
@@ -38,10 +35,8 @@ export const apiRoutes = {
   datasourceMetadataRefresh: (datasourceId: string) =>
     `/api/datasources/${enc(datasourceId)}/metadata/refresh`,
 
-  // Queries
   // クエリ実行の開始（POST）/ 一覧などの基点パス。
   queries: () => '/api/queries',
-  /** Query Guard scan estimate (Query Guard feature). */
   // Query Guard のスキャン見積もり取得。
   queryEstimate: () => '/api/queries/estimate',
   // 単一クエリのスナップショット取得。
@@ -61,7 +56,6 @@ export const apiRoutes = {
   // 単一クエリの結果を外部ストレージへエクスポート。
   queryExport: (id: string) => `/api/queries/${enc(id)}/export`,
 
-  // Notebooks
   // ノートブック一覧取得 / 新規作成の基点パス。
   notebooks: () => '/api/notebooks',
   // 単一ノートブックの取得、更新、削除。
@@ -69,7 +63,6 @@ export const apiRoutes = {
   // ノートブックの共有一覧取得と更新。
   notebookShares: (id: string) => `/api/notebooks/${enc(id)}/shares`,
 
-  // Saved queries
   // 保存済みクエリ一覧取得 / 新規作成の基点パス。
   savedQueries: () => '/api/saved-queries',
   // 単一の保存済みクエリの取得、更新、削除。
@@ -77,16 +70,14 @@ export const apiRoutes = {
   // 保存済みクエリの共有一覧取得と更新。
   savedQueryShares: (id: string) => `/api/saved-queries/${enc(id)}/shares`,
 
-  // History
   // クエリ実行履歴一覧取得。
   history: () => '/api/history',
 
-  // Admin (RBAC operations view)
+  // 管理 API（RBAC の Operations ビュー用）。
   adminQueries: () => '/api/admin/queries',
   adminQuery: (id: string) => `/api/admin/queries/${enc(id)}`,
   adminAuditLogs: () => '/api/admin/audit-logs',
 
-  // Schedules (Query Scheduling feature)
   // スケジュール一覧取得 / 新規作成の基点パス。
   schedules: () => '/api/schedules',
   // 単一スケジュールの取得、更新、削除。
@@ -96,12 +87,11 @@ export const apiRoutes = {
   // スケジュールの実行履歴一覧取得。
   scheduleRuns: (id: string) => `/api/schedules/${enc(id)}/runs`,
 
-  // Alerts (threshold-based notifications)
+  // Alert（閾値ベースの通知）。
   alerts: () => '/api/alerts',
   alert: (id: string) => `/api/alerts/${enc(id)}`,
   alertEval: (id: string) => `/api/alerts/${enc(id)}/eval`,
 
-  // Dashboards (grid of query/chart panels)
   // ダッシュボード一覧取得 / 新規作成の基点パス。
   dashboards: () => '/api/dashboards',
   // 単一ダッシュボードの取得、更新、削除。
@@ -109,7 +99,7 @@ export const apiRoutes = {
   // ダッシュボードの共有一覧取得と更新。
   dashboardShares: (id: string) => `/api/dashboards/${enc(id)}/shares`,
 
-  // Workflows (Query Workflow feature)
+  // クエリワークフロー（多段 SQL オーケストレーション）。
   workflows: () => '/api/workflows',
   workflow: (id: string) => `/api/workflows/${enc(id)}`,
   workflowRun: (id: string) => `/api/workflows/${enc(id)}/run`,
@@ -121,11 +111,10 @@ export const apiRoutes = {
   workflowRunDownloadXlsx: (runId: string) => `/api/workflow-runs/${enc(runId)}/download.xlsx`,
   workflowRunExport: (runId: string) => `/api/workflow-runs/${enc(runId)}/export`,
 
-  // AI assistant
   // AI アシスタント（SQL 説明 / エラー修正 / 下書き / 書き換え）の SSE ストリーム。
   aiAssist: () => '/api/ai/assist',
 
-  // GitHub integration
+  // GitHub 連携。
   githubStatus: () => '/api/github/status',
   githubConnect: () => '/api/github/connect',
   githubConnection: () => '/api/github/connection',

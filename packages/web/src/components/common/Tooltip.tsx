@@ -28,10 +28,13 @@ const sideClasses: Record<TooltipSide, string> = {
   right: 'left-full top-1/2 -translate-y-1/2 ml-1.5',
 };
 
+// Radix Primitives（radix-ui@1.6.2）の Tooltip primitive への置換 PoC は完了した
+// （本ファイルを77行から49行へ削減し、useState、useId、4つの event handler を
+// 削除できた）が、bundle 全体が8,780,236 bytesから8,826,622 bytesへ46,386 bytes
+// 増え、AppShell chunk も404,558 bytesから451,250 bytesへ46,692 bytes増えた。
+// production 28行削減に対して lockfile が403行増え、初期 bundle の25KB上限も
+// 超えたため、依存と実装差分を撤去してこの手書き実装に戻した。
 /**
- * Lightweight tooltip. Shown on hover/focus via local state (no portal needed
- * for the shell). 150ms fade aligns with the motion budget.
- *
  * 軽量なツールチップ。ホバーまたはフォーカス時にローカル state (`open`) を
  * 切り替えて表示する（シェル用途のためポータルは使用しない）。
  * 150msのフェードでモーションバジェットに合わせている。
@@ -48,7 +51,7 @@ export function Tooltip({ label, children, side = 'bottom' }: TooltipProps) {
   return (
     <span
       className="relative inline-flex"
-      // マウスホバー・フォーカスの開始/終了に応じて open を切り替える
+      // マウスホバーとフォーカスの開始/終了に応じて open を切り替える
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)}
