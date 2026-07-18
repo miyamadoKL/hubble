@@ -151,4 +151,107 @@ describe('startFileReload', () => {
     await Promise.all([stopping, duplicateStopping]);
     expect(stopped).toBe(true);
   });
+
+  it('reload 実行中に検出した mtime 変化は、完了後に自動で再実行される', async () => {
+    let finishFirstReload: (() => void) | undefined;
+    let callCount = 0;
+    const reload = vi.fn(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Promise<void>((resolve) => {
+          finishFirstReload = resolve;
+        });
+      }
+      return undefined;
+    });
+    const handle = startFileReload([{ path: '/cfg/datasources.yaml', reload }], {
+      intervalSeconds: 30,
+      statImpl: (p) => ({ mtimeMs: mtimes.get(p) ?? 0 }),
+    });
+
+    // 1 回目の reload を開始させ、未解決のまま進行中にする。
+    handle.triggerReload();
+    await Promise.resolve();
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    // 進行中に mtime 変化を検出させる（旧実装ではここで取りこぼしていた）。
+    mtimes.set('/cfg/datasources.yaml', 2000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    // 1 回目の reload が完了すると、取りこぼされていた変更が自動で反映される。
+    finishFirstReload?.();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
+
+    await handle.stop();
+  });
+
+  it('reload 実行中の複数トリガーは完了後の追加実行 1 回に合流する', async () => {
+    let finishFirstReload: (() => void) | undefined;
+    let callCount = 0;
+    const reload = vi.fn(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Promise<void>((resolve) => {
+          finishFirstReload = resolve;
+        });
+      }
+      return undefined;
+    });
+    const handle = startFileReload([{ path: '/cfg/datasources.yaml', reload }], {
+      intervalSeconds: 30,
+      statImpl: (p) => ({ mtimeMs: mtimes.get(p) ?? 0 }),
+    });
+
+    handle.triggerReload();
+    await Promise.resolve();
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    // mtime 変化と triggerReload() の重複トリガーを進行中に何度も発生させる。
+    mtimes.set('/cfg/datasources.yaml', 2000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    process.emit('SIGHUP');
+    handle.triggerReload();
+    handle.triggerReload();
+    await Promise.resolve();
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    finishFirstReload?.();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
+
+    // 合流により 3 回目は発生しない。
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reload).toHaveBeenCalledTimes(2);
+
+    await handle.stop();
+  });
+
+  it('stop() 後は合流待ちの reload が実行されない', async () => {
+    let finishFirstReload: (() => void) | undefined;
+    const reload = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirstReload = resolve;
+        }),
+    );
+    const handle = startFileReload([{ path: '/cfg/datasources.yaml', reload }], {
+      intervalSeconds: 30,
+      statImpl: (p) => ({ mtimeMs: mtimes.get(p) ?? 0 }),
+    });
+
+    handle.triggerReload();
+    await Promise.resolve();
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    // 進行中に取りこぼし対象の変更を発生させ、その後すぐに stop() する。
+    mtimes.set('/cfg/datasources.yaml', 2000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const stopping = handle.stop();
+
+    finishFirstReload?.();
+    await stopping;
+
+    // stop() 後は pending の再実行が起動しないため、1 回のままである。
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
 });

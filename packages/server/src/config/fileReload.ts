@@ -56,16 +56,21 @@ export function startFileReload(
   let reloadPromise: Promise<void> | undefined;
   let stopped = false;
   // 実行中の reload がある間に来た追加のトリガー（別ファイルの mtime 変化や
-  // SIGHUP の重複）は待ち行列に積まず読み捨てる。この取りこぼしは実際に起こり得る:
-  // poll() は runReload() を呼ぶ前に lastMtime を更新するため、進行中の reload
-  // 完了前に検出された変更は「既知」として記録されるが、それをトリガーした
-  // runReload() 呼び出しはここで即座に何もせず戻る。その後 reload が完了しても
-  // 再実行はスケジュールされないため、その時点の変更は反映されないまま
-  // lastMtime だけが更新済みの状態になる。回復するのは、reload 完了後に
-  // 同じファイルが再度変更されるか、triggerReload()/SIGHUP が改めて呼ばれた
-  // ときだけである。
+  // SIGHUP の重複、triggerReload() の再呼び出し）は pendingRerun フラグに
+  // 合流（コアレス）させる。poll() は runReload() を呼ぶ前に lastMtime を
+  // 更新するため、進行中の reload 完了前に検出された変更はすでに「既知」の
+  // mtime として記録されているが、その変更を反映した reload はまだ実行されて
+  // いない。そこで進行中の reload が完了した時点で pendingRerun が立って
+  // いれば、フラグを下ろしてから runReload() を呼び直し、取りこぼした変更を
+  // 1 回の追加 reload にまとめて反映する。連続で何度トリガーされても、
+  // 合流する追加実行は最大 1 回である。stopped の場合は従来どおり何もしない。
+  let pendingRerun = false;
   const runReload = (): void => {
-    if (stopped || reloadPromise) return;
+    if (stopped) return;
+    if (reloadPromise) {
+      pendingRerun = true;
+      return;
+    }
     const currentReload = Promise.resolve()
       .then(async () => {
         // 複数の監視対象パスが同じ reload コールバックを共有し得るため、
@@ -79,6 +84,10 @@ export function startFileReload(
       })
       .finally(() => {
         if (reloadPromise === currentReload) reloadPromise = undefined;
+        if (pendingRerun && !stopped) {
+          pendingRerun = false;
+          runReload();
+        }
       });
     reloadPromise = currentReload;
   };
