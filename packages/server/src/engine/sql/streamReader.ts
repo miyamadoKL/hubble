@@ -1,5 +1,14 @@
 /**
  * Node.js Readable ストリームから固定サイズの行バッチを読み出すヘルパー。
+ *
+ * Node 24 の `readable.iterator({ destroyOnReturn: false })` への置換を
+ * PoC で検証したが、採用しなかった。行数が `SQL_BATCH_SIZE` ちょうどで
+ * 終端に達した場合、標準 iterator は最後の行を返した時点では終端を通知せず、
+ * 次の `next()` を呼んで初めて `done: true` を返す。これにより、既存の
+ * 「最終バッチで即座に FINISHED」という契約が崩れ、空の追加ページを伴う
+ * RUNNING 応答が発生する回帰が確認された。この終端判定を lookahead と
+ * 保持 buffer で埋め戻すと標準 API への状態所有の移譲にならないため、
+ * 空の追加ページを許容する製品仕様変更を行わない限り、このキュー方式を維持する。
  */
 import { SQL_BATCH_SIZE } from './constants';
 
@@ -13,6 +22,12 @@ export interface RowStreamReaderOptions {
   queueHighWaterMultiplier?: number;
 }
 
+/**
+ * Readable ストリームの `data`/`end`/`error` イベントを内部キューへ蓄積し、
+ * `readBatch` による pull 型の読み出しへ変換する。キューが高水位に達したら
+ * ストリームを pause し、読み出しで水位が下がったら resume する単純な
+ * 背圧制御を自前で持つ。
+ */
 export class RowStreamReader {
   private readonly queue: unknown[][] = [];
   private done = false;
@@ -50,7 +65,7 @@ export class RowStreamReader {
     stream.on('error', this.onError);
   }
 
-  /** キューに溜まっている行数(テスト・診断用)。 */
+  /** キューに溜まっている行数(テストと診断用)。 */
   queueDepth(): number {
     return this.queue.length;
   }
@@ -61,7 +76,7 @@ export class RowStreamReader {
   }
 
   /**
-   * リスナ解除と pause 解除。接続返却・破棄前に呼ぶ。
+   * リスナ解除と pause 解除。接続返却や破棄の前に呼ぶ。
    */
   dispose(): void {
     if (this.disposed) return;

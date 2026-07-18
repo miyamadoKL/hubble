@@ -47,13 +47,18 @@ export interface QueryResultObserver {
   onSettled?: (exec: QueryExecution) => void;
 }
 
-// バッファが maxRows に到達したときの挙動: 'truncate' はそこで受信を打ち切って
-// バッファするが Trino 側のクエリ自体は最後まで走らせる（rowCount は総数を反映）。
-// 'cancel' はバッファが truncate された時点で Trino クエリ自体を DELETE で止める。
+/**
+ * バッファが maxRows に到達したときの挙動。
+ * `truncate` はそこで受信を打ち切ってバッファするが Trino 側のクエリ自体は
+ * 最後まで走らせる（rowCount は総数を反映する）。`cancel` はバッファが
+ * truncate された時点で Trino クエリ自体を DELETE で止める。
+ */
 export type OverflowMode = 'truncate' | 'cancel';
 
-// `QueryExecution` の生成に必要な初期値一式。呼び出し元（registry.ts）が
-// 提出パラメータと依存（TrinoClient、時刻源）をまとめて渡す。
+/**
+ * `QueryExecution` の生成に必要な初期値一式。呼び出し元（registry.ts）が
+ * 提出パラメータと依存（TrinoClient、時刻源）をまとめて渡す。
+ */
 export interface QueryExecutionInit {
   queryId: string;
   statement: string;
@@ -65,10 +70,8 @@ export interface QueryExecutionInit {
   client: StatementClient;
   /** クエリ開始時に固定した実行先エンジン（CSV 再実行もこの参照を使う）。 */
   engine: QueryEngine;
-  /** Wall-clock time source (injectable for tests). */
   // テスト時に時刻を差し替えられるようにするための注入ポイント。
   now?: () => number;
-  /** Called when the query reaches a terminal state. */
   // 終端状態（finished/failed/canceled）に達した瞬間に一度だけ呼ばれるフック。
   // registry/service 側の履歴更新などに使われる。
   onSettled?: (exec: QueryExecution) => void;
@@ -82,10 +85,6 @@ export interface QueryExecutionInit {
 type Listener = (event: QueryEvent) => void;
 
 /**
- * A single query's lifecycle and buffered result. Drives the Trino polling
- * loop, accumulates rows in an in-memory page store, and fans out SSE events
- * to subscribers. Terminal states: finished | failed | canceled.
- *
  * 1 件のクエリのライフサイクルと結果バッファを表すクラス。Trino のポーリング
  * ループを駆動し、受信した行をメモリ上のページストアに蓄積しつつ、購読者
  * （SSE ハンドラ等）へイベントをファンアウトする。終端状態は
@@ -117,17 +116,13 @@ export class QueryExecution {
   stats?: QueryStats;
   error?: ApiErrorDetail;
   finishedAt?: number;
-  /** True once buffering stopped at `maxRows` while the query kept running. */
   // maxRows に達してバッファへの追加を打ち切った後に true になる。
   truncated = false;
-  /** Session mutations to reflect on completion (set-catalog/schema/session). */
   // SET CATALOG/SCHEMA/SESSION などクエリ完了時に上位セッションへ反映すべき変更。
   readonly mutations: TrinoSessionMutations = emptySessionMutations();
 
-  /** Buffered rows (capped at maxRows when overflowMode === 'truncate'). */
   // 実際にメモリへ保持している行データ本体。
   private readonly rows: unknown[][] = [];
-  /** Total rows produced by Trino (may exceed buffered count when truncated). */
   // Trino が実際に生成した総行数。truncate 時はバッファ件数より大きくなり得る。
   private producedRows = 0;
 
@@ -141,7 +136,6 @@ export class QueryExecution {
   private cancelRequested = false;
   // registry の slot を取得して run() に入ったか。state='queued' とは別に管理する。
   private runStarted = false;
-  /** Resolves when the execution reaches a terminal state. */
   // settled Promise を解決するための resolve 関数（コンストラクタ内で束縛）。
   private settledResolve!: () => void;
   readonly settled: Promise<void>;
@@ -224,7 +218,6 @@ export class QueryExecution {
       try {
         l(event);
       } catch {
-        // A failing listener must not break the loop or other listeners.
         // 1 つのリスナーが例外を投げても、他の購読者への配信やループ自体は継続する。
       }
     }
@@ -252,7 +245,6 @@ export class QueryExecution {
     return snap;
   }
 
-  /** Snapshot of all already-buffered rows, for SSE replay. */
   // SSE 新規接続時のリプレイ（sse.ts の buildReplayEvents）用に、現在のバッファを
   // 丸ごとコピーして返す（以降の追加行の影響を受けないスナップショット）。
   bufferedRows(): unknown[][] {
@@ -304,7 +296,6 @@ export class QueryExecution {
     this.emit({ type: 'stats', stats });
   }
 
-  /** Request cancellation. Safe to call before, during, or after the run. */
   // キャンセル要求。run() の開始前/実行中/実行後いずれのタイミングで呼ばれても
   // 安全なように設計されている。すでに終端状態なら何もしない。
   async requestCancel(): Promise<void> {
@@ -334,9 +325,6 @@ export class QueryExecution {
   }
 
   /**
-   * Drive the polling loop to completion. Resolves (never rejects) when the
-   * query reaches a terminal state; failures are recorded as `error` + state.
-   *
    * クエリのライフサイクル全体を駆動するメインループ。POST で開始し、
    * nextUri がある限り GET でポーリングを続け、終端状態に達したら settle() で
    * 終了処理を行う。例外を投げることはなく（reject しない）、失敗は
@@ -394,7 +382,6 @@ export class QueryExecution {
         return;
       }
       const { detail } = toErrorResponse(err);
-      // A structured Trino/user error is a query failure; transport faults too.
       // 構造化された Trino/ユーザーエラーもトランスポート層の障害も、
       // ここでは同様に failed として扱う。
       const state: QueryState = err instanceof AppError && err.status >= 500 ? 'failed' : 'failed';

@@ -2,17 +2,17 @@
  * このファイルは Query Guard の判定ロジック（許可/警告/ブロックの決定）を
  * 提供する。
  *
- * 役割: `estimateService.ts` が EXPLAIN IO の見積もり結果（スキャン推定
- * バイト数や行数、または見積もり不能を示すステータス）を渡すと、設定された
- * 上限値、モード、不明時ポリシーに基づいて `GuardVerdict`（decision +
- * reasons）を返す純粋関数 `computeVerdict` を中心に構成される。副作用や
- * I/O は一切持たず、単体テスト（guardVerdict.test.ts）で網羅的に検証される
- * ロジックの核。
+ * 役割: EXPLAIN IO の見積もり結果（スキャン推定バイト数や行数、または
+ * 見積もり不能を示すステータス）を渡すと、設定された上限値、モード、
+ * 不明時ポリシーに基づいて `GuardVerdict`（decision + reasons）を返す
+ * 純粋関数 `computeVerdict` を中心に構成される。副作用や I/O は一切持たず、
+ * 単体テスト（guardVerdict.test.ts）で網羅的に検証されるロジックの核。
  *
- * アーキテクチャ上の位置づけ: `estimateService.ts` からのみ呼ばれる。
- * 上限値やモードの取得元（`ServerConfig` -> `EstimateGuardConfig`）や
- * EXPLAIN の実行は関与せず、あくまで「入力（見積もり値 + 設定）から
- * 出力（判定）を導く」変換のみを担当する。
+ * アーキテクチャ上の位置づけ: `computeVerdict` は `engine/trinoEstimate.ts`
+ * の `buildResult` からのみ呼ばれる。上限値やモードの取得元
+ * （`ServerConfig` -> `EstimateGuardConfig`）や EXPLAIN の実行は関与せず、
+ * あくまで「入力（見積もり値 + 設定）から出力（判定）を導く」変換のみを
+ * 担当する。
  */
 import type {
   EstimateStatus,
@@ -22,35 +22,27 @@ import type {
   GuardVerdict,
 } from '@hubble/contracts';
 
-/** Limits + policy the verdict is computed against (Query Guard feature). */
-// 判定の元になる上限値とポリシー一式（Query Guard 機能）。
 export interface GuardLimits {
   mode: GuardMode;
-  /** Scan-bytes limit (0 = no limit). */
-  // スキャンバイト数の上限（0 = 無制限）。
+  /** スキャンバイト数の上限（0 = 無制限）。 */
   maxScanBytes: number;
-  /** Scan-rows limit (0 = no limit). */
-  // スキャン行数の上限（0 = 無制限）。
+  /** スキャン行数の上限（0 = 無制限）。 */
   maxScanRows: number;
   onUnknown: GuardOnUnknown;
 }
 
-// computeVerdict への入力（EXPLAIN IO のパース結果から取り出した値）。
 export interface VerdictInput {
   status: EstimateStatus;
-  /** Estimated input scan bytes (null = unknown). */
-  // 見積もられた入力スキャンバイト数（null = 不明）。
+  /** 見積もられた入力スキャンバイト数（null = 不明）。 */
   scanBytes: number | null;
   /** 全入力テーブルのバイト数を見積もれた場合は true。 */
   scanBytesComplete: boolean;
-  /** Estimated input scan rows (null = unknown). */
-  // 見積もられた入力スキャン行数（null = 不明）。
+  /** 見積もられた入力スキャン行数（null = 不明）。 */
   scanRows: number | null;
   /** 全入力テーブルの行数を見積もれた場合は true。 */
   scanRowsComplete: boolean;
 }
 
-/** Group digits for human-readable reasons: 6001215 -> "6,001,215". */
 // 理由メッセージを人間が読みやすいよう桁区切りにする: 6001215 -> "6,001,215"。
 function fmt(n: number): string {
   return Math.round(n).toLocaleString('en-US');
@@ -59,28 +51,17 @@ function fmt(n: number): string {
 // 判定の重大度（deciding 用の内部指標）。allow < warn < block。
 const SEVERITY: Record<GuardDecision, number> = { allow: 0, warn: 1, block: 2 };
 
-/** Pick the more severe of two decisions. */
 // 2 つの判定のうち、より重大な（=強い制約を要求する）方を選ぶ。
 function worse(a: GuardDecision, b: GuardDecision): GuardDecision {
   return SEVERITY[a] >= SEVERITY[b] ? a : b;
 }
 
-/** Map an ON_UNKNOWN policy to the decision it requests. */
 // ON_UNKNOWN ポリシーを、それが要求する判定へ変換する（1:1 対応）。
 function onUnknownDecision(policy: GuardOnUnknown): GuardDecision {
-  return policy; // 'allow' | 'warn' | 'block' map 1:1 to a decision tier.
+  return policy;
 }
 
 /**
- * Compute the guard verdict (pure function — the unit under test).
- *
- * Two kinds of "cause" contribute a desired decision tier:
- *  - a limit exceedance wants `block` (the strongest a real violation can ask);
- *  - an un-estimable query wants whatever ON_UNKNOWN says (allow/warn/block).
- *
- * The strongest requested tier wins, then `warn` mode caps any `block` down to
- * `warn` (warn mode never blocks). `unsupported` / `disabled` always allow.
- *
  * ガードの判定を計算する（純粋関数であり、このファイルの単体テスト対象）。
  *
  * 判定に寄与する「原因」は 2 種類ある:
@@ -99,14 +80,11 @@ export function computeVerdict(input: VerdictInput, limits: GuardLimits): GuardV
   }
 
   const reasons: string[] = [];
-  // Each cause requests a decision tier; the strongest wins.
   // 各「原因」が要求する判定を requests に積み、最後に最も強いものを採用する。
   const requests: GuardDecision[] = [];
   const want = (decision: GuardDecision): void => {
     requests.push(decision);
   };
-  // With no limit configured there is nothing to protect, so an un-estimable
-  // query is moot — ON_UNKNOWN only applies when a limit is actually set.
   // 上限が何も設定されていなければ保護すべき対象が無いため、見積もり不能で
   // あること自体は無意味になる。ON_UNKNOWN は実際に上限が設定されている
   // 場合にのみ適用される。
@@ -121,8 +99,8 @@ export function computeVerdict(input: VerdictInput, limits: GuardLimits): GuardV
       want(decision);
     }
   } else {
-    // status === 'estimated'
-    // EXPLAIN が成功し、少なくとも一部の見積もり値が得られたケース。
+    // ここに来るのは status === 'estimated'、つまり EXPLAIN が成功し、
+    // 少なくとも一部の見積もり値が得られたケース。
     const { scanBytes, scanRows, scanBytesComplete, scanRowsComplete } = input;
     const bytesKnown = scanBytes !== null;
     const rowsKnown = scanRows !== null;
@@ -169,7 +147,6 @@ export function computeVerdict(input: VerdictInput, limits: GuardLimits): GuardV
 
   // 集めた要求の中で最も強い判定を採用する（何も要求が無ければ allow）。
   const requested = requests.reduce<GuardDecision>((acc, d) => worse(acc, d), 'allow');
-  // warn mode never blocks: cap a requested block down to warn.
   // warn モードでは block を要求されていても warn に格下げする
   // （warn モードは常に非破壊的な警告に留める）。
   const decision = limits.mode === 'warn' && requested === 'block' ? 'warn' : requested;

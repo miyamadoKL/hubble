@@ -21,6 +21,11 @@ export interface BuildEnginesOptions {
   pgPoolFactory?: PgPoolFactory;
 }
 
+/**
+ * 解決済みデータソース一覧から、id をキーとする QueryEngine マップを構築する。
+ * 各エンジンは LeasedEngine でラップされ、close 前の drain 待機を持つ。
+ * 既定データソース id は先頭要素の id になる。
+ */
 export function buildEngines(
   datasources: ResolvedDatasource[],
   options: BuildEnginesOptions,
@@ -34,6 +39,7 @@ export function buildEngines(
   return { engines, defaultDatasourceId: first.id };
 }
 
+/** データソース種別に応じたエンジン実装を選び、LeasedEngine でラップして返す。 */
 export function createEngineForDatasource(
   ds: ResolvedDatasource,
   options: BuildEnginesOptions,

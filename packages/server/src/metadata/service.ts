@@ -27,7 +27,6 @@ interface CacheEntry<T> {
   updatedAt: number;
   generation: number;
   engine: QueryEngine;
-  /** In-flight revalidation, deduped so we never double-fetch the same key. */
   // 実行中のバックグラウンド再取得。同じキーに対して二重に fetch しないよう
   // このプロミスで重複排除する。
   revalidating?: Promise<void>;
@@ -46,14 +45,6 @@ interface MetadataFetchResult<T> {
 }
 
 /**
- * TTL cache with stale-while-revalidate over QueryEngine metadata methods.
- *
- * - Fresh hit (within TTL): served from cache, `{source:'cache', stale:false}`.
- * - Stale hit: served immediately as `{source:'cache', stale:true}` and a
- *   background refresh is kicked off (deduped per key).
- * - Miss: fetched synchronously, `{source:'live', stale:false}`.
- * - `refresh()` forces a synchronous re-fetch and updates the cache.
- *
  * `QueryEngine` に対する TTL + stale-while-revalidate キャッシュ。
  * データソースと principal ごとに独立したキャッシュを保持する（キーに
  * `datasourceId` と principal を含める）。別キーへのアクセス時に期限切れエントリを
@@ -70,6 +61,10 @@ interface MetadataFetchResult<T> {
  *   経ない明示的なリフレッシュ）。
  */
 export class MetadataService {
+  // `lru-cache` への置換は PoC 前に見送った。同種の cache 実装
+  // （estimateService.ts）を計測したところ、CacheEntry、Map、走査、
+  // 有効期限判定、保存、eviction を合計しても 47 実装行しかなく、
+  // 依存の import と初期化を足す前から 100 実装行の削減基準に届かない。
   private readonly catalogs = new Map<string, CacheEntry<Catalog[]>>();
   private readonly schemas = new Map<string, CacheEntry<SchemaItem[]>>();
   private readonly tables = new Map<string, CacheEntry<TableItem[]>>();
@@ -208,7 +203,6 @@ export class MetadataService {
       return this.envelope(entry.items, 'cache', false, entry.updatedAt);
     }
     if (entry && entry.generation === generation && this.isStale(entry)) {
-      // Serve stale, revalidate in background (deduped).
       // stale ヒット: 古い値を即座に返しつつ、バックグラウンドで再取得する。
       // 既に revalidating が進行中なら新たな fetch は起動しない（重複排除）。
       if (!entry.revalidating) {
@@ -229,7 +223,6 @@ export class MetadataService {
             });
           })
           .catch(() => {
-            // Keep the stale entry on failure; clear the in-flight marker.
             // 再取得に失敗しても既存の stale なエントリはそのまま残し、
             // 次回呼び出しで再度リトライできるよう進行中マーカーだけ解除する。
             entry.revalidating = undefined;
@@ -237,7 +230,6 @@ export class MetadataService {
       }
       return this.envelope(entry.items, 'cache', true, entry.updatedAt);
     }
-    // Miss: fetch synchronously.
     // ミス: キャッシュに存在しないため、同期的に fetch してから保存し返却する。
     const fetched = await this.fetchStable(requestedDatasourceId, fetcher);
     const updatedAt = this.now();
@@ -354,7 +346,6 @@ export class MetadataService {
     return { catalog, schema, name: table, columns: res.items };
   }
 
-  /** Sample rows are not cached (always live — they are tiny and exploratory). */
   // サンプル行は探索的な用途で使われる小さいデータのため、キャッシュせず
   // 常に QueryEngine へライブ問い合わせする。
   getSample(
@@ -371,9 +362,6 @@ export class MetadataService {
   }
 
   /**
-   * Force-refresh a slice of the cache. With no catalog: catalogs. With catalog
-   * only: that catalog's schemas. With catalog+schema: that schema's tables.
-   *
    * キャッシュの一部を強制的に再取得して更新する。引数の与え方で対象範囲が
    * 変わる: catalog 省略ならカタログ一覧、catalog のみならそのカタログの
    * スキーマ一覧、catalog+schema ならそのスキーマのテーブル一覧を更新する。
