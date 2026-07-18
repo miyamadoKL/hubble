@@ -3,15 +3,10 @@
  */
 import { useState } from 'react';
 import type { Alert, CreateAlertRequest, SavedQuery, UpdateAlertRequest } from '@hubble/contracts';
-import {
-  alertOpSchema,
-  alertSelectorSchema,
-  cronExpression,
-  defaultAlertNotifications,
-} from '@hubble/contracts';
+import { alertOpSchema, alertSelectorSchema, defaultAlertNotifications } from '@hubble/contracts';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
-import { CRON_PRESETS } from './scheduleFormat';
+import { ScheduleBuilder } from './ScheduleBuilder';
 import { cn } from '../../utils/cn';
 
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
@@ -88,7 +83,8 @@ function AlertFormModalBody({
   const [selector, setSelector] = useState(alert?.selector ?? 'first');
   const [rearm, setRearm] = useState(String(alert?.rearm ?? 0));
   const [muted, setMuted] = useState(alert?.muted ?? false);
-  const [cron, setCron] = useState(alert?.cron ?? CRON_PRESETS[2]!.cron);
+  const [cron, setCron] = useState(alert?.cron ?? '0 9 * * *');
+  const [cronValid, setCronValid] = useState(true);
   const initialNotifications = alert?.notifications ?? defaultAlertNotifications;
   const [notifySlack, setNotifySlack] = useState(initialNotifications.channels.includes('slack'));
   const [notifyEmail, setNotifyEmail] = useState(initialNotifications.channels.includes('email'));
@@ -100,7 +96,6 @@ function AlertFormModalBody({
   );
   const [webhookUrl, setWebhookUrl] = useState(initialNotifications.webhookUrl ?? '');
 
-  const cronValid = cronExpression.safeParse(cron).success;
   const nameValid = name.trim().length > 0;
   const savedQueryValid = savedQueryId.length > 0;
   const columnValid = columnName.trim().length > 0;
@@ -243,45 +238,10 @@ function AlertFormModalBody({
           </label>
         </div>
 
-        {/* Cron: ScheduleFormModal と同じプリセットチップ + 妥当性フィードバック。 */}
+        {/* Schedule: 毎時/毎日/毎週/毎月のプリセット、または上級者向けの cron 直接入力。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Schedule (cron)</span>
-          <div className="flex flex-wrap gap-1.5">
-            {CRON_PRESETS.map((preset) => (
-              <button
-                key={preset.cron}
-                type="button"
-                aria-pressed={cron === preset.cron}
-                onClick={() => setCron(preset.cron)}
-                className={cn(
-                  'rounded-full px-2.5 py-0.5 text-2xs font-medium transition-colors',
-                  cron === preset.cron
-                    ? 'bg-accent-soft text-accent'
-                    : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
-                )}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <input
-            value={cron}
-            aria-label="Cron expression"
-            spellCheck={false}
-            onChange={(e) => setCron(e.target.value)}
-            placeholder="minute hour day-of-month month day-of-week"
-            className={cn(TEXT_INPUT, 'font-mono', !cronValid && 'border-error focus:border-error')}
-          />
-          {/* cron 式が 5 フィールド形式として妥当かどうかでエラー文言と補足説明を切り替える。 */}
-          {!cronValid ? (
-            <p role="alert" className="font-mono text-2xs text-error">
-              Must be a 5-field cron expression (minute hour day-of-month month day-of-week).
-            </p>
-          ) : (
-            <p className="font-mono text-2xs text-ink-subtle">
-              Next evaluation time is computed by the server and shown in the list after saving.
-            </p>
-          )}
+          <span className={FIELD_LABEL}>Schedule</span>
+          <ScheduleBuilder value={cron} onChange={setCron} onValidChange={setCronValid} />
         </div>
 
         <label className="flex items-center gap-2 text-sm text-ink-strong">

@@ -73,6 +73,18 @@ describe('GET /api/config', () => {
     expect(parsed.defaults.limit).toBe(5000);
     expect(parsed.version).toBe('0.1.0');
   });
+
+  // schedule/cron.ts は server local timezone（Node プロセスの実行環境）で cron 式を
+  // 評価するため、web のスケジュールビルダーが読み下しに明記できるよう、この
+  // プロセス自身の Intl.DateTimeFormat().resolvedOptions().timeZone を公開すること
+  // を確認する（IANA タイムゾーン名の形として空でない文字列であること）。
+  it('exposes the server process timezone for the schedule builder', async () => {
+    const { app } = await createTestContext();
+    const res = await app.request(apiRoutes.config());
+    const parsed = appConfigSchema.parse(await res.json());
+    expect(parsed.serverTimeZone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(parsed.serverTimeZone.length).toBeGreaterThan(0);
+  });
 });
 
 describe('unknown /api route', () => {

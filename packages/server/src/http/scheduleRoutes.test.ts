@@ -383,4 +383,123 @@ describe('schedule routes', () => {
     expect((await response.json()) as unknown).toMatchObject({ error: { code: 'INTERNAL' } });
     await ctx.services.shutdown();
   });
+
+  // savedQueryId 参照モードの schedule 作成/更新は、その時点で owner がアクセス
+  // できる saved query かどうかを検証する (存在しなければ 404)。
+  describe('savedQueryId validation', () => {
+    it('creates a schedule that references a saved query', async () => {
+      const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+      const saved = await ctx.services.savedQueries.create('admin', {
+        name: 'sq',
+        statement: 'SELECT 1',
+      });
+
+      const res = await ctx.app.request('/api/schedules', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ name: 'via-saved', savedQueryId: saved.id, cron: '0 9 * * *' }),
+      });
+      expect(res.status).toBe(201);
+      const body = scheduleSchema.parse(await res.json());
+      expect(body.savedQueryId).toBe(saved.id);
+      expect(body.statement).toBeNull();
+      await ctx.services.shutdown();
+    });
+
+    it('rejects creation with a 404 when savedQueryId does not exist', async () => {
+      const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+      const res = await ctx.app.request('/api/schedules', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          name: 'dangling',
+          savedQueryId: 'sq_does_not_exist',
+          cron: '0 9 * * *',
+        }),
+      });
+      expect(res.status).toBe(404);
+      await ctx.services.shutdown();
+    });
+
+    it('rejects a request specifying both statement and savedQueryId with a 400', async () => {
+      const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+      const saved = await ctx.services.savedQueries.create('admin', {
+        name: 'sq',
+        statement: 'SELECT 1',
+      });
+      const res = await ctx.app.request('/api/schedules', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          name: 'both',
+          statement: 'SELECT 2',
+          savedQueryId: saved.id,
+          cron: '0 9 * * *',
+        }),
+      });
+      expect(res.status).toBe(400);
+      await ctx.services.shutdown();
+    });
+
+    it('rejects creation with a 400 when neither statement nor savedQueryId is given', async () => {
+      const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+      const res = await ctx.app.request('/api/schedules', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ name: 'neither', cron: '0 9 * * *' }),
+      });
+      expect(res.status).toBe(400);
+      await ctx.services.shutdown();
+    });
+
+    it('switches an existing schedule from direct statement to a saved query reference', async () => {
+      const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+      const saved = await ctx.services.savedQueries.create('admin', {
+        name: 'sq',
+        statement: 'SELECT 1',
+      });
+      const created = scheduleSchema.parse(
+        await (
+          await ctx.app.request('/api/schedules', {
+            method: 'POST',
+            headers: jsonHeaders(),
+            body: JSON.stringify({ name: 'switching', statement: 'SELECT 1', cron: '0 9 * * *' }),
+          })
+        ).json(),
+      );
+      expect(created.statement).toBe('SELECT 1');
+      expect(created.savedQueryId).toBeNull();
+
+      const patched = await ctx.app.request(`/api/schedules/${created.id}`, {
+        method: 'PATCH',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ savedQueryId: saved.id }),
+      });
+      expect(patched.status).toBe(200);
+      const updated = scheduleSchema.parse(await patched.json());
+      expect(updated.savedQueryId).toBe(saved.id);
+      expect(updated.statement).toBeNull();
+      await ctx.services.shutdown();
+    });
+
+    it('rejects an update to a nonexistent savedQueryId with a 404', async () => {
+      const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+      const created = scheduleSchema.parse(
+        await (
+          await ctx.app.request('/api/schedules', {
+            method: 'POST',
+            headers: jsonHeaders(),
+            body: JSON.stringify({ name: 'x', statement: 'SELECT 1', cron: '0 9 * * *' }),
+          })
+        ).json(),
+      );
+      const res = await ctx.app.request(`/api/schedules/${created.id}`, {
+        method: 'PATCH',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ savedQueryId: 'sq_does_not_exist' }),
+      });
+      expect(res.status).toBe(404);
+      await ctx.services.shutdown();
+    });
+  });
 });

@@ -70,6 +70,7 @@ function toSchedule(record: ScheduleRecord, latest?: ScheduleRunRecord): Schedul
     id: record.id,
     name: record.name,
     statement: record.statement,
+    savedQueryId: record.savedQueryId,
     catalog: record.catalog,
     schema: record.schema,
     cron: record.cron,
@@ -129,6 +130,30 @@ async function assertScheduleStatementWritable(
   });
 }
 
+/**
+ * savedQueryId 指定時に、その時点で owner (呼び出し principal) がアクセスできる
+ * saved query かどうかを確認する。見つからなければ 404 を投げる。
+ * ここでの確認は作成/更新リクエストの入力検証であり、実行時認可（scheduler が
+ * 発火のたびに再解決する owner ロールでのアクセス可否）を代替するものではない
+ * (scheduleRoutes.md の設計コメント、および scheduler.ts の実行時解決を参照)。
+ * @returns アクセス可能な saved query の現在の statement (作成/更新時の
+ *   EXPLAIN VALIDATE 事前検証に使う)。
+ */
+async function assertSavedQueryAccessible(
+  services: Services,
+  principal: { user: string; groups?: string[]; role: { name: string } },
+  savedQueryId: string,
+): Promise<{ statement: string }> {
+  const sq = await services.savedQueries.get(
+    { user: principal.user, groups: principal.groups ?? [], role: principal.role.name },
+    savedQueryId,
+  );
+  if (!sq) {
+    throw AppError.notFound(`Saved query ${savedQueryId} not found`);
+  }
+  return { statement: sq.statement };
+}
+
 function assertValidationAllowsWrite(result: ValidationResult): void {
   if (result.ok) return;
   if (result.kind === 'unavailable') return; // lenient: allow, re-checked at run time
@@ -170,6 +195,7 @@ export function scheduleRoutes(services: Services): App {
   });
 
   // POST /api/schedules: 新規スケジュールを作成する。作成前に EXPLAIN (TYPE VALIDATE) で検証する。
+  // statement と savedQueryId はどちらか一方のみ (契約層の refine で保証済み)。
   app.post('/', async (c) => {
     const owner = c.var.principal.user;
     const body = await parseJsonBody(c, createScheduleRequestSchema);
@@ -180,8 +206,15 @@ export function scheduleRoutes(services: Services): App {
       body.datasourceId,
       services.defaultDatasourceId,
     );
+    // savedQueryId 指定時は、まずこの時点で owner がアクセスできる saved query かを
+    // 確認する (できなければ 404)。検証に使う statement はその時点の内容だが、
+    // 実行時 (scheduler) は毎回 savedQueries.get() で再解決するため、ここでの
+    // 検証結果をキャッシュして使い回すことはない。
+    const statementForValidation = body.statement
+      ? body.statement
+      : (await assertSavedQueryAccessible(services, c.var.principal, body.savedQueryId!)).statement;
     const validation = await engine.validate({
-      statement: body.statement,
+      statement: statementForValidation,
       catalog: body.catalog,
       schema: body.schema,
       principal: owner,
@@ -191,7 +224,7 @@ export function scheduleRoutes(services: Services): App {
     await assertScheduleStatementWritable(
       services,
       c.var.principal,
-      body.statement,
+      statementForValidation,
       engine,
       body.catalog,
       body.schema,
@@ -199,6 +232,7 @@ export function scheduleRoutes(services: Services): App {
     const record = await services.schedules.create(owner, {
       name: body.name,
       statement: body.statement,
+      savedQueryId: body.savedQueryId,
       catalog: body.catalog,
       schema: body.schema,
       cron: body.cron,
@@ -236,6 +270,7 @@ export function scheduleRoutes(services: Services): App {
     // 実行に影響しうるフィールドが変更された場合のみ、コストのかかる再検証を行う。
     const statementChanges =
       body.statement !== undefined ||
+      body.savedQueryId !== undefined ||
       body.catalog !== undefined ||
       body.schema !== undefined ||
       body.cron !== undefined ||
@@ -250,22 +285,53 @@ export function scheduleRoutes(services: Services): App {
         targetDatasourceId,
         services.defaultDatasourceId,
       );
-      const validation = await engine.validate({
-        statement: body.statement ?? existing.statement,
-        catalog: body.catalog !== undefined ? body.catalog : existing.catalog,
-        schema: body.schema !== undefined ? body.schema : existing.schema,
-        principal: owner,
-        roleName: c.var.principal.role.name,
-      });
-      assertValidationAllowsWrite(validation);
-      await assertScheduleStatementWritable(
-        services,
-        c.var.principal,
-        body.statement ?? existing.statement,
-        engine,
-        body.catalog !== undefined ? body.catalog : existing.catalog,
-        body.schema !== undefined ? body.schema : existing.schema,
-      );
+      // 検証に使う statement を決める。
+      // - body.statement が来た場合: 直書きモードへの切替/更新。それを使う。
+      // - body.savedQueryId が来た場合: 参照モードへの切替/更新。この時点で
+      //   アクセス可能か確認し (できなければ 404)、その現在の statement を使う。
+      // - どちらも来ていない場合: 既存の設定を維持。既存が savedQueryId 参照なら
+      //   その時点の statement を best-effort で取得し、取得できなければ
+      //   (共有解除/削除等) 再検証自体をスキップする。この場合の実行時失敗検出は
+      //   scheduler の実行時解決 (毎回 savedQueries.get) が担う。
+      let statementForValidation: string | undefined;
+      if (body.statement !== undefined) {
+        statementForValidation = body.statement;
+      } else if (body.savedQueryId !== undefined) {
+        statementForValidation = (
+          await assertSavedQueryAccessible(services, c.var.principal, body.savedQueryId)
+        ).statement;
+      } else if (existing.savedQueryId) {
+        const sq = await services.savedQueries.get(
+          {
+            user: c.var.principal.user,
+            groups: c.var.principal.groups ?? [],
+            role: c.var.principal.role.name,
+          },
+          existing.savedQueryId,
+        );
+        statementForValidation = sq?.statement;
+      } else {
+        statementForValidation = existing.statement ?? undefined;
+      }
+
+      if (statementForValidation !== undefined) {
+        const validation = await engine.validate({
+          statement: statementForValidation,
+          catalog: body.catalog !== undefined ? body.catalog : existing.catalog,
+          schema: body.schema !== undefined ? body.schema : existing.schema,
+          principal: owner,
+          roleName: c.var.principal.role.name,
+        });
+        assertValidationAllowsWrite(validation);
+        await assertScheduleStatementWritable(
+          services,
+          c.var.principal,
+          statementForValidation,
+          engine,
+          body.catalog !== undefined ? body.catalog : existing.catalog,
+          body.schema !== undefined ? body.schema : existing.schema,
+        );
+      }
     }
 
     const updated = await services.schedules.update(owner, id, {

@@ -13,27 +13,22 @@
 import { useMemo, useState } from 'react';
 import type {
   DatasourceSummary,
+  SavedQuery,
   Schedule,
   CreateScheduleRequest,
   UpdateScheduleRequest,
 } from '@hubble/contracts';
-import {
-  cronExpression,
-  defaultRetryPolicy,
-  defaultScheduleNotifications,
-} from '@hubble/contracts';
+import { defaultRetryPolicy, defaultScheduleNotifications } from '@hubble/contracts';
 import { AlertTriangle } from 'lucide-react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
-import {
-  checkStatement,
-  CRON_PRESETS,
-  clampRetryField,
-  RETRY_BOUNDS,
-  type FormError,
-} from './scheduleFormat';
+import { checkStatement, clampRetryField, RETRY_BOUNDS, type FormError } from './scheduleFormat';
+import { ScheduleBuilder } from './ScheduleBuilder';
 import { cn } from '../../utils/cn';
 import { Dropdown } from '../common/Dropdown';
+
+/** クエリの入力方式。saved は既存の保存済みクエリ参照、direct は SQL 直接入力。 */
+type QueryMode = 'saved' | 'direct';
 
 /**
  * Create / edit form for a schedule (Query Scheduling feature). Modeled on the
@@ -56,6 +51,8 @@ interface ScheduleFormModalProps {
   datasources: DatasourceSummary[];
   /** 新規作成時の既定データソース id。 */
   defaultDatasourceId?: string;
+  /** 保存済みクエリ一覧（saved query 参照モードのピッカー表示用）。 */
+  savedQueries: SavedQuery[];
   /** 作成と更新のミューテーションが実行中かどうか。true の間は保存ボタンを無効化する。 */
   submitting: boolean;
   /** Server error from the last submit (null while clean). */
@@ -103,6 +100,7 @@ function ScheduleFormModalBody({
   context,
   datasources,
   defaultDatasourceId,
+  savedQueries,
   submitting,
   serverError,
   onClose,
@@ -112,10 +110,28 @@ function ScheduleFormModalBody({
   const editing = Boolean(schedule);
 
   const [name, setName] = useState(schedule?.name ?? '');
+  // クエリの入力方式: saved query 参照が既定（ユーザー指摘 2 の一貫性要件）。
+  // 編集時は既存スケジュールの現在のモードを復元する。
+  const [queryMode, setQueryMode] = useState<QueryMode>(
+    schedule ? (schedule.savedQueryId ? 'saved' : 'direct') : 'saved',
+  );
+  const initialSavedQueryId = schedule?.savedQueryId ?? savedQueries[0]?.id ?? '';
+  const [savedQueryId, setSavedQueryId] = useState(initialSavedQueryId);
   const [statement, setStatement] = useState(schedule?.statement ?? '');
-  const [catalog, setCatalog] = useState(schedule?.catalog ?? context.catalog ?? '');
-  const [schema, setSchema] = useState(schedule?.schema ?? context.schema ?? '');
-  const [cron, setCron] = useState(schedule?.cron ?? CRON_PRESETS[2]!.cron);
+  // 新規作成（schedule 未指定）かつ saved query が選択済みの場合、その保存済みクエリの
+  // catalog / schema / datasourceId を初期値の 3 点セットとして使う。編集時は既存
+  // schedule の値が authoritative なので、この初期値は使わない（下の各 useState 参照）。
+  const initialSavedQuery = !schedule
+    ? savedQueries.find((q) => q.id === initialSavedQueryId)
+    : undefined;
+  const [catalog, setCatalog] = useState(
+    schedule?.catalog ?? initialSavedQuery?.catalog ?? context.catalog ?? '',
+  );
+  const [schema, setSchema] = useState(
+    schedule?.schema ?? initialSavedQuery?.schema ?? context.schema ?? '',
+  );
+  const [cron, setCron] = useState(schedule?.cron ?? '0 9 * * *');
+  const [cronValid, setCronValid] = useState(true);
   const [enabled, setEnabled] = useState(schedule?.enabled ?? true);
   const [retry, setRetry] = useState(schedule?.retry ?? defaultRetryPolicy);
   const initialNotifications = schedule?.notifications ?? defaultScheduleNotifications;
@@ -126,17 +142,66 @@ function ScheduleFormModalBody({
     initialNotifications.emailTo?.join(', ') ?? '',
   );
   const [datasourceId, setDatasourceId] = useState(
-    schedule?.datasourceId ?? defaultDatasourceId ?? datasources[0]?.id ?? '',
+    () =>
+      schedule?.datasourceId ??
+      initialSavedQuery?.datasourceId ??
+      defaultDatasourceId ??
+      datasources[0]?.id ??
+      '',
   );
 
-  // フォームのバリデーション: SQL 文の構文チェック、cron 式の書式チェック、名前の必須
-  // チェックをまとめて評価する。いずれかが不成立、または送信中であれば保存不可。
-  const check = checkStatement(statement, catalog || undefined, schema || undefined);
-  const cronValid = cronExpression.safeParse(cron).success;
+  // saved query を選び直すたびに、その保存済みクエリの実行コンテキスト
+  // （datasourceId、catalog、schema）を 3 点セットで prefill する（schedule 側の
+  // 各値は引き続きユーザーが編集できる authoritative な値）。datasourceId は
+  // sq 自身が持っていなくても、意味上の既定データソースへ必ず更新する
+  // （前に選ばれていた別の saved query の datasourceId が取り残されるのを防ぐ）。
+  const applySavedQuery = (sq: SavedQuery) => {
+    setSavedQueryId(sq.id);
+    setDatasourceId(sq.datasourceId ?? defaultDatasourceId ?? datasources[0]?.id ?? '');
+    setCatalog(sq.catalog ?? '');
+    setSchema(sq.schema ?? '');
+  };
+  const selectSavedQuery = (id: string) => {
+    const sq = savedQueries.find((q) => q.id === id);
+    if (sq) applySavedQuery(sq);
+    else setSavedQueryId(id);
+  };
+  // 未選択のまま saved query 一覧が使える状態になったら、先頭候補へ復旧する
+  // （新規に届いた一覧、または後から saved モードへ切り替えた場合の両方で使う）。
+  const recoverSavedQuerySelection = () => {
+    if (savedQueryId) return;
+    const first = savedQueries[0];
+    if (first) applySavedQuery(first);
+  };
+
+  // saved query 一覧はモーダルを開いた後に非同期で届く（SchedulesPanel 側のクエリが
+  // 完了する前にモーダルを開くと、初回マウント時点では savedQueries が空配列）。
+  // saved モードで未選択のまま一覧が届いた場合、先頭候補へ復旧させる
+  // （プルダウンが「候補ゼロ」のまま固まって見える問題への対応）。direct モードで
+  // 一覧が届いた場合はここでは復旧せず、後で saved モードへ切り替えた時点
+  // （下の Saved query ボタンの onClick）で復旧する。
+  // React が推奨する「レンダー中に state を調整する」パターン (useEffect は使わない):
+  // props である savedQueries の参照が変わった回のレンダー中にだけ判定し、
+  // 前回の参照を state に保存しておくことで多重発火を防ぐ。
+  const [syncedSavedQueries, setSyncedSavedQueries] = useState(savedQueries);
+  if (savedQueries !== syncedSavedQueries) {
+    setSyncedSavedQueries(savedQueries);
+    if (queryMode === 'saved') recoverSavedQuerySelection();
+  }
+
+  // フォームのバリデーション: クエリ入力（direct なら SQL 構文チェック、saved なら
+  // 選択必須）、cron 式の妥当性、名前の必須チェックをまとめて評価する。
+  // いずれかが不成立、または送信中であれば保存不可。
+  const check =
+    queryMode === 'direct'
+      ? checkStatement(statement, catalog || undefined, schema || undefined)
+      : { ok: true as const };
+  const savedQueryValid = queryMode === 'saved' ? savedQueryId.length > 0 : true;
   const nameValid = name.trim().length > 0;
   const emailRecipients = parseEmailRecipients(notifyEmailTo);
   const notificationValid = !notifyOnFailure || !notifyEmail || emailRecipients.length > 0;
-  const canSave = nameValid && check.ok && cronValid && notificationValid && !submitting;
+  const canSave =
+    nameValid && check.ok && savedQueryValid && cronValid && notificationValid && !submitting;
 
   // リトライ設定の数値入力（文字列）をコントラクト定義の範囲にクランプしてから state に反映する。
   const setRetryField = (field: keyof typeof RETRY_BOUNDS, raw: string) => {
@@ -157,10 +222,13 @@ function ScheduleFormModalBody({
       ],
       ...(emailRecipients.length > 0 ? { emailTo: emailRecipients } : {}),
     };
+    // クエリ入力は statement / savedQueryId のどちらか一方のみを送る
+    // (契約層の refine が両方指定を拒否するため)。
+    const queryFields = queryMode === 'saved' ? { savedQueryId } : { statement };
     if (editing && schedule) {
       const body: UpdateScheduleRequest = {
         name: name.trim(),
-        statement,
+        ...queryFields,
         catalog: catalog.trim() ? catalog.trim() : null,
         schema: schema.trim() ? schema.trim() : null,
         cron,
@@ -173,7 +241,7 @@ function ScheduleFormModalBody({
     } else {
       const body: CreateScheduleRequest = {
         name: name.trim(),
-        statement,
+        ...queryFields,
         catalog: catalog.trim() || undefined,
         schema: schema.trim() || undefined,
         cron,
@@ -218,43 +286,104 @@ function ScheduleFormModalBody({
           />
         </label>
 
-        {/* Statement */}
+        {/* クエリの入力方式。saved query 参照が既定（ユーザー指摘 2: Alert との一貫性）。
+            Notebook で編集して保存したクエリをここから呼び出すのが基本の流れで、
+            SQL 直接入力は上級者向けの代替手段として残す。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Statement</span>
-          <textarea
-            value={statement}
-            aria-label="SQL statement"
-            spellCheck={false}
-            onChange={(e) => setStatement(e.target.value)}
-            placeholder="SELECT count(*) FROM tpch.tiny.nation"
-            rows={5}
-            className={cn(
-              TEXT_INPUT,
-              'resize-y font-mono text-xs leading-relaxed',
-              !check.ok && check.message && 'border-error focus:border-error',
-            )}
-          />
-          {/* 構文エラーがあればメッセージ（行/列があれば付記）を表示し、なければ
-              「実行前にローカル検証済み」という補足説明を表示する分岐。 */}
-          {!check.ok && check.message ? (
-            <p role="alert" className="flex items-start gap-1.5 font-mono text-2xs text-error">
-              <AlertTriangle size={13} strokeWidth={1.75} className="mt-px shrink-0" />
-              <span>
-                Syntax error
-                {check.line != null && (
-                  <span className="text-ink-subtle">
-                    {' '}
-                    (line {check.line}
-                    {check.column != null ? `, col ${check.column}` : ''})
-                  </span>
-                )}
-                : {check.message}
-              </span>
-            </p>
+          <span className={FIELD_LABEL}>Query</span>
+          <div className="flex gap-1.5" role="radiogroup" aria-label="Query source">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={queryMode === 'saved'}
+              onClick={() => {
+                setQueryMode('saved');
+                // direct モードのまま一覧が届いていた場合、切替の時点で復旧する
+                // （一覧到着時は queryMode !== 'saved' だったため復旧されていない）。
+                recoverSavedQuerySelection();
+              }}
+              className={cn(
+                'rounded-full px-2.5 py-1 text-2xs font-medium transition-colors',
+                queryMode === 'saved'
+                  ? 'bg-accent-soft text-accent'
+                  : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
+              )}
+            >
+              Saved query
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={queryMode === 'direct'}
+              onClick={() => setQueryMode('direct')}
+              className={cn(
+                'rounded-full px-2.5 py-1 text-2xs font-medium transition-colors',
+                queryMode === 'direct'
+                  ? 'bg-accent-soft text-accent'
+                  : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
+              )}
+            >
+              Direct SQL
+            </button>
+          </div>
+
+          {queryMode === 'saved' ? (
+            savedQueries.length > 0 ? (
+              <select
+                className={TEXT_INPUT}
+                aria-label="Saved query"
+                value={savedQueryId}
+                onChange={(e) => selectSavedQuery(e.target.value)}
+              >
+                {savedQueries.map((sq) => (
+                  <option key={sq.id} value={sq.id}>
+                    {sq.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="font-mono text-2xs text-ink-subtle">
+                No saved queries yet — save one from the notebook, or switch to Direct SQL.
+              </p>
+            )
           ) : (
-            <p className="font-mono text-2xs text-ink-subtle">
-              Checked locally before every run — invalid SQL can't be saved.
-            </p>
+            <>
+              <textarea
+                value={statement}
+                aria-label="SQL statement"
+                spellCheck={false}
+                onChange={(e) => setStatement(e.target.value)}
+                placeholder="SELECT count(*) FROM tpch.tiny.nation"
+                rows={5}
+                className={cn(
+                  TEXT_INPUT,
+                  'resize-y font-mono text-xs leading-relaxed',
+                  !check.ok && check.message && 'border-error focus:border-error',
+                )}
+              />
+              {/* 構文エラーがあればメッセージ（行/列があれば付記）を表示し、なければ
+                  「実行前にローカル検証済み」という補足説明を表示する分岐。 */}
+              {!check.ok && check.message ? (
+                <p role="alert" className="flex items-start gap-1.5 font-mono text-2xs text-error">
+                  <AlertTriangle size={13} strokeWidth={1.75} className="mt-px shrink-0" />
+                  <span>
+                    Syntax error
+                    {check.line != null && (
+                      <span className="text-ink-subtle">
+                        {' '}
+                        (line {check.line}
+                        {check.column != null ? `, col ${check.column}` : ''})
+                      </span>
+                    )}
+                    : {check.message}
+                  </span>
+                </p>
+              ) : (
+                <p className="font-mono text-2xs text-ink-subtle">
+                  Checked locally before every run — invalid SQL can't be saved.
+                </p>
+              )}
+            </>
           )}
         </div>
 
@@ -298,47 +427,11 @@ function ScheduleFormModalBody({
           </label>
         </div>
 
-        {/* Cron */}
+        {/* Schedule: 毎時/毎日/毎週/毎月のプリセット、または上級者向けの cron 直接入力
+            （ユーザー指摘 1: cron 生入力は非エンジニアに使えない）。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Schedule (cron)</span>
-          <div className="flex flex-wrap gap-1.5">
-            {/* CRON_PRESETS のワンクリック定型文。押すと cron 入力欄の値をそのまま置き換える。 */}
-            {CRON_PRESETS.map((preset) => (
-              <button
-                key={preset.cron}
-                type="button"
-                aria-pressed={cron === preset.cron}
-                onClick={() => setCron(preset.cron)}
-                className={cn(
-                  'rounded-full px-2.5 py-0.5 text-2xs font-medium transition-colors',
-                  cron === preset.cron
-                    ? 'bg-accent-soft text-accent'
-                    : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
-                )}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-          <input
-            value={cron}
-            aria-label="Cron expression"
-            spellCheck={false}
-            onChange={(e) => setCron(e.target.value)}
-            placeholder="minute hour day-of-month month day-of-week"
-            className={cn(TEXT_INPUT, 'font-mono', !cronValid && 'border-error focus:border-error')}
-          />
-          {/* cron 式が 5 フィールド形式として妥当かどうかで、エラー文言と
-              補足説明（次回実行時刻はサーバー側で算出）のどちらを出すか切り替える。 */}
-          {!cronValid ? (
-            <p role="alert" className="font-mono text-2xs text-error">
-              Must be a 5-field cron expression (minute hour day-of-month month day-of-week).
-            </p>
-          ) : (
-            <p className="font-mono text-2xs text-ink-subtle">
-              Next run time is computed by the server and shown in the list after saving.
-            </p>
-          )}
+          <span className={FIELD_LABEL}>Schedule</span>
+          <ScheduleBuilder value={cron} onChange={setCron} onValidChange={setCronValid} />
         </div>
 
         {/* Retry */}
