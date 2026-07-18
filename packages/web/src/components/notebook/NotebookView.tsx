@@ -630,8 +630,7 @@ function runCellById(
  * @param onRename - 名前確定時に呼ばれるコールバック。
  * @param onDescribe - 説明確定時に呼ばれるコールバック。
  */
-/** Editable notebook title + description (NotebookView ヘッダー). */
-function NotebookHeader({
+export function NotebookHeader({
   name,
   description,
   readOnly,
@@ -722,7 +721,17 @@ function NotebookHeader({
                   }
                 }}
                 placeholder="Add a description…"
-                className="mt-0.5 w-full bg-transparent text-sm text-ink-muted focus:outline-none"
+                // block: 実ブラウザで計測すると、表示用 <p> と編集用 <input> は
+                // line-height、font-size、height、padding、border、margin が完全に
+                // 一致しているにもかかわらず、上端の位置だけ 3px ずれていた
+                // （Chromium 実測: <p> は top 107px、無指定の <input> は top 110px）。
+                // 原因は line-height ではなく display の違いにある。<input> は既定で
+                // display: inline-block のため、親 div はインラインフォーマッティング
+                // コンテキストを作り、匿名 line box の strut（親の line-height を基準にした
+                // 仮想の行の高さ）ぶんだけ input の上に余白が入る。block を指定して
+                // インラインフォーマッティングコンテキストへの参加を止めると、<p> と同じ
+                // margin ベースの配置になり、実測でも上端が一致した。
+                className="mt-0.5 block w-full bg-transparent text-sm text-ink-muted focus:outline-none"
               />
             )
           ) : (
