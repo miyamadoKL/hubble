@@ -71,6 +71,13 @@ function AlertFormModalBody({
 }: Omit<AlertFormModalProps, 'open'>) {
   const editing = Boolean(alert);
 
+  // React Hook Form への置換は見送っている。2026 年 7 月 16 日の PoC で本コンポーネントの
+  // 14 個の useState と手書き validity を移行したところ、現行 UI は webhook URL の形式を
+  // 検証せず（下記 notificationValid は空文字チェックのみ）サーバーの request schema より
+  // 弱い validation 契約になっているため、この差を保つ form schema と payload 変換、
+  // 初期 isValid を合わせる useEffect(trigger) が必要になった。結果として本ファイルは
+  // 333 行から 339 行へ増え、production 60 行削減の採用基準を満たさなかったため、
+  // 依存と実装差分を撤去し useState ベースの現行実装を維持している。
   const [name, setName] = useState(alert?.name ?? '');
   const [savedQueryId, setSavedQueryId] = useState(
     alert?.savedQueryId ?? savedQueries[0]?.id ?? '',

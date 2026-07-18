@@ -20,13 +20,18 @@ import type { ResultRow } from '../../execution';
 import { ColumnProfilePanel } from './ColumnProfilePanel';
 import { useServerResultView } from './useServerResultView';
 
-/**
- * High-density virtualized result grid: fixed header, row-number
- * column, 28px rows, mono numerics, column type labels. Rows stream in (the
- * parent passes a growing array). Client-side sort/filter operate over the rows
- * currently loaded — additional rows keep streaming in underneath. NULL is
- * rendered as a muted `NULL` token so it is visually distinct from empty text.
- */
+// @tanstack/react-table への置換は見送っている。2026 年 7 月 18 日の read-only preflight
+// （@tanstack/react-virtual は維持する前提）で計測したところ、本ファイルは 598 物理行/443
+// 実装行で、filter / sort / source projection のヘルパー（cellText、buildClientViewIndices、
+// materializeClientRow、compareValues）が 93 物理行/75 実装行、state と view の配線が 98
+// 物理行/53 実装行だった。TanStack へ移せるのはこの合計 148 実装行のうち UI と server
+// boundary を除いた部分に限られる一方、現行契約（column 定義と index 対応、custom global
+// filter、null/numeric/string 比較と安定 sort、server-side 時の manual filtering/sorting、
+// source row index の維持、streaming 時の row model 更新、virtual row からの visible cell
+// 取得、ColumnMenu の検索/click-away 接続）を保つ adapter に保守的に見積もっても 70〜100
+// 実装行を要し、削減分を大きく相殺する。依存追加前の production 正味削減上限は 20〜50
+// 実装行で 75 行の採用基準（gate）に届かないため、characterization test、依存追加、PoC は
+// 行わず、自前の sort / filter 実装を維持している。
 
 // 1行あたりの高さ（px）。仮想化の見積もりサイズにもそのまま使う。
 const ROW_HEIGHT = 28;
@@ -88,7 +93,6 @@ function renderValue(value: unknown, type: string): RenderedValue {
   return { text: String(value), isNull: false };
 }
 
-/** Lowercased string projection of a cell, for filtering. */
 // フィルタ処理用に、セルの値を小文字化した文字列へ変換する（大文字小文字を無視した部分一致検索のため）。
 function cellText(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -176,7 +180,7 @@ function compareValues(a: unknown, b: unknown, numeric: boolean): number {
   const an = a === null || a === undefined;
   const bn = b === null || b === undefined;
   if (an && bn) return 0;
-  if (an) return -1; // nulls first
+  if (an) return -1; // NULL を先頭にする
   if (bn) return 1;
   if (numeric) return Number(a) - Number(b);
   return String(a).localeCompare(String(b));
@@ -254,7 +258,6 @@ export function ResultGrid({
     [columns, hidden],
   );
 
-  // Filter (client-side, over loaded rows) then sort (stable, loaded range).
   // 画面に表示する行を組み立てる: まず読み込み済みの行すべてを元のインデックス
   // (sourceIndex、行番号列の表示に使う) 付きで保持し、フィルタ文字列があれば
   // いずれかのセルに部分一致する行だけへ絞り込み、さらにソート指定があれば
@@ -266,9 +269,9 @@ export function ResultGrid({
   }, [rows, columns, filter, sort, serverActive, rowChangeKey]);
   const viewLength = serverActive ? serverView.rows.length : (viewIndices?.length ?? rows.length);
 
-  // TanStack Virtual returns fresh function identities each render; the React
-  // Compiler rule flags it as un-memoizable. That is expected and harmless here
-  // (we don't pass the virtualizer's functions into memoized children).
+  // TanStack Virtual はレンダーのたびに新しい関数参照を返すため、React Compiler の
+  // ルールはこれを「メモ化不可能」として検知する。ここでは仮想化の関数をメモ化された
+  // 子コンポーネントへ渡していないため実害はなく、意図的にこの警告を無効化している。
   // eslint-disable-next-line react-hooks/incompatible-library
   // 仮想化の本体。表示対象の行数（view.length）、スクロール要素の取得方法、
   // 行の見積もり高さ、オーバースキャン数を渡して初期化する。
@@ -298,11 +301,11 @@ export function ResultGrid({
     setSort((prev) => {
       if (!prev || prev.colIndex !== colIndex) return { colIndex, dir: 'asc' };
       if (prev.dir === 'asc') return { colIndex, dir: 'desc' };
-      return null; // third click clears
+      return null; // 3 回目のクリックで未ソートへ戻す
     });
   };
 
-  // Grid template: row-number column + one column per visible field.
+  // グリッドテンプレート（行番号列 + 表示中の各フィールドの列）。
   // CSS Grid の grid-template-columns 文字列を組み立てる。
   // ヘッダーと各仮想行はそれぞれ独立した grid コンテナなので、`max-content` のような
   // コンテンツ依存の幅を使うとコンテナごとに解決結果が異なり、ヘッダーと値の列位置が
@@ -324,7 +327,6 @@ export function ResultGrid({
 
   return (
     <div className={cn('flex flex-col', className)}>
-      {/* Grid toolbar: column menu + filter. */}
       {/* グリッド上部のツールバー: 列の表示/非表示メニューと行フィルタ入力欄、読み込み済み行数表示。 */}
       <div className="flex items-center gap-1 border-b border-border-subtle bg-surface-base px-2 py-1">
         <div className="relative">
@@ -413,7 +415,6 @@ export function ResultGrid({
         </span>
       </div>
 
-      {/* Virtualized scroll body with a sticky CSS-grid header. */}
       {/* 仮想化されたスクロール本体。ヘッダー行は sticky で常に上部に固定表示される。 */}
       <div
         ref={scrollRef}
@@ -421,7 +422,6 @@ export function ResultGrid({
         data-testid="result-grid"
       >
         <div style={{ width: 'max-content', minWidth: '100%' }}>
-          {/* Header row */}
           {/* ヘッダー行: 行番号列見出し「#」+ 表示中の各カラムのソート可能なボタン。 */}
           <div
             className="sticky top-0 z-10 grid bg-surface-inset"
@@ -458,7 +458,6 @@ export function ResultGrid({
             })}
           </div>
 
-          {/* Virtual rows */}
           {/* 仮想行の描画領域。全体の高さを getTotalSize() で確保しつつ、
               実際に DOM へ描画するのは virtualRows（画面内 + オーバースキャン分）のみ。 */}
           <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
@@ -502,8 +501,8 @@ export function ResultGrid({
                         )}
                         title={rendered.text}
                       >
-                        {/* pr-px: the italic NULL's final glyph leans past its
-                            advance width; without it `truncate` clips the ink. */}
+                        {/* pr-px: 斜体の NULL 表示は最後の文字がグリフの進行幅をわずかに超えるため、
+                            この右パディングが無いと `truncate` がインク部分を欠けさせてしまう。 */}
                         <span className={cn('truncate', rendered.isNull && 'pr-px')}>
                           {rendered.text}
                         </span>
@@ -553,7 +552,6 @@ function ColumnMenu({ columns, hidden, onToggle, onClose }: ColumnMenuProps) {
     .filter(({ c }) => c.name.toLowerCase().includes(search.toLowerCase()));
   return (
     <>
-      {/* Click-away backdrop. */}
       {/* 画面全体を覆う透明な背景。ここをクリックするとメニューが閉じる（click-away）。 */}
       <div className="fixed inset-0 z-30" onClick={onClose} aria-hidden />
       <div className="absolute top-7 left-0 z-40 w-60 rounded-md border border-border-base bg-surface-overlay p-1.5 shadow-lg">
