@@ -7,11 +7,19 @@
  * 避ける。EXPLAIN の実行本体は `engine/trinoEstimate.ts`（TrinoEngine 経由）に
  * 移し、このクラスはキャッシュ層とエンジン解決に専念する。
  *
- * アーキテクチャ上の位置づけ: HTTP ルート層（担当外）がクエリ実行前に
- * このサービスを呼び出し、`block` 判定であれば実行そのものを拒否する。
- * `mode=off` のときはこのサービス自体を呼ばず、ルート側で `guard.ts` の
- * `disabledEstimate()` を返す（このファイルは on/warn/enforce の経路のみを
- * 担当する）。
+ * 呼び出し元ごとの挙動:
+ * - `POST /api/queries/estimate`（見積もり専用エンドポイント。実行は行わない）
+ *   は `mode=off` のときこのサービスを呼ばず `guard.ts` の
+ *   `disabledEstimate()` を返す。`warn`/`enforce` では常にこのサービスを
+ *   呼び出し、結果をそのままレスポンスとして返す。
+ * - `POST /api/queries`（実際にクエリを実行するエンドポイント）は
+ *   `mode === 'enforce'` かつ `engine.capabilities.costEstimate` のときだけ
+ *   このサービスを呼び出し、`block` 判定なら実行を拒否する。`off`/`warn`
+ *   では `disabledEstimate()` を返すことなく、見積もりなしでそのまま実行へ
+ *   進む。
+ * - `alert/evaluator.ts`、`schedule/scheduler.ts`、`workflow/runner.ts` も
+ *   同様に `mode === 'enforce'` かつ costEstimate 対応エンジンのときだけ
+ *   呼び出し、`block` 判定であれば実行を拒否する。
  */
 import type { EstimateResult } from '@hubble/contracts';
 import { AppError } from '../errors';
@@ -20,9 +28,10 @@ import { resolveEngine } from '../engine/resolve';
 import type { EffectiveGuardLimits } from '../rbac/guard';
 import type { GuardLimits } from './guardVerdict';
 
-/** Resolved guard settings the estimate service operates against. */
-// EstimateService が動作する上で必要な、解決済みの Query Guard 設定一式。
-// サーバー設定（ServerConfig）から必要な値だけを抜き出した形。
+/**
+ * EstimateService が動作する上で必要な、解決済みの Query Guard 設定一式。
+ * サーバー設定（ServerConfig）から必要な値だけを抜き出した形。
+ */
 export interface EstimateGuardConfig {
   mode: GuardLimits['mode'];
   maxScanBytes: number;
@@ -33,22 +42,17 @@ export interface EstimateGuardConfig {
   bytesPerSecond: number;
 }
 
-// 見積もりリクエストのパラメータ。
 export interface EstimateRequestParams {
-  /** Statement exactly as it will be executed (already auto-LIMIT-rewritten by web). */
-  // 実際に実行されるのと全く同じステートメント（web 側で auto-LIMIT 済み）。
+  /** 実行予定のステートメント。 */
   statement: string;
   catalog?: string;
   schema?: string;
   /**
-   * Identity the EXPLAIN runs as — the same `X-Trino-User` as the user query
-   * (the authenticated principal). Drives the cache key too.
+   * EXPLAIN を実行する際の identity。実際のユーザークエリと同じ
+   * `X-Trino-User` を使う（認証済み principal）。キャッシュキーの一部にもなる。
    */
-  // EXPLAIN を実行する際の identity。実際のユーザークエリと同じ
-  // `X-Trino-User` を使う（認証済み principal）。キャッシュキーの一部にもなる。
   principal: string;
-  /** Target datasource id. Omitted = default at request time. */
-  // 実行先データソース id。省略時はリクエスト時点の既定データソース。
+  /** 実行先データソース id。省略時はリクエスト時点の既定データソース。 */
   datasourceId?: string;
   /** キャッシュ分離用のロール名。 */
   roleName?: string;
@@ -70,21 +74,23 @@ const DATASOURCE_RELOADING_CODE = 'DATASOURCE_RELOADING';
 const MAX_ESTIMATE_ATTEMPTS = 2;
 
 /**
- * Query Guard estimation service (Query Guard feature).
- *
- * Resolves the target `QueryEngine`, delegates `EXPLAIN (TYPE IO, FORMAT JSON)`
- * to it, and caches the result per principal/catalog/schema/statement/datasource.
- * `mode=off` is handled by the caller (the route short-circuits before reaching
- * the service).
- *
  * Query Guard の見積もりサービス。対象エンジンを解決し、
  * `EXPLAIN (TYPE IO, FORMAT JSON)` を委譲して結果をキャッシュする。
- * `mode=off` は呼び出し元（ルート層）が処理し、このサービスまで到達しない。
+ * `mode=off` はいずれの呼び出し元でもこのサービスへ到達しない
+ * （`POST /api/queries/estimate` は `disabledEstimate()` で代替し、
+ * `POST /api/queries` とスケジュール/ワークフロー/アラートの各実行経路は
+ * `mode === 'enforce'` のときだけ呼び出す）。
  */
 export class EstimateService {
-  /** Insertion-ordered cache (Map preserves order; oldest evicted first). */
   // 挿入順を保持するキャッシュ（Map は挿入順を維持するため、最も古い
   // エントリから追い出す＝簡易 LRU 的な動作になる）。
+  //
+  // `lru-cache` への置換は計測のうえ見送った。CacheEntry、Map、走査、
+  // 有効期限判定、保存、eviction を合計しても実装 47 行しかなく、依存の
+  // import と初期化を足す前から採用基準の 100 実装行削減に届かない。
+  // さらに current clock、SWR、reload generation の所有者を減らせることが
+  // 条件だが、cacheGenerations や engineGenerations による世代管理は
+  // 引き続き自前で持つ必要があり、置換の実益がない。
   private readonly cache = new Map<string, CacheEntry>();
   // 同じ datasource ID のエンジンが差し替わった場合も旧見積もりを再利用しないよう、
   // エンジンオブジェクトごとに EstimateService 内の世代番号を割り当てる。
@@ -185,9 +191,6 @@ export class EstimateService {
   }
 
   /**
-   * Return a cached estimate if it is still fresh, else `undefined`. Exposed so
-   * the run path can reuse a recent estimate without a Trino round-trip.
-   *
    * まだ有効期限内のキャッシュ済み見積もりがあればそれを返し、無ければ
    * `undefined` を返す。クエリ実行パス側が直近の見積もりを Trino への
    * 往復なしに再利用できるよう公開されている。
@@ -235,7 +238,6 @@ export class EstimateService {
       result,
       expiresAt: this.now() + this.config.cacheTtlSeconds * 1000,
     });
-    // Evict oldest entries past the cap.
     // 上限件数を超えた分は挿入順で最も古いものから追い出す。
     while (this.cache.size > MAX_CACHE_ENTRIES) {
       const oldest = this.cache.keys().next().value;
@@ -244,7 +246,6 @@ export class EstimateService {
     }
   }
 
-  /** Estimate, consulting the cache first. */
   // まずキャッシュを確認し、ヒットすればそれを返す。ミスであれば対象エンジンへ
   // 委譲して EXPLAIN を実行し、結果をキャッシュへ格納してから返す。
   async estimate(params: EstimateRequestParams): Promise<EstimateResult> {

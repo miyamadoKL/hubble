@@ -12,9 +12,6 @@ export type MysqlPoolFactory = (ds: ResolvedMysqlDatasource) => MysqlPool;
  * 解決済み MySQL データソースからプールを構築する。
  * readOnly 時は接続確立フックで READ ONLY セッションを設定する(ガードレール。
  * 本気のアクセス制御は DB 権限で行う)。
- *
- * @param ds - 解決済み MySQL データソース。
- * @returns mysql2 プール。
  */
 export function createMysqlPool(ds: ResolvedMysqlDatasource): MysqlPool {
   const ssl = ds.tls ? (ds.tlsCa !== undefined ? { ca: ds.tlsCa } : {}) : undefined;

@@ -53,8 +53,6 @@ export async function runTrinoEstimate(
       options.estimateTimeoutMs,
     );
     parsed = cell === undefined ? undefined : parseExplainIoJson(cell);
-    // A missing cell or a non-IO-plan cell (Trino echoed an unsupported
-    // statement verbatim) means the query cannot be estimated -> allow.
     // セルが存在しない、または IO プランでないセル（Trino が非対応の
     // ステートメントをそのままエコーバックした場合など）は「見積もり不能」
     // を意味し、ステータスは unsupported（=常に allow）となる。
@@ -104,11 +102,6 @@ function buildResult(
 }
 
 /**
- * Map a thrown error to an estimate status:
- * - Trino USER_ERROR (syntax/analysis, EXPLAIN-unsupported): `unsupported`
- *   (the real run would fail immediately the same way — no resource risk).
- * - anything else (transport, timeout-abort, engine fault): `unavailable`.
- *
  * 投げられたエラーを見積もりステータスへマッピングする:
  * - Trino の USER_ERROR（構文/解析エラー、EXPLAIN 非対応など）は
  *   `unsupported` とする（実際にクエリを実行しても同様に即座に失敗する
@@ -121,22 +114,17 @@ function classifyEstimateError(err: unknown): EstimateStatus {
     return 'unsupported';
   }
   if (err instanceof TrinoTransportError) return 'unavailable';
-  // AbortError from the timeout, network failures, anything else -> unavailable.
+  // タイムアウトによる AbortError、ネットワーク障害、その他すべて unavailable とする。
   void (err instanceof AppError);
   return 'unavailable';
 }
 
 /**
- * Drive the EXPLAIN to completion, returning the single varchar cell, with a
- * hard timeout. On timeout the in-flight statement is cancelled (DELETE) and
- * the abort propagates so the run is torn down rather than left hanging.
- *
- * EXPLAIN 文を最後まで駆動し、単一の varchar セルを返す。ハードタイムアウト
- * 付きで、タイムアウト時は実行中のステートメントをキャンセル（DELETE）し、
- * abort を伝播させることで実行を宙ぶらりんにせず確実に後始末する。
- */
-/**
- * EXPLAIN (TYPE IO, FORMAT JSON) を実行し JSON セルを返す（write check 等で再利用）。
+ * EXPLAIN (TYPE IO, FORMAT JSON) を最後まで駆動し、単一の varchar セルを
+ * 返す（Query Guard の見積もりと rbac/writeCheck.ts の書き込み判定の両方から
+ * 再利用される）。ハードタイムアウト付きで、タイムアウト時は実行中の
+ * ステートメントをキャンセル（DELETE）し、abort を伝播させることで実行を
+ * 宙ぶらりんにせず確実に後始末する。
  */
 export async function fetchTrinoIoExplainCell(
   statement: string,
@@ -157,7 +145,6 @@ async function runExplain(
   const mutations = emptySessionMutations();
   const rows: unknown[][] = [];
   // estimateTimeoutMs 経過で強制的に abort する安全弁。
-  // Best-effort cancel of the in-flight EXPLAIN on timeout/abort.
   await driveStatementPages({
     client,
     statement,
@@ -168,7 +155,6 @@ async function runExplain(
       if (page.data) rows.push(...page.data);
     },
   });
-  // EXPLAIN IO returns exactly one row, one varchar column.
   // EXPLAIN IO は 1 行 1 列の varchar を返す。
   const cell = rows[0]?.[0];
   return typeof cell === 'string' ? cell : undefined;
