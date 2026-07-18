@@ -5,6 +5,7 @@ import type { ResolvedDatasource } from './types';
 import { createEngineForDatasource, type BuildEnginesOptions } from '../engine/factory';
 import type { QueryEngine } from '../engine/types';
 
+/** 旧エンジンの close 待ち上限（ミリ秒）。超過してもリロード自体はブロックしない。 */
 export const ENGINE_CLOSE_TIMEOUT_MS = 60_000;
 
 /** 公開前の候補エンジンを共通期限内で疎通確認する。 */
@@ -35,6 +36,7 @@ export async function probeCandidateEngines(
   }
 }
 
+/** 2つの `ResolvedDatasource` が等価かを判定する。JSON 文字列比較のためキー順序に依存する。 */
 export function resolvedDatasourceEqual(a: ResolvedDatasource, b: ResolvedDatasource): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -48,6 +50,11 @@ export interface DatasourceReloadPlan {
   invalidateDatasourceIds: string[];
 }
 
+/**
+ * 現行のエンジン集合と新しい datasources.yaml の内容を突き合わせ、どのエンジンを
+ * 新規作成、維持、close するかの計画を作る（副作用は起こさない）。定義が変わらない
+ * データソースは既存エンジンを使い続け、変わったものだけ新エンジンを候補として作る。
+ */
 export function planDatasourceReload(
   currentEngines: Map<string, QueryEngine>,
   currentDatasources: ResolvedDatasource[],
@@ -91,6 +98,7 @@ export function planDatasourceReload(
   };
 }
 
+/** エンジンを close するが、`timeoutMs` を超えたら待たずに諦めてログ警告だけ出す。 */
 export async function closeEngineWithTimeout(
   engine: QueryEngine,
   timeoutMs: number,
@@ -111,6 +119,7 @@ export async function closeEngineWithTimeout(
   }
 }
 
+/** `applyDatasourceReloadSync` が書き換える、サービス側が保持する可変状態。 */
 export interface DatasourceReloadTarget {
   engines: Map<string, QueryEngine>;
   datasources: ResolvedDatasource[];
@@ -118,6 +127,13 @@ export interface DatasourceReloadTarget {
   invalidateDatasource: (id: string) => void;
 }
 
+/**
+ * `probeCandidateEngines` で疎通確認済みの `plan` を、同期的かつ一括で `target` へ
+ * 適用する。エンジン集合の入れ替えとデータソース一覧の差し替えの間に await を挟むと、
+ * その間に実行中のクエリが古いエンジンと新しいデータソース一覧の不整合な組み合わせを
+ * 参照し得るため、この関数は意図的に非同期処理を行わない。旧エンジンの close だけは
+ * 即座に `void` で fire-and-forget し、リロード自体をブロックしない。
+ */
 export function applyDatasourceReloadSync(
   target: DatasourceReloadTarget,
   plan: DatasourceReloadPlan,

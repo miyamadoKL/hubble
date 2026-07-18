@@ -70,6 +70,11 @@ import type { ShutdownDrainContext } from './shutdown/coordinator';
 import { ReadinessService } from './health/readiness';
 import { DataRetentionService } from './retention/service';
 
+/**
+ * `buildServices()` が構築する、サーバー全体で共有する長寿命サービス群。
+ * 各ドメインルーター（http/*Routes.ts）はこのオブジェクトを受け取り、
+ * リポジトリやエンジン等の具体的な生成方法を意識せずに利用する。
+ */
 export interface Services {
   config: ServerConfig;
   rbac: LoadedRbac;
@@ -170,6 +175,14 @@ export interface BuildServicesOptions {
   aiProvider?: AiProvider;
 }
 
+/**
+ * 設定と DB 接続から `Services` グラフ全体（エンジン、各リポジトリ、
+ * スケジューラー、通知等）を構築し、依存関係を配線する。
+ * @param config 読み込み済みのサーバー設定。
+ * @param db マイグレーション適用済みの DB ハンドル。
+ * @param options I/O の差し替え等を行うテスト向けオプション。
+ * @returns 構築済みの `Services`。
+ */
 export async function buildServices(
   config: ServerConfig,
   db: SqlDatabase,

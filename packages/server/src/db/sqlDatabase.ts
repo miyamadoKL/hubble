@@ -1,3 +1,12 @@
+/**
+ * server 全体の永続化層が依存する DB アクセスの共通契約を定義するファイル。
+ *
+ * `db/postgresAdapter.ts` がこのインターフェースを実装し、`store/*` の各
+ * repository と `db/migrate.ts` は具象実装ではなくここで定義される
+ * `SqlDatabase` にのみ依存する。永続化バックエンドは PostgreSQL に一本化されており
+ * （旧 SQLite adapter や backend 分岐は撤去済み）、このファイルはその単一実装が
+ * 満たすべき最小限の操作面（query/run/exec/transaction/close）だけを表す。
+ */
 // バインドパラメータとして許容される値の型。JSON を保存する場合は
 // JSON.stringify() した文字列として渡す（TEXT 列に保存される）。
 export type SqlParam = string | number | boolean | null;
