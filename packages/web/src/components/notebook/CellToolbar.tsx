@@ -8,6 +8,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import {
+  Bookmark,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -77,6 +78,13 @@ interface CellToolbarProps {
   /** Drag handle props supplied by the DnD container in NotebookView. */
   /** NotebookView 側の DnD コンテナから渡される、ドラッグハンドル用の props。 */
   dragHandleProps?: React.HTMLAttributes<HTMLSpanElement>;
+  /**
+   * 「Save query」ボタン押下時に呼ばれる(SQL セルのみ)。省略時はボタン自体を
+   * 描画しない。
+   */
+  onSaveQuery?: () => void;
+  /** true のとき「Save query」ボタンを無効化する(セルの SQL が空のとき等)。 */
+  saveQueryDisabled?: boolean;
 }
 
 /**
@@ -108,6 +116,8 @@ export function CellToolbar({
   onMoveDown,
   onDelete,
   dragHandleProps,
+  onSaveQuery,
+  saveQueryDisabled = false,
 }: CellToolbarProps) {
   return (
     <div className="flex items-center gap-1.5 border-b border-border-subtle bg-surface-raised px-2 py-1.5">
@@ -193,6 +203,18 @@ export function CellToolbar({
               />
             )}
           </Tooltip>
+        )}
+        {/* SQL セルのみ「保存済みクエリとして保存」ボタンを表示する。onSaveQuery が
+            渡されていない場合(呼び出し元が未対応)は描画しない。SQL が空のセルは
+            saveQueryDisabled で無効化される。 */}
+        {kind === 'sql' && onSaveQuery && (
+          <IconButton
+            icon={Bookmark}
+            label="Save query"
+            size="sm"
+            disabled={saveQueryDisabled}
+            onClick={onSaveQuery}
+          />
         )}
         {/* セルを上へ移動するボタン。先頭セルなど移動不可な場合は disabled。 */}
         <IconButton
