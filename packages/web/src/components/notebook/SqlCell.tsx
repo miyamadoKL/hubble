@@ -640,6 +640,7 @@ export function SqlCell({
               />
               <ResultPane
                 cellId={cellId}
+                notebookId={context.notebookId}
                 cell={exec}
                 explainText={explainText}
                 explainRunning={explainRunning}

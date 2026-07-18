@@ -25,6 +25,16 @@ import { ShareModal } from '../common/ShareModal';
 import { GitSyncControl } from '../github/GitSyncControl';
 import { listNotebookShares, updateNotebookShares } from '../../api/notebooks';
 import { isDocumentOwner } from '../../utils/documentShare';
+import { cn } from '../../utils/cn';
+import {
+  NOTEBOOK_WIDTH_DEFAULT,
+  NOTEBOOK_WIDTH_MIN,
+  beginNotebookWidthResize,
+  clampNotebookWidth,
+  notebookWidthMax,
+  readNotebookWidth,
+  writeNotebookWidth,
+} from '../../notebook/notebookWidth';
 import {
   useCellExecution,
   executionActions,
@@ -97,16 +107,42 @@ export function NotebookView({
   const dragIndex = useRef<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
+  // ノートブック列幅（全ノートブック共通のUI設定、localStorageに永続化）。
+  // 初期値は localStorage の保存値をマウント時点のビューポート幅でクランプして読み込む
+  // （他タブとの同期は不要な仕様のため、以降はここでの再読み込みを行わない）。
+  const [notebookWidth, setNotebookWidthState] = useState(() =>
+    clampNotebookWidth(
+      readNotebookWidth(),
+      typeof window !== 'undefined' ? window.innerWidth : NOTEBOOK_WIDTH_DEFAULT,
+    ),
+  );
+  // 幅を変更し、クランプしたうえで localStorage へ保存する。
+  const setNotebookWidth = (width: number) => {
+    const clamped = clampNotebookWidth(
+      width,
+      typeof window !== 'undefined' ? window.innerWidth : NOTEBOOK_WIDTH_DEFAULT,
+    );
+    setNotebookWidthState(clamped);
+    writeNotebookWidth(clamped);
+  };
+  // ハンドルのダブルクリックで既定幅へ戻す。
+  const resetNotebookWidth = () => setNotebookWidth(NOTEBOOK_WIDTH_DEFAULT);
+
   // アクティブなノートブックが存在しない（何も開いていない）場合は空状態のみ表示する。
   if (!entry) {
     return (
-      <div className="mx-auto w-full max-w-4xl px-6 py-16">
+      <NotebookWidthFrame
+        width={notebookWidth}
+        setWidth={setNotebookWidth}
+        resetWidth={resetNotebookWidth}
+        padding="px-6 py-16"
+      >
         <EmptyState
           icon={NotebookText}
           title="No notebook open"
           description="Create a notebook to start composing SQL cells."
         />
-      </div>
+      </NotebookWidthFrame>
     );
   }
 
@@ -201,7 +237,12 @@ export function NotebookView({
   const cells = notebook.cells;
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 py-6">
+    <NotebookWidthFrame
+      width={notebookWidth}
+      setWidth={setNotebookWidth}
+      resetWidth={resetNotebookWidth}
+      padding="px-6 py-6"
+    >
       {/* ノートブック名と説明をインライン編集できるヘッダー */}
       <NotebookHeader
         name={notebook.name}
@@ -337,6 +378,145 @@ export function NotebookView({
           updateShares={(shares) => updateNotebookShares(notebookId, shares)}
         />
       )}
+    </NotebookWidthFrame>
+  );
+}
+
+/**
+ * ノートブック幅リサイズハンドル1本分。左右の端に重ねて配置し、ドラッグ、ダブルクリックでの
+ * 既定幅リセット、フォーカス時の左右矢印キー（16px刻み）による調整に対応する。
+ */
+function NotebookWidthHandle({
+  edge,
+  width,
+  max,
+  onDragStart,
+  onArrowResize,
+  onReset,
+}: {
+  /** ハンドルが付いている辺。ドラッグ方向とキー操作の符号を決める。 */
+  edge: 'left' | 'right';
+  /** 現在の幅（aria-valuenow の表示に使う）。 */
+  width: number;
+  /** 現在のビューポート幅から求めた実際の上限（aria-valuemax の表示に使う）。 */
+  max: number;
+  /** pointerdown ハンドラー（ドラッグ開始）。 */
+  onDragStart: (e: React.PointerEvent) => void;
+  /** 矢印キーで幅を変更するハンドラー（クランプ前の絶対幅を渡す。クランプは呼び出し元が行う）。 */
+  onArrowResize: (nextWidth: number) => void;
+  /** ダブルクリックで既定幅へ戻すハンドラー。 */
+  onReset: () => void;
+}) {
+  // 右ハンドルは ArrowRight で拡大、左ハンドルは ArrowLeft で拡大というように、
+  // 辺ごとに矢印キーの意味が逆になる（どちらも「外側へ広げる」操作として揃える）。
+  const sign = edge === 'right' ? 1 : -1;
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="ノートブックの幅を調整"
+      aria-valuenow={width}
+      aria-valuemin={NOTEBOOK_WIDTH_MIN}
+      aria-valuemax={max}
+      tabIndex={0}
+      onPointerDown={onDragStart}
+      onDoubleClick={onReset}
+      onKeyDown={(e) => {
+        // ページ全体のスクロールと矢印キー操作が同時に発生しないよう、
+        // このハンドルが処理する矢印キーは既定動作を必ず止める。
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          onArrowResize(width - sign * 16);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          onArrowResize(width + sign * 16);
+        }
+      }}
+      className={cn(
+        'group absolute top-0 z-10 h-full w-3 cursor-col-resize touch-none',
+        edge === 'left' ? '-left-3' : '-right-3',
+      )}
+    >
+      <span
+        className={cn(
+          'absolute top-0 h-full w-px bg-transparent transition-colors group-hover:bg-accent group-focus-visible:bg-accent',
+          edge === 'left' ? 'right-1' : 'left-1',
+        )}
+      />
+    </div>
+  );
+}
+
+/**
+ * ノートブックの編集画面 / 空状態を中央寄せしつつ、左右端のドラッグハンドルで
+ * 幅を変更できるようにするラッパー。幅そのものは呼び出し元（NotebookView）の
+ * state で保持し、ここではハンドルの pointer/キーボード操作の配線と表示のみを担う。
+ * テストのために export している（単体テストからハンドルの操作を検証する）。
+ */
+export function NotebookWidthFrame({
+  width,
+  setWidth,
+  resetWidth,
+  padding,
+  children,
+}: {
+  /** 現在の幅（px）。 */
+  width: number;
+  /** 幅を変更する（クランプと永続化は呼び出し元が行う）。 */
+  setWidth: (width: number) => void;
+  /** 既定幅へリセットする。 */
+  resetWidth: () => void;
+  /** コンテナに適用する padding の Tailwind クラス（編集画面/空状態で異なる）。 */
+  padding: string;
+  children: ReactNode;
+}) {
+  // ドラッグ中の pointer リスナー解除関数。ドラッグ中でなければ null。
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+  // unmount 時にドラッグ中のリスナーが残らないようにする。
+  useEffect(() => () => dragCleanupRef.current?.(), []);
+
+  // edge を引数に取る直接のトップレベル関数にしておく（curry で ref アクセスを含む
+  // クロージャを render 中に生成する形にすると、react-hooks/refs lint ルールが
+  // 「render 中の ref アクセス」として誤検知するため）。
+  // ドラッグ開始時の pointerId を beginNotebookWidthResize に渡し、無関係な
+  // ポインタ（マルチタッチ等）からの pointermove/pointerup/pointercancel を無視させる。
+  const startDrag = (edge: 'left' | 'right', e: React.PointerEvent) => {
+    dragCleanupRef.current?.();
+    const cleanup = beginNotebookWidthResize(
+      edge,
+      e.clientX,
+      width,
+      setWidth,
+      () => {
+        if (dragCleanupRef.current === cleanup) dragCleanupRef.current = null;
+      },
+      e.pointerId,
+    );
+    dragCleanupRef.current = cleanup;
+  };
+
+  // aria-valuemax に表示する実際の上限（ビューポート幅依存）。
+  const max = notebookWidthMax(typeof window !== 'undefined' ? window.innerWidth : width);
+
+  return (
+    <div className={cn('relative mx-auto w-full', padding)} style={{ maxWidth: `${width}px` }}>
+      <NotebookWidthHandle
+        edge="left"
+        width={width}
+        max={max}
+        onDragStart={(e) => startDrag('left', e)}
+        onArrowResize={setWidth}
+        onReset={resetWidth}
+      />
+      {children}
+      <NotebookWidthHandle
+        edge="right"
+        width={width}
+        max={max}
+        onDragStart={(e) => startDrag('right', e)}
+        onArrowResize={setWidth}
+        onReset={resetWidth}
+      />
     </div>
   );
 }
