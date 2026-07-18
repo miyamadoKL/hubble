@@ -210,6 +210,24 @@ describe('ResultGrid height resize handle', () => {
     expect(heightHandle().className).toContain('touch-none');
   });
 
+  // PR #119 では通常時ほぼ不可視（h-px の透明バー）だったため発見されなかった。
+  // グリップは通常状態でも常時見えるスタイル（不透明な bg-border-base）でなければならない。
+  test('グリップは通常状態でも常時見える（透明ではない）', () => {
+    renderGrid({ columns, rows, notebookId: 'nb-1', cellId: 'cell-1' });
+    const grip = heightHandle().querySelector('span');
+    expect(grip?.className).toContain('bg-border-base');
+    expect(grip?.className).not.toContain('bg-transparent');
+  });
+
+  // hover / focus-visible 時はアクセントカラーへ強調される（常時視認できる状態からの
+  // さらなる強調）。実際の :hover は jsdom で再現できないため、クラスの付与のみ検証する。
+  test('グリップはhover/focus時にアクセントカラーへ強調するクラスを持つ', () => {
+    renderGrid({ columns, rows, notebookId: 'nb-1', cellId: 'cell-1' });
+    const grip = heightHandle().querySelector('span');
+    expect(grip?.className).toContain('group-hover:bg-accent');
+    expect(grip?.className).toContain('group-focus-visible:bg-accent');
+  });
+
   test('矢印キー操作はpreventDefaultされ、ページの矢印キースクロールと衝突しない', () => {
     renderGrid({ columns, rows, notebookId: 'nb-1', cellId: 'cell-1' });
     const handle = heightHandle();

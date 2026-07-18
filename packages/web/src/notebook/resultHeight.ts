@@ -6,8 +6,12 @@
  * の JSON を保存し、セルを一度もドラッグ調整していない間は明示的な高さを持たない
  * （呼び出し側が Tailwind の `max-h-96` にフォールバックする）。クランプ計算と
  * JSON の読み書きを純粋関数として切り出し、DOM描画なしに単体テストできるようにしている。
+ * pointer ドラッグの配線自体（`beginResultHeightResize`）は結果表示域固有のロジックを
+ * 含まないため、SQL エディターの高さハンドル（editorHeight.ts）と共有できるよう
+ * verticalDragResize.ts の汎用実装をそのまま re-export している。
  */
 import { principalStorageKey } from '../storage/principalStorage';
+import { beginVerticalDragResize } from './verticalDragResize';
 
 /** 結果表示域の高さの下限（px）。 */
 export const RESULT_HEIGHT_MIN = 128;
@@ -140,47 +144,7 @@ export function resetResultHeight(notebookId: string, cellId: string): void {
 }
 
 /**
- * 高さリサイズハンドルの pointer ドラッグを開始する。ポインタのY移動量をそのまま
- * 高さの増分として `setHeight` に渡す。呼び出し元は pointerup 時（または
- * unmount 時）に返り値の cleanup を呼ぶこと。
- *
- * `pointerId` はドラッグ開始時のポインタを特定するための識別子（React の
- * PointerEvent#pointerId をそのまま渡す想定）。マルチタッチ等で無関係な
- * pointermove/pointerup/pointercancel が飛んできても無視するために使う。
- * また `pointerup` だけでなく `pointercancel`（タッチスクロールへの切替や
- * ジェスチャー中断で発火する）でも同じ cleanup を呼び、window の event listener と
- * document.body.style の変更が unmount までリークしないようにする。
+ * 高さリサイズハンドルの pointer ドラッグを開始する（結果表示域向けの名前を保った
+ * re-export）。実装本体は verticalDragResize.ts を参照。
  */
-export function beginResultHeightResize(
-  startY: number,
-  startHeight: number,
-  setHeight: (height: number) => void,
-  onEnd: () => void = () => {},
-  pointerId?: number,
-): () => void {
-  const previousCursor = document.body.style.cursor;
-  const previousUserSelect = document.body.style.userSelect;
-  let active = true;
-  const onMove = (event: PointerEvent) => {
-    if (active && event.pointerId === pointerId) {
-      setHeight(startHeight + (event.clientY - startY));
-    }
-  };
-  const cleanup = (event?: PointerEvent) => {
-    if (!active) return;
-    if (event && event.pointerId !== pointerId) return;
-    active = false;
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', cleanup);
-    window.removeEventListener('pointercancel', cleanup);
-    document.body.style.cursor = previousCursor;
-    document.body.style.userSelect = previousUserSelect;
-    onEnd();
-  };
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', cleanup);
-  window.addEventListener('pointercancel', cleanup);
-  document.body.style.cursor = 'row-resize';
-  document.body.style.userSelect = 'none';
-  return cleanup;
-}
+export const beginResultHeightResize = beginVerticalDragResize;

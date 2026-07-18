@@ -610,6 +610,8 @@ export function SqlCell({
                 onReady={handleReady}
                 trinoLanguage={trinoLanguage}
                 ariaLabel={`SQL cell ${name ?? ''}`}
+                notebookId={context.notebookId}
+                cellId={cellId}
               />
             </Suspense>
           </div>

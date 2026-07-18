@@ -19,6 +19,7 @@ import { formatDecimal, formatInt } from '../../utils/format';
 import type { ResultRow } from '../../execution';
 import { ColumnProfilePanel } from './ColumnProfilePanel';
 import { useServerResultView } from './useServerResultView';
+import { VerticalResizeHandle } from '../common/VerticalResizeHandle';
 import {
   RESULT_HEIGHT_MIN,
   beginResultHeightResize,
@@ -605,39 +606,25 @@ export function ResultGrid({
         </div>
       </div>
 
-      {/* 結果表示域の高さ調整ハンドル。スクロールコンテナ下端の水平バー。
+      {/* 結果表示域の高さ調整ハンドル。スクロールコンテナ下端の常時視認できるグリップバー。
           ドラッグ、ダブルクリックでのリセット（未調整状態に戻す）、フォーカス時の
           上下矢印キー（16px刻み）による調整に対応する。 */}
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="結果表示域の高さを調整"
+      <VerticalResizeHandle
+        ariaLabel="結果表示域の高さを調整"
         // 未調整状態（customHeight === null）では、内容量に応じて128〜384pxの間で
         // 変動する実際の表示高さ（measuredHeight、ResizeObserver で追跡）を通知する。
         // 計測前やResizeObserver非対応環境では下限（RESULT_HEIGHT_MIN）にフォールバックする。
-        aria-valuenow={customHeight ?? measuredHeight ?? RESULT_HEIGHT_MIN}
-        aria-valuemin={RESULT_HEIGHT_MIN}
-        aria-valuemax={resultHeightMax(typeof window !== 'undefined' ? window.innerHeight : 0)}
-        tabIndex={0}
+        valueNow={customHeight ?? measuredHeight ?? RESULT_HEIGHT_MIN}
+        valueMin={RESULT_HEIGHT_MIN}
+        valueMax={resultHeightMax(typeof window !== 'undefined' ? window.innerHeight : 0)}
         onPointerDown={startHeightDrag}
         onDoubleClick={() => applyHeight(null)}
-        onKeyDown={(e) => {
+        onAdjust={(delta) => {
           // pointerドラッグ側（startHeightDrag）と同じ基準（未調整時は実測高さ）に揃える。
           const current = customHeight ?? measuredHeight ?? RESULT_HEIGHT_MIN;
-          // ページの矢印キースクロールと同時に発生しないよう、処理した矢印キーは
-          // 既定動作を必ず止める。
-          if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            applyHeight(current - 16);
-          } else if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            applyHeight(current + 16);
-          }
+          applyHeight(current + delta);
         }}
-        className="group flex h-2 shrink-0 cursor-row-resize touch-none items-center justify-center border-b border-border-subtle bg-surface-base"
-      >
-        <span className="h-px w-8 bg-transparent transition-colors group-hover:bg-accent group-focus-visible:bg-accent" />
-      </div>
+      />
     </div>
   );
 }
