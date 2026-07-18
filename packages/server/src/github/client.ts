@@ -3,6 +3,12 @@
  *
  * fetchImpl を注入可能にし、テストではフェイク fetch で差し替える。
  * Octokit は使わず素の fetch のみで GitHub API を叩く。
+ *
+ * transport だけを `@octokit/request` へ移す vertical slice を試したが、401、
+ * rate limit、404 の null 化、422 の pull request 重複判定、Base64 content の
+ * 扱いを既存の error contract に戻す adapter が必要になり、実装行が正味で増えた
+ * (315 行から 333 行)。GitHub error contract を変える製品判断がない限り、raw fetch
+ * を維持する。
  */
 import { AppError } from '../errors';
 
@@ -15,12 +21,14 @@ const DEFAULT_HEADERS = {
   'User-Agent': 'hubble',
 } as const;
 
+/** OAuth token 交換/更新の応答。expiresAt は access token の失効予定時刻。 */
 export interface GithubTokenResponse {
   accessToken: string;
   refreshToken?: string;
   expiresAt?: string;
 }
 
+/** ファイル更新 (PUT contents) のパラメータ。sha 省略時は新規作成として扱う。 */
 export interface GithubPutFileParams {
   path: string;
   branch: string;
@@ -72,6 +80,7 @@ export interface GithubClient {
   listPullRequests(token: string, repo: string, head: string): Promise<GithubPullRequestSummary[]>;
 }
 
+/** fetchImpl はテスト用の差し替え口。省略時はグローバル fetch を使う。 */
 export interface GithubClientOptions {
   clientId: string;
   clientSecret: string;

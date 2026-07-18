@@ -2,9 +2,12 @@
  * このファイルは Query Scheduling 機能の中核である `Scheduler` クラスを提供する。
  *
  * 保存済み SQL (Schedule) を cron 式に従って定期実行するインプロセスのスケジューラーで、
- * server 起動時に生成され、`tickSeconds` ごとに `tick()` を呼び出すタイマーを自前で持つ。
+ * server 起動時に生成される。`tickSeconds` ごとに `tick()` を呼び出すタイマー自体は
+ * 自前で持たず `PeriodicRunner` (util/periodicRunner.ts) に委譲する。
  * 各発火 (fire) では次の順で処理する:
- *   1. `validator.ts` (StatementValidator) で `EXPLAIN (TYPE VALIDATE)` による事前検証
+ *   1. `engine.validate()` で `EXPLAIN (TYPE VALIDATE)` による実行直前の事前検証
+ *      (schedule 作成/更新時も `scheduleRoutes.ts` がルート側で `engine.validate()` を
+ *      直接呼ぶ別経路で検証する)
  *   2. guardMode が `enforce` の場合、`EstimateService` で Query Guard のスキャン量見積り
  *   3. `execute.ts` (drainStatement) で実際に Trino へ投げて完走させる
  * 失敗時は `retry.ts` の分類 (deterministic/transient) に従い、transient のみ `retry.ts` の
@@ -16,6 +19,13 @@
  * 次回発火時刻は常に「現在時刻」から計算する (`cron.ts` の `nextRunAfter`) ため、
  * サーバー停止中に発火時刻を跨いでも過去分は取り戻さず (バックフィルしない)、
  * 次の未来の発火だけを予約する。
+ *
+ * `workflow/runner.ts` と retry 実行部分の重複が大きいが、共通 executor へは
+ * 抽出しない。engine lookup、RBAC、lease、write check、validate、guard、失敗分類、
+ * backoff は重複していても、retry や abort の境界、lease の生存期間、失敗時の結果
+ * capture と永続化は呼び出し側ごとに異なる。これらを一つの interface へ入れると
+ * mode flag と caller 固有の分岐が増え、正味の削減が計測基準 (120 行) に届かない
+ * ため、重複を許容してファイルを分離したまま維持する。
  */
 import type { ScheduleRunStatus } from '@hubble/contracts';
 import type { TrinoRequestContext } from '../trino/types';
@@ -48,9 +58,7 @@ import { PeriodicRunner } from '../util/periodicRunner';
 import { raceSqlAbort } from '../engine/sql/abort';
 
 /**
- * Resolved scheduler settings.
- *
- * 日本語: server 起動時に config から解決される、スケジューラー動作パラメータ一式。
+ * server 起動時に config から解決される、スケジューラー動作パラメータ一式。
  */
 export interface SchedulerConfig {
   // スケジューラーの tick ループ自体を起動するかどうか。false でも孤児実行の
@@ -58,19 +66,18 @@ export interface SchedulerConfig {
   enabled: boolean;
   // tick() を呼び出す間隔（秒）。この間隔で全 enabled スケジュールを走査する。
   tickSeconds: number;
-  // 同時に実行可能なスケジュール数の上限。tick() はこれを超えて新規発火しない。
-  // schedule、workflow、alert が共有する同時実行上限。
-  // services 層はこの値から共有 admission controller を1つ構築する。
+  // schedule、workflow、alert が共有する同時実行上限。services 層はこの値から
+  // 共有 admission controller (JobAdmissionController) を1つ構築し、tick() 自身では
+  // なく tryAcquire() の呼び出し側 (launch()/runManual()) がこの上限を強制する。
   maxConcurrent: number;
   // schedule_runs テーブルに保持する実行履歴の最大件数（スケジュールごと）。
   runsRetention: number;
-  /** `enforce` applies Query Guard blocking to scheduled runs. */
-  // 日本語: 'off' は Query Guard を評価しない、'warn' は評価するが実行は妨げない、
+  // 'off' は Query Guard を評価しない、'warn' は評価するが実行は妨げない、
   // 'enforce' はスキャン量見積りが閾値超過ならブロック (blocked ステータスで即終了) する。
   guardMode: 'off' | 'warn' | 'enforce';
 }
 
-// 日本語: Scheduler の構築に必要な依存一式 (DI)。テストでは now/sleep/setTimer を
+// Scheduler の構築に必要な依存一式 (DI)。テストでは now/sleep/setTimer を
 // 差し替えることで時刻進行やバックオフ待ちを実時間なしに検証できる。
 export interface SchedulerDeps {
   // schedule 定義 (cron 式、リトライポリシー等) の永続化リポジトリ。
@@ -94,21 +101,16 @@ export interface SchedulerDeps {
   /** schedule、workflow、alert で共有する実行枠。 */
   admission: JobAdmissionController;
   config: SchedulerConfig;
-  /** Wall clock (injectable for tests). */
-  // 日本語: 省略時は Date.now。テストでは仮想時計を注入して cron 発火判定を制御する。
+  // 省略時は Date.now。テストでは仮想時計を注入して cron 発火判定を制御する。
   now?: () => number;
-  /** Backoff sleep between retries (injectable for tests). */
-  // 日本語: 省略時は実際に setTimeout で待つ。テストでは即時解決させて高速化する。
+  // 省略時は実際に setTimeout で待つ。テストでは即時解決させて高速化する。
   sleep?: (ms: number) => Promise<void>;
-  /** setTimeout shim returning a clearable handle (injectable for tests). */
-  // 日本語: 省略時は Node の setTimeout。テストは vi.useFakeTimers 等と組み合わせて使う。
+  // 省略時は Node の setTimeout。テストは vi.useFakeTimers 等と組み合わせて使う。
   setTimer?: (fn: () => void, ms: number) => { clear: () => void };
 }
 
 /**
- * Terminal outcome of a single run (before persistence).
- *
- * 日本語: 1 回の実行 (リトライを含む一連の attempt) が確定した最終結果を表す内部型。
+ * 1 回の実行 (リトライを含む一連の attempt) が確定した最終結果を表す内部型。
  * `executeRun` がこれを `ScheduleRunRepository.finish` へ渡して永続化する。
  */
 interface RunOutcome {
@@ -122,66 +124,53 @@ interface RunOutcome {
   guard?: Record<string, AuditJson>;
 }
 
-// 日本語: SchedulerDeps.sleep 省略時の既定実装。実際に ms ミリ秒待ってから解決する。
+// SchedulerDeps.sleep 省略時の既定実装。実際に ms ミリ秒待ってから解決する。
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-// 旧実装のtimer説明を残す。
-// 日本語: SchedulerDeps.setTimer 省略時の既定実装。setTimeout をラップし、
-// プロセス終了をタイマーが妨げないよう unref() できる場合は unref する。
 // SchedulerDeps.setTimer 省略時の setTimeout と unref は PeriodicRunner が共通実装する。
 
 /**
- * In-process query scheduler (Query Scheduling feature).
+ * インプロセスのクエリスケジューラー (Query Scheduling 機能)。
  *
- * A single tick loop scans enabled schedules every `tickSeconds`, fires any that
- * are due (next cron time has passed), and records a `schedule_runs` row per
- * firing. Each run validates the statement with `EXPLAIN (TYPE VALIDATE)` and
- * (in `enforce` guard mode) checks the scan estimate before executing; transient
- * failures retry per the schedule's policy, while deterministic failures
- * (USER_ERROR, guard block) fail immediately.
+ * `tickSeconds` ごとに tick ループが有効なスケジュールを走査し、次回発火時刻を
+ * 過ぎたものを発火させて `schedule_runs` 行を記録する。各 run は
+ * `EXPLAIN (TYPE VALIDATE)` による事前検証を行い、`enforce` guard モードでは
+ * 実行前にスキャン量見積りも確認する。transient な失敗はスケジュールのポリシーに
+ * 従って再試行し、deterministic な失敗 (USER_ERROR、guard block) は即座に確定する。
  *
- * Next-run times are computed from "now" (never backfilled), so a stopped server
- * skips missed fires and resumes at the next future occurrence. Overlap is
- * prevented per schedule, and total concurrency is capped by `maxConcurrent`.
+ * 次回発火時刻は常に現在時刻から計算し (バックフィルしない)、停止していたサーバーは
+ * 取りこぼした発火を無視して次の未来の発火だけを再開する。同一スケジュールの多重実行
+ * (overlap) の防止と、schedule/workflow/alert 全体での同時実行数の上限
+ * (`maxConcurrent`) は共有 admission controller が担う。
  *
- * 次回発火時刻は現在時刻から計算し、停止中の発火は埋め戻さない。
- * 同一定義の重複と全ジョブ種別の同時実行上限は共有 admission controller が防ぐ。
- *
- * 日本語: ライフサイクルは start() → (tick() の繰り返し) → stop() の順。
- * start() はまずクラッシュ復旧 (実行中のまま残った run を aborted にする) を行い、
- * enabled なら次回発火時刻を seed して tick タイマーを起動する。tick() は
- * 期限が来たスケジュールを非同期に launch() し、overlap (同一スケジュールの多重実行)
- * と maxConcurrent (全体の同時実行数上限) の両方を守る。stop() はタイマーを止めた上で
- * と共有 admission controller の全体同時実行上限の両方を守る。stop() はタイマーを止めた上で
- * 実行中の Promise 群を待ち合わせ、グレースフルに終了する。
+ * ライフサイクルは start() → (tick() の繰り返し) → stop() の順。start() はまず
+ * クラッシュ復旧 (実行中のまま残った run を aborted にする) を行い、enabled なら
+ * 次回発火時刻を seed して tick タイマーを起動する。tick() は期限が来たスケジュールを
+ * 非同期に launch() する。stop() はタイマーを止めた上で実行中の Promise 群を
+ * 待ち合わせ、グレースフルに終了する。
  */
 export class Scheduler {
-  // 以下 3 つは SchedulerDeps から解決された実体 (省略時は defaultXxx にフォールバック)。
   // 以下は SchedulerDeps から解決された実体 (省略時は defaultXxx にフォールバック)。
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly periodic: PeriodicRunner;
   private readonly shutdownAbort = new AbortController();
 
-  /** Next fire time (epoch ms) per schedule id, computed from "now". */
-  // 日本語: スケジュール id ごとの「次に発火すべき時刻」。tick() のたびに現在時刻と比較し、
-  // 過ぎていれば発火してこのマップを次の未来時刻へ更新する。
+  // スケジュール id ごとの「次に発火すべき時刻」(epoch ms、現在時刻基準で計算)。
+  // tick() のたびに現在時刻と比較し、過ぎていれば発火してこのマップを
+  // 次の未来時刻へ更新する。
   private readonly nextFire = new Map<string, number>();
-  /** Schedule ids with an in-flight run (overlap guard). */
-  // 日本語: 実行中のスケジュール id 集合。同一スケジュールの多重発火 (overlap) を防ぐ。
+  // 実行中のスケジュール id 集合。同一スケジュールの多重発火 (overlap) を防ぐ。
   private readonly inFlight = new Set<string>();
-  /** Promises for in-flight runs, awaited on shutdown. */
-  // 日本語: stop()/whenIdle() が Promise.allSettled で待ち合わせるための実行中 Promise 群。
+  // stop()/whenIdle() が Promise.allSettled で待ち合わせるための実行中 Promise 群。
   private readonly running = new Map<string, Promise<void>>();
   private readonly starting = new Set<Promise<void>>();
   private readonly notificationTasks = new Set<Promise<void>>();
 
-  // 旧実装では次のhandleをScheduler自身が保持していた。
-  // 日本語: 稼働中の tick タイマーのハンドル。stop() でこれを clear する。
   // 稼働中の tick timer と task は PeriodicRunner が保持し、stop() で停止して待つ。
-  // 日本語: start() の多重呼び出しをガードする (冪等化)。
+  // start() の多重呼び出しをガードする (冪等化)。
   private started = false;
-  // 日本語: stop() 呼び出し後は true になり、以後 tick のスケジューリングを止める。
+  // stop() 呼び出し後は true になり、以後 tick のスケジューリングを止める。
   private stopping = false;
 
   constructor(private deps: SchedulerDeps) {
@@ -201,14 +190,13 @@ export class Scheduler {
   }
 
   /**
-   * Recover crashed runs and start the tick loop. Safe to call when disabled
-   * (recovery still runs; the loop does not start). Idempotent.
+   * クラッシュした run を復旧してから tick ループを開始する。disabled のときも
+   * 復旧処理だけは実行し (ループは起動しない)、複数回呼んでも安全 (冪等)。
    */
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
-    // Crash recovery: any run left `running` from a previous process is aborted.
-    // 日本語: 前回プロセスが実行途中でクラッシュ/強制終了した場合、running のまま
+    // 前回プロセスが実行途中でクラッシュ/強制終了した場合、running のまま
     // 残った schedule_runs 行を aborted へ確定させる。enabled に関わらず必ず行う。
     await this.deps.runs.abortOrphans(new Date(this.now()).toISOString());
     if (!this.deps.config.enabled) return;
@@ -217,30 +205,27 @@ export class Scheduler {
     this.periodic.start();
   }
 
-  /** Stop the tick loop and await any in-flight runs (graceful shutdown). */
+  /** tick ループを停止し、実行中の run を待ち合わせてグレースフルに終了する。 */
   async stop(): Promise<void> {
     // 以後の tick 予約を止め、既存タイマーを解除する。
     this.stopping = true;
     this.shutdownAbort.abort();
     await this.periodic.stop();
-    // 実行中の run が完了 (成功でも失敗でも) するまで待ってから戻る。
-    // claim中、実行中、通知中のtaskがすべて無くなるまで待ってから戻る。
+    // claim 中、実行中、通知中の task がすべて無くなるまで待ってから戻る。
     await this.drainLifecycleTasks();
   }
 
-  /** Await all currently in-flight runs to settle (no-op if idle). */
+  /** 主にテストから使う。claim、実行、通知がすべて終わるまで待機する (idle なら即座に戻る)。 */
   async whenIdle(): Promise<void> {
-    // 日本語: 主にテストから使う。実行中の全 run が終わるまで待機する。
-    // 日本語: 主にテストから使う。claim、実行、通知がすべて終わるまで待機する。
     await this.drainLifecycleTasks();
   }
 
-  /** Number of schedules with an in-flight run (overlap/concurrency view). */
+  /** overlap/同時実行数の観点での、実行中スケジュール数。 */
   get activeRuns(): number {
     return this.inFlight.size;
   }
 
-  /** Seed `nextFire` for every enabled schedule from the current time. */
+  /** 有効な全スケジュールについて、現在時刻を基準に `nextFire` を seed する。 */
   private async seedNextFires(): Promise<void> {
     const now = new Date(this.now());
     const schedules = await this.deps.schedules.listAllEnabled();
@@ -254,24 +239,21 @@ export class Scheduler {
     }
   }
 
-  // 旧実装の再帰timer説明を残す。
-  // 日本語: tickSeconds 後に自身を呼び出す tick() を 1 回分だけ予約する
-  // (setInterval ではなく setTimeout の再帰にすることで、tick() の実行時間が
-  // 次回予約に影響しても間隔がズレるだけで重複発火はしない)。stopping なら何もしない。
-  // PeriodicRunner は setInterval を使わず、tick 完了後に次の setTimeout を予約する。
-  // tick の実行時間は間隔を後ろへずらすだけで、同じ処理を重複発火させない。
+  // tick ループの駆動は PeriodicRunner (util/periodicRunner.ts) に委譲している。
+  // setInterval ではなく、tick 完了後に次の setTimeout を予約する方式のため、
+  // tick() の実行時間が長引いても間隔が後ろへずれるだけで、同じ処理が
+  // 重複発火することはない。
 
   /**
-   * One scan: fire every schedule whose next time has passed (subject to overlap
-   * and concurrency limits). Exposed for tests to drive deterministically.
+   * 1 回分のスキャン。次回発火時刻を過ぎた全スケジュールを (overlap と同時実行数の
+   * 上限に従って) 発火させる。テストから決定的に駆動できるよう公開している。
    */
   async tick(): Promise<void> {
     if (this.stopping) return;
     const now = this.now();
     const schedules = await this.deps.schedules.listAllEnabled();
     const live = new Set(schedules.map((s) => s.id));
-    // Forget schedules that were disabled/deleted since the last scan.
-    // 日本語: 前回スキャン以降に無効化/削除されたスケジュールの予約時刻をここで破棄する
+    // 前回スキャン以降に無効化/削除されたスケジュールの予約時刻をここで破棄する
     // (メモリリーク防止、かつ再度有効化された際は下の「新規発火」扱いで再 seed される)。
     for (const id of this.nextFire.keys()) {
       if (!live.has(id)) this.nextFire.delete(id);
@@ -280,8 +262,7 @@ export class Scheduler {
     for (const schedule of schedules) {
       const fireAt = this.nextFire.get(schedule.id);
       if (fireAt === undefined) {
-        // Newly enabled since startup: seed without firing immediately.
-        // 日本語: 起動後に新規作成/有効化されたスケジュールは、いきなり発火させず
+        // 起動後に新規作成/有効化されたスケジュールは、いきなり発火させず
         // 次回発火時刻だけを現在時刻基準で予約する (最初の tick では走らない)。
         const next = nextRunAfter(schedule.cron, new Date(now));
         if (next !== null) this.nextFire.set(schedule.id, next);
@@ -289,9 +270,7 @@ export class Scheduler {
       }
       if (now < fireAt) continue;
 
-      // Due. Advance the next fire time first so a long run can't double-fire,
-      // then attempt to launch (respecting overlap + concurrency).
-      // 日本語: 発火時刻に到達。実行を始める前に次回発火時刻を先に進めておくことで、
+      // 発火時刻に到達。実行を始める前に次回発火時刻を先に進めておくことで、
       // 実行が長引いても同じ枠で二重発火しないようにする。
       const scheduledFor = fireAt;
       const next = nextRunAfter(schedule.cron, new Date(now));
@@ -306,25 +285,23 @@ export class Scheduler {
         throw err;
       }
 
-      // 日本語: overlap/上限チェックを通過した場合のみ実際に非同期実行を開始する。
+      // overlap/上限チェックを通過した場合のみ実際に非同期実行を開始する。
       this.launch(schedule, new Date(scheduledFor).toISOString(), lease);
     }
   }
 
-  /** Begin an async run, tracking it for overlap/shutdown bookkeeping. */
   /** 非同期 run を開始し、重複防止と停止待機のため追跡する。 */
   private launch(
     schedule: ScheduleRecord,
     scheduledForIso: string,
     admissionLease: JobAdmissionLease,
   ): void {
-    // 日本語: inFlight への追加は同期的に行い、tick() の次のイテレーションからも
+    // inFlight への追加は同期的に行い、tick() の次のイテレーションからも
     // 「実行中」として見えるようにする (overlap 判定の一貫性のため)。
     this.inFlight.add(schedule.id);
     const p = this.runOnce(schedule, scheduledForIso)
       .catch((err: unknown) => {
-        // runOnce already persists outcomes; this guards an unexpected throw.
-        // 日本語: 通常ここには来ない (executeRun は失敗も含めて必ず永続化するため)。
+        // 通常ここには来ない (executeRun は失敗も含めて必ず永続化するため)。
         // 想定外の例外がプロセスを落とさないための最後の砦としてログのみ出す。
         console.error(`scheduler: unexpected error running schedule ${schedule.id}`, err);
       })
@@ -338,18 +315,17 @@ export class Scheduler {
   }
 
   /**
-   * Manual run trigger (`POST /api/schedules/:id/run`). Uses the same execution
-   * path and policy as the tick. Returns the run id, or throws if a run is
-   * already in flight for this schedule. `scheduledFor` defaults to now.
-   *
-   * 手動 run を cron と同じ実行経路へ投入する。
-   * run id を返し、同一定義の重複または共有上限超過なら例外を投げる。
+   * 手動 run トリガー (`POST /api/schedules/:id/run`)。cron 発火と同じ実行経路と
+   * ポリシーを使う。run id を返し、同一定義に対する run が既に進行中なら例外を
+   * 投げる。`scheduledFor` は既定で現在時刻になる。
    */
   async runManual(schedule: ScheduleRecord): Promise<{ runId: string }> {
-    // 旧実装の二段階確認に関する説明を残す。
-    // 日本語: メモリ上の inFlight とDB上の hasRunning の両方をチェックする。
-    // inFlight は同一プロセス内の重複を、hasRunning は (別プロセス由来なども含め)
-    // DB 上に running 行が残っているケースを捕捉する二重の安全網。
+    // まず共有 admission (schedule/admission.ts) から実行枠を取得し、同一プロセス内の
+    // 重複と全体上限を判定する。その後の runs.start() が DB 側で running 行の claim に
+    // 失敗した場合 (別プロセス由来などで既に running 行が存在する場合) は
+    // ScheduleRunClaimConflictError を投げてくるため、catch 節で
+    // JobAdmissionRejectedError('duplicate', ...) へ変換し、admission 側の重複判定と
+    // 同じエラー型として呼び出し元へ伝える。
     const admissionLease = this.deps.admission.tryAcquire('schedule', schedule.id);
     const scheduledForIso = new Date(this.now()).toISOString();
     this.inFlight.add(schedule.id);
@@ -359,7 +335,7 @@ export class Scheduler {
     });
     this.starting.add(starting);
     try {
-      // 日本語: 先に schedule_runs へ running 状態の行を作る。ここで失敗したら
+      // 先に schedule_runs へ running 状態の行を作る。ここで失敗したら
       // 実行を開始していないので inFlight を戻して例外を呼び出し元へ伝播する。
       const runId = await this.deps.runs.start({
         scheduleId: schedule.id,
@@ -367,8 +343,7 @@ export class Scheduler {
         scheduledFor: scheduledForIso,
         startedAt: scheduledForIso,
       });
-      // Execute in the background; the route returns immediately with the run id.
-      // 日本語: ルートハンドラは runId を待たずに即座にレスポンスを返すため、
+      // ルートハンドラは runId を待たずに即座にレスポンスを返すため、
       // 実際の検証、実行、リトライはここから非同期 (fire-and-forget) で進める。
       const p = this.executeRun(schedule, runId, scheduledForIso)
         .catch((err: unknown) => {
@@ -394,10 +369,9 @@ export class Scheduler {
     }
   }
 
-  /** Insert the run row then execute (used by the tick path). */
   /** cron 経路で running 行を claim してから実行する。 */
   private async runOnce(schedule: ScheduleRecord, scheduledForIso: string): Promise<void> {
-    // 日本語: tick 経路では overlap チェックは launch() 呼び出し前 (tick 内) で
+    // tick 経路では overlap チェックは launch() 呼び出し前 (tick 内) で
     // 既に済んでいるため、ここでは schedule_runs 行の作成と実行のみを行う。
     const runId = await this.deps.runs.start({
       scheduleId: schedule.id,
@@ -409,8 +383,8 @@ export class Scheduler {
   }
 
   /**
-   * Drive validation, guard, execution, and retries for a single run, then
-   * persist the terminal outcome. Never throws (failures are recorded).
+   * 1 回分の run について検証、guard、実行、リトライを駆動し、最終結果を永続化する。
+   * 例外は投げない (失敗は結果として記録される)。
    */
   private async executeRun(
     schedule: ScheduleRecord,
@@ -514,10 +488,6 @@ export class Scheduler {
     });
   }
 
-  /**
-   * Run the validate -> guard -> execute pipeline with the schedule's retry
-   * policy. Returns a terminal outcome; `attempt` is the number of attempts made.
-   */
   /** 検証、guard、実行を安全な実効リトライポリシーで繰り返し、終端結果を返す。 */
   private async attemptWithRetries(schedule: ScheduleRecord): Promise<RunOutcome> {
     const policy = retryPolicyForStatement(schedule.retry, schedule.statement);
@@ -564,7 +534,7 @@ export class Scheduler {
     try {
       const effective = effectiveGuardLimits(this.deps.guardConfig, scheduleRole);
 
-      // 日本語: 無限ループに見えるが、各分岐は必ず return するか (確定的失敗/成功/blocked)、
+      // 無限ループに見えるが、各分岐は必ず return するか (確定的失敗/成功/blocked)、
       // maybeRetry() が undefined を返した場合のみ waitBeforeRetry() を挟んで continue する。
       // つまりループを抜けるのは「確定」か「リトライ上限到達で確定」のいずれかのみ。
       for (;;) {
@@ -599,8 +569,7 @@ export class Scheduler {
           };
         }
 
-        // 1. Pre-flight validation (EXPLAIN VALIDATE). USER_ERROR is deterministic.
-        // 日本語: 実行直前にもう一度 EXPLAIN (TYPE VALIDATE) で検証する。作成/更新時にも
+        // 実行直前にもう一度 EXPLAIN (TYPE VALIDATE) で検証する。作成/更新時にも
         // 検証しているが、依存テーブルの変化などで実行時点では失敗しうるための再チェック。
         const validation = await engine.validate({
           statement: schedule.statement,
@@ -610,7 +579,7 @@ export class Scheduler {
           roleName: scheduleRole.name,
         });
         if (!validation.ok && validation.kind === 'user_error') {
-          // 日本語: SQL 自体が不正 (構文/意味エラー)。何度再試行しても同じ結果になるため
+          // SQL 自体が不正 (構文/意味エラー)。何度再試行しても同じ結果になるため
           // リトライせず即座に failed で確定する。
           return {
             status: 'failed',
@@ -621,10 +590,7 @@ export class Scheduler {
             rowCount: null,
           };
         }
-        // `unavailable` validation (Trino unreachable) is a transient fault: fall
-        // through to the catch via a thrown transport-style execution below — but
-        // we can short-circuit and treat it as a transient failure directly.
-        // 日本語: Trino に接続できない等、検証そのものが行えなかった場合は一時的な障害と
+        // Trino に接続できない等、検証そのものが行えなかった場合は一時的な障害と
         // みなし、maybeRetry() でリトライ可否を判定してから待って再試行する。
         if (!validation.ok) {
           const transientOutcome = this.maybeRetry(
@@ -638,8 +604,7 @@ export class Scheduler {
           continue;
         }
 
-        // 2. Query Guard (enforce mode only): a block is deterministic.
-        // 日本語: enforce モードでのみ、EXPLAIN (TYPE IO) ベースのスキャン量見積りを行い、
+        // enforce モードでのみ、EXPLAIN (TYPE IO) ベースのスキャン量見積りを行い、
         // 閾値超過ならブロックする。ブロックはポリシー判断でありリトライしても結果は
         // 変わらないため、blocked ステータスで即座に確定する。
         if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
@@ -673,8 +638,7 @@ export class Scheduler {
           }
         }
 
-        // 3. Execute.
-        // 日本語: 検証とガードを通過したので実際に Trino へ投げ、完走 (全ページ追走) させる。
+        // 検証とガードを通過したので実際に Trino へ投げ、完走 (全ページ追走) させる。
         // drainStatement は結果行をバッファせず行数だけ数える (execute.ts 参照)。
         try {
           const client = engine.executionClient({
@@ -701,7 +665,7 @@ export class Scheduler {
           };
         } catch (err) {
           if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
-          // 日本語: retry.ts の classifyFailure で「再試行しても無駄 (deterministic)」か
+          // retry.ts の classifyFailure で「再試行しても無駄 (deterministic)」か
           // 「一時的な障害 (transient)」かを判定する。
           const failureClass = classifyFailure(err);
           const errorType = errorTypeOf(err);
@@ -732,8 +696,8 @@ export class Scheduler {
   }
 
   /**
-   * If no further retry is allowed after `attempt` attempts, return the final
-   * `failed` outcome; otherwise return undefined (the caller waits + retries).
+   * `attempt` 回の試行後にこれ以上リトライできない場合は最終的な `failed` outcome を
+   * 返す。まだリトライできる場合は undefined を返す (呼び出し元が待機して再試行する)。
    */
   private maybeRetry(
     attempt: number,
@@ -755,8 +719,7 @@ export class Scheduler {
   }
 
   private async waitBeforeRetry(policy: ScheduleRecord['retry'], attempt: number): Promise<void> {
-    // The upcoming retry index equals the number of attempts already made.
-    // 日本語: retry.ts の backoffMs は 1-based の retryIndex を取る。ここまでの attempt 数が
+    // retry.ts の backoffMs は 1-based の retryIndex を取る。ここまでの attempt 数が
     // そのまま「これから行うリトライの番号」になるため、そのまま渡してよい。
     await raceSqlAbort(this.sleep(backoffMs(policy, attempt)), this.shutdownAbort.signal);
   }
@@ -773,8 +736,7 @@ export class Scheduler {
   }
 }
 
-/** Compose a USER_ERROR message with its line/column when present. */
-// 日本語: バリデーションエラーのメッセージに、可能なら "(line N:M)" を付加して読みやすくする。
+// バリデーションエラーのメッセージに、可能なら "(line N:M)" を付加して読みやすくする。
 function locationMessage(v: { message: string; line?: number; column?: number }): string {
   if (v.line !== undefined && v.column !== undefined) {
     return `${v.message} (line ${v.line}:${v.column})`;
@@ -782,8 +744,7 @@ function locationMessage(v: { message: string; line?: number; column?: number })
   return v.message;
 }
 
-/** Best-effort Trino error type / code from a thrown error. */
-// 日本語: エラーオブジェクトの形が実行時まで確定しないため、Trino 由来のエラー種別
+// エラーオブジェクトの形が実行時まで確定しないため、Trino 由来のエラー種別
 // (trino.errorType) か AppError 由来のコード (detail.code) を緩く型ガードして取り出す。
 // どちらも無ければ null (errorType 不明として記録される)。
 function errorTypeOf(err: unknown): string | null {

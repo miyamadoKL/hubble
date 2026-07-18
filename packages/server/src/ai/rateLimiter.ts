@@ -1,3 +1,9 @@
+/**
+ * AI アシスタント要求 (`POST /api/ai/assist`) のレート制限。
+ *
+ * サーバープロセス単体で、同時実行数の上限と principal (ユーザー) ごとの
+ * 1分あたり要求数の上限を管理する。状態はメモリ上のみに保持する。
+ */
 const RATE_WINDOW_MS = 60_000;
 
 export interface AiRateLimiterOptions {
@@ -6,6 +12,7 @@ export interface AiRateLimiterOptions {
   now?: () => number;
 }
 
+/** tryAcquire の結果。ok=true なら release() で利用枠を解放できる。 */
 export type AiRateLimitResult =
   | { ok: true; release: () => void }
   | { ok: false; retryAfterSeconds: number };

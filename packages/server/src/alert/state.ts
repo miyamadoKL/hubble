@@ -1,6 +1,12 @@
 /**
  * Alert の状態遷移と通知判定の純粋関数。
  * Redash の next_state / should_notify 相当のロジックを担う。
+ *
+ * `ExactDecimal` による任意精度 10 進比較は `bignumber.js` へ置き換えない。
+ * strict な10進数正規表現による構文検証、`Number.isSafeInteger` を外れる整数の
+ * 拒否、approximate numeric (real/double/float) 型を別経路で `Number` 比較する
+ * 分岐は置き換えても残る。削減見込みは45行から70行にとどまり、runtime dependency
+ * を追加する採用基準を満たさない。
  */
 import type { AlertOp, AlertSelector, AlertState } from '@hubble/contracts';
 
@@ -123,6 +129,7 @@ export function nextAlertState(_currentState: AlertState, conditionMet: boolean)
   return 'ok';
 }
 
+/** shouldNotify への入力。lastTriggeredAt は前回通知時刻(rearm 判定に使う)。 */
 export interface ShouldNotifyInput {
   previousState: AlertState;
   newState: AlertState;

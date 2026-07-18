@@ -7,6 +7,7 @@
 import type { DocumentGitType } from '@hubble/contracts';
 import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 
+/** github_connections テーブルの1レコード。トークンは crypto.ts で暗号化済みの状態で保持する。 */
 export interface GithubConnectionRecord {
   owner: string;
   githubLogin: string;

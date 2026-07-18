@@ -7,6 +7,7 @@ import type { StatementClient } from '../engine/types';
 import { createSqlAbortError } from '../engine/sql/abort';
 import { driveStatementPages } from '../engine/statementDriver';
 
+/** 行収集の結果。truncated は ALERT_MAX_ROWS で打ち切ったかどうか。 */
 export interface FetchRowsResult {
   columns: TrinoColumn[];
   rows: unknown[][];

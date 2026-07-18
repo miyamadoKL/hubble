@@ -187,6 +187,12 @@ async function validateWorkflowSteps(
   await validateStepsWritable(services, principal, stages, workflowDatasourceId);
 }
 
+/**
+ * `/api/workflows` にマウントするサブルーター。
+ *
+ * notebook/dashboard と異なり workflow に共有 (document_shares) の概念はなく、
+ * owner 本人以外からのアクセスは常に 404 になる (403 を返す経路がない)。
+ */
 export function workflowRoutes(services: Services): App {
   const app: App = new Hono<{ Variables: AuthVariables }>();
 
@@ -313,6 +319,10 @@ export function workflowRoutes(services: Services): App {
   return app;
 }
 
+/**
+ * `/api/workflow-runs` にマウントするサブルーター。run/step の owner が要求者と
+ * 一致しない場合も 404 として扱い、他ユーザーの run の存在を判別させない。
+ */
 export function workflowRunRoutes(services: Services, options: WorkflowRunRoutesOptions = {}): App {
   const app: App = new Hono<{ Variables: AuthVariables }>();
 

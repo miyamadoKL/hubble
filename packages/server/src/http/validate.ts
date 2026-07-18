@@ -6,13 +6,19 @@
  * パースを提供する。契約（zod スキーマ）は `@hubble/contracts` 側にあり、このファイルは
  * `@hubble/contracts` から zod への直接依存を持たずに zod スキーマを受け取れるよう、
  * 構造的部分型（`SafeParser`）で最小限のインターフェースだけを要求する。
+ *
+ * `@hono/zod-validator` へ置き換えない。`parseJsonBody` 本体の実装は 15 物理行で、
+ * `SafeParser` interface とエラー整形を合わせても撤去余地は最大 30 物理行にとどまる。
+ * 一方で置き換えには実 call site 24 件、route file 9 件それぞれへ json middleware と
+ * `c.req.valid('json')` の追加、malformed JSON の `Request body must be valid JSON`
+ * と `VALIDATION_ERROR` を既存 `AppError` envelope で返す error adapter が必要になり、
+ * 導入コストが撤去できる行数を上回る。Hono RPC への全面移行も採用しない。response 側の
+ * runtime Zod validation を失い、web と server の compile time coupling が増える。
  */
 import type { Context } from 'hono';
 import { AppError } from '../errors';
 
 /**
- * Minimal structural view of a zod schema — avoids a direct zod dependency.
- *
  * zod スキーマの `safeParse` メソッドだけを要求する構造的インターフェース。このファイルが
  * zod パッケージ自体に直接依存しなくても、zod スキーマをそのまま渡して使えるようにする。
  */
@@ -25,8 +31,6 @@ interface SafeParser<T> {
 }
 
 /**
- * Parse + validate a JSON body against a zod schema, throwing AppError(400).
- *
  * リクエストボディを JSON としてパースし、渡されたスキーマで検証する共通ヘルパー。
  * 各ルートハンドラの冒頭で `await parseJsonBody(c, someRequestSchema)` の形で呼ばれる。
  * @param c - Hono のリクエストコンテキスト。
@@ -52,8 +56,6 @@ export async function parseJsonBody<T>(c: Context, schema: SafeParser<T>): Promi
 }
 
 /**
- * Parse a non-negative integer query param, returning a fallback when absent.
- *
  * クエリ文字列のページング系パラメータ（offset/limit 等）を整数へパースする共通ヘルパー。
  * @param value - `c.req.query(...)` で取得した生の文字列（未指定なら `undefined`）。
  * @param fallback - 値が未指定、空文字、またはパース不能なときに使うデフォルト値。
