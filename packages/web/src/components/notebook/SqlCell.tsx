@@ -12,10 +12,12 @@ import { StatsStrip } from './StatsStrip';
 import { EstimateStrip } from './EstimateStrip';
 import { ResultPane } from './ResultPane';
 import { LastRunStrip } from './LastRunStrip';
+import { SaveQueryModal } from './SaveQueryModal';
 import { parseStatement } from '../../trino-lang';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { useEstimate } from '../../hooks/useEstimate';
 import { useGuardConfig } from '../../hooks/useConfig';
+import { useDatasources } from '../../hooks/useDatasources';
 import { Tooltip } from '../common/Tooltip';
 import { Gauge } from 'lucide-react';
 import {
@@ -176,6 +178,9 @@ export function SqlCell({
 }: SqlCellProps) {
   // Query Guard機能のグローバル設定（mode等）を取得する。
   const guard = useGuardConfig();
+  // 「Save query」モーダルの表示状態。接続先表示に使うデータソース一覧も取得する。
+  const [saveQueryOpen, setSaveQueryOpen] = useState(false);
+  const { datasources } = useDatasources();
   // LIMIT句を自動付与するかどうかのトグル状態。
   const [autoLimit, setAutoLimit] = useState(true);
   // 自動LIMIT時に使う行数上限（初期値はdefaultLimit）。
@@ -590,6 +595,21 @@ export function SqlCell({
         onMoveDown={chrome.onMoveDown}
         onDelete={deleteCell}
         dragHandleProps={chrome.dragHandleProps}
+        onSaveQuery={() => setSaveQueryOpen(true)}
+        saveQueryDisabled={!source.trim()}
+      />
+      {/* SQL を保存済みクエリとして保存するモーダル。セルの現在のソースと実行
+          コンテキスト(datasourceId / catalog / schema)を渡す。 */}
+      <SaveQueryModal
+        open={saveQueryOpen}
+        statement={source}
+        context={{
+          datasourceId: context.datasourceId,
+          catalog: context.catalog,
+          schema: context.schema,
+        }}
+        datasources={datasources}
+        onClose={() => setSaveQueryOpen(false)}
       />
       {/* 折りたたまれていない場合のみ、エディタ本体と結果表示エリアをレンダリングする。 */}
       {!collapsed && (
