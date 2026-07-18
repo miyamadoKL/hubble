@@ -6,6 +6,11 @@
  * 既定の loopback レンジは IPv4 の `127.0.0.0/8` と IPv6 の `::1/128` である。
  * 構文解析と所属判定は ipaddr.js に委譲し、第三者パッケージの型はアダプターの内部に閉じ込める。
  * 外側の角括弧とゾーン ID は、既存方針に合わせて解析の前に正規化する。
+ *
+ * Node 標準の `net.BlockList` は採用しない。IPv6 の `/0` と plain IPv4 アドレスの
+ * 照合、および IPv4-mapped CIDR の family semantics が、このファイルが提供する
+ * 現行の contract（IPv4-mapped IPv6 を IPv4 レンジと比較する等）と異なるため、
+ * security boundary で独自補正を増やすより ipaddr.js を選ぶ。
  */
 import { isIP } from 'node:net';
 import ipaddr from 'ipaddr.js';

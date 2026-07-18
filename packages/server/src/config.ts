@@ -24,30 +24,33 @@ import { isValidCron } from './schedule/cron';
 import { DEFAULT_POSTGRES_TIMEOUTS, type PostgresTimeouts } from './db/postgresTimeouts';
 import type { TokenEncryptionKeyring } from './github/crypto';
 
-/** How a proxy-supplied principal is derived from SSO headers. */
-/** 日本語: `AUTH_USER_MAPPING` で選択する、SSO ヘッダから principal（実行ユーザー名）を
+/**
+ * `AUTH_USER_MAPPING` で選択する、SSO ヘッダから principal（実行ユーザー名）を
  * 導出する方式。`email-localpart` はメールの `@` より前の部分、`email` はメール全体、
- * `user` はユーザーヘッダの値をそのまま使う。 */
+ * `user` はユーザーヘッダの値をそのまま使う。
+ */
 export type UserMapping = 'email-localpart' | 'email' | 'user';
 
-/** Authentication configuration. */
-/** 日本語: 認証まわりの設定一式。`AUTH_MODE=none`（既定）ではほぼ無視され、
- * `AUTH_MODE=proxy`（oauth2-proxy 前段 SSO）のときにのみ意味を持つ。 */
+/**
+ * 認証まわりの設定一式。`AUTH_MODE=none`（既定）ではほぼ無視され、
+ * `AUTH_MODE=proxy`（oauth2-proxy 前段 SSO）のときにのみ意味を持つ。
+ */
 export interface AuthConfig {
-  /** `none`: no auth, principal is `trino.user`. `proxy`: SSO headers. */
+  /** `none` は認証なしで principal が `trino.user` になる。`proxy` は SSO ヘッダを使う。 */
   mode: AuthMode;
-  /** Raw trusted-proxy CIDR list (parsed lazily by the auth layer). */
-  /** 日本語: SSO ヘッダを信頼してよいリクエスト元 CIDR のカンマ区切りリスト（生文字列）。
+  /**
+   * SSO ヘッダを信頼してよいリクエスト元 CIDR のカンマ区切りリスト（生文字列）。
    * 実際の CIDR パース/マッチングは auth 層（auth/cidr.ts）が遅延実行する。
-   * 信頼範囲外からの SSO ヘッダはなりすまし対策として無視される。 */
+   * 信頼範囲外からの SSO ヘッダはなりすまし対策として無視される。
+   */
   trustedProxyCidrs: string;
-  /** Lower-cased header name carrying the SSO user. */
+  /** SSO ユーザーを運ぶヘッダ名（小文字化済み）。 */
   ssoHeaderUser: string;
-  /** Lower-cased header name carrying the SSO email. */
+  /** SSO メールを運ぶヘッダ名（小文字化済み）。 */
   ssoHeaderEmail: string;
-  /** Lower-cased header name carrying SSO group membership (oauth2-proxy 等)。 */
+  /** SSO グループ所属を運ぶヘッダ名（oauth2-proxy 等、小文字化済み）。 */
   ssoHeaderGroups: string;
-  /** Principal derivation strategy. */
+  /** principal 導出方式。 */
   userMapping: UserMapping;
 }
 
@@ -84,9 +87,10 @@ export interface ExportConfig {
   };
 }
 
-/** Server runtime configuration, derived from environment variables. */
-/** 日本語: サーバー実行時設定。`loadServerConfig()` が環境変数から一度だけ構築し、
- * 以後は不変な値としてアプリ全体（Services グラフ）に注入される。 */
+/**
+ * サーバー実行時設定。`loadServerConfig()` が環境変数から一度だけ構築し、
+ * 以後は不変な値としてアプリ全体（Services グラフ）に注入される。
+ */
 export interface ServerConfig {
   /** 日本語: HTTP リッスンポート（`PORT`、既定 8080）。 */
   port: number;
@@ -100,11 +104,7 @@ export interface ServerConfig {
   /** 日本語: 必須の `DATABASE_URL` で指定するPostgreSQL接続設定。 */
   database: DatabaseConfig;
   /**
-   * Directory of the built web app to serve (e.g. `web/dist`). When set, the
-   * server serves these static files and falls back to `index.html` for any
-   * non-`/api` path (SPA). Unset (default) = API-only, no static serving.
-   *
-   * 日本語: `STATIC_DIR` 環境変数。設定するとビルド済み web アプリ (dist) を
+   * `STATIC_DIR` 環境変数。設定するとビルド済み web アプリ (dist) を
    * 静的配信し、非 `/api` パスは SPA のため `index.html` にフォールバックする。
    * 未設定（既定）の場合は API 専用サーバーとして動作し、静的配信は行わない。
    */
@@ -119,10 +119,11 @@ export interface ServerConfig {
    * レガシー自動合成パスは廃止された)。
    */
   trino: {
-    /** Value sent as `X-Trino-User`. */
-    /** 日本語: `TRINO_USER`（既定 `admin`）。全 Trino データソース共通の impersonation
+    /**
+     * `TRINO_USER`（既定 `admin`）。全 Trino データソース共通の impersonation
      * ユーザー。AUTH_MODE=none の場合はこの値が principal になる。proxy モードでは
-     * SSO から解決した principal が実際の X-Trino-User として使われる。 */
+     * SSO から解決した principal が実際の X-Trino-User として使われる。
+     */
     user: string;
   };
   /** 候補データソースを公開する前の疎通確認期限。 */
@@ -136,13 +137,15 @@ export interface ServerConfig {
   };
   /** 日本語: クエリ実行とページストアの挙動を制御する設定群（`QUERY_*`）。 */
   query: {
-    /** Default cap on rows buffered server-side per query. */
-    /** 日本語: `QUERY_MAX_ROWS`（既定 100,000）。クエリ 1 件あたりサーバーメモリに
-     * バッファする行数の上限。 */
+    /**
+     * `QUERY_MAX_ROWS`（既定 100,000）。クエリ 1 件あたりサーバーメモリに
+     * バッファする行数の上限。
+     */
     maxRows: number;
-    /** Maximum number of queries running (追走中) concurrently. */
-    /** 日本語: `QUERY_CONCURRENCY`（既定 5）。同時に nextUri を追走できるクエリ数の
-     * 上限（semaphore で制御）。 */
+    /**
+     * `QUERY_CONCURRENCY`（既定 5）。同時に nextUri を追走できるクエリ数の
+     * 上限（semaphore で制御）。
+     */
     concurrency: number;
     /** 実行枠を待てるクエリの全体上限。 */
     maxQueued: number;
@@ -150,83 +153,91 @@ export interface ServerConfig {
     maxQueuedPerPrincipal: number;
     /** 終端済みを含め、registry が保持する QueryExecution の上限。 */
     maxTracked: number;
-    /** Minutes a finished query is retained before sweep. */
-    /** 日本語: `QUERY_TTL_MINUTES`（既定 30）。完了済みクエリをレジストリに保持する分数。
-     * 経過後は sweep（削除）される。 */
+    /**
+     * `QUERY_TTL_MINUTES`（既定 30）。完了済みクエリをレジストリに保持する分数。
+     * 経過後は sweep（削除）される。
+     */
     ttlMinutes: number;
-    /** What to do when a query exceeds `maxRows`: truncate buffering or cancel. */
-    /** 日本語: `QUERY_OVERFLOW_MODE`（既定 `truncate`）。`maxRows` を超えた場合の挙動。
+    /**
+     * `QUERY_OVERFLOW_MODE`（既定 `truncate`）。`maxRows` を超えた場合の挙動。
      * `truncate` はバッファへの追加のみ止めてクエリ自体は継続、`cancel` は Trino 側の
-     * クエリごとキャンセルする。 */
+     * クエリごとキャンセルする。
+     */
     overflowMode: 'truncate' | 'cancel';
   };
   /** 日本語: メタデータキャッシュの設定（`METADATA_TTL_SECONDS`）。 */
   metadata: {
-    /** TTL for metadata cache entries, in seconds. */
-    /** 日本語: `METADATA_TTL_SECONDS`（既定 300）。カタログ/スキーマ/テーブル情報の
-     * キャッシュ TTL。期限切れ後は stale-while-revalidate で古い値を返しつつ裏で更新する。 */
+    /**
+     * `METADATA_TTL_SECONDS`（既定 300）。カタログ/スキーマ/テーブル情報の
+     * キャッシュ TTL。期限切れ後は stale-while-revalidate で古い値を返しつつ裏で更新する。
+     */
     ttlSeconds: number;
   };
   /** 日本語: クエリ結果保存バックエンドの設定（`RESULT_STORE_*`）。 */
   resultStore: ResultStoreConfig;
   /** 日本語: クエリ結果エクスポート先の設定（`EXPORT_*`）。 */
   export: ExportConfig;
-  /** Query Guard configuration (Query Guard feature). */
-  /** 日本語: Query Guard（EXPLAIN (TYPE IO) による事前スキャン量見積もり）機能の設定。
-   * `QUERY_GUARD_*` 環境変数群から組み立てる。 */
+  /**
+   * Query Guard（EXPLAIN (TYPE IO) による事前スキャン量見積もり）機能の設定。
+   * `QUERY_GUARD_*` 環境変数群から組み立てる。
+   */
   guard: {
-    /** `off` disables the feature entirely (no estimation). */
-    /** 日本語: `QUERY_GUARD_MODE`（既定 `warn`）。`off` は見積もり自体を行わない、
-     * `warn` は超過しても実行は許可し警告のみ、`enforce` は超過時に 422 で実行をブロックする。 */
+    /**
+     * `QUERY_GUARD_MODE`（既定 `warn`）。`off` は見積もり自体を行わない、
+     * `warn` は超過しても実行は許可し警告のみ、`enforce` は超過時に 422 で実行をブロックする。
+     */
     mode: GuardMode;
-    /** Scan-bytes limit (0 = no limit). */
-    /** 日本語: `QUERY_GUARD_MAX_SCAN_BYTES`（既定 0 = 無制限）。見積もりスキャンバイト数の上限。 */
+    /** `QUERY_GUARD_MAX_SCAN_BYTES`（既定 0 = 無制限）。見積もりスキャンバイト数の上限。 */
     maxScanBytes: number;
-    /** Scan-rows limit (0 = no limit). */
-    /** 日本語: `QUERY_GUARD_MAX_SCAN_ROWS`（既定 0 = 無制限）。見積もりスキャン行数の上限。 */
+    /** `QUERY_GUARD_MAX_SCAN_ROWS`（既定 0 = 無制限）。見積もりスキャン行数の上限。 */
     maxScanRows: number;
-    /** How to treat a query whose scan cost cannot be estimated. */
-    /** 日本語: `QUERY_GUARD_ON_UNKNOWN`（既定 `warn`）。EXPLAIN が失敗/タイムアウトして
-     * 見積もり不能だった場合の扱い（`allow`/`warn`/`block`）。 */
+    /**
+     * `QUERY_GUARD_ON_UNKNOWN`（既定 `warn`）。EXPLAIN が失敗/タイムアウトして
+     * 見積もり不能だった場合の扱い（`allow`/`warn`/`block`）。
+     */
     onUnknown: GuardOnUnknown;
-    /** EXPLAIN timeout in ms; exceeded => estimation unavailable. */
-    /** 日本語: `QUERY_GUARD_ESTIMATE_TIMEOUT_MS`（既定 3000）。EXPLAIN 実行のタイムアウト。
-     * 超過すると見積もり不能扱いとなり `onUnknown` の方針に従う。 */
+    /**
+     * `QUERY_GUARD_ESTIMATE_TIMEOUT_MS`（既定 3000）。EXPLAIN 実行のタイムアウト。
+     * 超過すると見積もり不能扱いとなり `onUnknown` の方針に従う。
+     */
     estimateTimeoutMs: number;
-    /** Estimate-result cache TTL, in seconds. */
-    /** 日本語: `QUERY_GUARD_CACHE_TTL_SECONDS`（既定 30）。同一クエリの見積もり結果を
-     * 再利用するキャッシュの TTL。 */
+    /**
+     * `QUERY_GUARD_CACHE_TTL_SECONDS`（既定 30）。同一クエリの見積もり結果を
+     * 再利用するキャッシュの TTL。
+     */
     cacheTtlSeconds: number;
-    /** Cluster throughput estimate for `estimatedSeconds` (0 = no prediction). */
-    /** 日本語: `QUERY_GUARD_BYTES_PER_SECOND`（既定 0 = 予測しない）。クラスタの
-     * スループット見積もり値で、見積もり所要時間 (`estimatedSeconds`) の算出に使う。 */
+    /**
+     * `QUERY_GUARD_BYTES_PER_SECOND`（既定 0 = 予測しない）。クラスタの
+     * スループット見積もり値で、見積もり所要時間 (`estimatedSeconds`) の算出に使う。
+     */
     bytesPerSecond: number;
   };
-  /** Query Scheduling configuration (Query Scheduling feature). */
-  /** 日本語: cron スケジューラー（Query Scheduling 機能）の設定。`SCHEDULER_*` から組み立てる。 */
+  /** cron スケジューラー（Query Scheduling 機能）の設定。`SCHEDULER_*` から組み立てる。 */
   scheduler: {
-    /** When false, the API stays live but the tick loop never starts. */
-    /** 日本語: `SCHEDULER_ENABLED`（既定 true）。false でも API 自体は生きているが、
-     * 定期的にスケジュール実行時刻をスキャンするティックループは開始しない。 */
+    /**
+     * `SCHEDULER_ENABLED`（既定 true）。false でも API 自体は生きているが、
+     * 定期的にスケジュール実行時刻をスキャンするティックループは開始しない。
+     */
     enabled: boolean;
-    /** Seconds between due-schedule scans. */
-    /** 日本語: `SCHEDULER_TICK_SECONDS`（既定 15）。実行時刻を迎えたスケジュールが
-     * ないかをスキャンする周期（秒）。 */
+    /**
+     * `SCHEDULER_TICK_SECONDS`（既定 15）。実行時刻を迎えたスケジュールが
+     * ないかをスキャンする周期（秒）。
+     */
     tickSeconds: number;
-    /** Max schedules running concurrently across the scheduler. */
-    /** 日本語: `SCHEDULER_MAX_CONCURRENT`（既定 2）。スケジューラー全体で同時実行できる
-     * スケジュール数の上限。 */
-    /** 日本語: `SCHEDULER_MAX_CONCURRENT`（既定 2）。schedule、workflow step、alert が
-     * 共有する statement 同時実行数の上限。 */
+    /**
+     * `SCHEDULER_MAX_CONCURRENT`（既定 2）。schedule、workflow step、alert が
+     * 共有する `JobAdmissionController` の同時実行数の上限。
+     */
     maxConcurrent: number;
-    /** Per-schedule cap on retained `schedule_runs` rows (older are pruned). */
-    /** 日本語: `SCHEDULER_RUNS_RETENTION`（既定 50）。スケジュールごとに保持する
-     * 実行履歴 (`schedule_runs`) の件数上限。超過分は古い順に削除される。 */
+    /**
+     * `SCHEDULER_RUNS_RETENTION`（既定 50）。スケジュールごとに保持する
+     * 実行履歴 (`schedule_runs`) の件数上限。超過分は古い順に削除される。
+     */
     runsRetention: number;
   };
   /** スケジュール失敗通知の送信設定。 */
   notification: {
-    /** Slack incoming webhook URL。 */
+    /** Slack の incoming webhook URL。 */
     slackWebhookUrl?: string;
     /** 予約レンジへの webhook 送信を上書き許可する CIDR。 */
     webhookAllowedCidrs: ParsedCidr[];
@@ -378,8 +389,7 @@ function envOptional(env: Env, key: string): string | undefined {
   return v === undefined || v === '' ? undefined : v;
 }
 
-/** Parse a boolean env var. Accepts true/1/yes/on and false/0/no/off (any case). */
-// 日本語: 真偽値環境変数のパーサー。true/1/yes/on と false/0/no/off を大文字小文字を
+// 真偽値環境変数のパーサー。true/1/yes/on と false/0/no/off を大文字小文字を
 // 無視して受け付け、どちらにも該当しない値は起動時エラーにする。
 function envBool(env: Env, key: string, fallback: boolean): boolean {
   const v = env[key];
@@ -635,6 +645,11 @@ export function resolveExportConfig(env: Env): ExportConfig {
  * `ServerConfig` を組み立てるエントリーポイント。各セクション（auth/trino/defaults/
  * query/metadata/guard/scheduler）ごとに対応する環境変数を読み、上の `env*` ヘルパーで
  * 型変換、デフォルト適用、不正値検出を行う。
+ *
+ * この段階的な parse を、raw env を flat な Zod schema で型変換してから nested
+ * `ServerConfig` へ組み立てる構成へ集約することは採用しない。flat schema から
+ * nested config への変換層がそのまま残るため、集約しても行数と分岐数は減らず増加する
+ * ことを実測で確認済み。
  */
 export function loadServerConfig(env: Env = process.env): ServerConfig {
   const smtpPasswordEnv = envOptional(env, 'NOTIFY_SMTP_PASSWORD_ENV');
@@ -649,8 +664,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
     auth: {
       mode: envEnum(env, 'AUTH_MODE', ['none', 'proxy'] as const, 'none'),
       trustedProxyCidrs: envStr(env, 'AUTH_TRUSTED_PROXY_CIDRS', '127.0.0.0/8,::1/128'),
-      // Header names are compared case-insensitively; normalize to lower-case.
-      // 日本語: ヘッダ名は大文字小文字を無視して比較するため、ここで小文字に正規化しておく。
+      // ヘッダ名は大文字小文字を無視して比較するため、ここで小文字に正規化しておく。
       ssoHeaderUser: envStr(env, 'AUTH_SSO_HEADER_USER', 'x-forwarded-user').toLowerCase(),
       ssoHeaderEmail: envStr(env, 'AUTH_SSO_HEADER_EMAIL', 'x-forwarded-email').toLowerCase(),
       ssoHeaderGroups: envStr(env, 'AUTH_SSO_HEADER_GROUPS', 'x-forwarded-groups').toLowerCase(),
@@ -741,10 +755,7 @@ export function loadServerConfig(env: Env = process.env): ServerConfig {
 }
 
 /**
- * Build the public `AppConfig` from server config and validate it
- * against the contract before exposing it via `GET /api/config`.
- *
- * 日本語: `ServerConfig`（内部設定）と既定データソースから、フロントエンドに
+ * `ServerConfig`（内部設定）と既定データソースから、フロントエンドに
  * 公開してよい部分だけを抜き出し、`GET /api/config` で返す `AppConfig`
  * （packages/contracts の契約スキーマ）を組み立てる。`appConfigSchema.parse`
  * によって契約に沿った形になっているかをここで検証する（サーバー起動直後の

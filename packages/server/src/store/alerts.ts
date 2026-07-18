@@ -12,6 +12,14 @@ import type { SqlDatabase, SqlParam } from '../db/sqlDatabase';
 import { newId } from '../util/id';
 import { AppError } from '../errors';
 
+/**
+ * Alert 作成/更新時点の principal 情報のスナップショット検証スキーマ。cron による
+ * 評価時（`AlertEvaluator.evaluateAlert`）に `schedulePrincipalIdentity` へ渡され、
+ * `resolveRoleForPrincipal` で実行時ロールを再解決するために使う。解決したロールが
+ * 保存済みクエリへのアクセス可否、データソース許可、Query Guard の上限、
+ * 書き込み可否をその場で判定する起点になる security boundary であり、
+ * 単なる表示用の記録ではない。
+ */
 export const alertPrincipalSnapshotSchema = z.object({
   user: z.string().min(1),
   email: z.string().min(1).optional(),
@@ -55,6 +63,7 @@ export interface CreateAlertInput {
   principalSnapshot: PrincipalIdentity;
 }
 
+/** `AlertRepository.update` への入力。指定したフィールドのみ部分更新する。 */
 export interface UpdateAlertInput {
   name?: string;
   savedQueryId?: string;

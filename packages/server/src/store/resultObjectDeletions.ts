@@ -1,5 +1,18 @@
 /**
  * JSONL result object の削除 outbox を管理する永続化層。
+ *
+ * `store/*` 全体として、Kysely や generic CRUD 基底 class は採用しない。この
+ * ファイルは `store/*` の中で最小の repository（SQL 文 6 件、動的 SQL と
+ * transaction は 0 件）だが、それでも Kysely 導入は見送っている。既存の
+ * `PostgresDatabase` は pool を private に保持し、`transaction()` が 60 秒
+ * deadline とクライアント破棄を、`withAdvisoryLock()` が同じ pool から借りた
+ * session lock 用クライアントを所有している。Kysely の `PostgresDialect` に
+ * 第二の `Pool` を持たせると pool owner が増え、既存 pool を渡すには db
+ * factory、close ownership、transaction deadline と advisory lock の境界を
+ * 追加実装する必要がある。その追加分が、最小候補ですら必要な正味 20%
+ * 削減（35.2 行以上）を先に消費してしまうため、query builder への移行は
+ * 見送った。document revision、favorite、summary の差を flag や callback で
+ * 隠す generic 基底 class も、同じ理由で wrong abstraction として避けている。
  */
 import type { SqlDatabase } from '../db/sqlDatabase';
 

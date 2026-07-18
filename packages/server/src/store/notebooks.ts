@@ -3,7 +3,7 @@
  * CRUD を提供する。ノートブック本体（セル、変数、コンテキストを含む契約型
  * `Notebook` 全体）は JSON 文字列として `data` 列にそのまま保存し、`name` /
  * `description` のみ検索用に別列へ複製して抽出する。所有分に加え、
- * `document_shares` 経由で共有されたノートブックも accessor 向けに一覧・取得できる。
+ * `document_shares` 経由で共有されたノートブックも accessor 向けに一覧表示と取得ができる。
  * `likeParam()` は savedQueries.ts からも再利用される
  * LIKE 検索の共通ヘルパー。
  */
@@ -24,6 +24,7 @@ import {
   type StoreForbidden,
 } from './documentShares';
 
+/** name 重複などの一意性制約違反を表す判別用リテラル型。 */
 export type StoreConflict = 'conflict';
 
 /**
@@ -262,7 +263,6 @@ export class NotebookRepository {
   }
 
   private rowToNotebook(row: NotebookRow): Notebook {
-    // `data` is the source of truth; parse + validate against the contract.
     // `data` 列（JSON 文字列）が正であり、name/description 列は検索用の複製に
     // すぎないため無視する。パース結果を契約スキーマで検証してから返す。
     return notebookStoredSchema.parse({
@@ -292,10 +292,11 @@ function rowToListItem(
   };
 }
 
-/** Escape LIKE wildcards and wrap with `%…%` for a contains match. */
-// LIKE 検索のワイルドカード（\, %, _）をエスケープしてから `%…%` で囲み、
-// 部分一致（contains）検索用のパターンに変換する。呼び出し側の SQL は
-// `ESCAPE '\\'` を指定してこのエスケープ文字を認識する必要がある。
+/**
+ * LIKE 検索のワイルドカード（\, %, _）をエスケープしてから `%…%` で囲み、
+ * 部分一致（contains）検索用のパターンに変換する。呼び出し側の SQL は
+ * `ESCAPE '\\'` を指定してこのエスケープ文字を認識する必要がある。
+ */
 export function likeParam(query: string): string {
   const escaped = query.replace(/[\\%_]/g, (c) => `\\${c}`);
   return `%${escaped}%`;

@@ -6,8 +6,10 @@ import type { SqlDatabase } from '../db/sqlDatabase';
 import type { AlertTriggeredNotificationInput } from '../notification/service';
 import { newId } from '../util/id';
 
+/** 配信ジョブの状態。`pending` は未送信、`sent` は成功、`dead` は再試行上限到達。 */
 export type AlertDeliveryStatus = 'pending' | 'sent' | 'dead';
 
+/** `alert_deliveries` テーブル 1 行分の公開表現。 */
 export interface AlertDeliveryJob {
   id: string;
   alertId: string;
@@ -22,6 +24,7 @@ export interface AlertDeliveryJob {
   updatedAt: string;
 }
 
+/** `AlertDeliveryRepository.insert` への入力。新規ジョブは常に `pending`、試行回数 0 で作成される。 */
 export interface InsertAlertDeliveryInput {
   alertId: string;
   owner: string;

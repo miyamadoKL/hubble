@@ -9,6 +9,7 @@ export interface WatchedFile {
 }
 
 export interface FileReloadOptions {
+  /** mtime ポーリング間隔（秒）。0 以下ならポーリングを行わず SIGHUP のみで reload する。 */
   intervalSeconds: number;
   statImpl?: (path: string) => { mtimeMs: number } | null;
   log?: (message: string) => void;
@@ -30,6 +31,13 @@ const defaultStat = (path: string): { mtimeMs: number } | null => {
   }
 };
 
+/**
+ * 設定ファイル群を mtime ポーリングと SIGHUP の両方で監視し、変更検知時に
+ * 対応する reload コールバックを実行するハンドルを構築する。
+ * @param files 監視対象ファイルの初期集合。
+ * @param options ポーリング間隔や stat/log の差し替え（テスト用）を含むオプション。
+ * @returns 監視対象の更新、即時 reload、停止を行うハンドル。
+ */
 export function startFileReload(
   files: WatchedFile[],
   options: FileReloadOptions,
@@ -47,10 +55,22 @@ export function startFileReload(
 
   let reloadPromise: Promise<void> | undefined;
   let stopped = false;
+  // 実行中の reload がある間に来た追加のトリガー（別ファイルの mtime 変化や
+  // SIGHUP の重複）は待ち行列に積まず読み捨てる。この取りこぼしは実際に起こり得る:
+  // poll() は runReload() を呼ぶ前に lastMtime を更新するため、進行中の reload
+  // 完了前に検出された変更は「既知」として記録されるが、それをトリガーした
+  // runReload() 呼び出しはここで即座に何もせず戻る。その後 reload が完了しても
+  // 再実行はスケジュールされないため、その時点の変更は反映されないまま
+  // lastMtime だけが更新済みの状態になる。回復するのは、reload 完了後に
+  // 同じファイルが再度変更されるか、triggerReload()/SIGHUP が改めて呼ばれた
+  // ときだけである。
   const runReload = (): void => {
     if (stopped || reloadPromise) return;
     const currentReload = Promise.resolve()
       .then(async () => {
+        // 複数の監視対象パスが同じ reload コールバックを共有し得るため、
+        // Set で重複を除いてから実行する（例: datasources.yaml と rbac.yaml の
+        // 両方が同じ reloadConfig を指す）。
         const reloads = new Set(watchedFiles.map((f) => f.reload));
         await Promise.all([...reloads].map((reload) => Promise.resolve(reload())));
       })
@@ -142,6 +162,7 @@ export function startFileReload(
   };
 }
 
+/** `CONFIG_RELOAD_INTERVAL_SECONDS` を解決する。未設定/不正値/負値は既定の 30 秒とする。 */
 export function parseReloadIntervalSeconds(env: Record<string, string | undefined>): number {
   const raw = env.CONFIG_RELOAD_INTERVAL_SECONDS;
   if (raw === undefined || raw === '') return 30;

@@ -30,6 +30,11 @@ export const auditActionSchema = z.enum([
 
 export type AuditAction = z.infer<typeof auditActionSchema>;
 
+/**
+ * 監査ログの `detail` 列に格納する値の型。任意階層の入れ子を許容するが、
+ * `auditJsonSchema` が `z.number().finite()` で検証するため、`number` は
+ * 有限値のみが許され、`NaN` や `Infinity` は許容されない。
+ */
 export type AuditJson =
   | string
   | number
@@ -38,6 +43,7 @@ export type AuditJson =
   | AuditJson[]
   | { [key: string]: AuditJson };
 
+/** 再帰型 `AuditJson` を検証するため、自己参照に `z.lazy` を使う。 */
 export const auditJsonSchema: z.ZodType<AuditJson> = z.lazy(() =>
   z.union([
     z.string(),
@@ -60,6 +66,7 @@ export const auditEventInputSchema = z.object({
 
 export type AuditEventInput = z.infer<typeof auditEventInputSchema>;
 
+/** 監査ログ 1 行分の公開表現（`AuditLogDbRow` の snake_case を変換したもの）。 */
 export interface AuditLogRow {
   id: string;
   actor: string;
@@ -97,6 +104,7 @@ interface AuditLogDbRow {
   created_at: string;
 }
 
+/** `audit_log` テーブルに対する記録、保持期限切れの削除、カーソル検索を提供する。 */
 export class AuditRepository {
   constructor(
     private readonly db: SqlDatabase,
@@ -202,6 +210,11 @@ interface AuditWriter {
   search?(input: AuditSearchInput): Promise<AuditSearchResult>;
 }
 
+/**
+ * 監査ログ書き込みを best-effort にするラッパー。`record()` の失敗は本処理を
+ * 止めないよう握りつぶしてログに残すだけとし、監査ログの欠落が API 応答自体を
+ * 失敗させないようにする（読み取り系の `search`/`listForTest` は失敗を伝播する）。
+ */
 export class AuditLogger {
   constructor(
     private readonly repository: AuditWriter,

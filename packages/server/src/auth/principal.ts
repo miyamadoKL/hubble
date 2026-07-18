@@ -13,14 +13,6 @@ import type { AuthConfig } from '../config';
 import { isTrustedAddress, parseCidrList, type ParsedCidr } from './cidr';
 import type { ResolvedRole } from '../rbac/types';
 
-/**
- * The authenticated identity for a request. `user` is both the
- * owner id for stored resources and the `X-Trino-User` impersonation value.
- *
- * リクエストの認証済み識別情報。`user` は保存リソースの所有者 id と、
- * Trino へのリクエストで使う `X-Trino-User`（impersonation）の値を兼ねる。
- */
-
 /** SSO / none モードで解決されたユーザー識別子（ロール付与前）。 */
 export interface PrincipalIdentity {
   user: string;
@@ -29,6 +21,10 @@ export interface PrincipalIdentity {
   groups?: string[];
 }
 
+/**
+ * リクエストの認証済み識別情報。`user` は保存リソースの所有者 id と、
+ * Trino へのリクエストで使う `X-Trino-User`（impersonation）の値を兼ねる。
+ */
 export interface Principal extends PrincipalIdentity {
   /** リクエストごとに解決されたロール（Phase A は露出のみ、強制は Phase B）。 */
   role: ResolvedRole;
@@ -40,15 +36,12 @@ export type ResolveResult =
   | { ok: false; reason: string };
 
 /**
- * Look up a header value (case-insensitive) from a plain record.
- *
  * プレーンなレコードからヘッダー値を大文字小文字を無視して探す。
  * @param headers - ヘッダー名 -> 値 のレコード。
  * @param name - 探したいヘッダー名。
  * @returns 見つかった値。存在しなければ undefined。
  */
 function header(headers: Record<string, string | undefined>, name: string): string | undefined {
-  // Hono's `c.req.header()` already returns lower-cased keys, but be defensive.
   // Hono の c.req.header() は既に小文字キーを返すが、直接呼ばれる場合に備えて防御的に扱う。
   const direct = headers[name];
   if (direct !== undefined) return direct;
@@ -61,8 +54,6 @@ function header(headers: Record<string, string | undefined>, name: string): stri
 }
 
 /**
- * Parse a comma-separated SSO groups header into trimmed, non-empty group names.
- *
  * カンマ区切りの SSO グループヘッダーをパースする。各要素を trim し、空要素を除去する。
  * ヘッダー自体が欠落している場合は undefined（RBAC では空配列として扱う）。
  * @param value - グループヘッダーの生文字列。
@@ -77,9 +68,7 @@ export function parseGroupsHeader(value: string | undefined): string[] | undefin
 }
 
 /**
- * Apply the configured mapping to the SSO header values.
- *
- * 設定された `userMapping` に従い、SSO ヘッダーの値から {@link Principal} を組み立てる。
+ * 設定された `userMapping` に従い、SSO ヘッダーの値から {@link PrincipalIdentity} を組み立てる。
  * @param mapping - principal の組み立て方（'user' | 'email' | 'email-localpart'）。
  * @param userHeader - `X-Forwarded-User` 相当のヘッダー値。
  * @param emailHeader - `X-Forwarded-Email` 相当のヘッダー値。
@@ -114,9 +103,6 @@ export function mapPrincipal(
 }
 
 /**
- * Resolver bound to a config. Pre-parses the trusted CIDR list once. Pure given
- * (headers, remoteAddress) so it is trivially unit-testable without a socket.
- *
  * 設定に紐づいた principal リゾルバー。信頼済み CIDR リストはコンストラクタで一度だけ
  * パースしてキャッシュする。`(headers, remoteAddress)` に対して純粋関数的に振る舞うため、
  * 実ソケットなしでも容易に単体テストできる。
@@ -128,19 +114,12 @@ export class PrincipalResolver {
     this.trusted = parseCidrList(auth.trustedProxyCidrs);
   }
 
-  /**
-   * True when the peer address falls inside a trusted-proxy CIDR.
-   * ピアアドレスが信頼済みプロキシの CIDR に含まれていれば true。
-   */
+  /** ピアアドレスが信頼済みプロキシの CIDR に含まれていれば true。 */
   isTrusted(remoteAddress: string | undefined): boolean {
     return isTrustedAddress(this.trusted, remoteAddress);
   }
 
   /**
-   * Resolve a request's principal in `proxy` mode. SSO headers are honored only
-   * when the peer is a trusted proxy; otherwise (untrusted peer, or missing
-   * headers) the request is unauthenticated and the caller returns 401.
-   *
    * proxy モードでリクエストの principal を解決する。SSO ヘッダーは、ピアが信頼済み
    * プロキシである場合にのみ信用される。それ以外（信頼できないピア、または識別ヘッダーの
    * 欠落）の場合は未認証とし、呼び出し元（middleware.ts）が 401 を返す。

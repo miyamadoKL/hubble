@@ -243,6 +243,7 @@ function writeNotAllowed(message: string): AppError {
   return AppError.forbidden(message, WRITE_NOT_ALLOWED);
 }
 
+/** `assertQueryWriteAllowed` への入力。IO explain へ回す場合のみ Trino 系の 3 項目が必要。 */
 export interface AssertQueryWriteParams {
   statement: string;
   role: ResolvedRole;

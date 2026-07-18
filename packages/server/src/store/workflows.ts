@@ -342,7 +342,7 @@ export class WorkflowRepository {
 }
 
 // ---------------------------------------------------------------------------
-// Workflow runs
+// ワークフロー実行記録
 // ---------------------------------------------------------------------------
 
 interface WorkflowRunRow {
@@ -392,6 +392,7 @@ export interface FinishWorkflowRunInput {
   elapsedMs: number;
 }
 
+/** workflow の 1 step を終端状態へ更新する際の入力。 */
 export interface FinishWorkflowStepInput {
   status: WorkflowStepRunStatus;
   attempt: number;
@@ -404,6 +405,7 @@ export interface FinishWorkflowStepInput {
   finishedAt: string;
 }
 
+/** 保持期限切れの result object 参照。ResultStore 上の削除対象を表す。 */
 export interface ExpiredWorkflowStepResult {
   id: string;
   resultObjectKey: string;
