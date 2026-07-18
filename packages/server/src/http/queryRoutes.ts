@@ -86,9 +86,6 @@ const PERSISTED_RESULT_CACHE_CONTROL = 'private, no-cache';
 const PERSISTED_RESULT_REVALIDATION_VERSION = 'result-revalidation-v1';
 
 /**
- * Query endpoints: submit/snapshot/events(SSE)/rows/cancel/CSV.
- * Mounted under `/api/queries`.
- *
  * クエリ実行系エンドポイントをまとめた Hono サブルーターを構築するファクトリ関数。
  * @param services - DI コンテナ。Trino クライアント、実行レジストリ、Query Guard 見積り
  *   サービスなど、このルーターが必要とする協調オブジェクト一式を保持する（`../services` 参照）。
@@ -98,7 +95,6 @@ const PERSISTED_RESULT_REVALIDATION_VERSION = 'result-revalidation-v1';
 export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables }> {
   const app = new Hono<{ Variables: AuthVariables }>();
 
-  // POST /api/queries/estimate — Query Guard scan-cost estimate (no execution).
   // ステートメントを実行せず EXPLAIN (TYPE IO) 相当のスキャン量見積りだけを行うエンドポイント。
   app.post('/estimate', async (c) => {
     const body = await parseJsonBody(c, estimateRequestSchema);
@@ -106,7 +102,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const estimateDatasourceId = body.datasourceId ?? services.defaultDatasourceId;
     requireDatasourceAccess(principal.role, estimateDatasourceId);
     const effective = effectiveGuard(services.config, principal.role);
-    // mode=off: never touch Trino; return a `disabled` estimate immediately.
     // Query Guard 自体が無効な設定のときは Trino に問い合わせず即座に「無効」を返す。
     if (effective.mode === 'off') {
       return c.json(disabledEstimate());
@@ -124,7 +119,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return c.json(result);
   });
 
-  // POST /api/queries — accept and start; respond 202 with the queryId.
   // クエリを実際に投入するエンドポイント。非同期実行を開始し、完了を待たず 202 で queryId を返す。
   app.post('/', async (c) => {
     const body = await parseJsonBody(c, createQueryRequestSchema);
@@ -134,7 +128,7 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     const ctx: TrinoRequestContext = {
       catalog,
       schema,
-      // Impersonate the authenticated principal for this user query.
+      // 認証済み principal をこのクエリの実行ユーザーとしてそのまま使う。
       user: principal.user,
       sessionProperties: validateSessionProperties(body.sessionProperties),
     };
@@ -161,9 +155,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
       ioExplainTimeoutMs: services.config.guard.estimateTimeoutMs,
     });
 
-    // Query Guard enforce: estimate (reusing a fresh cached estimate from a
-    // just-prior /estimate call so this is usually a no-op) and block before
-    // any execution when the verdict says so.
     // enforce モードの時だけ、実行前にもう一度見積りを取り block 判定なら実行させずエラーにする。
     // 見積りサービス側に TTL キャッシュがあるため、直前の /estimate 呼び出しと同一なら
     // Trino への追加問い合わせは実質発生しない。
@@ -260,11 +251,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
   });
 
   /**
-   * Fetch an execution scoped to the requesting principal. A query is owned by
-   * the principal whose impersonation user started it; another
-   * user gets a 404 (indistinguishable from "unknown id"), so executions never
-   * leak across owners.
-   *
    * `:id` を取るエンドポイント共通の「実行を取得し、所有者チェックする」ヘルパー。
    * 存在しない id は `registry.getOrThrow` が例外を投げ、存在するが別ユーザー所有の場合は
    * ここで明示的に 404 を投げる。両者を区別できないようにするのが意図（IDOR 対策）。
@@ -336,6 +322,16 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     );
   };
 
+  /**
+   * CSV/ZIP エクスポート系エンドポイント共通の結果解決。認可チェックの経路が
+   * 2 つに分かれる点に注意する。永続化済み結果 (resultStore、`persisted`) を
+   * 返す経路は `usablePersistedResult` が owner スコープ (`history.getResultRef`)
+   * と `requireDatasourceAccess` を検証するが、結果が既に確定済みのため write
+   * check は行わない。一方、再実行 (re-exec) が必要かつ許可されている経路は、
+   * 元の実行時とは別リクエストであるため `requireDatasourceAccess` と
+   * `assertQueryWriteAllowed` を呼び直して権限を再検証する。この関数を変更する
+   * ときは、どちらの経路でも認可の再検証が抜け落ちないことを確認すること。
+   */
   const resolveExportEvents = async (
     c: { req: { param: (k: string) => string; raw: Request }; var: AuthVariables },
     exec: ReturnType<typeof services.registry.get> | undefined,
@@ -432,7 +428,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     });
   };
 
-  // GET /api/queries/:id — snapshot.
   // 実行の現在状態（ステータス、行数、エラー等）をポーリング取得するためのスナップショット API。
   app.get('/:id', async (c) => {
     const exec = maybeOwnedExec(c.req.param('id'), c);
@@ -455,7 +450,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return c.json(snapshot);
   });
 
-  // GET /api/queries/:id/rows?offset&limit — page of buffered rows.
   // バッファ済みの結果行をオフセット/リミット指定でページングして返す。
   app.get('/:id/rows', async (c) => {
     const exec = maybeOwnedExec(c.req.param('id'), c);
@@ -504,7 +498,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return c.json(page);
   });
 
-  // POST /api/queries/:id/rows/search — filter / sort / search over buffered or persisted rows.
   // メモリバッファまたは永続化結果の行をストリーミング評価して server-side 探索を行う。
   // 永続化結果は QUERY_MAX_ROWS で有界ではないため、全行を配列へ materialize しない。
   app.post('/:id/rows/search', async (c) => {
@@ -553,7 +546,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return c.json(page);
   });
 
-  // GET /api/queries/:id/profile — column profiles over buffered or persisted rows.
   // メモリバッファまたは永続化結果の行をストリーミング走査して列プロファイルを計算する。
   app.get('/:id/profile', async (c) => {
     const exec = maybeOwnedExec(c.req.param('id'), c);
@@ -593,7 +585,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return c.json(profile);
   });
 
-  // DELETE /api/queries/:id — cancel.
   // 実行中のクエリをキャンセルする。Trino 側へのキャンセル要求とローカル状態更新は exec に委譲。
   app.delete('/:id', async (c) => {
     const exec = ownedExec(c);
@@ -608,13 +599,11 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     return c.json(exec.snapshot());
   });
 
-  // GET /api/queries/:id/events — SSE replay + live.
   // Server-Sent Events でクエリの進捗をリアルタイム配信するエンドポイント。
   // 接続直後に「これまでの状態のリプレイ」を送り、その後はライブイベントをそのまま流す。
   app.get('/:id/events', (c) => {
     const exec = ownedExec(c);
     return streamSSE(c, async (sseStream) => {
-      // Buffer live events that arrive during replay, then flush in order.
       // リプレイ処理中に発生したライブイベントを取りこぼさないよう、いったんバッファに退避する。
       const pending: EncodedSseEvent[] = [];
       let pendingBytes = 0;
@@ -691,7 +680,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
 
       try {
         let replayForcedTerminal = false;
-        // Replay current state snapshot.
         // 接続時点までの状態を再構築したイベント列を先に流す（新規購読者への状態同期）。
         for (const event of buildReplayEvents(exec)) {
           const encoded = encodeSseEvent(event);
@@ -704,7 +692,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
             break;
           }
         }
-        // Flush events that arrived during replay, then go live.
         // リプレイ中に溜まったイベントを送信してからライブモードへ切り替える。
         if (!replayForcedTerminal) {
           while (pending.length > 0 && !disconnected) {
@@ -734,7 +721,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
         }
         if (disconnected) return;
 
-        // Wait for the query to settle (live events flow via the subscriber).
         // 以降のイベントは単一 writer 列へ追加し、終端または切断後に未送信分の完了を待つ。
         await Promise.race([done, disconnectedPromise]);
         if (!disconnected) {
@@ -884,7 +870,6 @@ export function queryRoutes(services: Services): Hono<{ Variables: AuthVariables
     });
   });
 
-  // POST /api/queries/:id/export
   // クエリ結果を S3 または Google Sheets へ同期的にエクスポートする。
   app.post('/:id/export', async (c) => {
     const body = await parseJsonBody(c, queryExportRequestSchema);
@@ -982,7 +967,6 @@ function normalizeEntityTag(value: string): string {
   return value.replace(/^W\//i, '');
 }
 
-// Re-export so app.ts can register a not-found that throws AppError consistently.
 // app.ts の not-found ハンドラが同じ AppError 型でエラーを投げられるよう、ここから再エクスポートする。
 export { AppError };
 

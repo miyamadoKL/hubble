@@ -52,6 +52,10 @@ export async function requireDocumentOwner(
   if (!owner) throw AppError.notFound(notFoundMessage(type, id));
   if (owner === accessor.user) return;
 
+  // 共有 permission を持つ非 owner (文書の存在をすでに知っている) には 403 を返して
+  // よいが、共有もされていない accessor には 404 を返し文書の存在自体を隠す。
+  // ここで一律 403 にすると、存在しない文書 ID と「存在するが見えない」文書 ID を
+  // 応答コードから区別できてしまい、総当たりで文書 ID の存在を探索できてしまう。
   const permission = await services.documentShares.resolvePermission(type, id, accessor);
   if (permission) throw AppError.forbidden('Only the document owner can manage shares');
   throw AppError.notFound(notFoundMessage(type, id));

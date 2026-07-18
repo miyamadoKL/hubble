@@ -62,6 +62,7 @@ export interface AlertEvaluatorDeps {
   setTimer?: (fn: () => void, ms: number) => { clear: () => void };
 }
 
+/** 1回の評価結果 (Alert の状態、通知要否、評価に使った値等)。 */
 export type AlertEvalOutcome = AlertEvalResponse;
 
 // 省略時の setTimeout と unref は PeriodicRunner が共通実装する。

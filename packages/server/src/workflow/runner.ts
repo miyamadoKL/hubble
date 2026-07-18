@@ -3,6 +3,14 @@
  *
  * ワークフロー run をステージ順に実行し、ステージ内は並行する。
  * 失敗ポリシー (stop / continue) とリトライ、Query Guard、結果永続化を扱う。
+ *
+ * `schedule/scheduler.ts` と retry 実行部分の重複が大きいが、共通 executor へ
+ * 抽出しない。engine lookup、RBAC、lease、write check、validate、guard、失敗分類、
+ * backoff、principal snapshot の解決 (`schedulePrincipalIdentity`) は両者で共通だが、
+ * schedule の run outcome に含まれる guard audit 詳細と、workflow 固有のステージ並行
+ * 実行、結果 capture (`ResultJsonlCapture`) と永続化は callback の外側または内側に
+ * 残る。これらを mode flag で吸収する共通 interface は誤った抽象化になり、
+ * 正味の削減が計測基準 (120 行) に届かないため分離を維持する。
  */
 import type { WorkflowRunStatus, WorkflowStep, WorkflowStepRunStatus } from '@hubble/contracts';
 import type { TrinoRequestContext } from '../trino/types';

@@ -4,6 +4,11 @@
  * Gemini API や GitHub Models など、HTTP レスポンスボディが SSE 形式で
  * 返る provider 実装から利用する。空行区切りでイベントを分割し、
  * `data:` 行のペイロードを連結して yield する。
+ *
+ * `eventsource-parser` への置き換えを検討したが、protocol parsing を委譲しても
+ * raw な受信 byte 数の追跡、未完了イベントの byte 数追跡、EOF 時の flush、早期
+ * return 時の reader cancel は各 provider 側の adapter として残る。PoC では
+ * server と web の合計実装行がむしろ増えたため、この自前パーサーを維持する。
  */
 import { AppError } from '../errors';
 

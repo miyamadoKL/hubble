@@ -1,5 +1,14 @@
 /**
  * Webhook 送信先を事前検証し、接続時の DNS 解決も同じポリシーで制限する。
+ *
+ * 汎用の SSRF 対策ライブラリや素の global fetch には置き換えない。接続確立時点での
+ * DNS 再検査、`all: true` による全 DNS 応答の検査、`allowedCidrs` を優先しつつ
+ * blocked destination を弾く判定順序、redirect の拒否は Hubble の security contract
+ * であり、これらを外部ライブラリの API 形状に合わせて再実装すると契約が暗黙化する。
+ * DNS lookup は URL 解決時 (`lookup`) と実際の TCP 接続時 (`connectionLookup`) の
+ * 2 段階で行う。前者だけでは DNS rebinding (許可判定後にレコードを社内アドレスへ
+ * 差し替える攻撃) を防げないため、undici の `Agent` に渡す `connectionLookup` でも
+ * 同じ allow/deny 判定をやり直す。
  */
 import { lookup as dnsLookup } from 'node:dns';
 import { lookup as dnsLookupPromise } from 'node:dns/promises';
