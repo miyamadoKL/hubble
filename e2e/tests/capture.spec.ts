@@ -282,10 +282,11 @@ test('capture p4a-markdown', async ({ page }) => {
 });
 
 test('capture p4a-reorder', async ({ page }) => {
+  // ユーザー指摘3: 上下移動ボタンは撤去し、並べ替えはグリップハンドルのみで行う。
   await addCell(page, 'sql');
   const firstCell = cell(page, 0);
-  await expect(firstCell.getByRole('button', { name: 'Move down' })).toBeVisible();
-  await firstCell.getByRole('button', { name: 'Move down' }).hover();
+  await expect(firstCell.getByRole('button', { name: 'Drag to reorder' })).toBeVisible();
+  await firstCell.getByRole('button', { name: 'Drag to reorder' }).hover();
   await captureScreenshot(page, OUTPUT_DIR, 'p4a-reorder.png');
 });
 

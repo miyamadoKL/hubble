@@ -60,13 +60,13 @@ export const workflowMessages = defineDictionary({
   runBreakdownSeparator: { ja: '、', en: ' · ' },
   // トリガー (manual/cron) の表示ラベル。契約値自体は変更せず、表示のみ翻訳する。
   triggerManual: { ja: '手動', en: 'manual' },
-  triggerCron: { ja: 'cron', en: 'cron' },
+  triggerCron: { ja: 'スケジュール', en: 'schedule' },
 
   // ---- WorkflowSettingsModal ----
   workflowSettingsTitle: { ja: 'ワークフロー設定', en: 'Workflow settings' },
   descriptionFieldLabel: { ja: '説明', en: 'Description' },
   defaultDatasourceFieldLabel: { ja: '既定のデータソース', en: 'Default datasource' },
-  scheduleCronFieldLabel: { ja: 'スケジュール（cron、任意）', en: 'Schedule (cron, optional)' },
+  scheduleCronFieldLabel: { ja: 'スケジュール（任意）', en: 'Schedule (optional)' },
   descriptionPlaceholder: {
     ja: 'このワークフローは何を生成しますか?',
     en: 'What does this workflow produce?',
@@ -76,8 +76,8 @@ export const workflowMessages = defineDictionary({
     en: 'e.g. 0 7 * * 1-5 (leave empty for manual only)',
   },
   cronValidationError: {
-    ja: '5 フィールドの cron 式（分 時 日 月 曜日）である必要があります。',
-    en: 'Must be a 5-field cron expression (minute hour day month weekday).',
+    ja: '分 時 日 月 曜日 の 5 項目で入力してください。',
+    en: 'Enter 5 fields: minute hour day month weekday.',
   },
   scheduleEnabledLabel: { ja: 'スケジュール有効', en: 'Schedule enabled' },
 
@@ -140,10 +140,10 @@ export const workflowMessages = defineDictionary({
   runAllStagesTitle: { ja: 'すべてのステージを順番に実行', en: 'Run all stages in order' },
   governanceBlockedNotice: {
     ja:
-      'ガバナンスが有効です。このワークフローが GitHub 上で承認されるまで、スケジュール（cron）実行は' +
+      'ガバナンスが有効です。このワークフローが GitHub 上で承認されるまで、スケジュール実行は' +
       'ブロックされ、結果も永続化されません。プッシュしてプルリクエストをマージしてください。',
     en:
-      'Governance is on: scheduled (cron) runs are blocked and results are not persisted until ' +
+      'Governance is on: scheduled runs are blocked and results are not persisted until ' +
       'this workflow is approved on GitHub. Push it and get the pull request merged.',
   },
   stageHeading: { ja: 'ステージ {n}', en: 'Stage {n}' },

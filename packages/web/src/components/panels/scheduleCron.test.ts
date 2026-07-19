@@ -180,7 +180,7 @@ describe('describeCronState (日本語読み下し)', () => {
 
   test('custom', () => {
     expect(describeCronState(state({ mode: 'custom', custom: '*/5 * * * *' }))).toBe(
-      'カスタム cron 式で実行: */5 * * * *',
+      'カスタム設定で実行: */5 * * * *',
     );
   });
 });

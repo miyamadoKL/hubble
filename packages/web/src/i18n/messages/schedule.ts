@@ -14,8 +14,8 @@ export const scheduleMessages = defineDictionary({
   newSchedule: { ja: '新規スケジュール', en: 'New schedule' },
   noSchedules: { ja: 'スケジュールがありません', en: 'No schedules' },
   createScheduleHint: {
-    ja: 'cron の実行間隔でクエリを実行するスケジュールを作成しましょう。',
-    en: 'Create a schedule to run a query on a cron cadence.',
+    ja: 'クエリを定期実行するスケジュールを作成しましょう。',
+    en: 'Create a schedule to run a query automatically.',
   },
   saveQueryFirstHint: {
     ja: 'まずクエリを保存してから、スケジュールを作成してください。',
@@ -38,8 +38,8 @@ export const scheduleMessages = defineDictionary({
   editSchedule: { ja: 'スケジュールを編集', en: 'Edit schedule' },
   newScheduleTitle: { ja: '新規スケジュール', en: 'New schedule' },
   formDescription: {
-    ja: '保存済みクエリを cron スケジュールで実行します。SQL 文と実行先は選択したクエリのものが使われます。',
-    en: 'Run a saved query on a cron schedule. The statement and datasource come from the query you pick.',
+    ja: '保存済みクエリを定期実行します。',
+    en: 'Run a saved query on a schedule.',
   },
   saveChanges: { ja: '変更を保存', en: 'Save changes' },
   createSchedule: { ja: 'スケジュールを作成', en: 'Create schedule' },

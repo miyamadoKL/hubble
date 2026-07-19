@@ -39,6 +39,7 @@ import { canPersistNotebookToServer } from '../utils/documentShare';
 import { ApiClientError } from '../api/client';
 import { principalStorageKey } from '../storage/principalStorage';
 import { useDatasourceStore } from '../stores/datasourceStore';
+import { clearRestoreAttemptsForCells } from '../execution';
 
 // ---- 永続化の注入 --------------------------------------------------
 
@@ -857,6 +858,14 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       // 保留中のオートセーブがあれば取り消す (古い内容を PUT しないため)。
       clearAutosave(notebook.id);
       cancelSavedNotebookQueue(notebook.id, false);
+      // 差し替えで消える旧セル（新しい cells 集合に存在しない id）の分だけ、
+      // 結果自動復元の試行済み記録も一緒に寿命を終える（指摘: replaceNotebook で
+      // 消えるセルの記録が回収されていなかった）。
+      const nextCellIds = new Set(notebook.cells.map((c) => c.id));
+      const removedCellIds = existing.notebook.cells
+        .map((c) => c.id)
+        .filter((cellId) => !nextCellIds.has(cellId));
+      if (removedCellIds.length > 0) clearRestoreAttemptsForCells(removedCellIds);
       set((s) => ({
         open: {
           ...s.open,
@@ -883,6 +892,11 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
       // draft なら localStorage 上の下書きも一緒に消す（復元されないように）。
       if (entry?.draft) removeDraft(id);
       else removeNotebookJournal(id);
+      // このnotebookのセルに紐づく「結果自動復元の試行済み」記録
+      // （execution レイヤーのモジュールレベル集合）も、notebook を閉じたら
+      // 一緒に寿命を終える。消さないと、二度と開かれない notebook のセルの
+      // 分だけ記録が無制限に増え続けてしまう。
+      if (entry) clearRestoreAttemptsForCells(entry.notebook.cells.map((c) => c.id));
       const previousActiveId = get().activeId;
       set((s) => {
         const open = { ...s.open };
@@ -971,6 +985,10 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => {
 
     removeCell: (id, cellId) => {
       mutate(id, (nb) => ({ ...nb, cells: nb.cells.filter((c) => c.id !== cellId) }));
+      // 削除したセルに紐づく結果自動復元の試行済み記録も一緒に消す（指摘:
+      // removeCell は配列から除くだけで、closeNotebook が列挙するのは残存
+      // セルのみのため、削除済みセルの記録が回収されずに残ってしまっていた）。
+      clearRestoreAttemptsForCells([cellId]);
     },
 
     moveCell: (id, from, to) => {

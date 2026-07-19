@@ -53,6 +53,7 @@ let persistenceWired = false;
 function ensureResultMetaSink(): void {
   __setCellSettledSink((cellId, summary) => {
     useNotebookStore.getState().setCellResultMeta(cellId, {
+      queryId: summary.queryId,
       trinoQueryId: summary.trinoQueryId,
       state: summary.state,
       rowCount: summary.rowCount,
