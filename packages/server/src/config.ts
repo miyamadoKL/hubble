@@ -801,5 +801,9 @@ export function toAppConfig(
         ? { enabled: false, provider: 'off' }
         : { enabled: true, provider: config.ai.provider, model: config.ai.model },
     version: config.version,
+    // schedule/cron.ts は server local timezone (Node プロセスの実行環境の
+    // タイムゾーン) で cron 式を評価する。web のスケジュールビルダーが同じ基準を
+    // 読み下し文に明記できるよう、IANA タイムゾーン名としてそのまま公開する。
+    serverTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   });
 }

@@ -3,6 +3,8 @@ import { openTestDatabase } from '../test/dbBackends';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { EstimateService } from '../query/estimateService';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
+import { SavedQueryRepository } from '../store/savedQueries';
+import { DocumentShareRepository } from '../store/documentShares';
 import { FakeTrino, type FakeScenario } from '../test/fakeTrino';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -77,6 +79,7 @@ interface Harness {
   engines: Map<string, QueryEngine>;
   schedules: ScheduleRepository;
   runs: ScheduleRunRepository;
+  savedQueries: SavedQueryRepository;
   scheduler: Scheduler;
   admission: JobAdmissionController;
   audit: AuditLogger;
@@ -99,6 +102,7 @@ async function makeHarness(
   const { engines, defaultDatasourceId } = makeEnginesMap(fake);
   const schedules = new ScheduleRepository(db);
   const runs = new ScheduleRunRepository(db, 50);
+  const savedQueries = new SavedQueryRepository(db, new DocumentShareRepository(db));
   const audit = new AuditLogger(new AuditRepository(db));
   const notifications: FailureNotificationInput[] = [];
   const notifier =
@@ -132,6 +136,7 @@ async function makeHarness(
   const scheduler = new Scheduler({
     schedules,
     runs,
+    savedQueries,
     engines,
     defaultDatasourceId,
     estimate,
@@ -157,6 +162,7 @@ async function makeHarness(
     engines,
     schedules,
     runs,
+    savedQueries,
     scheduler,
     admission,
     audit,
@@ -836,6 +842,321 @@ describe('Scheduler tick + lifecycle', () => {
     const orphan = runs.find((r) => r.id === orphanId);
     expect(orphan?.status).toBe('aborted');
     expect(orphan?.finishedAt).not.toBeNull();
+  });
+});
+
+describe('Scheduler saved query resolution', () => {
+  let h: Harness;
+  afterEach(async () => {
+    if (h?.db) await h.db.close();
+  });
+
+  it('resolves the saved query statement on every run (edits reflect on the next run)', async () => {
+    h = await makeHarness([
+      VALIDATE_OK,
+      {
+        match: 'SELECT_V1',
+        trinoId: 'qv1',
+        pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+      },
+      {
+        match: 'SELECT_V2',
+        trinoId: 'qv2',
+        pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[2]] }],
+      },
+    ]);
+    const savedQuery = await h.savedQueries.create('alice', {
+      name: 'sq',
+      statement: 'SELECT_V1',
+    });
+    const s = await h.schedules.create('alice', {
+      name: 'via saved query',
+      savedQueryId: savedQuery.id,
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+      principalSnapshot: { user: 'alice' },
+    });
+
+    await h.scheduler.runManual(s);
+    await h.scheduler.whenIdle();
+    let runs = await h.runs.list(s.id, 10);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.status).toBe('success');
+    expect(runs[0]!.trinoQueryId).toMatch(/^qv1_/);
+
+    // saved query を編集する。schedule 自体は書き換えない。
+    await h.savedQueries.update(
+      { user: 'alice', groups: [], role: 'unrestricted' },
+      savedQuery.id,
+      { name: 'sq', description: '', statement: 'SELECT_V2', isFavorite: false },
+    );
+
+    // list() は started_at DESC で並ぶ。同一ミリ秒だと id の辞書順に依存してしまうため、
+    // 2 回目の run が確実に「新しい」と判定されるよう時計を進めてから実行する。
+    h.setNow(h.now() + 1_000);
+    await h.scheduler.runManual(s);
+    await h.scheduler.whenIdle();
+    runs = await h.runs.list(s.id, 10);
+    expect(runs).toHaveLength(2);
+    // 直近の run (list は新しい順) が編集後の statement で実行されている。
+    expect(runs[0]!.status).toBe('success');
+    expect(runs[0]!.trinoQueryId).toMatch(/^qv2_/);
+  });
+
+  it('records a failed run with a clear errorMessage when the saved query is no longer accessible', async () => {
+    h = await makeHarness([VALIDATE_OK]);
+    const savedQuery = await h.savedQueries.create('alice', {
+      name: 'sq',
+      statement: 'SELECT_GONE',
+    });
+    const s = await h.schedules.create('alice', {
+      name: 'dangling reference',
+      savedQueryId: savedQuery.id,
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+      principalSnapshot: { user: 'alice' },
+    });
+    // saved query を削除する（共有解除や他人による削除と同じ「解決不能」状態を再現する）。
+    await h.savedQueries.delete({ user: 'alice', groups: [], role: 'unrestricted' }, savedQuery.id);
+
+    const { runId } = await h.scheduler.runManual(s);
+    await h.scheduler.whenIdle();
+
+    const runs = await h.runs.list(s.id, 10);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.id).toBe(runId);
+    expect(runs[0]!.status).toBe('failed');
+    expect(runs[0]!.errorType).toBe('SAVED_QUERY_ACCESS_DENIED');
+    expect(runs[0]!.errorMessage).toMatch(new RegExp(savedQuery.id));
+  });
+
+  it('resolves the saved query statement via the cron tick path too', async () => {
+    h = await makeHarness(
+      [
+        VALIDATE_OK,
+        {
+          match: 'SELECT_TICK',
+          trinoId: 'qtick',
+          pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+        },
+      ],
+      { enabled: true },
+    );
+    const savedQuery = await h.savedQueries.create('alice', {
+      name: 'sq',
+      statement: 'SELECT_TICK',
+    });
+    const s = await h.schedules.create('alice', {
+      name: 'ticked',
+      savedQueryId: savedQuery.id,
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+      principalSnapshot: { user: 'alice' },
+    });
+    await h.scheduler.start();
+    // 1 tick 目は次回発火時刻を seed するだけで実際には発火しない (scheduler.ts の
+    // tick() コメント参照)。時間を進めてから 2 回目の tick で発火させる。
+    await h.scheduler.tick();
+    h.setNow(h.now() + 60_000);
+    await h.scheduler.tick();
+    await h.scheduler.whenIdle();
+
+    const runs = await h.runs.list(s.id, 10);
+    expect(runs.some((r) => r.status === 'success' && r.trinoQueryId?.startsWith('qtick_'))).toBe(
+      true,
+    );
+  });
+
+  // コーディネーター指摘4-1: 他ユーザーの共有 saved query を参照して成功した後、
+  // 共有エントリだけを削除する（saved query レコード自体は残す）と、次回実行が
+  // 拒否されることを確認する。DocumentShareRepository.resolvePermission が
+  // owner でない accessor に対して undefined を返す分岐を実際に通す。
+  it('rejects the next run once a shared saved query access is revoked (record kept, share removed)', async () => {
+    h = await makeHarness([
+      VALIDATE_OK,
+      {
+        match: 'SELECT_SHARED',
+        trinoId: 'qshared',
+        pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+      },
+    ]);
+    const shares = new DocumentShareRepository(h.db);
+    // alice が所有し、bob へ view 共有した saved query。schedule は bob が所有する。
+    const savedQuery = await h.savedQueries.create('alice', {
+      name: 'shared sq',
+      statement: 'SELECT_SHARED',
+    });
+    await shares.replaceForDocument(
+      'saved_query',
+      savedQuery.id,
+      [{ subjectType: 'user', subjectValue: 'bob', permission: 'view' }],
+      'alice',
+    );
+    const s = await h.schedules.create('bob', {
+      name: 'via shared saved query',
+      savedQueryId: savedQuery.id,
+      cron: '* * * * *',
+      datasourceId: DEFAULT_DATASOURCE_ID,
+      principalSnapshot: { user: 'bob' },
+    });
+
+    await h.scheduler.runManual(s);
+    await h.scheduler.whenIdle();
+    let runs = await h.runs.list(s.id, 10);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.status).toBe('success');
+    expect(runs[0]!.trinoQueryId).toMatch(/^qshared_/);
+
+    // 共有エントリだけを削除する。saved query レコード自体（statement 等）はそのまま残す。
+    await shares.replaceForDocument('saved_query', savedQuery.id, [], 'alice');
+    const stillExists = await h.savedQueries.getByIdUnscoped(savedQuery.id);
+    expect(stillExists).toBeDefined();
+
+    h.setNow(h.now() + 1_000);
+    await h.scheduler.runManual(s);
+    await h.scheduler.whenIdle();
+    runs = await h.runs.list(s.id, 10);
+    expect(runs).toHaveLength(2);
+    expect(runs[0]!.status).toBe('failed');
+    expect(runs[0]!.errorType).toBe('SAVED_QUERY_ACCESS_DENIED');
+  });
+
+  // コーディネーター指摘4-2: saved query を書き込み文へ編集すると、次回実行時に
+  // owner ロールで write check が評価される（query.write を持たないロールなら
+  // failed/WRITE_NOT_ALLOWED になる）。schedule 自体は書き換えていない。
+  it('re-evaluates the write check for the owner role when the saved query becomes a write statement', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-sched-write-'));
+    try {
+      writeFileSync(
+        join(dir, 'rbac.yaml'),
+        `roles:
+  read-only:
+    permissions: []
+    datasources: ['*']
+assignments:
+  - user: alice
+    role: read-only
+defaultRole: read-only
+`,
+        'utf8',
+      );
+      const rbac = () => loadRbac({ env: { RBAC_PATH: join(dir, 'rbac.yaml') }, cwd: dir });
+      h = await makeHarness(
+        [
+          VALIDATE_OK,
+          // query.write を持たないロールの write check (rbac/writeCheck.ts) は先頭トークンで
+          // 分類するため、FakeTrino の match マーカーではなく実際に 'SELECT' で始まる文を
+          // 使う必要がある (先頭トークンが 'SELECT' でないと fast path に乗らず、
+          // ioExplain 経由の分類に回ってしまう)。
+          {
+            match: 'SELECT 1',
+            trinoId: 'qro',
+            pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+          },
+        ],
+        {},
+        undefined,
+        rbac,
+      );
+      const savedQuery = await h.savedQueries.create('alice', {
+        name: 'sq',
+        statement: 'SELECT 1',
+      });
+      const s = await h.schedules.create('alice', {
+        name: 'read then write',
+        savedQueryId: savedQuery.id,
+        cron: '* * * * *',
+        datasourceId: DEFAULT_DATASOURCE_ID,
+        principalSnapshot: { user: 'alice' },
+      });
+
+      // read-only ロールでも SELECT は許可される。
+      await h.scheduler.runManual(s);
+      await h.scheduler.whenIdle();
+      let runs = await h.runs.list(s.id, 10);
+      expect(runs[0]!.status).toBe('success');
+
+      // saved query を書き込み文へ編集する（schedule 自体は触らない）。
+      await h.savedQueries.update({ user: 'alice', groups: [], role: 'read-only' }, savedQuery.id, {
+        name: 'sq',
+        description: '',
+        statement: 'INSERT INTO t VALUES (1)',
+        isFavorite: false,
+      });
+
+      h.setNow(h.now() + 1_000);
+      await h.scheduler.runManual(s);
+      await h.scheduler.whenIdle();
+      runs = await h.runs.list(s.id, 10);
+      expect(runs).toHaveLength(2);
+      expect(runs[0]!.status).toBe('failed');
+      expect(runs[0]!.errorType).toBe('WRITE_NOT_ALLOWED');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // コーディネーター指摘4-3: 実行間に RBAC の datasource allowlist を変更すると、
+  // 次回実行がブロックされる。saved query 参照 schedule でも、datasourceId の
+  // allowlist チェック自体は schedule.datasourceId（authoritative）に対して
+  // 行われることを確認する。
+  it('blocks the next run when the RBAC datasource allowlist changes between runs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hubble-sched-allowlist-'));
+    try {
+      const rbacYaml = (datasources: string) => `roles:
+  scoped:
+    permissions: [query.write]
+    datasources: [${datasources}]
+assignments:
+  - user: alice
+    role: scoped
+defaultRole: scoped
+`;
+      writeFileSync(join(dir, 'rbac.yaml'), rbacYaml(DEFAULT_DATASOURCE_ID), 'utf8');
+      const rbac = () => loadRbac({ env: { RBAC_PATH: join(dir, 'rbac.yaml') }, cwd: dir });
+      h = await makeHarness(
+        [
+          VALIDATE_OK,
+          {
+            match: 'SELECT_ALLOWLIST',
+            trinoId: 'qallow',
+            pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
+          },
+        ],
+        {},
+        undefined,
+        rbac,
+      );
+      const savedQuery = await h.savedQueries.create('alice', {
+        name: 'sq',
+        statement: 'SELECT_ALLOWLIST',
+      });
+      const s = await h.schedules.create('alice', {
+        name: 'allowlisted',
+        savedQueryId: savedQuery.id,
+        cron: '* * * * *',
+        datasourceId: DEFAULT_DATASOURCE_ID,
+        principalSnapshot: { user: 'alice' },
+      });
+
+      await h.scheduler.runManual(s);
+      await h.scheduler.whenIdle();
+      let runs = await h.runs.list(s.id, 10);
+      expect(runs[0]!.status).toBe('success');
+
+      // allowlist から DEFAULT_DATASOURCE_ID を外す。
+      writeFileSync(join(dir, 'rbac.yaml'), rbacYaml('trino-prod'), 'utf8');
+
+      h.setNow(h.now() + 1_000);
+      await h.scheduler.runManual(s);
+      await h.scheduler.whenIdle();
+      runs = await h.runs.list(s.id, 10);
+      expect(runs).toHaveLength(2);
+      expect(runs[0]!.status).toBe('blocked');
+      expect(runs[0]!.errorType).toBe('DATASOURCE_ACCESS_DENIED');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

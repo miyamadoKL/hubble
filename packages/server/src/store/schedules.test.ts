@@ -91,6 +91,107 @@ describe('schedule repositories', () => {
       expect(await repo.get('alice', created.id)).toBeUndefined();
     });
 
+    // savedQueryId 参照モードでの作成/読み出しと、direct statement ⇔ savedQueryId
+    // の相互切替（片方を指定するともう片方が null にリセットされること）を検証する。
+    it('round-trips savedQueryId and toggles exclusively with statement on update', async () => {
+      const repo = new ScheduleRepository(await open());
+
+      const created = await repo.create('alice', {
+        name: 'via saved query',
+        savedQueryId: 'sq_1',
+        cron: '0 9 * * *',
+        ...ds,
+        principalSnapshot: { user: 'alice' },
+      });
+      expect(created.savedQueryId).toBe('sq_1');
+      expect(created.statement).toBeNull();
+
+      const fetched = await repo.get('alice', created.id);
+      expect(fetched?.savedQueryId).toBe('sq_1');
+      expect(fetched?.statement).toBeNull();
+
+      // statement を指定して更新すると、savedQueryId は null にリセットされる。
+      const toDirect = await repo.update('alice', created.id, { statement: 'SELECT 1' });
+      expect(toDirect?.statement).toBe('SELECT 1');
+      expect(toDirect?.savedQueryId).toBeNull();
+
+      // savedQueryId を指定して更新すると、statement は null にリセットされる。
+      const toSaved = await repo.update('alice', created.id, { savedQueryId: 'sq_2' });
+      expect(toSaved?.savedQueryId).toBe('sq_2');
+      expect(toSaved?.statement).toBeNull();
+    });
+
+    // 指摘5: statement / saved_query_id の排他は契約層の refine だけでなく、
+    // DB 側にも CHECK 制約として二重に持たせている
+    // (migrations/0002_schedule_saved_query.sql の schedules_statement_xor_saved_query)。
+    // repository/契約層を経由しない直接の INSERT でも拒否されることを、生 SQL で確認する。
+    it('rejects statement and saved_query_id both non-null at the DB level (CHECK constraint)', async () => {
+      const database = await open();
+      const nowIso = new Date().toISOString();
+      await expect(
+        database.run(
+          `INSERT INTO schedules
+             (id, owner, name, statement, saved_query_id, catalog, schema, cron, enabled,
+              retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
+              notifications, datasource_id, principal_snapshot, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          [
+            'sch_check_test',
+            'alice',
+            'both-set',
+            'SELECT 1', // statement 非 null
+            'sq_1', // saved_query_id も非 null → 排他違反
+            null,
+            null,
+            '* * * * *',
+            1,
+            3,
+            60,
+            2,
+            '{}',
+            DEFAULT_DATASOURCE_ID,
+            null,
+            nowIso,
+            nowIso,
+          ],
+        ),
+      ).rejects.toThrow();
+    });
+
+    // 両方 null（statement も saved_query_id も未指定）も同じ CHECK 制約で拒否される。
+    it('rejects statement and saved_query_id both null at the DB level (CHECK constraint)', async () => {
+      const database = await open();
+      const nowIso = new Date().toISOString();
+      await expect(
+        database.run(
+          `INSERT INTO schedules
+             (id, owner, name, statement, saved_query_id, catalog, schema, cron, enabled,
+              retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
+              notifications, datasource_id, principal_snapshot, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          [
+            'sch_check_test_2',
+            'alice',
+            'neither-set',
+            null,
+            null,
+            null,
+            null,
+            '* * * * *',
+            1,
+            3,
+            60,
+            2,
+            '{}',
+            DEFAULT_DATASOURCE_ID,
+            null,
+            nowIso,
+            nowIso,
+          ],
+        ),
+      ).rejects.toThrow();
+    });
+
     // listAllEnabled() が所有者を横断して enabled=true のスケジュールのみを
     // 返すこと（スケジューラーが使う想定の挙動）を検証する。
     it('lists only enabled schedules across owners for the scheduler', async () => {

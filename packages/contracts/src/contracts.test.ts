@@ -109,6 +109,7 @@ describe('config', () => {
     // AI アシスタント無効時の公開設定（provider 未設定の既定値）。
     ai: { enabled: false, provider: 'off' },
     version: '0.1.0',
+    serverTimeZone: 'Asia/Tokyo',
   };
 
   it('parses a valid AppConfig', () => {
@@ -977,6 +978,7 @@ describe('schedule', () => {
     id: 'sch_1',
     name: 'nightly',
     statement: 'SELECT 1',
+    savedQueryId: null,
     catalog: 'tpch',
     schema: 'tiny',
     cron: '0 0 * * *',
@@ -997,6 +999,21 @@ describe('schedule', () => {
   it('parses a Schedule with null nextRunAt and lastRun', () => {
     const v = { ...schedule, nextRunAt: null, lastRun: null };
     expect(scheduleSchema.parse(v)).toEqual(v);
+  });
+
+  it('parses a Schedule that references a saved query (statement null)', () => {
+    const v = { ...schedule, statement: null, savedQueryId: 'sq_1' };
+    expect(scheduleSchema.parse(v)).toEqual(v);
+  });
+
+  it('rejects a Schedule with both statement and savedQueryId non-null (指摘5: 排他制約)', () => {
+    const v = { ...schedule, statement: 'SELECT 1', savedQueryId: 'sq_1' };
+    expect(scheduleSchema.safeParse(v).success).toBe(false);
+  });
+
+  it('rejects a Schedule with neither statement nor savedQueryId (指摘5: 排他制約)', () => {
+    const v = { ...schedule, statement: null, savedQueryId: null };
+    expect(scheduleSchema.safeParse(v).success).toBe(false);
   });
 
   it('applies retry policy defaults', () => {
@@ -1101,6 +1118,33 @@ describe('schedule', () => {
   it('rejects an empty UpdateScheduleRequest', () => {
     expect(updateScheduleRequestSchema.safeParse({}).success).toBe(false);
     expect(updateScheduleRequestSchema.safeParse({ enabled: false }).success).toBe(true);
+  });
+
+  it('CreateScheduleRequest requires exactly one of statement / savedQueryId', () => {
+    expect(createScheduleRequestSchema.safeParse({ name: 'x', cron: '* * * * *' }).success).toBe(
+      false,
+    );
+    expect(
+      createScheduleRequestSchema.safeParse({
+        name: 'x',
+        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
+        cron: '* * * * *',
+      }).success,
+    ).toBe(false);
+    expect(
+      createScheduleRequestSchema.safeParse({ name: 'x', savedQueryId: 'sq_1', cron: '* * * * *' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('UpdateScheduleRequest rejects specifying both statement and savedQueryId', () => {
+    expect(
+      updateScheduleRequestSchema.safeParse({ statement: 'SELECT 1', savedQueryId: 'sq_1' })
+        .success,
+    ).toBe(false);
+    expect(updateScheduleRequestSchema.safeParse({ savedQueryId: 'sq_1' }).success).toBe(true);
+    expect(updateScheduleRequestSchema.safeParse({ statement: 'SELECT 1' }).success).toBe(true);
   });
 
   it('builds schedule route paths', () => {

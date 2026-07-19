@@ -61,6 +61,13 @@ export const appConfigSchema = z.object({
   ai: aiPublicConfigSchema,
   // フロントエンドに表示するアプリバージョン文字列。
   version: z.string().min(1),
+  /**
+   * server プロセスが cron 式を評価する際の基準タイムゾーン（IANA 名、例:
+   * "Asia/Tokyo"）。schedule/cron.ts は server local timezone で次回実行時刻を
+   * 計算するため、web 側のスケジュールビルダーはこの値を読み下し文に明記して
+   * 表示時刻と実行時刻の食い違いを防ぐ。
+   */
+  serverTimeZone: z.string().min(1),
 });
 
 export type AppDefaults = z.infer<typeof appDefaultsSchema>;

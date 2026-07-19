@@ -50,8 +50,10 @@ export interface ScheduleRecord {
   /** スケジュールの所有者（principal）。全操作の絞り込みキーになる。 */
   owner: string;
   name: string;
-  /** 定期実行される SQL 文。 */
-  statement: string;
+  /** 定期実行される SQL 文。savedQueryId 参照の場合は null。 */
+  statement: string | null;
+  /** 参照する保存済みクエリの id。直書き statement の場合は null。 */
+  savedQueryId: string | null;
   /** 既定のカタログ（未指定なら null）。 */
   catalog: string | null;
   /** 既定のスキーマ（未指定なら null）。 */
@@ -80,7 +82,10 @@ export interface ScheduleRecord {
  */
 export interface CreateScheduleInput {
   name: string;
-  statement: string;
+  /** 直書きの SQL 文。savedQueryId とはどちらか一方のみ指定する（契約層の refine で保証済み）。 */
+  statement?: string | null;
+  /** 参照する保存済みクエリの id。statement とはどちらか一方のみ指定する。 */
+  savedQueryId?: string | null;
   catalog?: string | null;
   schema?: string | null;
   cron: string;
@@ -100,7 +105,11 @@ export interface CreateScheduleInput {
  */
 export interface UpdateScheduleInput {
   name?: string;
+  /** 直書きの SQL 文に切り替える場合に指定する。 */
   statement?: string;
+  /** 保存済みクエリ参照に切り替える場合に指定する。statement 指定時は無視される想定はなく、
+   * ルート層が契約層の refine で排他を保証してから渡す。 */
+  savedQueryId?: string;
   catalog?: string | null;
   schema?: string | null;
   cron?: string;
@@ -124,7 +133,8 @@ interface ScheduleRow {
   id: string;
   owner: string;
   name: string;
-  statement: string;
+  statement: string | null;
+  saved_query_id: string | null;
   catalog: string | null;
   schema: string | null;
   cron: string;
@@ -212,7 +222,8 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
     id: row.id,
     owner: row.owner,
     name: row.name,
-    statement: row.statement,
+    statement: row.statement ?? null,
+    savedQueryId: row.saved_query_id ?? null,
     catalog: row.catalog ?? null,
     schema: row.schema ?? null,
     cron: row.cron,
@@ -293,7 +304,9 @@ export class ScheduleRepository {
       id: newId('sch_'),
       owner,
       name: input.name,
-      statement: input.statement,
+      // statement / savedQueryId はどちらか一方のみが渡される（契約層の refine で保証済み）。
+      statement: input.statement ?? null,
+      savedQueryId: input.savedQueryId ?? null,
       catalog: input.catalog ?? null,
       schema: input.schema ?? null,
       cron: input.cron,
@@ -307,10 +320,10 @@ export class ScheduleRepository {
     };
     await this.db.run(
       `INSERT INTO schedules
-         (id, owner, name, statement, catalog, schema, cron, enabled,
+         (id, owner, name, statement, saved_query_id, catalog, schema, cron, enabled,
           retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
           notifications, datasource_id, principal_snapshot, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       insertParams(record),
     );
     return record;
@@ -329,10 +342,22 @@ export class ScheduleRepository {
   ): Promise<ScheduleRecord | undefined> {
     const existing = await this.get(owner, id);
     if (!existing) return undefined;
+    // statement / savedQueryId の切替: 片方が指定されたらもう片方は null にリセットする
+    // （ルート層の契約バリデーションにより両方同時に指定されることはない）。
+    let statement = existing.statement;
+    let savedQueryId = existing.savedQueryId;
+    if (input.statement !== undefined) {
+      statement = input.statement;
+      savedQueryId = null;
+    } else if (input.savedQueryId !== undefined) {
+      savedQueryId = input.savedQueryId;
+      statement = null;
+    }
     const merged: ScheduleRecord = {
       ...existing,
       name: input.name ?? existing.name,
-      statement: input.statement ?? existing.statement,
+      statement,
+      savedQueryId,
       catalog: input.catalog !== undefined ? input.catalog : existing.catalog,
       schema: input.schema !== undefined ? input.schema : existing.schema,
       cron: input.cron ?? existing.cron,
@@ -348,13 +373,14 @@ export class ScheduleRepository {
     };
     await this.db.run(
       `UPDATE schedules SET
-         name = $1, statement = $2, catalog = $3, schema = $4, cron = $5, enabled = $6,
-         retry_max_attempts = $7, retry_backoff_seconds = $8, retry_backoff_multiplier = $9,
-         notifications = $10, datasource_id = $11, principal_snapshot = $12, updated_at = $13
-       WHERE id = $14 AND owner = $15`,
+         name = $1, statement = $2, saved_query_id = $3, catalog = $4, schema = $5, cron = $6, enabled = $7,
+         retry_max_attempts = $8, retry_backoff_seconds = $9, retry_backoff_multiplier = $10,
+         notifications = $11, datasource_id = $12, principal_snapshot = $13, updated_at = $14
+       WHERE id = $15 AND owner = $16`,
       [
         merged.name,
         merged.statement,
+        merged.savedQueryId,
         merged.catalog,
         merged.schema,
         merged.cron,
@@ -396,6 +422,7 @@ function insertParams(s: ScheduleRecord): SqlParam[] {
     s.owner,
     s.name,
     s.statement,
+    s.savedQueryId,
     s.catalog,
     s.schema,
     s.cron,

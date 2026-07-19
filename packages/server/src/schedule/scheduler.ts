@@ -44,6 +44,7 @@ import {
   type ScheduleRepository,
   type ScheduleRunRepository,
 } from '../store/schedules';
+import type { SavedQueryRepository } from '../store/savedQueries';
 import { drainStatement } from './execute';
 import { nextRunAfter } from './cron';
 import { backoffMs, classifyFailure, retryPolicyForStatement, shouldRetry } from './retry';
@@ -84,6 +85,13 @@ export interface SchedulerDeps {
   schedules: ScheduleRepository;
   // schedule_runs (実行履歴) の永続化リポジトリ。
   runs: ScheduleRunRepository;
+  /**
+   * 保存済みクエリの永続化リポジトリ。savedQueryId を参照する schedule は、
+   * 実行のたびに (attemptWithRetries の冒頭で) ここから現在の statement を
+   * 解決する。保存時に解決した statement をキャッシュして使い回すことはしない
+   * (saved query の編集が次回実行に反映されるのが仕様)。
+   */
+  savedQueries: SavedQueryRepository;
   /** データソース id から QueryEngine を引くマップ。 */
   engines: Map<string, QueryEngine>;
   /** datasourceId 省略時の既定 id（スケジュールには永続化済み id を使う）。 */
@@ -490,7 +498,6 @@ export class Scheduler {
 
   /** 検証、guard、実行を安全な実効リトライポリシーで繰り返し、終端結果を返す。 */
   private async attemptWithRetries(schedule: ScheduleRecord): Promise<RunOutcome> {
-    const policy = retryPolicyForStatement(schedule.retry, schedule.statement);
     let attempt = 0;
 
     if (!schedule.principalSnapshot) {
@@ -530,6 +537,49 @@ export class Scheduler {
         rowCount: null,
       };
     }
+
+    // 実行のたびに statement を解決する。savedQueryId を持つ schedule は毎回
+    // savedQueries.get() で現在の statement を取得し (保存時のキャッシュは使わない)、
+    // 以後の write check / validate / guard 見積り / 実行はすべてこの解決済み statement に
+    // 対して行う。これにより saved query 側の編集が次回実行へ即座に反映される。
+    // 解決に使う owner ロールは上で解決済みの scheduleRole (datasourceId allowlist と同じ
+    // 認可コンテキスト) を使う。
+    let statement: string;
+    if (schedule.savedQueryId) {
+      const savedQuery = await this.deps.savedQueries.get(
+        {
+          user: schedule.owner,
+          groups: schedule.principalSnapshot.groups ?? [],
+          role: scheduleRole.name,
+        },
+        schedule.savedQueryId,
+      );
+      if (!savedQuery) {
+        return {
+          status: 'failed',
+          attempt: 1,
+          trinoQueryId: null,
+          errorType: 'SAVED_QUERY_ACCESS_DENIED',
+          errorMessage: `Saved query '${schedule.savedQueryId}' is not accessible to the schedule owner`,
+          rowCount: null,
+        };
+      }
+      statement = savedQuery.statement;
+    } else if (schedule.statement) {
+      statement = schedule.statement;
+    } else {
+      // 契約層の refine で statement/savedQueryId のいずれかは必ず存在する前提だが、
+      // 直接 DB を書き換えた等の想定外ケースに備えたガード。
+      return {
+        status: 'failed',
+        attempt: 1,
+        trinoQueryId: null,
+        errorType: 'INVALID_SCHEDULE',
+        errorMessage: `Schedule '${schedule.id}' has neither a statement nor a savedQueryId`,
+        rowCount: null,
+      };
+    }
+    const policy = retryPolicyForStatement(schedule.retry, statement);
     const releaseLease = engine.lease?.() ?? (() => {});
     try {
       const effective = effectiveGuardLimits(this.deps.guardConfig, scheduleRole);
@@ -543,13 +593,13 @@ export class Scheduler {
 
         try {
           const ioExplain = engine.ioExplainExecution?.({
-            statement: schedule.statement,
+            statement,
             catalog: schedule.catalog ?? undefined,
             schema: schedule.schema ?? undefined,
             principal: schedule.owner,
           });
           await assertQueryWriteAllowed({
-            statement: schedule.statement,
+            statement,
             role: scheduleRole,
             ioExplainClient: ioExplain?.client,
             ioExplainCtx: ioExplain?.ctx,
@@ -572,7 +622,7 @@ export class Scheduler {
         // 実行直前にもう一度 EXPLAIN (TYPE VALIDATE) で検証する。作成/更新時にも
         // 検証しているが、依存テーブルの変化などで実行時点では失敗しうるための再チェック。
         const validation = await engine.validate({
-          statement: schedule.statement,
+          statement,
           catalog: schedule.catalog,
           schema: schedule.schema,
           principal: schedule.owner,
@@ -609,7 +659,7 @@ export class Scheduler {
         // 変わらないため、blocked ステータスで即座に確定する。
         if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
           const estimate = await this.deps.estimate.estimate({
-            statement: schedule.statement,
+            statement,
             catalog: schedule.catalog ?? undefined,
             schema: schedule.schema ?? undefined,
             principal: schedule.owner,
@@ -652,7 +702,7 @@ export class Scheduler {
             schema: schedule.schema ?? undefined,
             user: schedule.owner,
           };
-          const result = await drainStatement(client, schedule.statement, ctx, {
+          const result = await drainStatement(client, statement, ctx, {
             signal: this.shutdownAbort.signal,
           });
           return {

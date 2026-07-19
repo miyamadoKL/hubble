@@ -80,3 +80,15 @@ export function useGuardConfig(): GuardConfig {
   const { data } = useConfig();
   return data?.guard ?? GUARD_OFF;
 }
+
+/**
+ * server が cron 式を評価する基準タイムゾーン（IANA 名）を返すフック。
+ * scheduler は server local timezone で次回実行時刻を計算するため、スケジュール
+ * ビルダーの読み下し文にこの値を明記して表示時刻と実行時刻の食い違いを防ぐ
+ * （`packages/web/src/components/panels/ScheduleBuilder.tsx` から利用）。
+ * 未取得の間は null を返し、呼び出し側は「サーバー時刻基準」とだけ表示する。
+ */
+export function useServerTimeZone(): string | null {
+  const { data } = useConfig();
+  return data?.serverTimeZone ?? null;
+}

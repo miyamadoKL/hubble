@@ -10,6 +10,7 @@
  */
 import { useMemo, useState } from 'react';
 import type { Schedule } from '@hubble/contracts';
+import { useQuery } from '@tanstack/react-query';
 import { CalendarClock, History as HistoryIcon, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
@@ -17,6 +18,7 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
 import { ApiClientError } from '../../api/client';
+import { listSavedQueries } from '../../api/savedQueries';
 import { ScheduleStatusBadge } from './ScheduleStatusBadge';
 import { ScheduleFormModal } from './ScheduleFormModal';
 import { ScheduleRunsModal } from './ScheduleRunsModal';
@@ -183,6 +185,13 @@ export function SchedulesPanel({ search }: { search: string }) {
   const context = useUiStore((s) => s.shellContext);
   const { datasources, selectedId } = useDatasources();
   const list = useSchedules();
+  // saved query 参照モードのピッカー用。Alert パネルと同じキャッシュキーを使い、
+  // 両パネルを行き来しても再フェッチが重複しないようにする。
+  const savedQueriesQuery = useQuery({
+    queryKey: ['saved-queries', 'list'],
+    queryFn: () => listSavedQueries(),
+  });
+  const savedQueries = savedQueriesQuery.data ?? [];
   const create = useCreateSchedule();
   const update = useUpdateSchedule();
   const remove = useDeleteSchedule();
@@ -230,7 +239,8 @@ export function SchedulesPanel({ search }: { search: string }) {
     const items = list.data ?? [];
     const matched = q
       ? items.filter(
-          (s) => s.name.toLowerCase().includes(q) || s.statement.toLowerCase().includes(q),
+          (s) =>
+            s.name.toLowerCase().includes(q) || (s.statement?.toLowerCase().includes(q) ?? false),
         )
       : items;
     return [...matched].sort((a, b) => a.name.localeCompare(b.name));
@@ -341,6 +351,7 @@ export function SchedulesPanel({ search }: { search: string }) {
         context={context}
         datasources={datasources}
         defaultDatasourceId={selectedId}
+        savedQueries={savedQueries}
         submitting={create.isPending || update.isPending}
         serverError={serverError}
         onClose={closeForm}

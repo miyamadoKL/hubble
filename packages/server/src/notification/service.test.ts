@@ -32,6 +32,7 @@ function schedule(overrides: Partial<ScheduleRecord> = {}): ScheduleRecord {
     owner: 'alice',
     name: 'nightly',
     statement: 'SELECT * FROM secret_table',
+    savedQueryId: null,
     catalog: 'tpch',
     schema: 'tiny',
     cron: '* * * * *',

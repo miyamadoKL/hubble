@@ -55,8 +55,9 @@ describe('loadMigrations', () => {
 describe('openDatabase with the real initial migration', () => {
   it('loads the real migrations directory', () => {
     const migrations = loadMigrations(MIGRATIONS_DIR);
-    expect(migrations.map((migration) => migration.version)).toEqual([1]);
+    expect(migrations.map((migration) => migration.version)).toEqual([1, 2]);
     expect(migrations[0]!.name).toBe('0001_baseline.sql');
+    expect(migrations[1]!.name).toBe('0002_schedule_saved_query.sql');
   });
 });
 

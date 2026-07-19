@@ -10,6 +10,8 @@ import type { FakeScenario } from '../test/fakeTrino';
 import { deriveTrinoSourceTags } from './trino';
 import { openTestDatabase } from '../test/dbBackends';
 import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
+import { SavedQueryRepository } from '../store/savedQueries';
+import { DocumentShareRepository } from '../store/documentShares';
 import { Scheduler } from '../schedule/scheduler';
 import { JobAdmissionController } from '../schedule/admission';
 import { EstimateService } from '../query/estimateService';
@@ -288,6 +290,7 @@ describe('schedule datasource persistence', () => {
     const { engines, defaultDatasourceId } = makeEnginesMap(fake);
     const schedules = new ScheduleRepository(db);
     const runs = new ScheduleRunRepository(db, 50);
+    const savedQueries = new SavedQueryRepository(db, new DocumentShareRepository(db));
     const estimate = new EstimateService(engines, defaultDatasourceId, {
       mode: 'off',
       maxScanBytes: 0,
@@ -301,6 +304,7 @@ describe('schedule datasource persistence', () => {
     const scheduler = new Scheduler({
       schedules,
       runs,
+      savedQueries,
       engines,
       defaultDatasourceId,
       estimate,

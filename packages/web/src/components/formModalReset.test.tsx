@@ -3,6 +3,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { Alert, SavedQuery, Schedule } from '@hubble/contracts';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+
+// ScheduleBuilder が useServerTimeZone（GET /api/config 経由）を呼ぶため、
+// このファイルのテストではネットワーク往復を避けるためにモックする。
+vi.mock('../hooks/useConfig', () => ({
+  useServerTimeZone: vi.fn(() => null),
+}));
+
 import { AlertFormModal } from './panels/AlertFormModal';
 import { ScheduleFormModal } from './panels/ScheduleFormModal';
 import { SaveNotebookModal } from './notebook/SaveNotebookModal';
@@ -50,6 +57,7 @@ function schedule(id: string, name: string, statement: string): Schedule {
     id,
     name,
     statement,
+    savedQueryId: null,
     catalog: 'catalog',
     schema: 'schema',
     cron: '0 * * * *',
@@ -121,6 +129,7 @@ describe('フォームモーダルの再初期化', () => {
     const common = {
       context: {},
       datasources: [],
+      savedQueries: [],
       submitting: false,
       serverError: null,
       onClose: vi.fn(),

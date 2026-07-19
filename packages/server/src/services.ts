@@ -327,6 +327,7 @@ export async function buildServices(
   const scheduler = new Scheduler({
     schedules,
     runs: scheduleRuns,
+    savedQueries,
     engines,
     defaultDatasourceId: runtime.defaultDatasourceId,
     estimate,
