@@ -9,7 +9,7 @@ import { Spinner } from '../common/Spinner';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
-import { StateBadge } from '../common/StateBadge';
+import { QueryStateBadge } from './QueryStateBadge';
 import { DatasourceBadge } from '../common/DatasourceBadge';
 import { useAdminQueries, useKillAdminQuery } from '../../hooks/useAdminQueries';
 import { useMe } from '../../hooks/useMe';
@@ -17,6 +17,12 @@ import { hasPermission } from '../../permissions';
 import { useDatasources } from '../../hooks/useDatasources';
 import { formatDuration } from '../../utils/format';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { panelsMessages } from '../../i18n/messages/panels';
+
+/** OperationsPanel 内で使う辞書の合成。共通文言 + パネル固有文言を 1 つの t() で引けるようにする。 */
+const operationsDict = { ...commonMessages, ...panelsMessages } as const;
 
 function OperationsRow({
   item,
@@ -31,6 +37,7 @@ function OperationsRow({
   onKill: (item: AdminQueryItem) => void;
   killing: boolean;
 }) {
+  const t = useT(operationsDict);
   const oneLine = item.statement.replace(/\s+/g, ' ').trim();
   const progress =
     item.stats?.progressPercentage !== undefined
@@ -42,7 +49,7 @@ function OperationsRow({
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <StateBadge state={item.state} />
+            <QueryStateBadge state={item.state} />
             <DatasourceBadge datasourceId={item.datasourceId} datasources={datasources} />
             <span className="font-mono text-2xs text-ink-subtle">{item.owner}</span>
           </div>
@@ -59,10 +66,10 @@ function OperationsRow({
             className={cn('shrink-0 opacity-0 transition-opacity group-hover:opacity-100')}
             disabled={killing}
             onClick={() => onKill(item)}
-            aria-label={`Kill query by ${item.owner}`}
+            aria-label={t('killQueryByAria', { owner: item.owner })}
           >
             <OctagonX size={14} strokeWidth={1.75} />
-            Kill
+            {t('killButton')}
           </Button>
         )}
       </div>
@@ -74,6 +81,7 @@ function OperationsRow({
  * Operations サイドバーパネル本体。
  */
 export function OperationsPanel() {
+  const t = useT(operationsDict);
   const { data: me } = useMe();
   const canView = hasPermission(me, 'queries.viewAll');
   const canKill = hasPermission(me, 'query.killAny');
@@ -95,14 +103,14 @@ export function OperationsPanel() {
       ) : isError ? (
         <EmptyState
           icon={Activity}
-          title="Could not load queries"
-          description="Check your connection and try again."
+          title={t('couldNotLoadQueries')}
+          description={t('checkConnectionHint')}
         />
       ) : items.length === 0 ? (
         <EmptyState
           icon={Activity}
-          title="No active queries"
-          description="Running queries from all users will appear here."
+          title={t('noActiveQueries')}
+          description={t('allUsersQueriesHint')}
         />
       ) : (
         <ul>
@@ -122,16 +130,19 @@ export function OperationsPanel() {
       <Modal
         open={pendingKill !== null}
         onClose={() => setPendingKill(null)}
-        title="Kill query?"
+        title={t('killQueryTitle')}
         description={
           pendingKill
-            ? `Owner: ${pendingKill.owner}\n${pendingKill.statement.replace(/\s+/g, ' ').trim()}`
+            ? t('killQueryDescription', {
+                owner: pendingKill.owner,
+                statement: pendingKill.statement.replace(/\s+/g, ' ').trim(),
+              })
             : undefined
         }
         footer={
           <>
             <Button variant="ghost" onClick={() => setPendingKill(null)}>
-              Cancel
+              {t('cancel')}
             </Button>
             <Button
               variant="danger"
@@ -140,13 +151,16 @@ export function OperationsPanel() {
                 if (!pendingKill) return;
                 kill.mutate(pendingKill.queryId, {
                   onSuccess: () =>
-                    toast.info('Query killed', `Stopped ${pendingKill.owner}'s query.`),
-                  onError: () => toast.error('Kill failed', 'Could not stop the query.'),
+                    toast.info(
+                      t('queryKilledTitle'),
+                      t('queryKilledBody', { owner: pendingKill.owner }),
+                    ),
+                  onError: () => toast.error(t('killFailedTitle'), t('killFailedBody')),
                 });
                 setPendingKill(null);
               }}
             >
-              Kill
+              {t('killButton')}
             </Button>
           </>
         }

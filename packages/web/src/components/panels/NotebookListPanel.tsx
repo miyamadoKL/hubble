@@ -12,13 +12,10 @@ import { EmptyState } from '../common/EmptyState';
 import { DocumentShareBadge } from '../common/DocumentShareBadge';
 import { formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { panelsMessages } from '../../i18n/messages/panels';
 
-/**
- * Notebook list panel (Notebook 一覧). Shows each saved notebook
- * with its last-updated time; the active notebook is highlighted. Clicking a row
- * opens the notebook (再オープン). Items are lightweight
- * `NotebookListItem`s from `GET /api/notebooks`.
- */
 /**
  * ノートブック一覧を描画するコンポーネント。
  *
@@ -38,6 +35,8 @@ export function NotebookListPanel({
   onOpen?: (id: string) => void;
   className?: string;
 }) {
+  const t = useT(panelsMessages);
+  const { locale } = useLocale();
   // 相対時刻表示（"3分前" など）の基準となる現在時刻。
   const now = new Date();
   // ノートブックが 1 件も無い場合は空状態を表示して終了する。
@@ -45,8 +44,8 @@ export function NotebookListPanel({
     return (
       <EmptyState
         icon={NotebookPen}
-        title="No notebooks"
-        description="Create a notebook to start composing SQL cells."
+        title={t('noNotebooks')}
+        description={t('createNotebookHint')}
         compact
       />
     );
@@ -90,7 +89,7 @@ export function NotebookListPanel({
                 )}
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 font-mono text-2xs text-ink-subtle">
                   <DocumentShareBadge owner={nb.owner} myPermission={nb.myPermission} />
-                  <span>{formatRelativeTime(nb.updatedAt, now)}</span>
+                  <span>{formatRelativeTime(nb.updatedAt, now, locale)}</span>
                 </div>
               </div>
             </button>
