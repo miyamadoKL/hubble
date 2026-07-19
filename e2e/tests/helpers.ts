@@ -378,6 +378,38 @@ export async function seedSavedQuery(
 }
 
 /**
+ * API 経由でスケジュールを作成し、その id を返す（i18n レイアウト検証など、
+ * SchedulesPanel に実データを表示させたいテストで使う）。
+ */
+export async function seedSchedule(
+  request: APIRequestContext,
+  q: { name: string; statement: string; cron?: string },
+): Promise<string> {
+  const res = await request.post('/api/schedules', {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+    data: { cron: '0 9 * * *', ...q },
+  });
+  expect(res.ok()).toBeTruthy();
+  return (await res.json()).id as string;
+}
+
+/**
+ * API 経由で Alert を作成し、その id を返す（i18n レイアウト検証など、
+ * AlertsPanel に実データを表示させたいテストで使う）。
+ */
+export async function seedAlert(
+  request: APIRequestContext,
+  q: { name: string; savedQueryId: string; columnName: string; op: string; value: string },
+): Promise<string> {
+  const res = await request.post('/api/alerts', {
+    headers: { 'Sec-Fetch-Site': 'same-origin' },
+    data: { cron: '0 9 * * *', ...q },
+  });
+  expect(res.ok()).toBeTruthy();
+  return (await res.json()).id as string;
+}
+
+/**
  * Run a statement to a terminal state through the API (so it lands in history).
  * API 経由で SQL 文を終端状態まで実行する（実行履歴に記録させるためのヘルパー）。
  */

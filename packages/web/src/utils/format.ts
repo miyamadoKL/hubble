@@ -7,6 +7,9 @@
  * `date-fns` へは置き換えない。現行の各 helper 実装が小さく、ライブラリ導入は
  * 正味の削減にならない。
  */
+import { t } from '../i18n/t';
+import { commonMessages } from '../i18n/messages/common';
+import type { Locale } from '../i18n/locale';
 
 // 3桁ごとにカンマ区切りを行うための Intl.NumberFormat インスタンス。
 // 呼び出しごとに生成するとコストがかかるため、モジュールスコープで1つだけ生成し使い回す。
@@ -94,9 +97,15 @@ export function formatDuration(ms: number): string {
  *
  * @param iso 対象の日時を表す ISO 8601 形式の文字列。
  * @param now 比較基準となる現在時刻（テスト容易性のため引数で注入可能。デフォルトは `new Date()`）。
+ * @param locale 表示ロケール。省略時は 'en'（既存呼び出し元との後方互換用のデフォルト値。
+ *   UI から呼ぶ場合は `useLocale()` で得た現在のロケールを明示的に渡す）。
  * @returns 相対時間を表す文字列。`iso` が不正な日時の場合は空文字列。
  */
-export function formatRelativeTime(iso: string, now: Date = new Date()): string {
+export function formatRelativeTime(
+  iso: string,
+  now: Date = new Date(),
+  locale: Locale = 'en',
+): string {
   const then = new Date(iso).getTime();
   const diffMs = now.getTime() - then;
   // iso が不正な日時文字列でパースに失敗した場合、diffMs が NaN になるため
@@ -104,13 +113,13 @@ export function formatRelativeTime(iso: string, now: Date = new Date()): string 
   if (Number.isNaN(diffMs)) return '';
   const minutes = Math.round(diffMs / 60000);
   // 1分未満は「たった今」を意味する固定文言を返す。
-  if (minutes < 1) return 'just now';
+  if (minutes < 1) return t(commonMessages, 'agoJustNow', locale);
   // 60分未満は分単位で表示する。
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return t(commonMessages, 'agoMinutes', locale, { n: minutes });
   const hours = Math.round(minutes / 60);
   // 24時間未満は時間単位で表示する。
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t(commonMessages, 'agoHours', locale, { n: hours });
   // それ以上は日単位で表示する（上限のカット処理は行わない）。
   const days = Math.round(hours / 24);
-  return `${days}d ago`;
+  return t(commonMessages, 'agoDays', locale, { n: days });
 }

@@ -16,6 +16,13 @@ import { ScheduleStatusBadge } from './ScheduleStatusBadge';
 import { attemptLabel } from './scheduleFormat';
 import { useScheduleRuns } from '../../hooks/useSchedules';
 import { formatDuration, formatInt, formatRelativeTime } from '../../utils/format';
+import { useLocale } from '../../i18n/locale';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { scheduleRunMessages } from '../../i18n/messages/scheduleRun';
+
+/** ScheduleRunsModal 内で使う辞書の合成。 */
+const scheduleRunDict = { ...commonMessages, ...scheduleRunMessages } as const;
 
 /**
  * Run-history view for one schedule (Query Scheduling feature). Lists runs newest
@@ -31,6 +38,8 @@ import { formatDuration, formatInt, formatRelativeTime } from '../../utils/forma
  * @param now 相対時刻表示の基準となる現在時刻。
  */
 function RunRow({ run, now }: { run: ScheduleRun; now: Date }) {
+  const { locale } = useLocale();
+  const t = useT(scheduleRunMessages);
   // 失敗かつ 2 回以上試行していた場合のみ「リトライ済み」として扱う。
   const retried = run.status === 'failed' && run.attempt > 1;
   return (
@@ -41,48 +50,50 @@ function RunRow({ run, now }: { run: ScheduleRun; now: Date }) {
         {run.attempt > 1 && (
           <span
             className="font-mono text-2xs text-warning"
-            title={`This run took ${run.attempt} attempts`}
+            title={t('tookNAttempts', { n: run.attempt })}
           >
-            {attemptLabel(run.attempt)}
+            {attemptLabel(run.attempt, locale)}
           </span>
         )}
         <span className="ml-auto font-mono text-2xs text-ink-subtle">
-          {formatRelativeTime(run.startedAt, now)}
+          {formatRelativeTime(run.startedAt, now, locale)}
         </span>
       </div>
 
       {/* 行数、所要時間、試行回数、trinoQueryId のメタデータ一覧 */}
       <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-2xs text-ink-subtle sm:grid-cols-4">
         <div className="flex gap-1.5">
-          <dt>rows</dt>
+          <dt>{t('rowsItem')}</dt>
           <dd className="text-ink-muted">{run.rowCount != null ? formatInt(run.rowCount) : '—'}</dd>
         </div>
         <div className="flex gap-1.5">
-          <dt>elapsed</dt>
+          <dt>{t('elapsedItem')}</dt>
           <dd className="text-ink-muted">
             {run.elapsedMs != null ? formatDuration(run.elapsedMs) : '—'}
           </dd>
         </div>
         <div className="flex gap-1.5">
-          <dt>attempt</dt>
+          <dt>{t('attemptItem')}</dt>
           <dd className="text-ink-muted">{run.attempt}</dd>
         </div>
         {run.trinoQueryId && (
           <div className="col-span-2 flex min-w-0 gap-1.5 sm:col-span-1">
-            <dt>query</dt>
+            <dt>{t('queryItem')}</dt>
             <dd className="truncate text-ink-muted">{run.trinoQueryId}</dd>
           </div>
         )}
       </dl>
 
-      {/* エラーメッセージ（存在する場合）。errorType があれば接頭辞として付け、
-          リトライ後の失敗であれば試行回数を併記する。 */}
+      {/* エラーメッセージ（存在する場合。サーバー由来の生テキストなので翻訳しない）。
+          errorType があれば接頭辞として付け、リトライ後の失敗であれば試行回数を併記する。 */}
       {run.errorMessage && (
         <p className="mt-1.5 font-mono text-2xs whitespace-pre-wrap text-error">
           {run.errorType ? `${run.errorType}: ` : ''}
           {run.errorMessage}
           {retried && (
-            <span className="text-error/80"> (failed after {attemptLabel(run.attempt)})</span>
+            <span className="text-error/80">
+              {t('failedAfterAttempts', { label: attemptLabel(run.attempt, locale) })}
+            </span>
           )}
         </p>
       )}
@@ -104,6 +115,7 @@ export function ScheduleRunsModal({
   schedule: Schedule | null;
   onClose: () => void;
 }) {
+  const t = useT(scheduleRunDict);
   // schedule が null でなければモーダルを開いた状態として扱う。
   const open = schedule !== null;
   // 対象スケジュールの実行履歴を取得するフック。schedule が無ければ id は null を渡す。
@@ -115,8 +127,8 @@ export function ScheduleRunsModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={schedule ? `Runs — ${schedule.name}` : 'Runs'}
-      description="Most recent runs first. A failed run that exhausted its retries shows the attempt count."
+      title={schedule ? t('runsTitleFor', { name: schedule.name }) : t('runsTitle')}
+      description={t('runsDescription')}
       className="max-w-2xl"
     >
       <div className="-mx-5 -my-4 max-h-[60vh] overflow-auto">
@@ -124,22 +136,22 @@ export function ScheduleRunsModal({
         {runs.isPending ? (
           // 取得中はスピナーを表示する。
           <div className="flex items-center justify-center gap-2 py-10 font-mono text-2xs text-ink-subtle">
-            <Spinner size={14} /> Loading…
+            <Spinner size={14} /> {t('loading')}
           </div>
         ) : runs.isError ? (
           // 取得エラー時の空状態表示。
           <EmptyState
             icon={History}
-            title="Couldn't load runs"
-            description="The server didn't respond."
+            title={t('couldntLoadRuns')}
+            description={t('serverDidntRespond')}
             compact
           />
         ) : (runs.data?.length ?? 0) === 0 ? (
           // 実行履歴がまだ 0 件の場合の空状態表示。
           <EmptyState
             icon={History}
-            title="No runs yet"
-            description="Runs appear here once the schedule fires or you trigger it manually."
+            title={t('noRunsYetTitle')}
+            description={t('noRunsYetDescription')}
             compact
           />
         ) : (

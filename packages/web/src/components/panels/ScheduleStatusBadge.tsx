@@ -6,6 +6,7 @@
 import type { ScheduleRunStatus } from '@hubble/contracts';
 import { StatusBadge } from '../common/StatusBadge';
 import { runTone, runStatusLabel } from './scheduleFormat';
+import { useLocale } from '../../i18n/locale';
 
 /**
  * @param status 表示対象のスケジュール実行状態。
@@ -21,10 +22,11 @@ export function ScheduleStatusBadge({
   className?: string;
   dot?: boolean;
 }) {
+  const { locale } = useLocale();
   return (
     <StatusBadge
       tone={runTone(status)}
-      label={runStatusLabel(status)}
+      label={runStatusLabel(status, locale)}
       className={className}
       dot={dot}
     />

@@ -239,8 +239,9 @@ export function Sidebar({
             </div>
           )}
 
-          {/* 選択中タブに応じてパネル本体を出し分ける（同時に描画されるのは1つだけ）。 */}
-          <div className="min-h-0 flex-1 overflow-auto">
+          {/* 選択中タブに応じてパネル本体を出し分ける（同時に描画されるのは1つだけ）。
+              data-testid は e2e のレイアウト検証（overflow 走査対象の絞り込み）用。 */}
+          <div className="min-h-0 flex-1 overflow-auto" data-testid="sidebar-panel">
             {effectiveTab === 'data' && datasourceId && (
               <SchemaTree
                 filter={search}

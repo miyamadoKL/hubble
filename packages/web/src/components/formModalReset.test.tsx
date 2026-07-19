@@ -141,9 +141,7 @@ describe('フォームモーダルの再初期化', () => {
         <ScheduleFormModal open schedule={schedule('a', 'Schedule A', 'SELECT 1')} {...common} />,
       ),
     );
-    expect(
-      (container.querySelector('[aria-label="Schedule name"]') as HTMLInputElement).value,
-    ).toBe('Schedule A');
+    expect((container.querySelector('[name="name"]') as HTMLInputElement).value).toBe('Schedule A');
 
     act(() =>
       root.render(
@@ -151,9 +149,7 @@ describe('フォームモーダルの再初期化', () => {
       ),
     );
 
-    expect(
-      (container.querySelector('[aria-label="Schedule name"]') as HTMLInputElement).value,
-    ).toBe('Schedule B');
+    expect((container.querySelector('[name="name"]') as HTMLInputElement).value).toBe('Schedule B');
     expect(
       (container.querySelector('[aria-label="SQL statement"]') as HTMLTextAreaElement).value,
     ).toBe('SELECT 2');

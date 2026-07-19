@@ -13,6 +13,9 @@
 import type { ScheduleRunStatus, ScheduleRunSummary } from '@hubble/contracts';
 import { parseStatement } from '../../trino-lang';
 import { ApiClientError } from '../../api/client';
+import { t } from '../../i18n/t';
+import { scheduleRunMessages } from '../../i18n/messages/scheduleRun';
+import type { Locale } from '../../i18n/locale';
 
 /**
  * Pure presentation + validation helpers for the Query Scheduling panels, kept
@@ -39,8 +42,20 @@ const STATUS_TONE: Record<ScheduleRunStatus, RunTone> = {
   blocked: 'warning',
 };
 
-// ScheduleRunStatus の各値を画面表示用の大文字ラベルへマッピングするテーブル。
-const STATUS_LABEL: Record<ScheduleRunStatus, string> = {
+// ScheduleRunStatus の各値を辞書のキーへマッピングするテーブル（表示は
+// scheduleRunMessages 側でロケール別に持つ。契約値である ScheduleRunStatus 自体は
+// 変更しない）。
+const STATUS_LABEL_KEY = {
+  running: 'statusRunning',
+  success: 'statusSuccess',
+  failed: 'statusFailed',
+  aborted: 'statusAborted',
+  blocked: 'statusBlocked',
+} as const satisfies Record<ScheduleRunStatus, keyof typeof scheduleRunMessages>;
+
+// summarizeLastRun 用の英語限定ラベル（この関数自体が現在どの画面からも呼ばれていない
+// dead code のため、フルの多言語化はスコープ外とし、既存のテスト互換のみ保つ）。
+const STATUS_LABEL_EN: Record<ScheduleRunStatus, string> = {
   running: 'RUNNING',
   success: 'SUCCESS',
   failed: 'FAILED',
@@ -53,9 +68,14 @@ export function runTone(status: ScheduleRunStatus): RunTone {
   return STATUS_TONE[status];
 }
 
-/** run の status から画面表示用のラベル文字列（大文字）を求める。 */
-export function runStatusLabel(status: ScheduleRunStatus): string {
-  return STATUS_LABEL[status];
+/**
+ * run の status から画面表示用のラベル文字列を求める。契約値
+ * （running/success/failed/aborted/blocked）自体は変更せず、表示だけ翻訳する。
+ * `locale` 省略時は 'en'（既存呼び出し元との後方互換用のデフォルト値。UI から呼ぶ場合は
+ * `useLocale()` で得た現在のロケールを明示的に渡す）。
+ */
+export function runStatusLabel(status: ScheduleRunStatus, locale: Locale = 'en'): string {
+  return t(scheduleRunMessages, STATUS_LABEL_KEY[status], locale);
 }
 
 /**
@@ -66,7 +86,7 @@ export function runStatusLabel(status: ScheduleRunStatus): string {
 export function summarizeLastRun(run: ScheduleRunSummary): string {
   // ラベルは先頭大文字+残り小文字（例: "Failed"）に整形して表示用の文とする。
   const label =
-    STATUS_LABEL[run.status].charAt(0) + STATUS_LABEL[run.status].slice(1).toLowerCase();
+    STATUS_LABEL_EN[run.status].charAt(0) + STATUS_LABEL_EN[run.status].slice(1).toLowerCase();
   // 失敗かつ複数回試行していた場合のみ、試行回数を併記する（例: "Failed · 3 attempts"）。
   if (run.status === 'failed' && run.attempt > 1) {
     return `${label} · ${run.attempt} attempts`;
@@ -74,10 +94,15 @@ export function summarizeLastRun(run: ScheduleRunSummary): string {
   return label;
 }
 
-/** Human "N attempts" phrasing for the history view (singular-aware). */
-// 1 回だけなら単数形 "1 attempt"、複数回なら "N attempts" と、英語の単数/複数を正しく出し分ける。
-export function attemptLabel(attempt: number): string {
-  return attempt === 1 ? '1 attempt' : `${attempt} attempts`;
+/**
+ * 実行履歴の試行回数表記（「N attempts」等）を求める。1 回だけなら単数形、複数回
+ * なら複数形と、日英それぞれの単数/複数を正しく出し分ける。
+ * `locale` 省略時は 'en'（既存呼び出し元との後方互換用のデフォルト値）。
+ */
+export function attemptLabel(attempt: number, locale: Locale = 'en'): string {
+  return attempt === 1
+    ? t(scheduleRunMessages, 'attemptSingular', locale)
+    : t(scheduleRunMessages, 'attemptPlural', locale, { n: attempt });
 }
 
 // ---- Client-side statement syntax check (run-prevention UI) -----------------
