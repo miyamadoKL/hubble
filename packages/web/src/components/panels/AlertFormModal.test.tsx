@@ -165,7 +165,7 @@ describe('AlertFormModal: スケジュールビルダーのモード切替と送
         />,
       ),
     );
-    act(() => radio('Custom (cron)').click());
+    act(() => radio('Custom').click());
     const cronInput = container.querySelector('[name="cron"]') as HTMLInputElement;
     typeInto(cronInput, '*/15 * * * *');
 

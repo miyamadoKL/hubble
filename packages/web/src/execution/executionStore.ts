@@ -196,6 +196,52 @@ interface ExecutionStoreState {
 // 購読の開始/停止が再レンダーを引き起こさないようにしている。
 const runtimes = new Map<string, CellRuntime>();
 
+// リロード直後の結果自動復元（restoreCell）を「cellId + queryId の組み合わせ
+// ごとに1回だけ試みる」ための試行済み記録。SqlCell は ViewportCell の遅延
+// マウント/アンマウント（視界外→再進入）で何度も生成/破棄されるため、
+// コンポーネント内の useRef だけでは試行状態が失われ、TTL 切れ済みの queryId を
+// 視界に入るたびに再取得してしまう（指摘: マウント単位の ref では防げない）。
+// モジュールレベルで保持しつつ、notebook を閉じたら該当セルの分だけ消える
+// 寿命設計にする（`clearRestoreAttemptsForCells` を notebookStore の
+// closeNotebook/removeCell/replaceNotebook から呼ぶ）。runtimes 同様、
+// zustand の外に置いて再レンダーを起こさない。
+//
+// キーは cellId と queryId を文字列結合せず Map<cellId, Set<queryId>> の
+// 構造化キーにする。cellId は契約上ただの非空文字列（区切り文字の禁止は
+// されていない）なので、`${cellId}::${queryId}` のような文字列結合キーは
+// cellId 自体に `::` を含むケースで衝突・誤消去し得る（指摘）。
+const restoreAttempts = new Map<string, Set<string>>();
+
+/**
+ * 指定した cellId/queryId の組み合わせについて、自動復元（restoreCell）を
+ * 既に試行済みかどうかを返す。
+ */
+export function hasAttemptedRestore(cellId: string, queryId: string): boolean {
+  return restoreAttempts.get(cellId)?.has(queryId) ?? false;
+}
+
+/** 指定した cellId/queryId の組み合わせを試行済みとして記録する。 */
+export function markRestoreAttempted(cellId: string, queryId: string): void {
+  let queryIds = restoreAttempts.get(cellId);
+  if (!queryIds) {
+    queryIds = new Set();
+    restoreAttempts.set(cellId, queryIds);
+  }
+  queryIds.add(queryId);
+}
+
+/**
+ * 指定した cellId 群に紐づく試行記録をまとめて消す。notebook を閉じる/
+ * セルを削除する/notebook を丸ごと差し替えるといった、セルが「もう存在しない」
+ * ことが確定するタイミングで notebookStore 側から呼ばれ、そのセルの分だけ
+ * 記録を寿命終了させる（消さないと、二度と開かれないセルの分だけ無制限に
+ * 増え続けてしまう）。Map のキー単位で削除するだけなので、文字列キーの
+ * ように走査してプレフィックス一致を判定する必要はない。
+ */
+export function clearRestoreAttemptsForCells(cellIds: Iterable<string>): void {
+  for (const cellId of cellIds) restoreAttempts.delete(cellId);
+}
+
 /**
  * EventSource factory — overridable in tests via `__setEventSourceFactory`.
  * EventSource の生成関数。テストでは `__setEventSourceFactory` でモックに差し替える。
@@ -211,6 +257,9 @@ export function __setEventSourceFactory(factory: EventSourceFactory | undefined)
  * 実行が終端状態に達したときのサマリー。notebook 側（cell.resultMeta）へ永続化される。
  */
 export interface CellResultSummary {
+  // アプリ側のクエリ id。リロード後の結果自動復元（restoreCell）に使う。
+  // createQuery 自体が失敗した等、確定前に終端した場合は空文字なので省略する。
+  queryId?: string;
   trinoQueryId?: string;
   state: QueryState;
   rowCount: number;
@@ -242,6 +291,7 @@ export function __setCellSettledSink(
 function emitCellSettled(cellId: string, cell: CellExecution): void {
   if (!cellSettledSink) return; // シンク未配線（テスト等）なら何もしない
   cellSettledSink(cellId, {
+    queryId: cell.queryId || undefined,
     trinoQueryId: cell.trinoQueryId,
     state: cell.state,
     rowCount: cell.rowCount,

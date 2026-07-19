@@ -18,7 +18,7 @@ export const scheduleBuilderMessages = defineDictionary({
   modeDaily: { ja: '毎日', en: 'Daily' },
   modeWeekly: { ja: '毎週', en: 'Weekly' },
   modeMonthly: { ja: '毎月', en: 'Monthly' },
-  modeCustom: { ja: 'カスタム（cron）', en: 'Custom (cron)' },
+  modeCustom: { ja: 'カスタム', en: 'Custom' },
 
   // 各モードの入力欄ラベル。
   minuteHourlyLabel: {
@@ -33,13 +33,16 @@ export const scheduleBuilderMessages = defineDictionary({
   dayOfMonthLabel: { ja: '日（1-31）', en: 'Day of month (1-31)' },
   hourLabel: { ja: '時（0-23）', en: 'Hour (0-23)' },
   minuteLabel: { ja: '分（0-59）', en: 'Minute (0-59)' },
-  cronExpressionLabel: { ja: 'Cron 式', en: 'Cron expression' },
+  cronExpressionLabel: {
+    ja: '実行タイミング（分 時 日 月 曜日 の 5 項目）',
+    en: 'Timing (5 fields: minute hour day month weekday)',
+  },
   cronExpressionPlaceholder: {
     ja: '分 時 日 月 曜日',
     en: 'minute hour day-of-month month day-of-week',
   },
 
-  // 曜日ラベル（cron の 0=日曜始まり）。
+  // 曜日ラベル（週の先頭を日曜とする）。
   weekdaySun: { ja: '日', en: 'Sun' },
   weekdayMon: { ja: '月', en: 'Mon' },
   weekdayTue: { ja: '火', en: 'Tue' },
@@ -54,7 +57,7 @@ export const scheduleBuilderMessages = defineDictionary({
   describeWeekly: { ja: '毎週 {days}の {time} に実行', en: 'Every week on {days} at {time}' },
   describeWeeklyEmpty: { ja: '曜日が選択されていません', en: 'No weekday selected' },
   describeMonthly: { ja: '毎月 {day} 日の {time} に実行', en: 'Monthly on day {day} at {time}' },
-  describeCustom: { ja: 'カスタム cron 式で実行: {cron}', en: 'Custom cron expression: {cron}' },
+  describeCustom: { ja: 'カスタム設定で実行: {cron}', en: 'Custom timing: {cron}' },
   describeCustomEmpty: { ja: '(未入力)', en: '(empty)' },
 
   // 曜日リストの列挙。2 項は「と」/"and"、3 項以上は読点/カンマで並べる

@@ -164,12 +164,12 @@ describe('triggerLabel', () => {
   // 契約値をそのまま生表示していた。ja ロケールで翻訳済みラベルになることを固定する。
   it('ja ロケールで manual/cron を翻訳済みラベルにする', () => {
     expect(triggerLabel('manual', 'ja')).toBe('手動');
-    expect(triggerLabel('cron', 'ja')).toBe('cron');
+    expect(triggerLabel('cron', 'ja')).toBe('スケジュール');
   });
 
   it('locale 省略時は既存呼び出し元互換のため en を返す', () => {
     expect(triggerLabel('manual')).toBe('manual');
-    expect(triggerLabel('cron')).toBe('cron');
+    expect(triggerLabel('cron')).toBe('schedule');
   });
 });
 

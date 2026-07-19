@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { notebookSchema, type Notebook } from '@hubble/contracts';
 import { ApiClientError } from '../api/client';
+import { hasAttemptedRestore, markRestoreAttempted } from '../execution';
 import {
   useNotebookStore,
   blankNotebook,
@@ -66,6 +67,25 @@ describe('open / close / active', () => {
     expect(s.activeId).toBe('a');
   });
 
+  // 指摘2: 結果自動復元（restoreCell）の「試行済み」記録は execution レイヤーの
+  // モジュールレベル集合で管理する（SqlCell の再マウントを跨いで保持するため）。
+  // notebook を閉じたら、その notebook のセル分の記録も一緒に寿命を終える必要が
+  // ある（さもないと二度と開かれない notebook のセルの分だけ無制限に増え続ける）。
+  test('closeNotebook はそのnotebookのセルに紐づく結果自動復元の試行済み記録を消す', () => {
+    const st = useNotebookStore.getState();
+    st.openNotebook(makeNotebook({ id: 'a', cells: [{ id: 'ca', kind: 'sql', source: 'X' }] }));
+    st.openNotebook(makeNotebook({ id: 'b', cells: [{ id: 'cb', kind: 'sql', source: 'Y' }] }));
+    markRestoreAttempted('ca', 'qa');
+    markRestoreAttempted('cb', 'qb');
+
+    useNotebookStore.getState().closeNotebook('a');
+
+    // 閉じた notebook（a）のセルの記録だけが消える。
+    expect(hasAttemptedRestore('ca', 'qa')).toBe(false);
+    // 開いたままの notebook（b）のセルの記録は残る。
+    expect(hasAttemptedRestore('cb', 'qb')).toBe(true);
+  });
+
   test('createBlankNotebook opens a draft with one empty SQL cell', () => {
     const id = useNotebookStore.getState().createBlankNotebook();
     const entry = useNotebookStore.getState().open[id];
@@ -104,6 +124,62 @@ describe('cell CRUD + move', () => {
     const entry = useNotebookStore.getState().open['nb-1']!;
     expect(entry.notebook.cells).toHaveLength(0);
     expect(entry.dirty).toBe(true);
+  });
+
+  // 指摘1（P1）: removeCell はセルを配列から除くだけで、closeNotebook が
+  // 列挙するのは残存セルのみのため、削除済みセルの結果自動復元「試行済み」
+  // 記録が回収されずに残ってしまっていた。removeCell 自身が対象セル分を
+  // 消去することを確認する。
+  test('removeCell は削除したセルの結果自動復元の試行済み記録も消す', () => {
+    useNotebookStore.getState().openNotebook(
+      makeNotebook({
+        cells: [
+          { id: 'c1', kind: 'sql', source: 'SELECT 1' },
+          { id: 'c2', kind: 'sql', source: 'SELECT 2' },
+        ],
+      }),
+    );
+    markRestoreAttempted('c1', 'q1');
+    markRestoreAttempted('c2', 'q2');
+
+    useNotebookStore.getState().removeCell('nb-1', 'c1');
+
+    expect(hasAttemptedRestore('c1', 'q1')).toBe(false);
+    // 削除していない c2 の記録は残る。
+    expect(hasAttemptedRestore('c2', 'q2')).toBe(true);
+  });
+
+  // 指摘1（P1）: replaceNotebook で notebook を丸ごと差し替えたとき、新しい
+  // cells 集合に存在しない旧セル（サーバー側で削除された等）の分も、結果自動
+  // 復元の試行済み記録が回収されていなかった。旧セル集合と新セル集合の差分
+  // （消えるセル）だけを消去することを確認する。
+  test('replaceNotebook は新しい cells 集合に存在しない旧セルの試行済み記録を消す', () => {
+    const st = useNotebookStore.getState();
+    st.openNotebook(
+      makeNotebook({
+        cells: [
+          { id: 'c1', kind: 'sql', source: 'SELECT 1' },
+          { id: 'c2', kind: 'sql', source: 'SELECT 2' },
+        ],
+      }),
+    );
+    markRestoreAttempted('c1', 'q1');
+    markRestoreAttempted('c2', 'q2');
+
+    // サーバーから返ってきた最新版では c1 が消え、c3 が新規追加されている。
+    useNotebookStore.getState().replaceNotebook(
+      makeNotebook({
+        cells: [
+          { id: 'c2', kind: 'sql', source: 'SELECT 2' },
+          { id: 'c3', kind: 'sql', source: 'SELECT 3' },
+        ],
+      }),
+    );
+
+    // 新集合に存在しない c1 の記録は消える。
+    expect(hasAttemptedRestore('c1', 'q1')).toBe(false);
+    // 新集合にも残る c2 の記録はそのまま。
+    expect(hasAttemptedRestore('c2', 'q2')).toBe(true);
   });
 
   test('moveCell reorders', () => {

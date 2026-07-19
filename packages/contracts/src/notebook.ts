@@ -73,11 +73,17 @@ export const cellKindSchema = z.enum(['sql', 'markdown']);
 export type CellKind = z.infer<typeof cellKindSchema>;
 
 /**
- * セルの直近の実行結果サマリ。ノートブックと一緒に永続化されるが、
- * 結果行そのものは永続化されない（再度実行すれば取得できるため）。
+ * セルの直近の実行結果サマリ。ノートブックと一緒に永続化される。結果行そのものは
+ * このサマリには含まれないが、`queryId` があればサーバー側に永続化された結果
+ * （TTL 付き。既定 7 日、`resultTtlDays`）を `GET /api/queries/:id` 系エンドポイント
+ * 経由で取得できる。ノートブック再読み込み時にこの `queryId` を使って結果を
+ * 自動復元する（`SqlCell` の起動時 restore、指摘4: 「再実行」ボタンの重複解消）。
  */
 export const cellResultMetaSchema = z.object({
-  // 実行時の Trino クエリ id。
+  // アプリ側のクエリ id（`POST /api/queries` が返す値）。再読み込み後の結果自動
+  // 復元（`GET /api/queries/:id` 系）に使う。Trino 自体のクエリ id とは別物。
+  queryId: z.string().optional(),
+  // 実行時の Trino クエリ id（情報表示・Trino UI へのリンク用。復元には使わない）。
   trinoQueryId: z.string().optional(),
   // 実行の終端状態（文字列。厳密な QueryState との整合は呼び出し側の責務）。
   state: z.string().optional(),
@@ -184,6 +190,7 @@ const cellInputSchema = cellSchema.extend({
   name: z.string().max(MAX_NAME_LENGTH).optional(),
   resultMeta: cellResultMetaSchema
     .extend({
+      queryId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
       trinoQueryId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
       state: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
       errorMessage: z.string().max(MAX_DESCRIPTION_LENGTH).optional(),

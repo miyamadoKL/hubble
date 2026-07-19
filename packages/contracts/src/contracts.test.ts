@@ -689,6 +689,32 @@ describe('notebook', () => {
     ).toBe(false);
   });
 
+  // resultMeta.queryId（結果自動復元に使うアプリ側クエリ id）にも、既存の
+  // trinoQueryId 等と同じ MAX_IDENTIFIER_LENGTH の保存入力上限を適用する。
+  it('bounds resultMeta.queryId at MAX_IDENTIFIER_LENGTH for saved notebooks', () => {
+    const withinBound = {
+      ...notebook,
+      cells: [
+        {
+          ...cell,
+          resultMeta: { ...cell.resultMeta, queryId: 'q'.repeat(MAX_IDENTIFIER_LENGTH) },
+        },
+      ],
+    };
+    expect(notebookStoredSchema.safeParse(withinBound).success).toBe(true);
+
+    const overBound = {
+      ...notebook,
+      cells: [
+        {
+          ...cell,
+          resultMeta: { ...cell.resultMeta, queryId: 'q'.repeat(MAX_IDENTIFIER_LENGTH + 1) },
+        },
+      ],
+    };
+    expect(notebookStoredSchema.safeParse(overBound).success).toBe(false);
+  });
+
   it('applies scalar bounds to notebook list responses', () => {
     const item = {
       id: 'nb1',

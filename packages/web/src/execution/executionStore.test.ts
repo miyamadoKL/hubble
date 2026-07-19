@@ -19,6 +19,9 @@ import {
   useExecutionStore,
   __setEventSourceFactory,
   __setCellSettledSink,
+  hasAttemptedRestore,
+  markRestoreAttempted,
+  clearRestoreAttemptsForCells,
   type CellResultSummary,
 } from './executionStore';
 import { MockEventSource } from './sse.test';
@@ -568,6 +571,24 @@ describe('executionStore cell-settled sink (resultMeta write-back)', () => {
     expect(seen[0]!.summary.rowCount).toBe(1);
     expect(seen[0]!.summary.columnCount).toBe(1);
     expect(typeof seen[0]!.summary.finishedAt).toBe('string');
+    // 指摘4: リロード後の結果自動復元（restoreCell）に使うアプリ側 queryId を
+    // サマリーへ含める（Trino 自体の queryId とは別物）。
+    expect(seen[0]!.summary.queryId).toBe('qid-sink');
+  });
+
+  test('createQuery自体が失敗しqueryId未確定のまま終端したときはqueryIdを含めない', async () => {
+    createQuery.mockRejectedValue(
+      Object.assign(new Error('bad'), { detail: { code: 'BAD_REQUEST', message: 'bad' } }),
+    );
+    const seen: CellResultSummary[] = [];
+    __setCellSettledSink((_id, summary) => seen.push(summary));
+
+    useExecutionStore.getState().runUnit('cell-sink-no-qid', unit('SELECT 1'), CTX, OPTS);
+    await flush();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.state).toBe('failed');
+    expect(seen[0]!.queryId).toBeUndefined();
   });
 
   test('emits a summary with the error message when createQuery rejects', async () => {
@@ -644,6 +665,47 @@ describe('executionStore.restoreCell', () => {
 
     await expect(restoring).resolves.toBe('superseded');
     expect(useExecutionStore.getState().cells['superseded-cell']).toBeUndefined();
+  });
+});
+
+describe('結果自動復元の試行済み記録（hasAttemptedRestore/markRestoreAttempted/clearRestoreAttemptsForCells）', () => {
+  afterEach(() => {
+    // 各テストが記録したキーを後始末する（モジュールレベルの集合はテスト間で共有されるため）。
+    clearRestoreAttemptsForCells(['cell-viewport', 'cell-other', 'cell-a', 'cell-b']);
+  });
+
+  test('cellId + queryId の組み合わせごとに独立して記録される', () => {
+    expect(hasAttemptedRestore('cell-a', 'q1')).toBe(false);
+    markRestoreAttempted('cell-a', 'q1');
+    expect(hasAttemptedRestore('cell-a', 'q1')).toBe(true);
+    // 同じ cellId でも別の queryId（再実行で新しい queryId になった場合）は未試行のまま。
+    expect(hasAttemptedRestore('cell-a', 'q2')).toBe(false);
+    // 別 cellId は無関係。
+    expect(hasAttemptedRestore('cell-b', 'q1')).toBe(false);
+  });
+
+  test('clearRestoreAttemptsForCells は指定 cellId の記録だけを消す', () => {
+    markRestoreAttempted('cell-a', 'q1');
+    markRestoreAttempted('cell-b', 'q1');
+    clearRestoreAttemptsForCells(['cell-a']);
+    expect(hasAttemptedRestore('cell-a', 'q1')).toBe(false);
+    expect(hasAttemptedRestore('cell-b', 'q1')).toBe(true);
+  });
+
+  // 指摘2 の「視界外退出→再進入を跨いでも再試行しない」回帰テストは、production
+  // effect を再記述したここではなく、実際に production コードが使う hook
+  // （useAutoRestoreResult）を mount → unmount → remount する形で
+  // useAutoRestoreResult.test.tsx に置く（codex 推奨）。
+
+  test('notebook を閉じた後は、同じ cellId が再利用されても再試行できる', async () => {
+    fetchQuerySnapshot.mockRejectedValue(new Error('gone'));
+    markRestoreAttempted('cell-viewport', 'history-expired');
+    expect(hasAttemptedRestore('cell-viewport', 'history-expired')).toBe(true);
+
+    // notebookStore.closeNotebook 相当の後始末。
+    clearRestoreAttemptsForCells(['cell-viewport']);
+
+    expect(hasAttemptedRestore('cell-viewport', 'history-expired')).toBe(false);
   });
 });
 

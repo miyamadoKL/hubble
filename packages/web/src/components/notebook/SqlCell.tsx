@@ -13,6 +13,7 @@ import { EstimateStrip } from './EstimateStrip';
 import { ResultPane } from './ResultPane';
 import { LastRunStrip } from './LastRunStrip';
 import { SaveQueryModal } from './SaveQueryModal';
+import { useAutoRestoreResult } from './useAutoRestoreResult';
 import { parseStatement } from '../../trino-lang';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { useEstimate } from '../../hooks/useEstimate';
@@ -111,24 +112,17 @@ interface SqlCellProps {
 /** Notebook-level cell-chrome handlers passed down from NotebookView. */
 /**
  * NotebookViewから渡される、セルの外枠（chrome）操作に関するハンドラー群の型。
- * 折りたたみ、上下移動、削除、リネーム、ドラッグ操作などをまとめて表す。
+ * 折りたたみ、削除、リネーム、ドラッグ操作などをまとめて表す。
  */
 export interface SqlCellChrome {
-  // これ以上上に移動できない場合はfalse。
-  canMoveUp: boolean;
-  // これ以上下に移動できない場合はfalse。
-  canMoveDown: boolean;
   // 折りたたみ状態をトグルするハンドラー。
   onToggleCollapse: () => void;
   // セル名を変更するハンドラー。
   onRename: (name: string) => void;
-  // セルを1つ上に移動するハンドラー。
-  onMoveUp: () => void;
-  // セルを1つ下に移動するハンドラー。
-  onMoveDown: () => void;
   // セルを削除するハンドラー。
   onDelete: () => void;
-  // ドラッグ&ドロップの取っ手（grip）に付与するprops（任意）。
+  // ドラッグ&ドロップの取っ手（grip）に付与するprops（任意）。セルの並べ替えは
+  // このグリップハンドルのみで行う（上下移動ボタンは重複操作のため撤去した）。
   dragHandleProps?: React.HTMLAttributes<HTMLSpanElement>;
 }
 
@@ -237,6 +231,16 @@ export function SqlCell({
   const exec = useCellExecution(cellId);
   // このセルが現在実行中（queued/running）かどうか。
   const running = isCellRunning(exec);
+
+  // リロード直後など、このセッションではまだ実行していないが永続化された前回結果
+  // （resultMeta.queryId、サーバー側に TTL 付きで残る）があるセルは、ユーザー操作
+  // なしで自動的に結果を復元して表示する（指摘4: セル右下の別の「再実行」ボタンは
+  // 廃止し、実行操作はツールバーの実行ボタンへ統一する）。ViewportCell が視界外の
+  // セルを遅延マウントする既存の仕組みにそのまま乗るため、実際にセルがマウント
+  // された（＝視界に入った）タイミングでのみ走り、一斉フェッチにはならない。
+  // 試行済みかどうかの管理（cellId + queryId ごとに1回だけ、マウント/アンマウント
+  // を跨いで保持）は useAutoRestoreResult 側の責務（同ファイル参照）。
+  useAutoRestoreResult(cellId, Boolean(exec), resultMeta?.queryId);
 
   // Map the cell's batch/error state onto per-statement gutter statuses, keyed
   // by each statement's start offset.
@@ -584,8 +588,6 @@ export function SqlCell({
         running={running}
         autoLimit={autoLimit}
         limit={limit}
-        canMoveUp={chrome.canMoveUp}
-        canMoveDown={chrome.canMoveDown}
         onToggleCollapse={chrome.onToggleCollapse}
         onRename={chrome.onRename}
         onRun={runWholeCell}
@@ -594,8 +596,6 @@ export function SqlCell({
         runDisabledReason={blocked ? presentation.reasons[0] : undefined}
         onToggleAutoLimit={() => setAutoLimit((v) => !v)}
         onLimitChange={setLimit}
-        onMoveUp={chrome.onMoveUp}
-        onMoveDown={chrome.onMoveDown}
         onDelete={deleteCell}
         dragHandleProps={chrome.dragHandleProps}
         onSaveQuery={() => setSaveQueryOpen(true)}
@@ -673,9 +673,12 @@ export function SqlCell({
               />
             </>
           ) : (
-            // このセッションではまだ実行していない場合、永続化された前回の実行結果概要が
-            // あればそれを表示する(リロード直後に「前回実行」を表示するケース)。
-            resultMeta && <LastRunStrip meta={resultMeta} onRun={runWholeCell} />
+            // このセッションではまだ実行していない場合、永続化された前回の実行結果概要を
+            // 表示する。resultMeta.queryId があれば上の effect が自動復元を試みており、
+            // 復元が成功すればこの分岐自体が exec 側（結果表示）へ切り替わる。TTL 切れ等で
+            // 復元できなかった場合はここに留まり、概要のみを表示する（実行はツールバーの
+            // ボタンで行うため、別の再実行ボタンはここに置かない）。
+            resultMeta && <LastRunStrip meta={resultMeta} />
           )}
         </>
       )}

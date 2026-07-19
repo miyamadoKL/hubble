@@ -3,15 +3,16 @@
  *
  * ノートブックの各セル（SQL / Markdown）上部に表示されるツールバー。
  * セルの折りたたみ、種別バッジ、名前の編集、SQL セルの実行/停止、
- * LIMIT 自動付与の切り替え、セルの並べ替えや削除、ドラッグハンドルなど、
+ * LIMIT 自動付与の切り替え、削除、ドラッグハンドルなど、
  * セル単位の操作をひとまとめに提供するコンポーネント群。
+ * セルの並べ替えはドラッグハンドルのみで行う（上下移動ボタンは、6点ドラッグ
+ * ハンドルと操作が重複していたため撤去した）。
  */
 import { useEffect, useRef, useState } from 'react';
 import {
   Bookmark,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   GripVertical,
   Play,
   Square,
@@ -30,9 +31,11 @@ const cellToolbarDict = { ...commonMessages, ...notebookMessages } as const;
 
 /**
  * Cell toolbar: collapse / kind badge / editable name, plus run /
- * stop, the LIMIT auto-append toggle (SQL cells), move up/down,
- * delete, and the drag grip handle. Move/delete/rename are notebook-level
- * operations passed down from NotebookView; run/limit are SQL-cell-owned.
+ * stop, the LIMIT auto-append toggle (SQL cells), delete, and the drag
+ * grip handle. Reordering is grip-handle-only now (the up/down move
+ * buttons were removed as a duplicate affordance). Delete/rename are
+ * notebook-level operations passed down from NotebookView; run/limit
+ * are SQL-cell-owned.
  */
 
 /**
@@ -53,11 +56,6 @@ interface CellToolbarProps {
   autoLimit?: boolean;
   /** LIMIT の行数（SQL セルのみ使用）。 */
   limit?: number;
-  /** True when this cell cannot move further in that direction. */
-  /** これ以上上へ移動できない場合は false（上移動ボタンの活性制御に使用）。 */
-  canMoveUp?: boolean;
-  /** これ以上下へ移動できない場合は false（下移動ボタンの活性制御に使用）。 */
-  canMoveDown?: boolean;
   /** 折りたたみ状態を切り替えるときに呼ばれる。 */
   onToggleCollapse: () => void;
   /** セル名の編集が確定したときに、新しい名前を渡して呼ばれる。 */
@@ -75,10 +73,6 @@ interface CellToolbarProps {
   onToggleAutoLimit?: () => void;
   /** LIMIT の値が変更されたときに、新しい値を渡して呼ばれる。 */
   onLimitChange?: (limit: number) => void;
-  /** セルを一つ上へ移動するときに呼ばれる。 */
-  onMoveUp?: () => void;
-  /** セルを一つ下へ移動するときに呼ばれる。 */
-  onMoveDown?: () => void;
   /** セルを削除するときに呼ばれる。 */
   onDelete?: () => void;
   /** Drag handle props supplied by the DnD container in NotebookView. */
@@ -95,7 +89,7 @@ interface CellToolbarProps {
 
 /**
  * セルツールバー本体。折りたたみボタン、種別バッジ、セル名、（SQL セルのみ）
- * LIMIT コントロールと実行/停止ボタン、上下移動や削除ボタン、ドラッグハンドルを
+ * LIMIT コントロールと実行/停止ボタン、削除ボタン、ドラッグハンドルを
  * 横一列に並べて表示する。表示/挙動の状態はすべて props 経由で親から渡され、
  * このコンポーネント自身は状態を持たない（純粋な表示コンポーネント）。
  *
@@ -108,8 +102,6 @@ export function CellToolbar({
   running = false,
   autoLimit = true,
   limit = 5000,
-  canMoveUp = true,
-  canMoveDown = true,
   onToggleCollapse,
   onRename,
   onRun,
@@ -118,8 +110,6 @@ export function CellToolbar({
   runDisabledReason,
   onToggleAutoLimit,
   onLimitChange,
-  onMoveUp,
-  onMoveDown,
   onDelete,
   dragHandleProps,
   onSaveQuery,
@@ -158,7 +148,7 @@ export function CellToolbar({
       {/* セル名のインライン編集コンポーネント。 */}
       <CellName name={name} onRename={onRename} />
 
-      {/* 右寄せの操作群: LIMIT、実行/停止、移動、削除、ドラッグハンドル。 */}
+      {/* 右寄せの操作群: LIMIT、実行/停止、削除、ドラッグハンドル。 */}
       <div className="ml-auto flex items-center gap-1.5">
         {/* SQL セルのみ LIMIT 自動付与コントロールを表示する。 */}
         {kind === 'sql' && (
@@ -226,22 +216,6 @@ export function CellToolbar({
             onClick={onSaveQuery}
           />
         )}
-        {/* セルを上へ移動するボタン。先頭セルなど移動不可な場合は disabled。 */}
-        <IconButton
-          icon={ChevronUp}
-          label={t('moveUp')}
-          size="sm"
-          disabled={!canMoveUp}
-          onClick={onMoveUp}
-        />
-        {/* セルを下へ移動するボタン。末尾セルなど移動不可な場合は disabled。 */}
-        <IconButton
-          icon={ChevronDown}
-          label={t('moveDown')}
-          size="sm"
-          disabled={!canMoveDown}
-          onClick={onMoveDown}
-        />
         {/* セル削除ボタン。 */}
         <IconButton
           icon={Trash2}

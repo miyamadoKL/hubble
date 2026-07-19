@@ -315,8 +315,6 @@ export function NotebookView({
               {/* セル本体：ステータス枠 + ツールバー + SQL エディタ／Markdown 本文 */}
               <CellRow
                 cell={cell}
-                index={index}
-                total={cells.length}
                 context={cellContext}
                 defaultLimit={defaultLimit}
                 costEstimateEnabled={costEstimateEnabled}
@@ -330,8 +328,6 @@ export function NotebookView({
                 onSourceChange={(src) => store.getState().setCellSource(notebookId, cell.id, src)}
                 onRename={(name) => store.getState().setCellName(notebookId, cell.id, name)}
                 onToggleCollapse={() => store.getState().toggleCellCollapsed(notebookId, cell.id)}
-                onMoveUp={() => store.getState().moveCell(notebookId, index, index - 1)}
-                onMoveDown={() => store.getState().moveCell(notebookId, index, index + 1)}
                 onDelete={() => confirmDelete(cell)}
                 onDragStart={() => {
                   dragIndex.current = index;
@@ -789,10 +785,9 @@ export function NotebookHeader({
 /**
  * ノートブック内の1セル分の行。左のステータス枠（CellFrame）、ツールバー、
  * 本文（SQL エディタまたは Markdown）をまとめ、ドラッグ&ドロップ用のハンドラを
- * SqlCell / CellToolbar に配線する。
+ * SqlCell / CellToolbar に配線する。セルの並べ替えはドラッグハンドルのみで行う
+ * （上下移動ボタンはグリップハンドルと操作が重複していたため撤去した）。
  * @param cell - 描画対象のセルデータ。
- * @param index - セル一覧内でのインデックス（上下移動可否の判定に使う）。
- * @param total - セル総数（末尾セルかどうかの判定に使う）。
  * @param context - クエリ実行のカタログ／スキーマ／ノートブック ID。
  * @param defaultLimit - LIMIT 自動付与の既定件数。
  * @param resolveUnit - 実行直前に変数を解決するコールバック（NotebookView から供給）。
@@ -804,8 +799,6 @@ export function NotebookHeader({
  * @param onSourceChange - セル本文が変更されたときに呼ばれる。
  * @param onRename - セル名変更時に呼ばれる。
  * @param onToggleCollapse - 折りたたみ状態の切り替え。
- * @param onMoveUp - このセルを1つ上に移動する。
- * @param onMoveDown - このセルを1つ下に移動する。
  * @param onDelete - このセルの削除を要求する（確認は呼び出し元が行う）。
  * @param onDragStart - グリップハンドルからのドラッグ開始通知。
  * @param onDragEnd - ドラッグ終了通知。
@@ -813,8 +806,6 @@ export function NotebookHeader({
 /** One cell row: status frame + toolbar + body (SQL editor or markdown). */
 function CellRow({
   cell,
-  index,
-  total,
   context,
   defaultLimit,
   costEstimateEnabled,
@@ -828,15 +819,11 @@ function CellRow({
   onSourceChange,
   onRename,
   onToggleCollapse,
-  onMoveUp,
-  onMoveDown,
   onDelete,
   onDragStart,
   onDragEnd,
 }: {
   cell: Cell;
-  index: number;
-  total: number;
   context: ExecutionContext;
   defaultLimit: number;
   costEstimateEnabled: boolean;
@@ -850,8 +837,6 @@ function CellRow({
   onSourceChange: (source: string) => void;
   onRename: (name: string) => void;
   onToggleCollapse: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
   onDelete: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
@@ -884,12 +869,8 @@ function CellRow({
   // NotebookView から降りてきた個々のコールバックをこの1オブジェクトに集約することで
   // SqlCell 側の props を簡潔に保つ。
   const chrome: SqlCellChrome = {
-    canMoveUp: index > 0,
-    canMoveDown: index < total - 1,
     onToggleCollapse,
     onRename,
-    onMoveUp,
-    onMoveDown,
     onDelete,
     dragHandleProps,
   };
@@ -922,12 +903,8 @@ function CellRow({
             kind="markdown"
             name={cell.name}
             collapsed={collapsed}
-            canMoveUp={index > 0}
-            canMoveDown={index < total - 1}
             onToggleCollapse={onToggleCollapse}
             onRename={onRename}
-            onMoveUp={onMoveUp}
-            onMoveDown={onMoveDown}
             onDelete={onDelete}
             dragHandleProps={dragHandleProps}
           />

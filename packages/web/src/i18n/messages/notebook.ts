@@ -20,8 +20,6 @@ export const notebookMessages = defineDictionary({
   blockedByQueryGuard: { ja: 'Query Guard でブロック中', en: 'Blocked by Query Guard' },
   runBlockedByQueryGuard: { ja: 'Query Guard によりブロック中', en: 'Run blocked by Query Guard' },
   saveQueryButton: { ja: 'クエリを保存', en: 'Save query' },
-  moveUp: { ja: '上へ移動', en: 'Move up' },
-  moveDown: { ja: '下へ移動', en: 'Move down' },
   deleteCellAria: { ja: 'セルを削除', en: 'Delete cell' },
   dragToReorder: { ja: 'ドラッグして並べ替え', en: 'Drag to reorder' },
   toggleAutoLimit: { ja: 'LIMIT 自動付与を切り替え', en: 'Toggle auto LIMIT' },

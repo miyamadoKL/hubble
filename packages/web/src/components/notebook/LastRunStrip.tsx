@@ -2,11 +2,15 @@
  * LastRunStrip.tsx
  *
  * SQL セルの「最終実行結果」の要約を表示する帯（ストリップ）コンポーネント。
- * ノートブックを再読み込みした直後など、実行結果の行データ自体は永続化されていないが
- * 実行サマリー（成功/失敗、行数、所要時間、実行日時など）だけは保存されている場合に、
- * ユーザーが再実行するまでの「空状態の代わり」として表示される。
+ * ノートブックを再読み込みした直後、`resultMeta.queryId` からの結果自動復元
+ * （`SqlCell` 側の effect）が TTL 切れ等で失敗した場合にだけ表示される
+ * （復元に成功した場合は ResultPane 側の表示へ切り替わり、このストリップは
+ * 出ない）。実行サマリー（成功/失敗、行数、所要時間、実行日時など）のみを示す
+ * 「空状態の代わり」で、実行操作はセル右上のツールバーの実行ボタンに統一して
+ * いるため、このコンポーネント自体には実行ボタンを置かない
+ * （指摘4: 別の「再実行」ボタンの重複を解消）。
  */
-import { CircleCheck, CircleX, History, Play } from 'lucide-react';
+import { CircleCheck, CircleX, History } from 'lucide-react';
 import type { CellResultMeta } from '@hubble/contracts';
 import { formatDuration, formatInt, formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
@@ -15,16 +19,15 @@ import { useLocale } from '../../i18n/locale';
 import { commonMessages } from '../../i18n/messages/common';
 import { notebookMessages, queryStateLabel } from '../../i18n/messages/notebook';
 
-/** LastRunStrip 内で使う辞書の合成。共通文言（{n} 行/Re-run 等）+ notebook 固有文言。 */
+/** LastRunStrip 内で使う辞書の合成。共通文言（{n} 行 等）+ notebook 固有文言。 */
 const lastRunStripDict = { ...commonMessages, ...notebookMessages } as const;
 
 /**
  * セルの最終実行サマリー（meta）を表示する帯コンポーネント。
  *
  * @param meta - 永続化された実行結果のメタ情報（状態、行数、所要時間、実行日時、エラー内容など）。
- * @param onRun - 「Re-run」ボタン押下時のコールバック。未指定の場合はボタン自体を表示しない。
  */
-export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: () => void }) {
+export function LastRunStrip({ meta }: { meta: CellResultMeta }) {
   const t = useT(lastRunStripDict);
   const { locale } = useLocale();
   // 実行が失敗状態だったかどうか。表示アイコンや配色の分岐に使う。
@@ -78,19 +81,9 @@ export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: ()
           {meta.errorMessage}
         </span>
       )}
-      {/* 右端に寄せる領域: 相対実行時刻の表示と、再実行ボタン（onRun が渡されている場合のみ）。 */}
+      {/* 右端に寄せる領域: 相対実行時刻の表示のみ（実行はツールバーの実行ボタンに統一）。 */}
       <div className="ml-auto flex items-center gap-3">
         {when && <span className="font-mono text-2xs text-ink-subtle">{when}</span>}
-        {onRun && (
-          <button
-            type="button"
-            onClick={onRun}
-            className="inline-flex items-center gap-1 rounded-sm border border-border-base bg-surface-raised px-1.5 py-0.5 text-2xs font-medium text-ink-muted hover:border-accent/40 hover:text-accent"
-          >
-            <Play size={10} strokeWidth={2.5} />
-            {t('rerunButton')}
-          </button>
-        )}
       </div>
     </div>
   );

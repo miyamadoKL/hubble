@@ -46,13 +46,15 @@ test('adds, collapses, and deletes cells (with confirm for non-empty cells)', as
   await expect(page.getByTestId('notebook-cell')).toHaveCount(0);
 });
 
-test('reorders cells with the move-up control', async ({ page }) => {
+test('reorders cells by dragging the grip handle', async ({ page }) => {
+  // ユーザー指摘3: 上下移動ボタンは6点グリップハンドルと操作が重複していたため撤去した。
+  // 並べ替えはドラッグハンドルのみで行う。
   await setEditor(page, 0, 'SELECT 1 AS first_cell');
   await addCell(page, 'sql');
   await setEditor(page, 1, 'SELECT 2 AS second_cell');
 
-  // Move the second cell up; its content now leads.
-  await cell(page, 1).getByRole('button', { name: 'Move up' }).click();
+  // 2番目のセルのグリップハンドルを1番目のセルの上へドラッグして順序を入れ替える。
+  await cell(page, 1).getByRole('button', { name: 'Drag to reorder' }).dragTo(cell(page, 0));
   await expect.poll(async () => getEditorValue(page, 0)).toContain('second_cell');
 });
 
@@ -154,4 +156,45 @@ test('saves a notebook, reloads, and restores it', async ({ page }) => {
     .waitFor({ timeout: 30_000 });
   await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 15_000 });
   await expect.poll(async () => getEditorValue(page, 0)).toContain('42 AS answer');
+});
+
+test('リロード後、永続化された結果をユーザー操作なしで自動復元する（再実行ボタン廃止）', async ({
+  page,
+}) => {
+  // ユーザー指摘4: リロード後にセル右下へ出る別の「再実行」ボタンは廃止し、
+  // サーバー側に永続化された結果（resultMeta.queryId、TTL 付き）があれば
+  // ユーザー操作なしで自動的に結果を復元・表示する。実行操作はツールバーの
+  // 実行ボタンのみに統一する。
+  const name = `E2E Persisted Result ${rnd()}`;
+  await setEditor(page, 0, 'SELECT 42 AS answer FROM tpch.tiny.nation LIMIT 1');
+  await runCell(page);
+  await expectFinished(page);
+  await waitGrid(page);
+
+  // 保存して resultMeta.queryId をサーバー側の notebook にも乗せる。
+  await page.keyboard.press('Control+s');
+  const dialog = page.getByRole('dialog', { name: 'Save notebook' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Notebook name' }).fill(name);
+  const saved = page.waitForResponse(
+    (r) => r.url().endsWith('/api/notebooks') && r.request().method() === 'POST' && r.ok(),
+  );
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await saved;
+  await expect(page.getByLabel('Unsaved changes')).toBeHidden({ timeout: 10_000 });
+
+  // リロード。このセッションでは未実行のはずだが、resultMeta.queryId から
+  // 自動復元が走り、ユーザーが何も押さなくても結果グリッドが表示される。
+  await page.reload();
+  await page
+    .locator('[data-testid="sql-editor"][data-ready="true"]')
+    .first()
+    .waitFor({ timeout: 30_000 });
+
+  await waitGrid(page);
+  await expect(
+    resultPane(page).getByTestId('result-grid').getByText('42', { exact: true }).first(),
+  ).toBeVisible();
+  // 復元に成功したセルには、旧「再実行」ボタン用の LastRunStrip 自体が出ない。
+  await expect(cell(page, 0).getByTestId('last-run-strip')).toHaveCount(0);
 });
