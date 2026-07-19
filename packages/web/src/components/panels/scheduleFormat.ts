@@ -1,17 +1,15 @@
 /**
  * クエリスケジューラー機能（Schedules 系パネル群）で共有する、UI を持たない
  * 純粋なヘルパー関数集。React コンポーネントから切り離すことで、単体テストで
- * ロジックだけを検証できるようにしてある。主な役割は次の 5 つ。
+ * ロジックだけを検証できるようにしてある。主な役割は次の 4 つ。
  *   1. 実行 run の status → 表示トーン（色）/ ラベル文字列への変換
- *   2. SQL 文のクライアント側構文チェック（保存前バリデーション。サーバーの
- *      EXPLAIN (TYPE VALIDATE) と同等のチェックをブラウザ内で先に行い、
- *      無効な SQL を持つスケジュールが保存されるのを防ぐ）
- *   3. サーバーが返す VALIDATION_ERROR をフォーム表示用の平坦なオブジェクトへ変換
- *   4. 作成と編集のフォームで使う cron プリセットの定義
- *   5. リトライ設定の数値フィールドをコントラクトで定義された範囲にクランプする処理
+ *   2. サーバーが返す VALIDATION_ERROR をフォーム表示用の平坦なオブジェクトへ変換
+ *   3. 作成と編集のフォームで使う cron プリセットの定義
+ *   4. リトライ設定の数値フィールドをコントラクトで定義された範囲にクランプする処理
+ * SQL 文は常に参照先の保存済みクエリが持つ値であり schedule フォームでは編集しないため、
+ * クライアント側の構文チェック（旧 checkStatement）はここには無い。
  */
 import type { ScheduleRunStatus, ScheduleRunSummary } from '@hubble/contracts';
-import { parseStatement } from '../../trino-lang';
 import { ApiClientError } from '../../api/client';
 import { t } from '../../i18n/t';
 import { scheduleRunMessages } from '../../i18n/messages/scheduleRun';
@@ -103,45 +101,6 @@ export function attemptLabel(attempt: number, locale: Locale = 'en'): string {
   return attempt === 1
     ? t(scheduleRunMessages, 'attemptSingular', locale)
     : t(scheduleRunMessages, 'attemptPlural', locale, { n: attempt });
-}
-
-// ---- Client-side statement syntax check (run-prevention UI) -----------------
-
-/** SQL 文の構文チェック結果。 */
-export interface StatementCheck {
-  ok: boolean;
-  /** First syntax error message, when the statement does not parse. */
-  message?: string;
-  line?: number;
-  column?: number;
-}
-
-/**
- * Parse a statement with the in-browser trino-lang analyzer and surface the
- * first syntax marker. Empty input is treated as not-ok (the form requires a
- * statement) but without an error message, so the field reads as "required"
- * rather than "broken".
- */
-export function checkStatement(
-  statement: string,
-  catalog?: string,
-  schema?: string,
-): StatementCheck {
-  // 空文字（トリム後）は「未入力」として NG 扱いにするが、エラーメッセージは付けない
-  // （フォーム側で「必須項目」として扱われ、「構文エラー」とは違う見せ方になる）。
-  if (!statement.trim()) return { ok: false };
-  // ブラウザ内蔵の trino-lang パーサーで構文解析し、マーカー（エラー/警告位置）を取得する。
-  const { markers } = parseStatement(statement, catalog, schema);
-  const first = markers[0];
-  // マーカーが 1 つも無ければ構文的に問題なし。
-  if (!first) return { ok: true };
-  // 先頭のマーカーのみを使い、メッセージと行/列番号を返す。
-  return {
-    ok: false,
-    message: first.message,
-    line: first.startLineNumber,
-    column: first.startColumn,
-  };
 }
 
 // ---- Server VALIDATION_ERROR formatting -------------------------------------

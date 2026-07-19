@@ -113,7 +113,6 @@ describe('aria-label / 可視ラベルのアクセシブルネームがロケー
             <ScheduleFormModal
               open
               schedule={null}
-              context={{}}
               datasources={datasources}
               savedQueries={savedQueries}
               submitting={false}
@@ -138,7 +137,6 @@ describe('aria-label / 可視ラベルのアクセシブルネームがロケー
             <ScheduleFormModal
               open
               schedule={null}
-              context={{}}
               datasources={datasources}
               savedQueries={savedQueries}
               submitting={false}
@@ -155,7 +153,7 @@ describe('aria-label / 可視ラベルのアクセシブルネームがロケー
     expect(accessibleName(nameInputEn)).toBe('Name');
   });
 
-  test('ScheduleFormModal: Query source（aria-labelledby）のアクセシブルネームが日英で切り替わる', () => {
+  test('ScheduleFormModal: Saved query セレクトのアクセシブルネームが日英で切り替わる', () => {
     withLocale('ja', () => {
       act(() =>
         root.render(
@@ -163,7 +161,6 @@ describe('aria-label / 可視ラベルのアクセシブルネームがロケー
             <ScheduleFormModal
               open
               schedule={null}
-              context={{}}
               datasources={datasources}
               savedQueries={savedQueries}
               submitting={false}
@@ -176,10 +173,8 @@ describe('aria-label / 可視ラベルのアクセシブルネームがロケー
         ),
       );
     });
-    const radiogroup = container.querySelector('[role="radiogroup"][aria-labelledby]')!;
-    // aria-label に固定英語文言を持たせていた旧実装は、ここが常に "Query source" の
-    // ままになる（＝支援技術利用者だけ英語という不整合）バグを起こしていた。
-    expect(accessibleName(radiogroup)).toBe('クエリ');
+    const select = container.querySelector('select[aria-label]')!;
+    expect(accessibleName(select)).toBe('保存済みクエリ');
   });
 
   test('AlertFormModal: Threshold 入力欄（label ラップ）のアクセシブルネームが日英で切り替わる', () => {
@@ -242,7 +237,6 @@ describe('aria-label / 可視ラベルのアクセシブルネームがロケー
             <ScheduleFormModal
               open
               schedule={null}
-              context={{}}
               datasources={datasources}
               savedQueries={savedQueries}
               submitting={false}

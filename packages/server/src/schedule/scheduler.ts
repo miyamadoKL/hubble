@@ -94,7 +94,7 @@ export interface SchedulerDeps {
   savedQueries: SavedQueryRepository;
   /** データソース id から QueryEngine を引くマップ。 */
   engines: Map<string, QueryEngine>;
-  /** datasourceId 省略時の既定 id（スケジュールには永続化済み id を使う）。 */
+  /** 解決した saved query が datasourceId を持たない場合に使う既定 id。 */
   defaultDatasourceId: string;
   // Query Guard のスキャン量見積りサービス (enforce モードで使用)。
   estimate: EstimateService;
@@ -130,6 +130,9 @@ interface RunOutcome {
   errorMessage: string | null;
   rowCount: number | null;
   guard?: Record<string, AuditJson>;
+  // 実行のたびに saved query から解決した実行先データソース id。
+  // principal snapshot 欠如など、解決前に確定した outcome では null。
+  datasourceId: string | null;
 }
 
 // SchedulerDeps.sleep 省略時の既定実装。実際に ms ミリ秒待ってから解決する。
@@ -454,6 +457,7 @@ export class Scheduler {
       await this.deps.notifications.sendFailure({
         schedule,
         runId,
+        datasourceId: outcome.datasourceId,
         errorType: outcome.errorType,
         errorMessage: outcome.errorMessage,
         scheduledFor: scheduledForIso,
@@ -475,8 +479,7 @@ export class Scheduler {
       scheduleId: schedule.id,
       runId,
       runOwner: schedule.owner,
-      catalog: schedule.catalog ?? null,
-      schema: schedule.schema ?? null,
+      savedQueryId: schedule.savedQueryId,
       outcome: outcome.status,
       success: outcome.status === 'success',
       attempt: outcome.attempt,
@@ -491,7 +494,7 @@ export class Scheduler {
       actor: schedule.owner,
       action: 'schedule.execute',
       target: schedule.id,
-      datasource: schedule.datasourceId,
+      ...(outcome.datasourceId !== null ? { datasource: outcome.datasourceId } : {}),
       detail,
     });
   }
@@ -508,77 +511,68 @@ export class Scheduler {
         errorType: 'PRINCIPAL_SNAPSHOT_REQUIRED',
         errorMessage: `Schedule '${schedule.id}' cannot execute without a principal snapshot`,
         rowCount: null,
+        datasourceId: null,
       };
     }
 
-    const engine = getEngineOrUndefined(this.deps.engines, schedule.datasourceId);
+    const scheduleIdentity = schedulePrincipalIdentity(schedule.owner, schedule.principalSnapshot);
+    const scheduleRole = resolveRoleForPrincipal(this.deps.getRbac(), scheduleIdentity);
+
+    // 実行のたびに saved query を解決する。statement / catalog / schema / 実行先
+    // データソースはすべて saved query 側が持つ値を毎回 savedQueries.get() で
+    // 取得し (保存時のキャッシュは使わない)、以後の write check / validate /
+    // guard 見積り / 実行はすべてこの解決済みの値に対して行う。これにより
+    // saved query 側の編集が次回実行へ即座に反映される。
+    const savedQuery = await this.deps.savedQueries.get(
+      {
+        user: schedule.owner,
+        groups: schedule.principalSnapshot.groups ?? [],
+        role: scheduleRole.name,
+      },
+      schedule.savedQueryId,
+    );
+    if (!savedQuery) {
+      return {
+        status: 'failed',
+        attempt: 1,
+        trinoQueryId: null,
+        errorType: 'SAVED_QUERY_ACCESS_DENIED',
+        errorMessage: `Saved query '${schedule.savedQueryId}' is not accessible to the schedule owner`,
+        rowCount: null,
+        datasourceId: null,
+      };
+    }
+    const statement = savedQuery.statement;
+    const catalog = savedQuery.catalog ?? null;
+    const schema = savedQuery.schema ?? null;
+    // saved query が実行先を指定していなければ既定データソースへフォールバックする。
+    const datasourceId = savedQuery.datasourceId ?? this.deps.defaultDatasourceId;
+
+    const engine = getEngineOrUndefined(this.deps.engines, datasourceId);
     if (!engine) {
       return {
         status: 'failed',
         attempt: 1,
         trinoQueryId: null,
         errorType: 'NOT_CONFIGURED',
-        errorMessage: `Datasource '${schedule.datasourceId}' is not configured`,
+        errorMessage: `Datasource '${datasourceId}' is not configured`,
         rowCount: null,
+        datasourceId,
       };
     }
 
-    const scheduleRole = resolveRoleForPrincipal(
-      this.deps.getRbac(),
-      schedulePrincipalIdentity(schedule.owner, schedule.principalSnapshot),
-    );
-    if (!roleAllowsDatasource(scheduleRole, schedule.datasourceId)) {
+    if (!roleAllowsDatasource(scheduleRole, datasourceId)) {
       return {
         status: 'blocked',
         attempt: 1,
         trinoQueryId: null,
         errorType: 'DATASOURCE_ACCESS_DENIED',
-        errorMessage: `Datasource '${schedule.datasourceId}' is not allowed for this role`,
+        errorMessage: `Datasource '${datasourceId}' is not allowed for this role`,
         rowCount: null,
+        datasourceId,
       };
     }
 
-    // 実行のたびに statement を解決する。savedQueryId を持つ schedule は毎回
-    // savedQueries.get() で現在の statement を取得し (保存時のキャッシュは使わない)、
-    // 以後の write check / validate / guard 見積り / 実行はすべてこの解決済み statement に
-    // 対して行う。これにより saved query 側の編集が次回実行へ即座に反映される。
-    // 解決に使う owner ロールは上で解決済みの scheduleRole (datasourceId allowlist と同じ
-    // 認可コンテキスト) を使う。
-    let statement: string;
-    if (schedule.savedQueryId) {
-      const savedQuery = await this.deps.savedQueries.get(
-        {
-          user: schedule.owner,
-          groups: schedule.principalSnapshot.groups ?? [],
-          role: scheduleRole.name,
-        },
-        schedule.savedQueryId,
-      );
-      if (!savedQuery) {
-        return {
-          status: 'failed',
-          attempt: 1,
-          trinoQueryId: null,
-          errorType: 'SAVED_QUERY_ACCESS_DENIED',
-          errorMessage: `Saved query '${schedule.savedQueryId}' is not accessible to the schedule owner`,
-          rowCount: null,
-        };
-      }
-      statement = savedQuery.statement;
-    } else if (schedule.statement) {
-      statement = schedule.statement;
-    } else {
-      // 契約層の refine で statement/savedQueryId のいずれかは必ず存在する前提だが、
-      // 直接 DB を書き換えた等の想定外ケースに備えたガード。
-      return {
-        status: 'failed',
-        attempt: 1,
-        trinoQueryId: null,
-        errorType: 'INVALID_SCHEDULE',
-        errorMessage: `Schedule '${schedule.id}' has neither a statement nor a savedQueryId`,
-        rowCount: null,
-      };
-    }
     const policy = retryPolicyForStatement(schedule.retry, statement);
     const releaseLease = engine.lease?.() ?? (() => {});
     try {
@@ -588,14 +582,14 @@ export class Scheduler {
       // maybeRetry() が undefined を返した場合のみ waitBeforeRetry() を挟んで continue する。
       // つまりループを抜けるのは「確定」か「リトライ上限到達で確定」のいずれかのみ。
       for (;;) {
-        if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
+        if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt, datasourceId);
         attempt += 1;
 
         try {
           const ioExplain = engine.ioExplainExecution?.({
             statement,
-            catalog: schedule.catalog ?? undefined,
-            schema: schedule.schema ?? undefined,
+            catalog: catalog ?? undefined,
+            schema: schema ?? undefined,
             principal: schedule.owner,
           });
           await assertQueryWriteAllowed({
@@ -606,7 +600,7 @@ export class Scheduler {
             ioExplainTimeoutMs: this.deps.guardConfig.estimateTimeoutMs,
           });
         } catch (err) {
-          if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
+          if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt, datasourceId);
           const errorType = errorTypeOf(err);
           const message = err instanceof Error ? err.message : String(err);
           return {
@@ -616,6 +610,7 @@ export class Scheduler {
             errorType,
             errorMessage: message,
             rowCount: null,
+            datasourceId,
           };
         }
 
@@ -623,8 +618,8 @@ export class Scheduler {
         // 検証しているが、依存テーブルの変化などで実行時点では失敗しうるための再チェック。
         const validation = await engine.validate({
           statement,
-          catalog: schedule.catalog,
-          schema: schedule.schema,
+          catalog,
+          schema,
           principal: schedule.owner,
           roleName: scheduleRole.name,
         });
@@ -638,6 +633,7 @@ export class Scheduler {
             errorType: 'USER_ERROR',
             errorMessage: locationMessage(validation),
             rowCount: null,
+            datasourceId,
           };
         }
         // Trino に接続できない等、検証そのものが行えなかった場合は一時的な障害と
@@ -648,6 +644,7 @@ export class Scheduler {
             policy,
             'TRINO_UNAVAILABLE',
             validation.message,
+            datasourceId,
           );
           if (transientOutcome) return transientOutcome;
           await this.waitBeforeRetry(policy, attempt);
@@ -660,10 +657,10 @@ export class Scheduler {
         if (effective.mode === 'enforce' && engine.capabilities.costEstimate) {
           const estimate = await this.deps.estimate.estimate({
             statement,
-            catalog: schedule.catalog ?? undefined,
-            schema: schedule.schema ?? undefined,
+            catalog: catalog ?? undefined,
+            schema: schema ?? undefined,
             principal: schedule.owner,
-            datasourceId: schedule.datasourceId,
+            datasourceId,
             roleName: scheduleRole.name,
             guard: effective,
           });
@@ -675,6 +672,7 @@ export class Scheduler {
               errorType: 'QUERY_BLOCKED',
               errorMessage: estimate.verdict.reasons.join('; ') || 'Blocked by Query Guard',
               rowCount: null,
+              datasourceId,
               guard: {
                 status: estimate.status,
                 decision: estimate.verdict.decision,
@@ -698,8 +696,8 @@ export class Scheduler {
             sessionReadOnly: !hasQueryWrite(scheduleRole),
           });
           const ctx: TrinoRequestContext = {
-            catalog: schedule.catalog ?? undefined,
-            schema: schedule.schema ?? undefined,
+            catalog: catalog ?? undefined,
+            schema: schema ?? undefined,
             user: schedule.owner,
           };
           const result = await drainStatement(client, statement, ctx, {
@@ -712,9 +710,10 @@ export class Scheduler {
             errorType: null,
             errorMessage: null,
             rowCount: result.rowCount,
+            datasourceId,
           };
         } catch (err) {
-          if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
+          if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt, datasourceId);
           // retry.ts の classifyFailure で「再試行しても無駄 (deterministic)」か
           // 「一時的な障害 (transient)」かを判定する。
           const failureClass = classifyFailure(err);
@@ -728,17 +727,24 @@ export class Scheduler {
               errorType,
               errorMessage: message,
               rowCount: null,
+              datasourceId,
             };
           }
           // transient: リトライ上限に達していなければ待って continue、達していれば
           // maybeRetry() が failed の RunOutcome を返すのでそれを確定させる。
-          const transientOutcome = this.maybeRetry(attempt, policy, errorType, message);
+          const transientOutcome = this.maybeRetry(
+            attempt,
+            policy,
+            errorType,
+            message,
+            datasourceId,
+          );
           if (transientOutcome) return transientOutcome;
           await this.waitBeforeRetry(policy, attempt);
         }
       }
     } catch (err) {
-      if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt);
+      if (this.shutdownAbort.signal.aborted) return this.abortedOutcome(attempt, datasourceId);
       throw err;
     } finally {
       releaseLease();
@@ -754,6 +760,7 @@ export class Scheduler {
     policy: ScheduleRecord['retry'],
     errorType: string | null,
     message: string,
+    datasourceId: string,
   ): RunOutcome | undefined {
     // shouldRetry(policy, attempt) が true ならまだリトライ余地があるので undefined
     // (呼び出し元が待ってから continue する)。false なら上限到達なので failed で確定する。
@@ -765,6 +772,7 @@ export class Scheduler {
       errorType,
       errorMessage: message,
       rowCount: null,
+      datasourceId,
     };
   }
 
@@ -774,7 +782,7 @@ export class Scheduler {
     await raceSqlAbort(this.sleep(backoffMs(policy, attempt)), this.shutdownAbort.signal);
   }
 
-  private abortedOutcome(attempt: number): RunOutcome {
+  private abortedOutcome(attempt: number, datasourceId: string | null = null): RunOutcome {
     return {
       status: 'aborted',
       attempt: Math.max(attempt, 1),
@@ -782,6 +790,7 @@ export class Scheduler {
       errorType: 'SERVER_SHUTDOWN',
       errorMessage: 'Run aborted during server shutdown',
       rowCount: null,
+      datasourceId,
     };
   }
 }

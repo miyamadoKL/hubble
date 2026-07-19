@@ -131,7 +131,6 @@ describe('ScheduleFormModal: ロケール切替でラベルが日英で切り替
           <ScheduleFormModal
             open
             schedule={null}
-            context={{}}
             datasources={datasources}
             savedQueries={savedQueries}
             submitting={false}

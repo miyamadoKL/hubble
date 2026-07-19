@@ -36,12 +36,15 @@ describe('shared job admission wiring', () => {
     const advanceGate = Promise.withResolvers<void>();
     ctx.fake.holdAdvance = advanceGate.promise;
     try {
+      const holderSaved = await ctx.services.savedQueries.create('alice', {
+        name: 'holder-sq',
+        statement: 'SELECT 1 /* SELECT_HOLD_ADMISSION */',
+        datasourceId: DEFAULT_DATASOURCE_ID,
+      });
       const schedule = await ctx.services.schedules.create('alice', {
         name: 'holder',
-        statement: 'SELECT 1 /* SELECT_HOLD_ADMISSION */',
+        savedQueryId: holderSaved.id,
         cron: '* * * * *',
-        datasourceId: DEFAULT_DATASOURCE_ID,
-
         principalSnapshot: { user: 'alice' },
       });
       const workflow = await ctx.services.workflows.create('alice', {

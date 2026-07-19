@@ -33,10 +33,7 @@ function schedule(over: Partial<Schedule> = {}): Schedule {
   return {
     id: 'sched-1',
     name: 'Nightly rollup',
-    statement: 'SELECT 1',
-    savedQueryId: null,
-    catalog: null,
-    schema: null,
+    savedQueryId: 'sq_1',
     cron: '0 9 * * *',
     enabled: true,
     retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
@@ -45,7 +42,6 @@ function schedule(over: Partial<Schedule> = {}): Schedule {
     updatedAt: timestamp,
     nextRunAt: null,
     lastRun: null,
-    datasourceId: 'trino-default',
     ...over,
   };
 }

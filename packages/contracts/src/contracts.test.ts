@@ -977,15 +977,11 @@ describe('schedule', () => {
   const schedule = {
     id: 'sch_1',
     name: 'nightly',
-    statement: 'SELECT 1',
-    savedQueryId: null,
-    catalog: 'tpch',
-    schema: 'tiny',
+    savedQueryId: 'sq_1',
     cron: '0 0 * * *',
     enabled: true,
     retry: { maxAttempts: 3, backoffSeconds: 60, backoffMultiplier: 2 },
     notifications: { onFailure: false, channels: [] },
-    datasourceId: 'trino-default',
     createdAt: ISO,
     updatedAt: ISO,
     nextRunAt: ISO,
@@ -1001,18 +997,9 @@ describe('schedule', () => {
     expect(scheduleSchema.parse(v)).toEqual(v);
   });
 
-  it('parses a Schedule that references a saved query (statement null)', () => {
-    const v = { ...schedule, statement: null, savedQueryId: 'sq_1' };
-    expect(scheduleSchema.parse(v)).toEqual(v);
-  });
-
-  it('rejects a Schedule with both statement and savedQueryId non-null (指摘5: 排他制約)', () => {
-    const v = { ...schedule, statement: 'SELECT 1', savedQueryId: 'sq_1' };
-    expect(scheduleSchema.safeParse(v).success).toBe(false);
-  });
-
-  it('rejects a Schedule with neither statement nor savedQueryId (指摘5: 排他制約)', () => {
-    const v = { ...schedule, statement: null, savedQueryId: null };
+  it('rejects a Schedule without a savedQueryId', () => {
+    const v: Record<string, unknown> = { ...schedule };
+    delete v.savedQueryId;
     expect(scheduleSchema.safeParse(v).success).toBe(false);
   });
 
@@ -1088,11 +1075,11 @@ describe('schedule', () => {
     expect(cronExpression.safeParse('').success).toBe(false);
   });
 
-  it('parses a CreateScheduleRequest and rejects an empty statement', () => {
+  it('parses a CreateScheduleRequest that references a saved query', () => {
     expect(
       createScheduleRequestSchema.safeParse({
         name: 'x',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '* * * * *',
         notifications: {
           onFailure: true,
@@ -1102,17 +1089,9 @@ describe('schedule', () => {
       }).success,
     ).toBe(true);
     expect(
-      createScheduleRequestSchema.safeParse({ name: 'x', statement: '', cron: '* * * * *' })
+      createScheduleRequestSchema.safeParse({ name: 'x', savedQueryId: '', cron: '* * * * *' })
         .success,
     ).toBe(false);
-  });
-
-  it('rejects oversized schedule SQL on create and update', () => {
-    const statement = 'x'.repeat(MAX_SQL_LENGTH + 1);
-    expect(
-      createScheduleRequestSchema.safeParse({ name: 'x', statement, cron: '* * * * *' }).success,
-    ).toBe(false);
-    expect(updateScheduleRequestSchema.safeParse({ statement }).success).toBe(false);
   });
 
   it('rejects an empty UpdateScheduleRequest', () => {
@@ -1120,31 +1099,18 @@ describe('schedule', () => {
     expect(updateScheduleRequestSchema.safeParse({ enabled: false }).success).toBe(true);
   });
 
-  it('CreateScheduleRequest requires exactly one of statement / savedQueryId', () => {
+  it('CreateScheduleRequest requires savedQueryId', () => {
     expect(createScheduleRequestSchema.safeParse({ name: 'x', cron: '* * * * *' }).success).toBe(
       false,
     );
-    expect(
-      createScheduleRequestSchema.safeParse({
-        name: 'x',
-        statement: 'SELECT 1',
-        savedQueryId: 'sq_1',
-        cron: '* * * * *',
-      }).success,
-    ).toBe(false);
     expect(
       createScheduleRequestSchema.safeParse({ name: 'x', savedQueryId: 'sq_1', cron: '* * * * *' })
         .success,
     ).toBe(true);
   });
 
-  it('UpdateScheduleRequest rejects specifying both statement and savedQueryId', () => {
-    expect(
-      updateScheduleRequestSchema.safeParse({ statement: 'SELECT 1', savedQueryId: 'sq_1' })
-        .success,
-    ).toBe(false);
+  it('UpdateScheduleRequest accepts savedQueryId alone', () => {
     expect(updateScheduleRequestSchema.safeParse({ savedQueryId: 'sq_1' }).success).toBe(true);
-    expect(updateScheduleRequestSchema.safeParse({ statement: 'SELECT 1' }).success).toBe(true);
   });
 
   it('builds schedule route paths', () => {

@@ -189,12 +189,16 @@ describe('RBAC query.write enforcement', () => {
 
   it('rejects write schedule creation for readonly owner', async () => {
     const ctx = await rbacCtx({ scenarios: [VALIDATE_OK] });
+    const saved = await ctx.services.savedQueries.create('reader', {
+      name: 'bad-sq',
+      statement: 'INSERT INTO t VALUES (1)',
+    });
     const res = await ctx.app.request('/api/schedules', {
       method: 'POST',
       headers: proxyHeaders('reader'),
       body: JSON.stringify({
         name: 'bad',
-        statement: 'INSERT INTO t VALUES (1)',
+        savedQueryId: saved.id,
         cron: '* * * * *',
       }),
     });

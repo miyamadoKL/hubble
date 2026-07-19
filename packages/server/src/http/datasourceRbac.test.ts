@@ -234,15 +234,25 @@ describe('role.datasources enforcement', () => {
       remoteAddress: () => '127.0.0.1',
       scenarios: [VALIDATE_OK],
     });
+    // schedule は実行先を持たず、参照する saved query の datasourceId で判定される。
+    const deniedSaved = await ctx.services.savedQueries.create('trino-user', {
+      name: 'bad',
+      statement: 'SELECT 1',
+      datasourceId: 'mysql-analytics',
+    });
+    const allowedSaved = await ctx.services.savedQueries.create('trino-user', {
+      name: 'ok',
+      statement: 'SELECT 1',
+      datasourceId: 'trino-prod',
+    });
 
     const denied = await ctx.app.request('/api/schedules', {
       method: 'POST',
       headers: proxyHeaders('trino-user'),
       body: JSON.stringify({
         name: 'bad',
-        statement: 'SELECT 1',
+        savedQueryId: deniedSaved.id,
         cron: '* * * * *',
-        datasourceId: 'mysql-analytics',
       }),
     });
     expect(denied.status).toBe(404);
@@ -252,9 +262,8 @@ describe('role.datasources enforcement', () => {
       headers: proxyHeaders('trino-user'),
       body: JSON.stringify({
         name: 'ok',
-        statement: 'SELECT 1',
+        savedQueryId: allowedSaved.id,
         cron: '* * * * *',
-        datasourceId: 'trino-prod',
       }),
     });
     expect(allowed.status).toBe(201);
@@ -330,13 +339,16 @@ defaultRole: none
         remoteAddress: () => '127.0.0.1',
         scenarios: [VALIDATE_OK],
       });
-      const record = await ctx.services.schedules.create('runner', {
+      const saved = await ctx.services.savedQueries.create('runner', {
         name: 'legacy',
         statement: 'SELECT 1',
+        datasourceId: 'trino-prod',
+      });
+      const record = await ctx.services.schedules.create('runner', {
+        name: 'legacy',
+        savedQueryId: saved.id,
         cron: '* * * * *',
         enabled: false,
-        datasourceId: 'trino-prod',
-
         principalSnapshot: { user: 'runner' },
       });
       const disableRes = await ctx.app.request(`/api/schedules/${record.id}`, {
@@ -381,12 +393,15 @@ defaultRole: none
         remoteAddress: () => '127.0.0.1',
         scenarios: [VALIDATE_OK],
       });
-      const record = await ctx.services.schedules.create('runner', {
+      const saved = await ctx.services.savedQueries.create('runner', {
         name: 'legacy',
         statement: 'SELECT 1',
-        cron: '* * * * *',
         datasourceId: 'trino-prod',
-
+      });
+      const record = await ctx.services.schedules.create('runner', {
+        name: 'legacy',
+        savedQueryId: saved.id,
+        cron: '* * * * *',
         principalSnapshot: { user: 'runner' },
       });
       const runRes = await ctx.app.request(`/api/schedules/${record.id}/run`, {

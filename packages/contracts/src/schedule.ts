@@ -1,15 +1,17 @@
 import { z } from 'zod';
 import { isoTimestamp } from './common';
-import { MAX_IDENTIFIER_LENGTH, MAX_NAME_LENGTH, MAX_SQL_LENGTH } from './limits';
+import { MAX_IDENTIFIER_LENGTH, MAX_NAME_LENGTH } from './limits';
 
 /**
  * クエリスケジューリング（cron による定期実行）機能の契約を定義するファイル。
- * `Schedule` は cron 式に従って保存済みの SQL 文を定期実行する設定であり、
+ * `Schedule` は cron 式に従って保存済みクエリ（`savedQueryId`）を定期実行する設定であり、
  * 発火のたびに実行結果を記録した `ScheduleRun` レコードが 1 件作られる
  * （内部でリトライが発生しても、run レコードは 1 firing につき 1 件のまま。
- * 詳細は `RetryPolicy` を参照）。文は作成/更新時、および実行直前の毎回、Trino の
- * `EXPLAIN (TYPE VALIDATE)` で検証されるため、構文的に不正なクエリが
- * 実クラスタでの実行として走ることはない。
+ * 詳細は `RetryPolicy` を参照）。SQL 文と実行先（datasource/catalog/schema）は
+ * すべて参照先の保存済みクエリが持つ値を使い、schedule 側では二重管理しない
+ * （catalog/schema/datasourceId は保存時ではなく実行時に毎回 saved query から解決する）。
+ * 文は作成/更新時、および実行直前の毎回、Trino の `EXPLAIN (TYPE VALIDATE)` で
+ * 検証されるため、構文的に不正なクエリが実クラスタでの実行として走ることはない。
  */
 
 /**
@@ -149,103 +151,70 @@ export type ScheduleRun = z.infer<typeof scheduleRunSchema>;
  * 都度計算される（無効化されている場合や計算不能な場合は null）。
  * `lastRun` は直近実行のサマリを埋め込んだもの。
  */
-export const scheduleSchema = z
-  .object({
-    // 一意な id。
-    id: z.string().min(1),
-    // スケジュール名。
-    name: z.string(),
-    // 実行する SQL 文。saved query 参照の場合は null（statement と savedQueryId は排他）。
-    statement: z.string().nullable(),
-    // 参照する保存済みクエリの id。直書き SQL の場合は null。
-    savedQueryId: z.string().min(1).nullable(),
-    // 実行対象のカタログ。
-    catalog: z.string().nullable(),
-    // 実行対象のスキーマ。
-    schema: z.string().nullable(),
-    // 実行タイミングを表す cron 式。
-    cron: cronExpression,
-    // このスケジュールが有効かどうか。
-    enabled: z.boolean(),
-    // リトライポリシー。
-    retry: retryPolicySchema,
-    // 確定失敗時の外部通知設定。
-    notifications: scheduleNotificationsSchema,
-    // 作成日時。
-    createdAt: isoTimestamp,
-    // 最終更新日時。
-    updatedAt: isoTimestamp,
-    // 次回発火予定時刻（計算済み）。無効化されている場合や計算不能な場合は null。
-    nextRunAt: isoTimestamp.nullable(),
-    // 直近の実行サマリ。一度も実行されていない場合は null。
-    lastRun: scheduleRunSummarySchema.nullable(),
-    // 実行先データソース id（作成/更新時に解決して永続化）。
-    datasourceId: z.string(),
-  })
-  // statement と savedQueryId は排他。DB 側にも同じ排他制約を CHECK 制約として
-  // 持たせている（migrations/0002_schedule_saved_query.sql）が、レスポンスを組み立てる
-  // routes 層のバグを早期に検出できるよう、契約層でも同じ条件を強制する。
-  .refine((v) => (v.statement === null) !== (v.savedQueryId === null), {
-    message: 'Exactly one of statement or savedQueryId must be non-null',
-  });
+export const scheduleSchema = z.object({
+  // 一意な id。
+  id: z.string().min(1),
+  // スケジュール名。
+  name: z.string(),
+  // 参照する保存済みクエリの id。SQL 文、catalog/schema、実行先データソースは
+  // すべてこの参照先が持つ値を実行のたびに解決して使う（schedule 側では保持しない）。
+  savedQueryId: z.string().min(1),
+  // 実行タイミングを表す cron 式。
+  cron: cronExpression,
+  // このスケジュールが有効かどうか。
+  enabled: z.boolean(),
+  // リトライポリシー。
+  retry: retryPolicySchema,
+  // 確定失敗時の外部通知設定。
+  notifications: scheduleNotificationsSchema,
+  // 作成日時。
+  createdAt: isoTimestamp,
+  // 最終更新日時。
+  updatedAt: isoTimestamp,
+  // 次回発火予定時刻（計算済み）。無効化されている場合や計算不能な場合は null。
+  nextRunAt: isoTimestamp.nullable(),
+  // 直近の実行サマリ。一度も実行されていない場合は null。
+  lastRun: scheduleRunSummarySchema.nullable(),
+});
 /** スケジュール全体の推論型。 */
 export type Schedule = z.infer<typeof scheduleSchema>;
 
 /**
- * `POST /api/schedules`（新規作成）のリクエストボディ。
- * `statement`（直書き SQL）と `savedQueryId`（保存済みクエリ参照）はどちらか
- * 一方だけを指定する。両方指定と両方省略はいずれも拒否する（下の refine）。
+ * `POST /api/schedules`（新規作成）のリクエストボディ。実行する SQL 文と実行先
+ * （datasource/catalog/schema）は `savedQueryId` の参照先が持つ値を使うため、
+ * ここでは受け付けない（直書き SQL は廃止）。
  */
-export const createScheduleRequestSchema = z
-  .object({
-    name: z.string().min(1).max(MAX_NAME_LENGTH),
-    statement: z.string().min(1).max(MAX_SQL_LENGTH).optional(),
-    savedQueryId: z.string().min(1).max(MAX_IDENTIFIER_LENGTH).optional(),
-    catalog: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
-    schema: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
-    cron: cronExpression.max(MAX_IDENTIFIER_LENGTH),
-    // 省略時は有効（enabled=true）として作成される（server 側の既定値に依存）。
-    enabled: z.boolean().optional(),
-    // 省略時は defaultRetryPolicy が適用される。
-    retry: retryPolicySchema.optional(),
-    // 省略時は通知しない。
-    notifications: scheduleNotificationsSchema.optional(),
-    // 実行先データソース id。省略時は作成時に既定データソースを保存する。
-    datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
-  })
-  .refine((v) => (v.statement !== undefined) !== (v.savedQueryId !== undefined), {
-    message: 'Exactly one of statement or savedQueryId must be provided',
-  });
+export const createScheduleRequestSchema = z.object({
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  savedQueryId: z.string().min(1).max(MAX_IDENTIFIER_LENGTH),
+  cron: cronExpression.max(MAX_IDENTIFIER_LENGTH),
+  // 省略時は有効（enabled=true）として作成される（server 側の既定値に依存）。
+  enabled: z.boolean().optional(),
+  // 省略時は defaultRetryPolicy が適用される。
+  retry: retryPolicySchema.optional(),
+  // 省略時は通知しない。
+  notifications: scheduleNotificationsSchema.optional(),
+});
 /** スケジュール作成リクエストの推論型。 */
 export type CreateScheduleRequest = z.infer<typeof createScheduleRequestSchema>;
 
 /**
  * `PATCH /api/schedules/:id` のリクエストボディ。すべてのフィールドが
  * 省略可能で、渡されたフィールドのみが更新される（部分更新）。
- * `statement` / `savedQueryId` / `catalog` / `schema` / `cron` を変更すると、
- * `EXPLAIN (TYPE VALIDATE)` による再検証がトリガーされる。
- * `statement` と `savedQueryId` は両方が同時に指定された場合のみ拒否する
- * （部分更新のため、片方だけ／どちらも指定しないケースは許容する）。
+ * `savedQueryId` / `cron` を変更すると、`EXPLAIN (TYPE VALIDATE)` による
+ * 再検証がトリガーされる。
  */
 export const updateScheduleRequestSchema = z
   .object({
     name: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
-    statement: z.string().min(1).max(MAX_SQL_LENGTH).optional(),
     savedQueryId: z.string().min(1).max(MAX_IDENTIFIER_LENGTH).optional(),
-    catalog: z.string().max(MAX_IDENTIFIER_LENGTH).nullable().optional(),
-    schema: z.string().max(MAX_IDENTIFIER_LENGTH).nullable().optional(),
     cron: cronExpression.max(MAX_IDENTIFIER_LENGTH).optional(),
     enabled: z.boolean().optional(),
     retry: retryPolicySchema.optional(),
     notifications: scheduleNotificationsSchema.optional(),
-    datasourceId: z.string().max(MAX_IDENTIFIER_LENGTH).optional(),
   })
   // 更新対象フィールドが 1 つも指定されていない空リクエストを拒否する。
-  .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' })
-  // statement と savedQueryId を同時に指定した場合、どちらが正なのか曖昧なので拒否する。
-  .refine((v) => !(v.statement !== undefined && v.savedQueryId !== undefined), {
-    message: 'statement and savedQueryId cannot both be specified',
-  });
+  .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
 /** スケジュール更新リクエストの推論型。 */
 export type UpdateScheduleRequest = z.infer<typeof updateScheduleRequestSchema>;
 

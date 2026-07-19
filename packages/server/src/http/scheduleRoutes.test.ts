@@ -5,13 +5,15 @@
  * 通して、スケジュールの作成/一覧/取得/更新/削除、EXPLAIN (TYPE VALIDATE) によるバリデーション
  * 挙動（構文エラー時の 400 化、cron 不正時の事前拒否）、手動実行と実行履歴の記録、
  * 実行中スケジュールへの同時実行リクエストが 409 になることを検証する。
+ * schedule は常に savedQueryId 参照のみを持ち、SQL 文と実行先（datasource/catalog/schema）は
+ * すべて参照先の saved query から解決される（直書き SQL は廃止済み）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { scheduleSchema, scheduleRunsResponseSchema, type Schedule } from '@hubble/contracts';
-import { createTestContext } from '../test/harness';
+import { createTestContext, type TestContext } from '../test/harness';
 import type { FakeScenario } from '../test/fakeTrino';
 
 // EXPLAIN (TYPE VALIDATE) が成功（構文的に妥当）を返す共通シナリオ。
@@ -22,6 +24,26 @@ const VALIDATE_OK: FakeScenario = {
 
 function jsonHeaders(): Record<string, string> {
   return { 'content-type': 'application/json' };
+}
+
+/** テスト用の保存済みクエリを作成するヘルパー。 */
+async function createSavedQuery(
+  ctx: TestContext,
+  overrides: {
+    name?: string;
+    statement?: string;
+    catalog?: string;
+    schema?: string;
+    datasourceId?: string;
+  } = {},
+) {
+  return ctx.services.savedQueries.create('admin', {
+    name: overrides.name ?? 'sq',
+    statement: overrides.statement ?? 'SELECT 1',
+    ...(overrides.catalog !== undefined ? { catalog: overrides.catalog } : {}),
+    ...(overrides.schema !== undefined ? { schema: overrides.schema } : {}),
+    ...(overrides.datasourceId !== undefined ? { datasourceId: overrides.datasourceId } : {}),
+  });
 }
 
 describe('schedule routes', () => {
@@ -41,10 +63,11 @@ describe('schedule routes', () => {
         },
       ],
     });
+    const saved = await createSavedQuery(ctx, { statement: 'SELECT_BAD' });
     const res = await ctx.app.request('/api/schedules', {
       method: 'POST',
       headers: jsonHeaders(),
-      body: JSON.stringify({ name: 'bad', statement: 'SELECT_BAD', cron: '* * * * *' }),
+      body: JSON.stringify({ name: 'bad', savedQueryId: saved.id, cron: '* * * * *' }),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
@@ -61,10 +84,11 @@ describe('schedule routes', () => {
   // 400 で弾かれることを確認する。
   it('rejects an invalid cron with a 400 before reaching Trino', async () => {
     const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+    const saved = await createSavedQuery(ctx);
     const res = await ctx.app.request('/api/schedules', {
       method: 'POST',
       headers: jsonHeaders(),
-      body: JSON.stringify({ name: 'x', statement: 'SELECT 1', cron: 'not a cron' }),
+      body: JSON.stringify({ name: 'x', savedQueryId: saved.id, cron: 'not a cron' }),
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -77,16 +101,15 @@ describe('schedule routes', () => {
   // null になる）、削除後に一覧が空になることを確認する。
   it('creates, lists, gets, patches (re-validating), and deletes a schedule', async () => {
     const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+    const saved = await createSavedQuery(ctx, { catalog: 'tpch', schema: 'tiny' });
 
     const createRes = await ctx.app.request('/api/schedules', {
       method: 'POST',
       headers: jsonHeaders(),
       body: JSON.stringify({
         name: 'nightly',
-        statement: 'SELECT 1',
+        savedQueryId: saved.id,
         cron: '0 0 * * *',
-        catalog: 'tpch',
-        schema: 'tiny',
         notifications: {
           onFailure: true,
           channels: ['email'],
@@ -97,6 +120,7 @@ describe('schedule routes', () => {
     expect(createRes.status).toBe(201);
     const created = scheduleSchema.parse(await createRes.json()) as Schedule;
     expect(created.id).toMatch(/^sch_/);
+    expect(created.savedQueryId).toBe(saved.id);
     expect(created.enabled).toBe(true);
     expect(created.nextRunAt).not.toBeNull();
     expect(created.lastRun).toBeNull();
@@ -115,15 +139,15 @@ describe('schedule routes', () => {
     );
     expect(got.name).toBe('nightly');
 
-    // PATCH changing the statement re-validates (the OK scenario allows it).
+    // PATCH changing enabled re-validates (the OK scenario allows it) since cron 系のフィールドは
+    // 変わらないが、enabled のみの変更は disableOnly として再検証をスキップする。
     const patchRes = await ctx.app.request(`/api/schedules/${created.id}`, {
       method: 'PATCH',
       headers: jsonHeaders(),
-      body: JSON.stringify({ statement: 'SELECT 2', enabled: false }),
+      body: JSON.stringify({ enabled: false }),
     });
     expect(patchRes.status).toBe(200);
     const patched = scheduleSchema.parse(await patchRes.json());
-    expect(patched.statement).toBe('SELECT 2');
     expect(patched.enabled).toBe(false);
     // Disabled schedules report no next run.
     expect(patched.nextRunAt).toBeNull();
@@ -134,36 +158,46 @@ describe('schedule routes', () => {
     await ctx.services.shutdown();
   });
 
-  // datasourceId だけを未知の id に変更した場合、404 で拒否されることを確認する。
-  it('PATCH returns 404 when changing to an unknown datasourceId', async () => {
+  // 参照する savedQueryId を切り替えた場合、EXPLAIN (TYPE VALIDATE) による再検証が走ることを確認する。
+  it('re-validates when savedQueryId changes', async () => {
     const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+    const savedA = await createSavedQuery(ctx, { name: 'a', statement: 'SELECT 1' });
+    const savedB = await createSavedQuery(ctx, { name: 'b', statement: 'SELECT 2' });
+
     const created = scheduleSchema.parse(
       await (
         await ctx.app.request('/api/schedules', {
           method: 'POST',
           headers: jsonHeaders(),
-          body: JSON.stringify({ name: 'ok', statement: 'SELECT 1', cron: '* * * * *' }),
+          body: JSON.stringify({ name: 'ds-switch', savedQueryId: savedA.id, cron: '* * * * *' }),
         })
       ).json(),
     );
+    expect(created.savedQueryId).toBe(savedA.id);
 
-    const res = await ctx.app.request(`/api/schedules/${created.id}`, {
+    const validateBefore = ctx.fake.requests.filter(
+      (r) => r.method === 'POST' && r.body?.includes('EXPLAIN (TYPE VALIDATE)'),
+    ).length;
+
+    const patchRes = await ctx.app.request(`/api/schedules/${created.id}`, {
       method: 'PATCH',
       headers: jsonHeaders(),
-      body: JSON.stringify({ datasourceId: 'no-such-datasource' }),
+      body: JSON.stringify({ savedQueryId: savedB.id }),
     });
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe('NOT_FOUND');
+    expect(patchRes.status).toBe(200);
+    const patched = scheduleSchema.parse(await patchRes.json());
+    expect(patched.savedQueryId).toBe(savedB.id);
 
-    const got = scheduleSchema.parse(
-      await (await ctx.app.request(`/api/schedules/${created.id}`)).json(),
-    );
-    expect(got.datasourceId).toBe(created.datasourceId);
+    const validateAfter = ctx.fake.requests.filter(
+      (r) => r.method === 'POST' && r.body?.includes('EXPLAIN (TYPE VALIDATE)'),
+    ).length;
+    expect(validateAfter).toBeGreaterThan(validateBefore);
+
     await ctx.services.shutdown();
   });
 
-  describe('PATCH datasourceId-only change', () => {
+  // PATCH で異なるデータソースへ切り替えた場合、未知の id なら 404 で拒否されることを確認する。
+  describe('PATCH to a datasource switched via the saved query', () => {
     let tempDir: string;
 
     beforeEach(() => {
@@ -174,8 +208,7 @@ describe('schedule routes', () => {
       rmSync(tempDir, { recursive: true, force: true });
     });
 
-    // datasourceId のみの変更でも EXPLAIN (TYPE VALIDATE) による再検証が走ることを確認する。
-    it('re-validates when only datasourceId changes', async () => {
+    it('re-validates against the new datasource when the referenced saved query changes', async () => {
       const yamlPath = join(tempDir, 'datasources.yaml');
       writeFileSync(
         yamlPath,
@@ -198,6 +231,8 @@ describe('schedule routes', () => {
         env: { DATASOURCES_PATH: yamlPath },
         cwd: tempDir,
       });
+      const savedA = await createSavedQuery(ctx, { name: 'a', datasourceId: 'trino-a' });
+      const savedB = await createSavedQuery(ctx, { name: 'b', datasourceId: 'trino-b' });
 
       const created = scheduleSchema.parse(
         await (
@@ -206,40 +241,29 @@ describe('schedule routes', () => {
             headers: jsonHeaders(),
             body: JSON.stringify({
               name: 'ds-switch',
-              statement: 'SELECT 1',
+              savedQueryId: savedA.id,
               cron: '* * * * *',
-              datasourceId: 'trino-a',
             }),
           })
         ).json(),
       );
-      expect(created.datasourceId).toBe('trino-a');
-
-      const validateBefore = ctx.fake.requests.filter(
-        (r) => r.method === 'POST' && r.body?.includes('EXPLAIN (TYPE VALIDATE)'),
-      ).length;
+      expect(created.savedQueryId).toBe(savedA.id);
 
       const patchRes = await ctx.app.request(`/api/schedules/${created.id}`, {
         method: 'PATCH',
         headers: jsonHeaders(),
-        body: JSON.stringify({ datasourceId: 'trino-b' }),
+        body: JSON.stringify({ savedQueryId: savedB.id }),
       });
       expect(patchRes.status).toBe(200);
       const patched = scheduleSchema.parse(await patchRes.json());
-      expect(patched.datasourceId).toBe('trino-b');
-      expect(patched.statement).toBe('SELECT 1');
-
-      const validateAfter = ctx.fake.requests.filter(
-        (r) => r.method === 'POST' && r.body?.includes('EXPLAIN (TYPE VALIDATE)'),
-      ).length;
-      expect(validateAfter).toBeGreaterThan(validateBefore);
+      expect(patched.savedQueryId).toBe(savedB.id);
 
       await ctx.services.shutdown();
     });
   });
 
   // PATCH でステートメントを不正な内容に変更した場合、再検証が走り 400 で拒否されることを確認する。
-  it('PATCH rejects a statement that fails validation', async () => {
+  it('PATCH rejects a saved query whose statement fails validation', async () => {
     const ctx = await createTestContext({
       scenarios: [
         // Specific match first: FakeTrino picks the first substring match, and
@@ -256,19 +280,21 @@ describe('schedule routes', () => {
         VALIDATE_OK,
       ],
     });
+    const savedOk = await createSavedQuery(ctx, { name: 'ok', statement: 'SELECT 1' });
+    const savedBroken = await createSavedQuery(ctx, { name: 'broken', statement: 'SELECT_BROKEN' });
     const created = scheduleSchema.parse(
       await (
         await ctx.app.request('/api/schedules', {
           method: 'POST',
           headers: jsonHeaders(),
-          body: JSON.stringify({ name: 'ok', statement: 'SELECT 1', cron: '* * * * *' }),
+          body: JSON.stringify({ name: 'ok', savedQueryId: savedOk.id, cron: '* * * * *' }),
         })
       ).json(),
     );
     const res = await ctx.app.request(`/api/schedules/${created.id}`, {
       method: 'PATCH',
       headers: jsonHeaders(),
-      body: JSON.stringify({ statement: 'SELECT_BROKEN' }),
+      body: JSON.stringify({ savedQueryId: savedBroken.id }),
     });
     expect(res.status).toBe(400);
     await ctx.services.shutdown();
@@ -287,12 +313,13 @@ describe('schedule routes', () => {
         },
       ],
     });
+    const saved = await createSavedQuery(ctx, { statement: 'SELECT_RUN' });
     const created = scheduleSchema.parse(
       await (
         await ctx.app.request('/api/schedules', {
           method: 'POST',
           headers: jsonHeaders(),
-          body: JSON.stringify({ name: 'run', statement: 'SELECT_RUN', cron: '* * * * *' }),
+          body: JSON.stringify({ name: 'run', savedQueryId: saved.id, cron: '* * * * *' }),
         })
       ).json(),
     );
@@ -330,12 +357,13 @@ describe('schedule routes', () => {
         },
       ],
     });
+    const saved = await createSavedQuery(ctx, { statement: 'SELECT_HOLD' });
     const created = scheduleSchema.parse(
       await (
         await ctx.app.request('/api/schedules', {
           method: 'POST',
           headers: jsonHeaders(),
-          body: JSON.stringify({ name: 'hold', statement: 'SELECT_HOLD', cron: '* * * * *' }),
+          body: JSON.stringify({ name: 'hold', savedQueryId: saved.id, cron: '* * * * *' }),
         })
       ).json(),
     );
@@ -364,12 +392,13 @@ describe('schedule routes', () => {
 
   it('does not report a database failure as a run conflict', async () => {
     const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+    const saved = await createSavedQuery(ctx);
     const created = scheduleSchema.parse(
       await (
         await ctx.app.request('/api/schedules', {
           method: 'POST',
           headers: jsonHeaders(),
-          body: JSON.stringify({ name: 'db-failure', statement: 'SELECT 1', cron: '* * * * *' }),
+          body: JSON.stringify({ name: 'db-failure', savedQueryId: saved.id, cron: '* * * * *' }),
         })
       ).json(),
     );
@@ -384,15 +413,12 @@ describe('schedule routes', () => {
     await ctx.services.shutdown();
   });
 
-  // savedQueryId 参照モードの schedule 作成/更新は、その時点で owner がアクセス
-  // できる saved query かどうかを検証する (存在しなければ 404)。
+  // savedQueryId は必須。作成/更新時にその時点で owner がアクセスできる saved query
+  // かどうかを検証する (存在しなければ 404)。
   describe('savedQueryId validation', () => {
     it('creates a schedule that references a saved query', async () => {
       const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
-      const saved = await ctx.services.savedQueries.create('admin', {
-        name: 'sq',
-        statement: 'SELECT 1',
-      });
+      const saved = await createSavedQuery(ctx);
 
       const res = await ctx.app.request('/api/schedules', {
         method: 'POST',
@@ -402,7 +428,6 @@ describe('schedule routes', () => {
       expect(res.status).toBe(201);
       const body = scheduleSchema.parse(await res.json());
       expect(body.savedQueryId).toBe(saved.id);
-      expect(body.statement).toBeNull();
       await ctx.services.shutdown();
     });
 
@@ -421,27 +446,7 @@ describe('schedule routes', () => {
       await ctx.services.shutdown();
     });
 
-    it('rejects a request specifying both statement and savedQueryId with a 400', async () => {
-      const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
-      const saved = await ctx.services.savedQueries.create('admin', {
-        name: 'sq',
-        statement: 'SELECT 1',
-      });
-      const res = await ctx.app.request('/api/schedules', {
-        method: 'POST',
-        headers: jsonHeaders(),
-        body: JSON.stringify({
-          name: 'both',
-          statement: 'SELECT 2',
-          savedQueryId: saved.id,
-          cron: '0 9 * * *',
-        }),
-      });
-      expect(res.status).toBe(400);
-      await ctx.services.shutdown();
-    });
-
-    it('rejects creation with a 400 when neither statement nor savedQueryId is given', async () => {
+    it('rejects creation with a 400 when savedQueryId is missing', async () => {
       const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
       const res = await ctx.app.request('/api/schedules', {
         method: 'POST',
@@ -452,44 +457,41 @@ describe('schedule routes', () => {
       await ctx.services.shutdown();
     });
 
-    it('switches an existing schedule from direct statement to a saved query reference', async () => {
+    it('switches an existing schedule to reference a different saved query', async () => {
       const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
-      const saved = await ctx.services.savedQueries.create('admin', {
-        name: 'sq',
-        statement: 'SELECT 1',
-      });
+      const savedA = await createSavedQuery(ctx, { name: 'a' });
+      const savedB = await createSavedQuery(ctx, { name: 'b' });
       const created = scheduleSchema.parse(
         await (
           await ctx.app.request('/api/schedules', {
             method: 'POST',
             headers: jsonHeaders(),
-            body: JSON.stringify({ name: 'switching', statement: 'SELECT 1', cron: '0 9 * * *' }),
+            body: JSON.stringify({ name: 'switching', savedQueryId: savedA.id, cron: '0 9 * * *' }),
           })
         ).json(),
       );
-      expect(created.statement).toBe('SELECT 1');
-      expect(created.savedQueryId).toBeNull();
+      expect(created.savedQueryId).toBe(savedA.id);
 
       const patched = await ctx.app.request(`/api/schedules/${created.id}`, {
         method: 'PATCH',
         headers: jsonHeaders(),
-        body: JSON.stringify({ savedQueryId: saved.id }),
+        body: JSON.stringify({ savedQueryId: savedB.id }),
       });
       expect(patched.status).toBe(200);
       const updated = scheduleSchema.parse(await patched.json());
-      expect(updated.savedQueryId).toBe(saved.id);
-      expect(updated.statement).toBeNull();
+      expect(updated.savedQueryId).toBe(savedB.id);
       await ctx.services.shutdown();
     });
 
     it('rejects an update to a nonexistent savedQueryId with a 404', async () => {
       const ctx = await createTestContext({ scenarios: [VALIDATE_OK] });
+      const saved = await createSavedQuery(ctx);
       const created = scheduleSchema.parse(
         await (
           await ctx.app.request('/api/schedules', {
             method: 'POST',
             headers: jsonHeaders(),
-            body: JSON.stringify({ name: 'x', statement: 'SELECT 1', cron: '0 9 * * *' }),
+            body: JSON.stringify({ name: 'x', savedQueryId: saved.id, cron: '0 9 * * *' }),
           })
         ).json(),
       );
