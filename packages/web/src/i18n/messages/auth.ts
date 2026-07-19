@@ -12,7 +12,6 @@ export const authMessages = defineDictionary({
     ja: '本人確認ができませんでした。',
     en: 'Unable to verify your identity.',
   },
-  retryButton: { ja: '再試行', en: 'Retry' },
   authRequiredTitle: { ja: '認証が必要です', en: 'Authentication required' },
   authRequiredDescription: {
     ja: 'このセッションは認証されていません。シングルサインオンでログインし直してください。',

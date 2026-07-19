@@ -12,7 +12,11 @@ import { toast } from './Toast';
 import { cn } from '../../utils/cn';
 import { findDuplicateShareIndices, type ShareDraftRow } from '../../utils/documentShare';
 import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { shareMessages } from '../../i18n/messages/share';
+
+/** ShareModal 内で使う辞書の合成。共通文言（Cancel/Save/Retry 等）+ share 固有文言。 */
+const shareModalDict = { ...commonMessages, ...shareMessages } as const;
 
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
 const TEXT_INPUT =
@@ -94,7 +98,7 @@ function ShareModalBody({
   fetchShares: () => Promise<{ shares: DocumentShare[] }>;
   updateShares: (shares: ShareDraftRow[]) => Promise<{ shares: DocumentShare[] }>;
 }) {
-  const t = useT(shareMessages);
+  const t = useT(shareModalDict);
   const [rows, setRows] = useState<ShareDraftRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -154,7 +158,7 @@ function ShareModalBody({
       toast.success(t('sharesUpdatedTitle'), t('sharesUpdatedBody', { name: documentName }));
       onClose();
     } catch {
-      toast.error(t('saveFailedTitle'), t('saveSharesFailedBody'));
+      toast.error(t('saveFailedToastTitle'), t('saveSharesFailedBody'));
     } finally {
       setSaving(false);
     }
@@ -170,7 +174,7 @@ function ShareModalBody({
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
-            {t('cancelButton')}
+            {t('cancel')}
           </Button>
           <Button
             variant="primary"
@@ -226,7 +230,7 @@ function ShareModalBody({
                   >
                     <option value="user">{t('subjectTypeUser')}</option>
                     <option value="group">{t('subjectTypeGroup')}</option>
-                    <option value="role">{t('subjectTypeRole')}</option>
+                    <option value="role">{t('roleLabel')}</option>
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">

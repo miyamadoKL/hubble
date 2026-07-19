@@ -112,7 +112,7 @@ function AlertRow({
         <AlertStateBadge state={alert.state} />
         <span className="font-mono text-2xs text-ink-subtle">{alert.cron}</span>
         <span className="font-mono text-2xs text-ink-subtle">
-          {t('nextEvalPrefix', { label: nextEvalLabel(alert, now, t) })}
+          {t('nextPrefix', { label: nextEvalLabel(alert, now, t) })}
         </span>
       </div>
 
@@ -294,7 +294,7 @@ export function AlertsPanel({ search }: { search: string }) {
         onCreate={(body) => {
           create.mutate(body, {
             onSuccess: (created) => {
-              toast.success(t('alertCreatedTitle'), t('alertCreatedBody', { name: created.name }));
+              toast.success(t('alertCreatedTitle'), t('entityReadyBody', { name: created.name }));
               closeForm();
             },
             onError: () => toast.error(t('createFailedTitle'), t('couldNotReachServer')),
@@ -306,10 +306,7 @@ export function AlertsPanel({ search }: { search: string }) {
             { id: editing.id, body },
             {
               onSuccess: (updated) => {
-                toast.success(
-                  t('alertUpdatedTitle'),
-                  t('alertUpdatedBody', { name: updated.name }),
-                );
+                toast.success(t('alertUpdatedTitle'), t('entitySavedBody', { name: updated.name }));
                 closeForm();
               },
               onError: () => toast.error(t('updateFailed'), t('couldNotReachServer')),

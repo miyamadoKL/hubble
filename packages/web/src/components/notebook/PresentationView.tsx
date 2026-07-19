@@ -11,7 +11,11 @@ import { useActiveNotebook } from '../../notebook';
 import { toPresentationCards } from '../../notebook/presentation';
 import { useUiStore } from '../../stores/uiStore';
 import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { notebookMessages } from '../../i18n/messages/notebook';
+
+/** PresentationView 内で使う辞書の合成。共通文言（Untitled notebook）+ notebook 固有文言。 */
+const presentationViewDict = { ...commonMessages, ...notebookMessages } as const;
 
 /**
  * Presentation mode. A read-only, full-bleed view of the
@@ -27,7 +31,7 @@ import { notebookMessages } from '../../i18n/messages/notebook';
  * ストアから直接参照する）。
  */
 export function PresentationView() {
-  const t = useT(notebookMessages);
+  const t = useT(presentationViewDict);
   // 現在アクティブなノートブックのエントリ（ノートブック本体とメタ情報）を取得。
   const entry = useActiveNotebook();
   // 「Exit」ボタン押下時のハンドラー: UIストアのプレゼンテーション表示フラグをトグルして閉じる。

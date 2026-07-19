@@ -35,7 +35,11 @@ import {
 } from '../../execution';
 import { useT, type TFn } from '../../i18n/t';
 import { useLocale, type Locale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
 import { notebookMessages, queryStateLabel } from '../../i18n/messages/notebook';
+
+/** ResultPane 内で使う辞書の合成。共通文言（Loading chart…/Export failed 等）+ notebook 固有文言。 */
+const resultPaneDict = { ...commonMessages, ...notebookMessages } as const;
 
 // Intl API 用のロケールタグへ変換する（ja → 'ja-JP', en → 'en-US'）。
 // 日時の絶対表示（Details タブの送信日時/完了日時）でのみ使う。
@@ -100,7 +104,7 @@ export function ResultPane({
   explainRunning,
   onExplain,
 }: ResultPaneProps) {
-  const t = useT(notebookMessages);
+  const t = useT(resultPaneDict);
   const { locale } = useLocale();
   // 現在選択中のタブ（初期値は Grid）。
   const [tab, setTab] = useState<ResultTab>('grid');
@@ -315,7 +319,7 @@ function ExplainView({
   running?: boolean;
   // 「Run EXPLAIN」ボタン押下時のハンドラー
   onRun?: () => void;
-  t: TFn<typeof notebookMessages>;
+  t: TFn<typeof resultPaneDict>;
 }) {
   // 実行中は専用のローディングメッセージを表示する。
   if (running) {
@@ -421,7 +425,7 @@ function ExportMenu({
   disabled: boolean;
   truncated: boolean;
   csvReexecAllowed: boolean;
-  t: TFn<typeof notebookMessages>;
+  t: TFn<typeof resultPaneDict>;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);

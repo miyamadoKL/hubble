@@ -1,11 +1,9 @@
 /**
  * i18n フェーズ 2c: パネル系コンポーネント（History / SavedQueries / Operations /
  * NotebookList）で使う文言辞書。
- * これらのパネルは互いに近い操作（Insert / New cell / 削除確認など）を持つため、
- * パネルをまたいで共有する語（Insert、Re-run 等）もこのファイルにまとめて置く
- * （Schedule/Alert 領域が `commonMessages` を共有するのと同じ考え方だが、
- * 本バッチでは common.ts 自体は変更しない方針のため専用の共有ブロックとして持つ）。
- * 汎用語（Cancel、Delete、Loading 等）は既存の `messages/common.ts` を再利用する。
+ * これらのパネル固有の文言（フィルタチップ、削除確認、パネル別のトースト等）をここに置く。
+ * パネルをまたいで共有する汎用語（Cancel、Delete、Loading、Re-run、行数/経過時間ラベル等）は
+ * `messages/common.ts` を再利用する。
  */
 import { defineDictionary } from '../t';
 
@@ -16,8 +14,6 @@ export const panelsMessages = defineDictionary({
   // ボタンの可視ラベル（"New cell"）と、追加成功時のトーストタイトル（"New SQL cell"）は
   // 元実装から表記が異なるため別エントリにする。
   newCellButton: { ja: '新規セル', en: 'New cell' },
-  newSqlCellToast: { ja: '新規 SQL セル', en: 'New SQL cell' },
-  share: { ja: '共有', en: 'Share' },
 
   // ---- HistoryPanel ----
   // state フィルタチップの表示ラベル。契約値（HistoryFilter/QueryState）自体は
@@ -43,7 +39,6 @@ export const panelsMessages = defineDictionary({
   queryStateFailed: { ja: '失敗', en: 'FAILED' },
   queryStateCanceled: { ja: 'キャンセル済み', en: 'CANCELED' },
 
-  reRun: { ja: '再実行', en: 'Re-run' },
   openResult: { ja: '結果を開く', en: 'Open result' },
   reRunningQueryToast: { ja: 'クエリを再実行しています', en: 'Re-running query' },
   openedSavedResultToast: { ja: '保存済みの結果を開きました', en: 'Opened saved result' },
@@ -70,10 +65,6 @@ export const panelsMessages = defineDictionary({
     ja: 'もっと見る（{shown} / {total} 件）',
     en: 'Load more ({shown} of {total})',
   },
-  rowsCount: { ja: '{n} 行', en: '{n} rows' },
-  queryIdLabel: { ja: 'クエリ', en: 'query' },
-  rowsLabel: { ja: '行数', en: 'rows' },
-  elapsedLabel: { ja: '経過時間', en: 'elapsed' },
 
   // ---- SavedQueriesPanel ----
   favorite: { ja: 'お気に入り登録', en: 'Favorite' },
@@ -112,10 +103,6 @@ export const panelsMessages = defineDictionary({
   killFailedBody: { ja: 'クエリを停止できませんでした。', en: 'Could not stop the query.' },
 
   // ---- NotebookListPanel ----
-  // "No notebooks" はコマンドパレットのノートブック検索サブモードでも同じ文言が
-  // 必要になるが、common.ts は変更しない方針のためここでは重複させている
-  // (共通化候補: 最終報告を参照)。
-  noNotebooks: { ja: 'ノートブックがありません', en: 'No notebooks' },
   createNotebookHint: {
     ja: 'ノートブックを作成して SQL セルの作成を始めましょう。',
     en: 'Create a notebook to start composing SQL cells.',

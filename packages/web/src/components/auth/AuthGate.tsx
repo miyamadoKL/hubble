@@ -11,7 +11,11 @@ import { activatePrincipalStorage } from '../../storage/principalStorage';
 import { AuthRequired } from './AuthRequired';
 import { useT } from '../../i18n/t';
 import { authMessages } from '../../i18n/messages/auth';
+import { commonMessages } from '../../i18n/messages/common';
 import { useHydrateLocaleFromPrincipalStorage } from '../../i18n/locale';
+
+/** AuthGate 内で使う辞書の合成。共通文言（Retry 等）+ 認証ゲート固有文言。 */
+const authDict = { ...commonMessages, ...authMessages } as const;
 
 /** identity が同じ page lifetime 内で変わった場合に全 client state を破棄する。 */
 function reloadForIdentityChange(): void {
@@ -44,7 +48,7 @@ interface ReadyIdentity {
  * @param onIdentityChange 同じ page 内で認証主体が変わった場合の再読み込み処理。
  */
 export function AuthGate({ children, onIdentityChange = reloadForIdentityChange }: AuthGateProps) {
-  const t = useT(authMessages);
+  const t = useT(authDict);
   const { data, error, refetch } = useMe();
   const [readyIdentity, setReadyIdentity] = useState<ReadyIdentity | null>(null);
   const [failedPrincipal, setFailedPrincipal] = useState<string | null>(null);

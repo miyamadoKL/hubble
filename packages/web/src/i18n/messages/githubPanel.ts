@@ -65,10 +65,7 @@ export const githubPanelMessages = defineDictionary({
     ja: 'このドキュメントを push するには GitHub アカウントを連携してください。コミットはあなたの名前で作成されます。',
     en: 'Connect your GitHub account to push this document. Commits are authored as you.',
   },
-  connectButton: { ja: 'GitHub と連携', en: 'Connect GitHub' },
-
   // フッターのボタン群。
-  closeButton: { ja: '閉じる', en: 'Close' },
   createPrButton: { ja: 'プルリクエストを作成', en: 'Create pull request' },
   createPrPending: { ja: '作成中…', en: 'Creating…' },
   createPrDisabledTitle: {

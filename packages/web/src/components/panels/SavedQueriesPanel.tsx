@@ -146,7 +146,7 @@ function SavedRow({
             </Button>
             {owner && (
               <Button variant="ghost" size="sm" icon={Share2} onClick={onShare}>
-                {t('share')}
+                {t('shareButton')}
               </Button>
             )}
             {owner && (
@@ -295,7 +295,10 @@ export function SavedQueriesPanel({ search }: { search: string }) {
             onNewCell={() => {
               if (!applySavedContext(query)) return;
               if (addSqlCellWithSource(query.statement)) {
-                toast.success(t('newSqlCellToast'), t('newSqlCellAddedBody', { name: query.name }));
+                toast.success(
+                  t('newSqlCellToastTitle'),
+                  t('newSqlCellAddedBody', { name: query.name }),
+                );
               }
             }}
             onDelete={() => setPendingDelete(query)}

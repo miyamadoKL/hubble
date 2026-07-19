@@ -144,7 +144,7 @@ function buildCommands(deps: {
       return;
     }
     store.addCell(id, kind, 'end');
-    toast.info(kind === 'sql' ? t('newSqlCellCommand') : t('newMarkdownCellCommand'));
+    toast.info(kind === 'sql' ? t('newSqlCellToastTitle') : t('newMarkdownCellCommand'));
   };
 
   // コマンドレジストリ本体。各要素が1つのコマンドパレット項目に対応する。
@@ -152,7 +152,7 @@ function buildCommands(deps: {
     // 「Query」グループ: 現在のノートブックの全セルを実行する。
     {
       id: 'run-all',
-      label: t('runAllCells'),
+      label: t('runAllCellsTooltip'),
       icon: Play,
       group: t('groupQuery'),
       run: () => void runAllCells(context, defaultLimit),
@@ -160,7 +160,7 @@ function buildCommands(deps: {
     // 「Notebook」グループ: 保存、新規作成、開く、セル追加などノートブック操作系。
     {
       id: 'save',
-      label: t('saveNotebook'),
+      label: t('saveNotebookTitle'),
       icon: Save,
       group: t('groupNotebook'),
       shortcut: ['Ctrl', 'S'],
@@ -192,7 +192,7 @@ function buildCommands(deps: {
     },
     {
       id: 'new-sql',
-      label: t('newSqlCellCommand'),
+      label: t('newSqlCellToastTitle'),
       icon: Code2,
       group: t('groupNotebook'),
       run: () => addCellToActive('sql'),
@@ -254,7 +254,7 @@ function buildCommands(deps: {
     // 「Help」グループ: キーボードショートカット一覧を開く。
     {
       id: 'shortcuts-help',
-      label: t('keyboardShortcuts'),
+      label: t('keyboardShortcutsTitle'),
       icon: Keyboard,
       group: t('groupHelp'),
       run: () => openShortcutsHelp(),
@@ -450,7 +450,7 @@ function PaletteContent({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={t('commandPaletteAria')}
+        aria-label={t('commandPaletteLabel')}
         className="relative z-10 w-full max-w-xl overflow-hidden rounded-lg border border-border-strong bg-surface-overlay shadow-lg animate-[slideUp_150ms_ease-out]"
         onKeyDown={onKeyDown}
       >
@@ -536,9 +536,7 @@ function PaletteContent({
             )}
             {/* 取得は成功したが、該当するノートブックが0件だった場合の空状態表示。 */}
             {notebooks.data && notebookItems.length === 0 && (
-              <li className="px-4 py-6 text-center text-sm text-ink-muted">
-                {t('noNotebooksInList')}
-              </li>
+              <li className="px-4 py-6 text-center text-sm text-ink-muted">{t('noNotebooks')}</li>
             )}
             {/* 検索結果のノートブック一覧をリスト表示する。選択中の項目はハイライトする。 */}
             {notebookItems.map((nb, i) => {

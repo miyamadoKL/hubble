@@ -9,7 +9,7 @@ import { X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { IconButton } from './IconButton';
 import { useT } from '../../i18n/t';
-import { layoutMessages } from '../../i18n/messages/layout';
+import { commonMessages } from '../../i18n/messages/common';
 
 /**
  * Modal コンポーネントの props。
@@ -132,7 +132,7 @@ export function Modal({
   footer,
   className,
 }: ModalProps) {
-  const t = useT(layoutMessages);
+  const t = useT(commonMessages);
   const overlayRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -258,7 +258,7 @@ export function Modal({
               </p>
             )}
           </div>
-          <IconButton icon={X} label={t('modalCloseButton')} onClick={onClose} tooltip={false} />
+          <IconButton icon={X} label={t('closeButton')} onClick={onClose} tooltip={false} />
         </header>
         {/* children が渡されている場合のみ本文領域を表示する */}
         {children && <div className="px-5 py-4">{children}</div>}

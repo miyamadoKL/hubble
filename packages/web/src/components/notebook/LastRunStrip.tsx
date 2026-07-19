@@ -12,7 +12,11 @@ import { formatDuration, formatInt, formatRelativeTime } from '../../utils/forma
 import { cn } from '../../utils/cn';
 import { useT } from '../../i18n/t';
 import { useLocale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
 import { notebookMessages, queryStateLabel } from '../../i18n/messages/notebook';
+
+/** LastRunStrip 内で使う辞書の合成。共通文言（{n} 行/Re-run 等）+ notebook 固有文言。 */
+const lastRunStripDict = { ...commonMessages, ...notebookMessages } as const;
 
 /**
  * セルの最終実行サマリー（meta）を表示する帯コンポーネント。
@@ -21,7 +25,7 @@ import { notebookMessages, queryStateLabel } from '../../i18n/messages/notebook'
  * @param onRun - 「Re-run」ボタン押下時のコールバック。未指定の場合はボタン自体を表示しない。
  */
 export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: () => void }) {
-  const t = useT(notebookMessages);
+  const t = useT(lastRunStripDict);
   const { locale } = useLocale();
   // 実行が失敗状態だったかどうか。表示アイコンや配色の分岐に使う。
   const failed = meta.state === 'failed';
@@ -56,7 +60,7 @@ export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: ()
       {/* 失敗していない場合のみ、取得した行数を表示する（rowCount が存在するとき）。 */}
       {!failed && meta.rowCount !== undefined && (
         <span className="font-mono text-2xs text-ink-muted tabular-nums">
-          {t('lastRunRowsUnit', { n: formatInt(meta.rowCount) })}
+          {t('rowsCountUnit', { n: formatInt(meta.rowCount) })}
         </span>
       )}
       {/* 実行にかかった所要時間（elapsedMs が存在するとき）。 */}

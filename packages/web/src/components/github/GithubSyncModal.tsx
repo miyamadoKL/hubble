@@ -265,7 +265,7 @@ export function GithubSyncModal({
                 className="mt-2"
                 onClick={() => window.location.assign(githubConnectUrl())}
               >
-                {t('connectButton')}
+                {t('connectGithubButton')}
               </Button>
             </div>
           )}

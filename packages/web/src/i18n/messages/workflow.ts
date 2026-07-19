@@ -14,20 +14,13 @@ export const workflowMessages = defineDictionary({
   // ---- RunExportMenu ----
   exportFormatCsvZip: { ja: 'CSV（zip）', en: 'CSV (zip)' },
   exportFormatXlsx: { ja: 'Excel（複数シート）', en: 'Excel (multi-sheet)' },
-  exportFormatSheets: { ja: 'Google スプレッドシート', en: 'Google Sheets' },
   exportRunResultsAria: { ja: '実行結果をエクスポート', en: 'Export run results' },
-  exportedToGoogleSheets: {
-    ja: 'Google スプレッドシートにエクスポートしました',
-    en: 'Exported to Google Sheets',
-  },
-  exportFailed: { ja: 'エクスポートに失敗しました', en: 'Export failed' },
 
   // ---- StepEditorModal ----
   addStepTitle: { ja: 'ステップを追加', en: 'Add step' },
   editStepTitle: { ja: 'ステップを編集', en: 'Edit step' },
   removeStepButton: { ja: 'ステップを削除', en: 'Remove step' },
   applyButton: { ja: '適用', en: 'Apply' },
-  nameFieldLabel: { ja: '名前', en: 'Name' },
   sqlStatementFieldLabel: { ja: 'SQL 文', en: 'SQL statement' },
   datasourceFieldLabel: { ja: 'データソース', en: 'Datasource' },
   onFailureFieldLabel: { ja: '失敗した場合', en: 'If this step fails' },
@@ -51,12 +44,9 @@ export const workflowMessages = defineDictionary({
     ja: '結果は永続化されていないか、期限切れです。',
     en: 'The result was not persisted or has expired.',
   },
-  noRows: { ja: '行がありません。', en: 'No rows.' },
 
   // ---- WorkflowRunsModal ----
   runHistoryTitle: { ja: '実行履歴', en: 'Run history' },
-  couldntLoadRunsTitle: { ja: '実行履歴を読み込めませんでした', en: "Couldn't load runs" },
-  noRunsYetTitle: { ja: 'まだ実行履歴がありません', en: 'No runs yet' },
   noRunsYetDescription: {
     ja: 'ワークフローを実行すると、ここに履歴が表示されます。',
     en: 'Run the workflow to see its history here.',
@@ -89,8 +79,6 @@ export const workflowMessages = defineDictionary({
     ja: '5 フィールドの cron 式（分 時 日 月 曜日）である必要があります。',
     en: 'Must be a 5-field cron expression (minute hour day month weekday).',
   },
-  disableScheduleAria: { ja: 'スケジュールを無効化', en: 'Disable schedule' },
-  enableScheduleAria: { ja: 'スケジュールを有効化', en: 'Enable schedule' },
   scheduleEnabledLabel: { ja: 'スケジュール有効', en: 'Schedule enabled' },
 
   // ---- WorkflowStatusBadge / workflowFormat.runStatusLabel ----
@@ -104,13 +92,10 @@ export const workflowMessages = defineDictionary({
 
   // ---- workflowFormat.nextRunLabel ----
   manualOnly: { ja: '手動のみ', en: 'manual only' },
-  scheduleDisabledLabel: { ja: '無効', en: 'Disabled' },
 
   // ---- WorkflowsPanel ----
-  neverRun: { ja: '未実行', en: 'never run' },
   stepCountSingular: { ja: '1 ステップ', en: '1 step' },
   stepCountPlural: { ja: '{n} ステップ', en: '{n} steps' },
-  nextRunPrefix: { ja: '次回 {label}', en: 'next {label}' },
   newWorkflowButton: { ja: '新規ワークフロー', en: 'New workflow' },
   noWorkflowsTitle: { ja: 'ワークフローがありません', en: 'No workflows' },
   noWorkflowsDescription: {
@@ -147,12 +132,7 @@ export const workflowMessages = defineDictionary({
     en: 'Step "{name}" needs a name and a SQL statement.',
   },
   unsavedChanges: { ja: '未保存の変更', en: 'unsaved changes' },
-  runsButton: { ja: '実行履歴', en: 'Runs' },
   deleteWorkflowAria: { ja: 'ワークフローを削除', en: 'Delete workflow' },
-  savingButton: { ja: '保存中…', en: 'Saving…' },
-  saveButton: { ja: '保存', en: 'Save' },
-  runningButton: { ja: '実行中…', en: 'Running…' },
-  runButton: { ja: '実行', en: 'Run' },
   saveBeforeRunningTitle: {
     ja: '実行する前にワークフローを保存してください',
     en: 'Save the workflow before running',
@@ -184,7 +164,6 @@ export const workflowMessages = defineDictionary({
   onFailureContinueTitle: { ja: '失敗時: 続行', en: 'On failure: continue' },
   onFailureStopShort: { ja: '停止', en: 'stop' },
   onFailureContinueShort: { ja: '続行', en: 'continue' },
-  stepRowsCount: { ja: '{n} 行', en: '{n} rows' },
   viewResultTitle: { ja: '永続化済みの結果を表示', en: 'View persisted result' },
   viewResultAria: { ja: '{name} の結果を表示', en: 'View result of {name}' },
   deleteWorkflowConfirmTitle: { ja: 'ワークフローを削除しますか?', en: 'Delete workflow?' },
@@ -195,16 +174,11 @@ export const workflowMessages = defineDictionary({
   workflowCreatedToast: { ja: 'ワークフローを作成しました', en: 'Workflow created' },
   workflowReadyToRun: { ja: '「{name}」は実行できる状態です。', en: '“{name}” is ready to run.' },
   workflowSavedToast: { ja: 'ワークフローを保存しました', en: 'Workflow saved' },
-  workflowSavedDescription: { ja: '「{name}」を保存しました。', en: '“{name}” saved.' },
-  saveFailedToast: { ja: '保存に失敗しました', en: 'Save failed' },
-  runStartedToast: { ja: '実行を開始しました', en: 'Run started' },
   workflowIsRunning: { ja: '「{name}」を実行中です。', en: '“{name}” is running.' },
   alreadyRunningToast: { ja: 'すでに実行中です', en: 'Already running' },
   alreadyRunningDescription: {
     ja: 'このワークフローはすでに実行中です。',
     en: 'This workflow has a run in progress.',
   },
-  runFailedToast: { ja: '実行に失敗しました', en: 'Run failed' },
-  couldNotStartRun: { ja: '実行を開始できませんでした。', en: 'Could not start the run.' },
   workflowRemovedDescription: { ja: 'ワークフローを削除しました。', en: 'Workflow removed.' },
 } as const);

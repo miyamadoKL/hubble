@@ -68,11 +68,11 @@ export function RunExportMenu({ runId, disabled }: { runId: string; disabled: bo
         return;
       }
       const response = await exportWorkflowRunToSheets(runId);
-      toast.success(t('exportedToGoogleSheets'), response.url);
+      toast.success(t('exportedToSheetsToast'), response.url);
       window.open(response.url, '_blank', 'noopener,noreferrer');
     } catch (err) {
       const message = err instanceof ApiClientError ? err.detail.message : t('couldNotReachServer');
-      toast.error(t('exportFailed'), message);
+      toast.error(t('exportFailedToast'), message);
     } finally {
       setBusy(false);
     }
@@ -87,7 +87,7 @@ export function RunExportMenu({ runId, disabled }: { runId: string; disabled: bo
         options={[
           { value: 'csv-zip', label: t('exportFormatCsvZip') },
           { value: 'xlsx', label: t('exportFormatXlsx') },
-          { value: 'sheets', label: t('exportFormatSheets') },
+          { value: 'sheets', label: t('googleSheetsOption') },
         ]}
         ariaLabel={t('exportRunResultsAria')}
         align="end"

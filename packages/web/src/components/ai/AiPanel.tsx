@@ -30,6 +30,10 @@ import { Markdown } from '../notebook/Markdown';
 import { AiDiffApply } from '../editor/AiDiffApply';
 import { useT, type TFn } from '../../i18n/t';
 import { aiMessages } from '../../i18n/messages/ai';
+import { commonMessages } from '../../i18n/messages/common';
+
+/** AiPanel 内で使う辞書の合成。共通文言（Stop 等）+ AI パネル固有文言。 */
+const aiDict = { ...commonMessages, ...aiMessages } as const;
 
 /** 適用先として記憶しておく、リクエスト時点のエディターと対象範囲。 */
 export interface CapturedTarget {
@@ -204,12 +208,12 @@ export function taskLabelKey(task: AiTask): TaskLabelKey {
  *
  * @param input カンマ区切りのテーブル名入力。
  * @param contextCatalog 2 要素表記を補完するための現在の catalog（未指定なら補完しない）。
- * @param t エラーメッセージの翻訳に使う関数（AiPanel の useT(aiMessages) を渡す）。
+ * @param t エラーメッセージの翻訳に使う関数（AiPanel の useT(aiDict) を渡す）。
  */
 function parseTableNames(
   input: string,
   contextCatalog: string | undefined,
-  t: TFn<typeof aiMessages>,
+  t: TFn<typeof aiDict>,
 ): { catalog: string; schema: string; table: string }[] {
   return input
     .split(',')
@@ -231,7 +235,7 @@ function parseTableNames(
  * メインエリアの右側に配置される。
  */
 export function AiPanel() {
-  const t = useT(aiMessages);
+  const t = useT(aiDict);
   const { data: config } = useConfig();
   const width = useUiStore((s) => s.aiPanelWidth);
   const setWidth = useUiStore((s) => s.setAiPanelWidth);
@@ -321,7 +325,7 @@ export function AiPanel() {
       (task === 'explain' || task === 'fix' || task === 'rewrite') &&
       !inspected?.original.trim()
     ) {
-      toast.error(t('toastTitle'), t('toastFocusSqlCell'));
+      toast.error(t('aiAssistantLabel'), t('toastFocusSqlCell'));
       return;
     }
     let errorMessage: string | undefined;
@@ -330,13 +334,13 @@ export function AiPanel() {
         ? useExecutionStore.getState().cells[inspected.cellId]?.error
         : undefined;
       if (!cellError) {
-        toast.error(t('toastTitle'), t('toastNoRecentError'));
+        toast.error(t('aiAssistantLabel'), t('toastNoRecentError'));
         return;
       }
       errorMessage = cellError.message;
     }
     if (task === 'draft' && instruction.trim() === '') {
-      toast.error(t('toastTitle'), t('toastWriteInstruction'));
+      toast.error(t('aiAssistantLabel'), t('toastWriteInstruction'));
       return;
     }
 
@@ -345,14 +349,14 @@ export function AiPanel() {
     if (tablesInput.trim() !== '') {
       const datasourceId = shellContext.datasourceId;
       if (!datasourceId) {
-        toast.error(t('toastTitle'), t('toastNoDatasource'));
+        toast.error(t('aiAssistantLabel'), t('toastNoDatasource'));
         return;
       }
       try {
         tableNames = parseTableNames(tablesInput, shellContext.catalog, t);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        toast.error(t('toastTitle'), t('toastFailedResolveTables', { message }));
+        toast.error(t('aiAssistantLabel'), t('toastFailedResolveTables', { message }));
         return;
       }
     }
@@ -420,7 +424,7 @@ export function AiPanel() {
               }
             }
             if (event.type === 'error') {
-              toast.error(t('toastTitle'), event.error.message);
+              toast.error(t('aiAssistantLabel'), event.error.message);
             }
           },
         },
@@ -433,11 +437,11 @@ export function AiPanel() {
         // ユーザーによる停止は正常系として扱う。
       } else if (resolvingTables) {
         const message = err instanceof Error ? err.message : String(err);
-        toast.error(t('toastTitle'), t('toastFailedResolveTables', { message }));
+        toast.error(t('aiAssistantLabel'), t('toastFailedResolveTables', { message }));
       } else if (err instanceof ApiClientError) {
-        toast.error(t('toastTitle'), err.detail.message);
+        toast.error(t('aiAssistantLabel'), err.detail.message);
       } else {
-        toast.error(t('toastTitle'), err instanceof Error ? err.message : String(err));
+        toast.error(t('aiAssistantLabel'), err instanceof Error ? err.message : String(err));
       }
     } finally {
       if (!requestCoordinator.isCurrent(claim)) {
@@ -454,10 +458,10 @@ export function AiPanel() {
   const applySql = (sql: string) => {
     setDiffOpen(false);
     if (target && applyCapturedSql(target, sql)) {
-      toast.success(t('toastTitle'), t('toastSqlApplied'));
+      toast.success(t('aiAssistantLabel'), t('toastSqlApplied'));
       return;
     }
-    toast.error(t('toastTitle'), t('toastTargetChanged'));
+    toast.error(t('aiAssistantLabel'), t('toastTargetChanged'));
   };
 
   /** requestを中断し、世代と表示中の適用先を同期的に解放する。 */
@@ -505,7 +509,7 @@ export function AiPanel() {
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <h2 className="flex items-center gap-1.5 text-2xs font-semibold tracking-[0.14em] text-ink-muted uppercase">
           <Sparkles size={13} strokeWidth={1.75} className="text-accent" />
-          {t('panelHeading')}
+          {t('aiAssistantLabel')}
         </h2>
         <div className="flex items-center gap-1">
           {config?.ai.model && (

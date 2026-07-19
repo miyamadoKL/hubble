@@ -199,7 +199,7 @@ function StepCard({
         </span>
         {stepRun?.rowCount !== null && stepRun?.rowCount !== undefined && (
           <span className="font-mono text-2xs text-ink-subtle">
-            {t('stepRowsCount', { n: formatInt(stepRun.rowCount) })}
+            {t('rowsCountUnit', { n: formatInt(stepRun.rowCount) })}
           </span>
         )}
         {stepRun?.elapsedMs !== null && stepRun?.elapsedMs !== undefined && (
@@ -429,9 +429,9 @@ function WorkflowEditor({
         stepId: typeof details?.stepId === 'string' ? details.stepId : null,
         message: details?.message ?? error.detail.message,
       });
-      toast.error(t('saveFailedToast'), details?.message ?? error.detail.message);
+      toast.error(t('saveFailedToastTitle'), details?.message ?? error.detail.message);
     } else {
-      toast.error(t('saveFailedToast'), t('couldNotReachServer'));
+      toast.error(t('saveFailedToastTitle'), t('couldNotReachServer'));
     }
   };
 
@@ -454,7 +454,7 @@ function WorkflowEditor({
       const next = draftFromWorkflow(updated);
       setDraft(next);
       setBaseline(next);
-      toast.success(t('workflowSavedToast'), t('workflowSavedDescription', { name: updated.name }));
+      toast.success(t('workflowSavedToast'), t('entitySavedBody', { name: updated.name }));
     } catch (error) {
       captureServerError(error);
     }
@@ -481,7 +481,7 @@ function WorkflowEditor({
         if (error instanceof ApiClientError && error.status === 409) {
           toast.error(t('alreadyRunningToast'), t('alreadyRunningDescription'));
         } else {
-          toast.error(t('runFailedToast'), t('couldNotStartRun'));
+          toast.error(t('runFailedTitle'), t('couldNotStartRun'));
         }
       },
     });
@@ -525,7 +525,7 @@ function WorkflowEditor({
             onClick={() => setRunsOpen(true)}
             disabled={isNew}
           >
-            {t('runsButton')}
+            {t('runsLabel')}
           </Button>
           <Button
             variant="ghost"
@@ -561,7 +561,7 @@ function WorkflowEditor({
             disabled={isNew || dirty || runInFlight || runNow.isPending}
             title={isNew || dirty ? t('saveBeforeRunningTitle') : t('runAllStagesTitle')}
           >
-            {runInFlight ? t('runningButton') : t('runButton')}
+            {runInFlight ? t('runningEllipsis') : t('runButton')}
           </Button>
         </div>
       </header>

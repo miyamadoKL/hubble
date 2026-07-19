@@ -8,8 +8,7 @@
 import { defineDictionary } from '../t';
 
 export const aiMessages = defineDictionary({
-  // パネルヘッダー。
-  panelHeading: { ja: 'AI アシスタント', en: 'AI assistant' },
+  // パネルヘッダー。見出しの機能名自体は common.aiAssistantLabel を使う。
   panelAriaLabel: { ja: 'AI アシスタントパネル', en: 'AI assistant panel' },
   closePanel: { ja: 'AI パネルを閉じる', en: 'Close AI panel' },
   resizeHandleLabel: { ja: 'AI パネルの幅を変更', en: 'Resize AI panel' },
@@ -54,11 +53,9 @@ export const aiMessages = defineDictionary({
   waitingForModel: { ja: 'モデルの応答を待っています…', en: 'Waiting for the model…' },
 
   // フッターのボタン。
-  stopButton: { ja: '停止', en: 'Stop' },
   reviewAndApplyButton: { ja: 'レビューして適用', en: 'Review & apply' },
 
-  // トースト（共通タイトル）。
-  toastTitle: { ja: 'AI アシスタント', en: 'AI assistant' },
+  // トースト（共通タイトル）。タイトル文言自体は common.aiAssistantLabel を使う。
   toastFocusSqlCell: {
     ja: '内容のある SQL セルにフォーカスしてください。',
     en: 'Focus a SQL cell with content first.',

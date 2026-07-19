@@ -35,8 +35,12 @@ import {
   setEditorHeight,
 } from '../notebook/editorHeight';
 import { useT } from '../i18n/t';
+import { commonMessages } from '../i18n/messages/common';
 import { notebookMessages } from '../i18n/messages/notebook';
 import './editor.css';
+
+/** SqlEditor 内で使う辞書の合成。共通文言（Format SQL）+ notebook 固有文言。 */
+const sqlEditorDict = { ...commonMessages, ...notebookMessages } as const;
 
 // 自動伸縮（内容連動）時の行高/最小行数/最大行数/上下パディングは editorHeight.ts の
 // 定数をそのまま使う（手動オーバーライドの下限や、syncHeight が行数だけから
@@ -95,7 +99,7 @@ export function SqlEditor({
   notebookId,
   cellId,
 }: SqlEditorProps) {
-  const t = useT(notebookMessages);
+  const t = useT(sqlEditorDict);
   // エディターをマウントする DOM ホスト要素。
   const hostRef = useRef<HTMLDivElement | null>(null);
   // 生成された Monaco エディターインスタンス本体。

@@ -116,10 +116,10 @@ export function StatsStrip({
           <StatItem label={t('statProgress')} value={`${Math.round(progress)}%`} />
         )}
         {/* 経過時間。 */}
-        <StatItem label={t('statElapsed')} value={formatDuration(stats?.elapsedTimeMillis ?? 0)} />
+        <StatItem label={t('elapsedLabel')} value={formatDuration(stats?.elapsedTimeMillis ?? 0)} />
         {/* 行数。クライアントに読み込み済みの行数(loadedRows)を優先し、なければ Trino 側の処理行数を使う。 */}
         <StatItem
-          label={t('statRows')}
+          label={t('rowsLabel')}
           value={formatInt(loadedRows ?? stats?.processedRows ?? 0)}
         />
         {/* 処理バイト数。 */}

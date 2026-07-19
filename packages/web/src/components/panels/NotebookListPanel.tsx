@@ -14,7 +14,11 @@ import { formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import { useT } from '../../i18n/t';
 import { useLocale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
 import { panelsMessages } from '../../i18n/messages/panels';
+
+/** NotebookListPanel 内で使う辞書の合成。共通文言（No notebooks）+ panels 固有文言。 */
+const notebookListDict = { ...commonMessages, ...panelsMessages } as const;
 
 /**
  * ノートブック一覧を描画するコンポーネント。
@@ -35,7 +39,7 @@ export function NotebookListPanel({
   onOpen?: (id: string) => void;
   className?: string;
 }) {
-  const t = useT(panelsMessages);
+  const t = useT(notebookListDict);
   const { locale } = useLocale();
   // 相対時刻表示（"3分前" など）の基準となる現在時刻。
   const now = new Date();

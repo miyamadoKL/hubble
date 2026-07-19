@@ -156,7 +156,7 @@ export function ChartControls({
       {config.type === 'scatter' && (
         <>
           {/* 散布図の点を色分けするグループ化列（未選択可）。 */}
-          <Field label={t('groupLabel')}>
+          <Field label={t('chartGroupLabel')}>
             <Dropdown<string>
               value={config.groupIndex == null ? '' : String(config.groupIndex)}
               options={[

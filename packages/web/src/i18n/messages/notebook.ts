@@ -16,7 +16,6 @@ export const notebookMessages = defineDictionary({
   cellNamePlaceholder: { ja: 'セル名', en: 'Cell name' },
   doubleClickToRename: { ja: 'ダブルクリックで名前を変更', en: 'Double-click to rename' },
   untitledCell: { ja: '無題のセル', en: 'Untitled cell' },
-  stopTooltip: { ja: '停止', en: 'Stop' },
   runCellTooltip: { ja: 'セルを実行', en: 'Run cell' },
   blockedByQueryGuard: { ja: 'Query Guard でブロック中', en: 'Blocked by Query Guard' },
   runBlockedByQueryGuard: { ja: 'Query Guard によりブロック中', en: 'Run blocked by Query Guard' },
@@ -31,8 +30,6 @@ export const notebookMessages = defineDictionary({
 
   // ---- StatsStrip ----
   statProgress: { ja: '進捗', en: 'progress' },
-  statElapsed: { ja: '経過時間', en: 'elapsed' },
-  statRows: { ja: '行数', en: 'rows' },
   statBytes: { ja: 'バイト数', en: 'bytes' },
   statSplits: { ja: 'スプリット', en: 'splits' },
   statPeakMem: { ja: 'ピークメモリ', en: 'peak mem' },
@@ -40,7 +37,6 @@ export const notebookMessages = defineDictionary({
   trinoUiLink: { ja: 'Trino UI', en: 'Trino UI' },
 
   // ---- EstimateStrip / SqlCell ----
-  estimateRowsUnit: { ja: '{n} 行', en: '{n} rows' },
   estimateUnavailableTooltip: {
     ja: 'このデータソースはスキャン見積もりに対応していません',
     en: 'This data source does not support scan estimates',
@@ -70,8 +66,6 @@ export const notebookMessages = defineDictionary({
 
   // ---- LastRunStrip ----
   lastRunLabel: { ja: '前回実行', en: 'Last run' },
-  lastRunRowsUnit: { ja: '{n} 行', en: '{n} rows' },
-  rerunButton: { ja: '再実行', en: 'Re-run' },
 
   // ---- ErrorPanel ----
   readOnlyRoleBadge: { ja: '読み取り専用ロール', en: 'Read-only role' },
@@ -109,7 +103,6 @@ export const notebookMessages = defineDictionary({
     ja: '行数上限に達したため結果が打ち切られました',
     en: 'result truncated at the row cap',
   },
-  loadingChart: { ja: 'チャートを読み込み中…', en: 'Loading chart…' },
   gridTab: { ja: 'グリッド', en: 'Grid' },
   chartTab: { ja: 'チャート', en: 'Chart' },
   explainTab: { ja: 'Explain', en: 'Explain' },
@@ -143,17 +136,11 @@ export const notebookMessages = defineDictionary({
   xlsxOption: { ja: 'XLSX', en: 'XLSX' },
   s3CsvOption: { ja: 'S3 (CSV, gzip)', en: 'S3 (CSV, gzip)' },
   s3XlsxOption: { ja: 'S3 (XLSX)', en: 'S3 (XLSX)' },
-  googleSheetsOption: { ja: 'Google スプレッドシート', en: 'Google Sheets' },
   partialDownloadNote: {
     ja: 'ダウンロードにはバッファ済みの行のみが含まれます（{code}: 全件ダウンロードでこのステートメントを再実行できません）。',
     en: 'Downloads include buffered rows only ({code}: full download cannot re-run this statement).',
   },
   exportedToS3Toast: { ja: 'S3 にエクスポートしました', en: 'Exported to S3' },
-  exportedToSheetsToast: {
-    ja: 'Google スプレッドシートにエクスポートしました',
-    en: 'Exported to Google Sheets',
-  },
-  exportFailedToast: { ja: 'エクスポートに失敗しました', en: 'Export failed' },
 
   // ---- ResultGrid ----
   showHideColumns: { ja: '列の表示/非表示', en: 'Show / hide columns' },
@@ -204,7 +191,6 @@ export const notebookMessages = defineDictionary({
   xAxisLabel: { ja: 'X 軸', en: 'X axis' },
   yAxisValueLabel: { ja: '値', en: 'Value' },
   yAxisLabel: { ja: 'Y 軸', en: 'Y axis' },
-  groupLabel: { ja: 'グループ', en: 'Group' },
   sizeLabel: { ja: 'サイズ', en: 'Size' },
   sortLabel: { ja: '並び替え', en: 'Sort' },
   limitLabel: { ja: '上限', en: 'Limit' },
@@ -215,6 +201,10 @@ export const notebookMessages = defineDictionary({
   xAxisColumnAria: { ja: 'X 軸の列', en: 'X axis column' },
   yAxisColumnAria: { ja: 'Y 軸の列', en: 'Y axis column' },
   scatterGroupingColumnAria: { ja: '散布図のグループ化列', en: 'Scatter grouping column' },
+  // 散布図のグループ化に使う列を選ぶフィールドのラベル。share.ts の subjectTypeGroup
+  // （共有主体としての「グループ」）とは概念が異なるため共通化しない
+  // （レビュー指摘: 表記が同一でも翻訳文脈が別）。
+  chartGroupLabel: { ja: 'グループ', en: 'Group' },
   scatterSizeColumnAria: { ja: '散布図の点サイズ列', en: 'Scatter point-size column' },
   sortOrderAria: { ja: '並び替え順', en: 'Sort order' },
   rowLimitAria: { ja: '行数の上限', en: 'Row limit' },
@@ -245,29 +235,20 @@ export const notebookMessages = defineDictionary({
     ja: 'このセルの SQL を保存済みクエリとして保存すると、あとで見つけて再利用できます。',
     en: "Save this cell's SQL as a saved query you can find and reuse later.",
   },
-  nameLabel: { ja: '名前', en: 'Name' },
   nameRequiredError: { ja: '名前は必須です。', en: 'Name is required.' },
   savedQueryNamePlaceholder: { ja: '例: 日次アクティブユーザー数', en: 'e.g. Daily active users' },
   descriptionOptionalLabel: { ja: '説明（任意）', en: 'Description (optional)' },
   savedQueryDescriptionPlaceholder: { ja: 'このクエリの用途', en: 'What this query is for' },
-  connectionLabel: { ja: '接続先', en: 'Connection' },
-  serverDefaultLabel: { ja: 'サーバーの既定', en: 'Server default' },
-  sqlPreviewLabel: { ja: 'SQL プレビュー', en: 'SQL preview' },
-  savingEllipsis: { ja: '保存中…', en: 'Saving…' },
   saveQueryCreatedToastTitle: { ja: '保存済みクエリを作成しました', en: 'Saved query created' },
   saveQueryCreatedToastBody: { ja: '「{name}」を保存しました。', en: '“{name}” was saved.' },
-  saveFailedToastTitle: { ja: '保存に失敗しました', en: 'Save failed' },
   invalidInputFallback: { ja: '入力内容が正しくありません。', en: 'Invalid input.' },
 
   // ---- SaveNotebookModal ----
-  saveNotebookDefaultTitle: { ja: 'ノートブックを保存', en: 'Save notebook' },
-  saveNotebookDefaultConfirmLabel: { ja: '保存', en: 'Save' },
   saveNotebookModalDescription: {
     ja: 'サーバーに保存するノートブックの名前を入力してください。',
     en: 'Give the notebook a name to save it to the server.',
   },
   notebookNameLabel: { ja: 'ノートブック名', en: 'Notebook name' },
-  untitledNotebook: { ja: '無題のノートブック', en: 'Untitled notebook' },
 
   // ---- MarkdownCell ----
   editMarkdownAria: { ja: 'Markdown を編集', en: 'Edit markdown' },
@@ -291,7 +272,6 @@ export const notebookMessages = defineDictionary({
   },
 
   // ---- NotebookView / NotebookHeader / ViewportCell ----
-  noNotebookOpenTitle: { ja: '開いているノートブックがありません', en: 'No notebook open' },
   noNotebookOpenDesc: {
     ja: 'ノートブックを作成すると SQL セルの作成を始められます。',
     en: 'Create a notebook to start composing SQL cells.',
@@ -323,7 +303,6 @@ export const notebookMessages = defineDictionary({
   clickToEditDescriptionTitle: { ja: 'クリックして説明を編集', en: 'Click to edit description' },
   addDescriptionPlaceholder: { ja: '説明を追加…', en: 'Add a description…' },
   readOnlyBadge: { ja: '読み取り専用', en: 'Read-only' },
-  shareButton: { ja: '共有', en: 'Share' },
   notebookDescriptionAria: { ja: 'ノートブックの説明', en: 'Notebook description' },
   notebookWidthAria: { ja: 'ノートブックの幅を調整', en: 'Resize notebook width' },
   emptyCellFallback: { ja: '空のセル', en: 'Empty cell' },
@@ -332,7 +311,6 @@ export const notebookMessages = defineDictionary({
   // ---- editor/SqlEditor.tsx, editor/registerTrinoLanguage.ts ----
   sqlEditorHeightAria: { ja: 'SQL エディターの高さを調整', en: 'Resize SQL editor height' },
   runSqlActionLabel: { ja: 'SQL を実行', en: 'Run SQL' },
-  formatSqlActionLabel: { ja: 'SQL を整形', en: 'Format SQL' },
 } as const);
 
 // QueryState の各値を辞書のキーへマッピングするテーブル。

@@ -9,7 +9,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useT, type TFn } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { layoutMessages } from '../../i18n/messages/layout';
+
+/** NotebookTabs 内で使う辞書の合成。共通文言（New notebook 等）+ layout 固有文言。 */
+const notebookTabsDict = { ...commonMessages, ...layoutMessages } as const;
 
 /** 1つのノートブックタブが表示に必要とする最小限の情報。 */
 export interface NotebookTab {
@@ -52,7 +56,7 @@ export function NotebookTabs({
   onRename: (id: string, name: string) => void;
   onNew: () => void;
 }) {
-  const t = useT(layoutMessages);
+  const t = useT(notebookTabsDict);
   return (
     <div className="flex items-stretch gap-1">
       {/* 開いているノートブックの数だけタブを描画する。 */}
@@ -104,7 +108,7 @@ function TabItem({
   onClose: () => void;
   onRename: (name: string) => void;
 }) {
-  const t = useT(layoutMessages);
+  const t = useT(notebookTabsDict);
   // インライン編集中かどうか。true の間は input を表示する。
   const [editing, setEditing] = useState(false);
   // インライン編集中の入力値（確定するまでは tab.name とは別に保持する）。
@@ -217,7 +221,7 @@ function TabItem({
  * 日本語の並列を表す中黒（U+30FB、使用禁止）とは異なる記号で、装飾的な区切りとして
  * 日英どちらでもそのまま使う。
  */
-function tabTitle(tab: NotebookTab, t: TFn<typeof layoutMessages>): string {
+function tabTitle(tab: NotebookTab, t: TFn<typeof notebookTabsDict>): string {
   const suffixes: string[] = [];
   if (tab.dirty) suffixes.push(t('tabUnsavedSuffix'));
   if (tab.conflict) suffixes.push(t('tabSaveConflictSuffix'));

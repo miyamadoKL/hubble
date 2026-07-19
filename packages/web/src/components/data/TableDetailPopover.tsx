@@ -142,7 +142,13 @@ export function TableDetailPopover({
           <Button variant="default" size="sm" icon={FilePlus2} onClick={onSelectTemplate}>
             {t('selectTemplateButton')}
           </Button>
-          <IconButton icon={X} label={t('close')} size="sm" onClick={onClose} tooltip={false} />
+          <IconButton
+            icon={X}
+            label={t('closeButton')}
+            size="sm"
+            onClick={onClose}
+            tooltip={false}
+          />
         </header>
 
         {/* テーブル自体のコメント（メタデータにコメントがある場合のみ表示）。 */}

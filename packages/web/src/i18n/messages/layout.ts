@@ -9,12 +9,8 @@ import { defineDictionary } from '../t';
 
 export const layoutMessages = defineDictionary({
   // ---- TopBar ----
-  runAllCellsTooltip: { ja: '全セルを実行', en: 'Run all cells' },
-  runButton: { ja: '実行', en: 'Run' },
-  stopButton: { ja: '停止', en: 'Stop' },
-  saveButton: { ja: '保存', en: 'Save' },
   closeAiAssistant: { ja: 'AI アシスタントを閉じる', en: 'Close AI assistant' },
-  aiAssistant: { ja: 'AI アシスタント', en: 'AI assistant' },
+  // 開くボタンの aria-label（機能名自体）は common.aiAssistantLabel を使う。
   // 元の英語文言（"Command palette  (Ctrl K)"）は 2 個の連続スペースを含む既存表記。
   // en は既存文言維持のためそのまま残す。
   commandPalette: { ja: 'コマンドパレット（Ctrl K）', en: 'Command palette  (Ctrl K)' },
@@ -26,7 +22,6 @@ export const layoutMessages = defineDictionary({
     ja: '「{name}」には未保存の変更があります。閉じると破棄されます。',
     en: '“{name}” has unsaved changes. Closing it will discard them.',
   },
-  cancelButton: { ja: 'キャンセル', en: 'Cancel' },
   discardAndClose: { ja: '破棄して閉じる', en: 'Discard & close' },
 
   // ---- Sidebar: アイコンレール（タブ切替）とパネル見出し ----
@@ -45,7 +40,6 @@ export const layoutMessages = defineDictionary({
   panelTitleData: { ja: 'データブラウザ', en: 'Data browser' },
   panelTitleSaved: { ja: '保存済みクエリ', en: 'Saved queries' },
   filterTables: { ja: 'テーブルを絞り込み…', en: 'Filter tables…' },
-  searchNotebooks: { ja: 'ノートブックを検索…', en: 'Search notebooks…' },
   searchSavedQueries: { ja: '保存済みクエリを検索…', en: 'Search saved queries…' },
   searchHistory: { ja: '履歴を検索…', en: 'Search history…' },
   searchSchedules: { ja: 'スケジュールを検索…', en: 'Search schedules…' },
@@ -71,7 +65,6 @@ export const layoutMessages = defineDictionary({
 
   // ---- UserChip ----
   currentIdentity: { ja: '現在のアイデンティティ', en: 'Current identity' },
-  roleLabel: { ja: 'ロール', en: 'Role' },
   permissionsLabel: { ja: '権限', en: 'Permissions' },
   noPermissions: { ja: '権限がありません', en: 'No permissions' },
   datasourcesLabel: { ja: 'データソース', en: 'Datasources' },
@@ -84,10 +77,8 @@ export const layoutMessages = defineDictionary({
   },
   disconnectButton: { ja: '連携解除', en: 'Disconnect' },
   disconnectFailedTitle: { ja: '連携解除に失敗しました', en: 'Disconnect failed' },
-  connectGithubButton: { ja: 'GitHub と連携', en: 'Connect GitHub' },
 
   // ---- NotebookTabs ----
-  newNotebook: { ja: '新規ノートブック', en: 'New notebook' },
   unsavedChanges: { ja: '未保存の変更', en: 'Unsaved changes' },
   browserRecoveryUnavailable: {
     ja: 'ブラウザー復旧利用不可',
@@ -117,30 +108,22 @@ export const layoutMessages = defineDictionary({
   dataSourceSelectorAria: { ja: 'データソース', en: 'Data source' },
 
   // ---- AppShell / App.tsx ----
-  saveNotebookTitle: { ja: 'ノートブックを保存', en: 'Save notebook' },
   saveNotebookAsTitle: { ja: '名前を付けて保存', en: 'Save notebook as' },
-  saveConfirmLabel: { ja: '保存', en: 'Save' },
   saveAsConfirmLabel: { ja: 'コピーを保存', en: 'Save a copy' },
   savedToastTitle: { ja: '保存しました', en: 'Saved' },
-  savedToastBody: { ja: '「{name}」を保存しました。', en: '“{name}” saved.' },
-  saveFailedToastTitle: { ja: '保存に失敗しました', en: 'Save failed' },
-  untitledNotebook: { ja: '無題のノートブック', en: 'Untitled notebook' },
   loadingWorkspace: { ja: 'ワークスペースを読み込み中…', en: 'Loading workspace…' },
 
   // ---- Logo ----
   workbenchLabel: { ja: 'ワークベンチ', en: 'Workbench' },
 
   // ---- ShortcutsHelp ----
-  keyboardShortcutsTitle: { ja: 'キーボードショートカット', en: 'Keyboard shortcuts' },
   macShortcutNote: {
     ja: 'macOS では、⌘ が Ctrl の代わりになります。実行、整形、保存はエディタ内からも使用できます。',
     en: 'On macOS, ⌘ stands in for Ctrl. Run, format and save also work from inside the editor.',
   },
   shortcutRunActiveCell: { ja: 'アクティブなセルを実行', en: 'Run the active cell' },
   shortcutSaveDocument: { ja: '現在のドキュメントを保存', en: 'Save current document' },
-  shortcutFormatSql: { ja: 'SQL を整形', en: 'Format SQL' },
   shortcutFormatSqlAlt: { ja: 'SQL を整形（別ショートカット）', en: 'Format SQL (alternate)' },
-  shortcutCommandPalette: { ja: 'コマンドパレット', en: 'Command palette' },
   shortcutToggleTheme: { ja: 'ライト/ダークテーマを切り替え', en: 'Toggle light / dark theme' },
   shortcutTogglePresentation: {
     ja: 'プレゼンテーションモードを切り替え',
@@ -150,7 +133,4 @@ export const layoutMessages = defineDictionary({
   // ---- SearchInput ----
   searchPlaceholderDefault: { ja: '検索…', en: 'Search…' },
   clearSearchAria: { ja: '検索をクリア', en: 'Clear search' },
-
-  // ---- Modal（共通ボタン） ----
-  modalCloseButton: { ja: '閉じる', en: 'Close' },
 } as const);

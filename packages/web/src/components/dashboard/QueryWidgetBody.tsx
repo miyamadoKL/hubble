@@ -13,7 +13,11 @@ import { Spinner } from '../common/Spinner';
 import { describeColumns, reconcileConfig, toLabel, toNumber } from '../../chart';
 import type { ResultRow } from '../../execution';
 import { useT, type TFn } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { dashboardMessages } from '../../i18n/messages/dashboard';
+
+/** QueryWidgetBody 内で使う辞書の合成。共通文言（Running…/Loading chart…）+ widget 固有文言。 */
+const queryWidgetDict = { ...commonMessages, ...dashboardMessages } as const;
 
 /**
  * widgetQueryCoordinator (business logic 層) が投げる代表的なエラーメッセージの
@@ -35,7 +39,7 @@ const KNOWN_ERROR_KEYS: Record<string, NoParamErrorKey> = {
 };
 
 /** 既知のエラーメッセージであれば翻訳し、未知であればそのまま返す。 */
-function translateWidgetError(t: TFn<typeof dashboardMessages>, message: string): string {
+function translateWidgetError(t: TFn<typeof queryWidgetDict>, message: string): string {
   const key = KNOWN_ERROR_KEYS[message];
   return key ? t(key) : message;
 }
@@ -59,7 +63,7 @@ function WidgetError({ message }: { message: string }) {
 
 /** 単純なテーブル表示 (ノートブックの ResultGrid は実行ストア結合のため使わない)。 */
 function WidgetTable({ columns, rows }: { columns: QueryColumn[]; rows: ResultRow[] }) {
-  const t = useT(dashboardMessages);
+  const t = useT(queryWidgetDict);
   const view = rows.slice(0, TABLE_MAX_ROWS);
   return (
     <div className="h-full overflow-auto">
@@ -110,7 +114,7 @@ function WidgetCounter({
   columns: QueryColumn[];
   rows: ResultRow[];
 }) {
-  const t = useT(dashboardMessages);
+  const t = useT(queryWidgetDict);
   const idx = widget.counter?.columnIndex ?? 0;
   const column = columns[idx];
   if (!column) {
@@ -152,7 +156,7 @@ export function QueryWidgetBody({
   columns: QueryColumn[];
   rows: ResultRow[];
 }) {
-  const t = useT(dashboardMessages);
+  const t = useT(queryWidgetDict);
   // チャート表示用に、保存済みの chart 設定を現在の列構成へ補正する。
   const cols = useMemo(() => describeColumns(columns), [columns]);
   const chartConfig = useMemo(
@@ -163,7 +167,7 @@ export function QueryWidgetBody({
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center gap-2 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> {t('runningStatus')}
+        <Spinner size={14} /> {t('runningEllipsis')}
       </div>
     );
   }
@@ -173,7 +177,7 @@ export function QueryWidgetBody({
   if (rows.length === 0) {
     return (
       <div className="flex h-full items-center justify-center font-mono text-2xs text-ink-subtle">
-        {t('noRows')}
+        {t('noResultRows')}
       </div>
     );
   }

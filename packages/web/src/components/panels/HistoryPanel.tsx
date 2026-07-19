@@ -122,7 +122,7 @@ function HistoryRow({
                 {entry.catalog ?? unknown}.{entry.schema ?? unknown}
               </span>
             )}
-            {entry.state === 'finished' && <span>{t('rowsCount', { n: entry.rowCount })}</span>}
+            {entry.state === 'finished' && <span>{t('rowsCountUnit', { n: entry.rowCount })}</span>}
             <span>{formatDuration(entry.elapsedMs)}</span>
           </div>
           {/* 折りたたみ中のみ、エラーメッセージの先頭部分をプレビュー表示する */}
@@ -149,7 +149,7 @@ function HistoryRow({
           <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-2xs text-ink-subtle">
             {entry.trinoQueryId && (
               <div className="col-span-2 flex gap-2">
-                <dt className="text-ink-subtle">{t('queryIdLabel')}</dt>
+                <dt className="text-ink-subtle">{t('queryFragmentLabel')}</dt>
                 <dd className="truncate text-ink-muted">{entry.trinoQueryId}</dd>
               </div>
             )}
@@ -179,13 +179,13 @@ function HistoryRow({
               size="sm"
               icon={FilePlus2}
               onClick={() => {
-                if (addSqlCellWithSource(entry.statement)) toast.success(t('newSqlCellToast'));
+                if (addSqlCellWithSource(entry.statement)) toast.success(t('newSqlCellToastTitle'));
               }}
             >
               {t('newCellButton')}
             </Button>
             <Button variant="ghost" size="sm" icon={Play} onClick={() => onRerun(entry)}>
-              {t('reRun')}
+              {t('rerunButton')}
             </Button>
             {entry.resultAvailable && (
               <Button variant="ghost" size="sm" icon={Table2} onClick={() => onOpenResult(entry)}>

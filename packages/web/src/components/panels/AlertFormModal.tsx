@@ -162,7 +162,7 @@ function AlertFormModalBody({
             {t('cancel')}
           </Button>
           <Button variant="primary" disabled={!canSave} onClick={submit}>
-            {submitting ? t('saving') : t('save')}
+            {submitting ? t('savingButton') : t('saveButton')}
           </Button>
         </>
       }

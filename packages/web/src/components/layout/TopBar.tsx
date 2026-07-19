@@ -35,7 +35,11 @@ import { useMe } from '../../hooks/useMe';
 import { hasPermission } from '../../permissions';
 import type { ExecutionContext } from '../../stores/datasourceStore';
 import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { layoutMessages } from '../../i18n/messages/layout';
+
+/** TopBar 内で使う辞書の合成。共通文言（Stop/Run/Save 等）+ layout 固有文言。 */
+const topBarDict = { ...commonMessages, ...layoutMessages } as const;
 
 /**
  * TopBar 本体コンポーネント。
@@ -59,7 +63,7 @@ export function TopBar({
   onContextChange: (next: { catalog: string; schema: string }) => void;
   defaultLimit: number;
 }) {
-  const t = useT(layoutMessages);
+  const t = useT(topBarDict);
   // テーマ（ライト/ダーク）とコマンドパレットの開閉、保存ダイアログのリクエストは
   // すべて uiStore（グローバル UI 状態）から取得する。
   const theme = useUiStore((s) => s.theme);
@@ -185,7 +189,7 @@ export function TopBar({
           {aiAvailable && (
             <IconButton
               icon={Sparkles}
-              label={aiPanelOpen ? t('closeAiAssistant') : t('aiAssistant')}
+              label={aiPanelOpen ? t('closeAiAssistant') : t('aiAssistantLabel')}
               active={aiPanelOpen}
               onClick={toggleAiPanel}
             />
@@ -222,7 +226,7 @@ export function TopBar({
         footer={
           <>
             <Button variant="ghost" onClick={() => setClosing(null)}>
-              {t('cancelButton')}
+              {t('cancel')}
             </Button>
             <Button
               variant="danger"
