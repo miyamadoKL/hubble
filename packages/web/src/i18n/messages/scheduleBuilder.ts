@@ -18,7 +18,7 @@ export const scheduleBuilderMessages = defineDictionary({
   modeDaily: { ja: '毎日', en: 'Daily' },
   modeWeekly: { ja: '毎週', en: 'Weekly' },
   modeMonthly: { ja: '毎月', en: 'Monthly' },
-  modeCustom: { ja: 'カスタム (cron)', en: 'Custom (cron)' },
+  modeCustom: { ja: 'カスタム（cron）', en: 'Custom (cron)' },
 
   // 各モードの入力欄ラベル。
   minuteHourlyLabel: {

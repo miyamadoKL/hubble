@@ -8,12 +8,8 @@ import { defineDictionary } from '../t';
 
 export const paletteMessages = defineDictionary({
   // ---- コマンド一覧 ----
-  runAllCells: { ja: '全セルを実行', en: 'Run all cells' },
-  saveNotebook: { ja: 'ノートブックを保存', en: 'Save notebook' },
   saveNotebookAs: { ja: 'ノートブックに名前を付けて保存…', en: 'Save notebook as…' },
-  newNotebook: { ja: '新規ノートブック', en: 'New notebook' },
   openNotebookCommand: { ja: 'ノートブックを開く…', en: 'Open notebook…' },
-  newSqlCellCommand: { ja: '新規 SQL セル', en: 'New SQL cell' },
   newMarkdownCellCommand: { ja: '新規 Markdown セル', en: 'New Markdown cell' },
   gotoDataBrowser: { ja: 'データブラウザへ移動', en: 'Go to Data browser' },
   gotoSavedQueries: { ja: '保存済みクエリへ移動', en: 'Go to Saved queries' },
@@ -23,7 +19,6 @@ export const paletteMessages = defineDictionary({
   switchToDarkTheme: { ja: 'ダークテーマに切り替え', en: 'Switch to dark theme' },
   exitPresentationMode: { ja: 'プレゼンテーションモードを終了', en: 'Exit presentation mode' },
   enterPresentationMode: { ja: 'プレゼンテーションモードを開始', en: 'Enter presentation mode' },
-  keyboardShortcuts: { ja: 'キーボードショートカット', en: 'Keyboard shortcuts' },
 
   // ---- グループ見出し ----
   groupQuery: { ja: 'クエリ', en: 'Query' },
@@ -33,7 +28,6 @@ export const paletteMessages = defineDictionary({
   groupHelp: { ja: 'ヘルプ', en: 'Help' },
 
   // ---- トースト ----
-  noNotebookOpenTitle: { ja: '開いているノートブックがありません', en: 'No notebook open' },
   createNotebookFirstBody: {
     ja: '先にノートブックを作成してください。',
     en: 'Create a notebook first.',
@@ -46,12 +40,8 @@ export const paletteMessages = defineDictionary({
 
   // ---- パレットのUI要素 ----
   closeCommandPaletteAria: { ja: 'コマンドパレットを閉じる', en: 'Close command palette' },
-  commandPaletteAria: { ja: 'コマンドパレット', en: 'Command palette' },
   openBadge: { ja: '開く', en: 'Open' },
-  searchNotebooksPlaceholder: { ja: 'ノートブックを検索…', en: 'Search notebooks…' },
   typeCommandPlaceholder: { ja: 'コマンドを入力…', en: 'Type a command…' },
   noMatchingCommands: { ja: '一致するコマンドがありません', en: 'No matching commands' },
   couldntLoadNotebooks: { ja: 'ノートブックを読み込めませんでした', en: "Couldn't load notebooks" },
-  // panels.ts の NotebookListPanel と同じ文言（共通化候補、最終報告を参照）。
-  noNotebooksInList: { ja: 'ノートブックがありません', en: 'No notebooks' },
 } as const);

@@ -123,7 +123,7 @@ function StepEditorBody({
         {/* input は <label> でラップ済みのため、可視の span ラベルと重複する aria-label は
             持たせず label の implicit association に委ねる。 */}
         <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>{t('nameFieldLabel')}</span>
+          <span className={FIELD_LABEL}>{t('nameLabel')}</span>
           <input
             autoFocus
             value={draft.name}

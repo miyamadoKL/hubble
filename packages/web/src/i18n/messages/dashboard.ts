@@ -14,10 +14,8 @@ export const dashboardMessages = defineDictionary({
   addButtonLabel: { ja: '追加', en: 'Add' },
 
   // --- AddWidgetModal ---
-  typeLabel: { ja: '種別', en: 'Type' },
   queryKindLabel: { ja: 'クエリ', en: 'Query' },
   textKindLabel: { ja: 'テキスト', en: 'Text' },
-  savedQueryLabel: { ja: '保存済みクエリ', en: 'Saved query' },
   selectSavedQueryPlaceholder: {
     ja: '保存済みクエリを選択…',
     en: 'Select a saved query…',
@@ -50,9 +48,6 @@ export const dashboardMessages = defineDictionary({
   backButton: { ja: '戻る', en: 'Back' },
   dashboardNameAria: { ja: 'ダッシュボード名', en: 'Dashboard name' },
   untitledDashboard: { ja: '無題のダッシュボード', en: 'Untitled dashboard' },
-  savingButton: { ja: '保存中…', en: 'Saving…' },
-  saveButton: { ja: '保存', en: 'Save' },
-  shareButton: { ja: '共有', en: 'Share' },
   deleteDashboardAria: { ja: 'ダッシュボードを削除', en: 'Delete dashboard' },
 
   // --- DashboardView: グリッド本体の空状態 ---
@@ -103,8 +98,9 @@ export const dashboardMessages = defineDictionary({
   widgetCountOther: { ja: '{n} 件のウィジェット', en: '{n} widgets' },
 
   // --- QueryWidgetBody ---
-  runningStatus: { ja: '実行中…', en: 'Running…' },
-  noRows: { ja: '結果行がありません', en: 'No rows' },
+  // common.noRows（"行がありません。"/"No rows."）と文言が異なるため、spread 合成時に
+  // 暗黙で上書きしないよう別名にする（レビュー指摘: 同名キーの暗黙衝突）。
+  noResultRows: { ja: '結果行がありません', en: 'No rows' },
   columnIndexNotFound: {
     ja: '結果に列番号 {idx} が見つかりません',
     en: 'Column index {idx} not found in the result',
@@ -113,7 +109,6 @@ export const dashboardMessages = defineDictionary({
     ja: '描画できるデータがありません: 結果に数値列がありません',
     en: 'Nothing to plot: the result has no numeric column',
   },
-  loadingChart: { ja: 'チャートを読み込み中…', en: 'Loading chart…' },
   showingFirstRows: {
     ja: '全 {total} 行中、先頭 {max} 行を表示中',
     en: 'Showing first {max} of {total} rows',

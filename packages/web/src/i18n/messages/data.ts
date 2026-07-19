@@ -38,11 +38,9 @@ export const dataMessages = defineDictionary({
   // ---- TableDetailPopover ------------------------------------------------------
   tableDetailsDialogLabel: { ja: '{name} の詳細', en: '{name} details' },
   closeDetailsLabel: { ja: '詳細を閉じる', en: 'Close details' },
-  close: { ja: '閉じる', en: 'Close' },
   viewBadge: { ja: 'ビュー', en: 'view' },
   tableBadge: { ja: 'テーブル', en: 'table' },
   selectTemplateButton: { ja: 'SELECT テンプレート', en: 'SELECT template' },
-  newSqlCellToastTitle: { ja: '新規 SQL セル', en: 'New SQL cell' },
   newSqlCellToastDescription: {
     ja: '{name} 用の SELECT テンプレートを追加しました。',
     en: 'SELECT template for {name} added.',
@@ -59,5 +57,4 @@ export const dataMessages = defineDictionary({
     ja: 'サンプル行の読み込みに失敗しました。',
     en: 'Failed to load sample rows.',
   },
-  noRows: { ja: '行がありません。', en: 'No rows.' },
 } as const);

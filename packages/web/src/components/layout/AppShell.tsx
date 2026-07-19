@@ -207,7 +207,7 @@ export function AppShell() {
       };
       useNotebookStore.getState().openNotebook(clone, { draft: true, activate: true });
       const saved = await persistNewNotebook(clone.id, name);
-      if (saved) toast.success(t('savedToastTitle'), t('savedToastBody', { name: saved.name }));
+      if (saved) toast.success(t('savedToastTitle'), t('entitySavedBody', { name: saved.name }));
       else toast.error(t('saveFailedToastTitle'), t('couldNotReachServer'));
       return;
     }
@@ -218,7 +218,7 @@ export function AppShell() {
       ? await persistNewNotebook(activeId, name)
       : (useNotebookStore.getState().renameNotebook(activeId, name),
         await persistSavedNotebook(activeId));
-    if (saved) toast.success(t('savedToastTitle'), t('savedToastBody', { name: saved.name }));
+    if (saved) toast.success(t('savedToastTitle'), t('entitySavedBody', { name: saved.name }));
     else toast.error(t('saveFailedToastTitle'), t('couldNotReachServer'));
   };
 
@@ -286,9 +286,7 @@ export function AppShell() {
         targetId={activeId}
         initialName={activeEntry?.notebook.name ?? t('untitledNotebook')}
         title={saveRequest?.mode === 'saveAs' ? t('saveNotebookAsTitle') : t('saveNotebookTitle')}
-        confirmLabel={
-          saveRequest?.mode === 'saveAs' ? t('saveAsConfirmLabel') : t('saveConfirmLabel')
-        }
+        confirmLabel={saveRequest?.mode === 'saveAs' ? t('saveAsConfirmLabel') : t('saveButton')}
         onClose={closeSaveModal}
         onConfirm={(name) => void onSaveConfirm(name)}
       />

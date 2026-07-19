@@ -43,10 +43,14 @@ import { getNotebook } from '../../api/notebooks';
 import { useNotebookStore } from '../../notebook';
 import { cn } from '../../utils/cn';
 import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { layoutMessages } from '../../i18n/messages/layout';
 
+/** Sidebar 内で使う辞書の合成。共通文言（ノートブック検索プレースホルダー）+ layout 固有文言。 */
+const sidebarDict = { ...commonMessages, ...layoutMessages } as const;
+
 // アイコンレール/パネル見出し/検索プレースホルダーで使う辞書キーの型。
-// `keyof typeof layoutMessages`（辞書全体のキー）のままだと、`{name}` 等の
+// `keyof typeof sidebarDict`（辞書全体のキー）のままだと、`{name}` 等の
 // プレースホルダーを持つ他エントリの型が union に混ざり、`t()` の引数要求が
 // 不定になって typecheck が通らないため、プレースホルダーを持たない
 // これらのキーだけのリテラル union に絞る。
@@ -63,7 +67,7 @@ type SidebarLabelKey =
   | 'panelTitleData'
   | 'panelTitleSaved'
   | 'filterTables'
-  | 'searchNotebooks'
+  | 'searchNotebooksPlaceholder'
   | 'searchSavedQueries'
   | 'searchHistory'
   | 'searchSchedules'
@@ -109,7 +113,7 @@ const PANEL_TITLE_KEY: Record<SidebarTab, SidebarLabelKey> = {
 // 各タブの検索欄に表示するプレースホルダー文言の辞書キー。
 const PANEL_PLACEHOLDER_KEY: Record<SidebarTab, SidebarLabelKey> = {
   data: 'filterTables',
-  notebooks: 'searchNotebooks',
+  notebooks: 'searchNotebooksPlaceholder',
   saved: 'searchSavedQueries',
   history: 'searchHistory',
   schedules: 'searchSchedules',
@@ -142,7 +146,7 @@ export function Sidebar({
   datasourceId?: string;
   flattenCatalog?: boolean;
 }) {
-  const t = useT(layoutMessages);
+  const t = useT(sidebarDict);
   const { data: me } = useMe();
   const canViewOperations = hasPermission(me, 'queries.viewAll');
   const tab = useUiStore((s) => s.sidebarTab);

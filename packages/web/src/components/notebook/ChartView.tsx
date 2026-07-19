@@ -17,7 +17,7 @@ import type { ResultRow } from '../../execution';
 import { useUiStore } from '../../stores/uiStore';
 import { Spinner } from '../common/Spinner';
 import { useT } from '../../i18n/t';
-import { notebookMessages } from '../../i18n/messages/notebook';
+import { commonMessages } from '../../i18n/messages/common';
 
 /**
  * The ECharts canvas for a result chart. ECharts is loaded lazily
@@ -51,7 +51,7 @@ export function ChartView({
   height?: number;
   fill?: boolean;
 }) {
-  const t = useT(notebookMessages);
+  const t = useT(commonMessages);
   // ECharts のキャンバスをマウントする DOM 要素への参照。
   const hostRef = useRef<HTMLDivElement | null>(null);
   // 初期化済みの ECharts インスタンスへの参照（アンマウント時に dispose するために保持）。

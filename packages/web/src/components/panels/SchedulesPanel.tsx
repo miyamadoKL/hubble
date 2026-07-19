@@ -57,7 +57,7 @@ const scheduleDict = { ...commonMessages, ...scheduleMessages } as const;
  * @param t 呼び出し元コンポーネントの useT で得た翻訳関数（scheduleDict に束縛済み）。
  */
 function nextRunLabel(schedule: Schedule, now: Date, t: TFn<typeof scheduleDict>): string {
-  if (!schedule.enabled) return t('disabled');
+  if (!schedule.enabled) return t('disabledLabel');
   if (!schedule.nextRunAt) return t('unknown');
   const then = new Date(schedule.nextRunAt).getTime();
   const diffMs = then - now.getTime();
@@ -119,7 +119,7 @@ function ScheduleRow({
           type="button"
           role="switch"
           aria-checked={schedule.enabled}
-          aria-label={schedule.enabled ? t('disableSchedule') : t('enableSchedule')}
+          aria-label={schedule.enabled ? t('disableScheduleAria') : t('enableScheduleAria')}
           onClick={onToggleEnabled}
           className={cn(
             'mt-0.5 flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors',
@@ -153,11 +153,11 @@ function ScheduleRow({
         {schedule.lastRun ? (
           <ScheduleStatusBadge status={schedule.lastRun.status} />
         ) : (
-          <span className="font-mono text-2xs text-ink-subtle">{t('neverRun')}</span>
+          <span className="font-mono text-2xs text-ink-subtle">{t('neverRunLabel')}</span>
         )}
         <DatasourceBadge datasourceId={savedQuery?.datasourceId} datasources={datasources} />
         <span className="font-mono text-2xs text-ink-subtle">
-          {t('nextRunPrefix', { label: nextRunLabel(schedule, now, t) })}
+          {t('nextPrefix', { label: nextRunLabel(schedule, now, t) })}
         </span>
       </div>
 
@@ -169,10 +169,10 @@ function ScheduleRow({
       <div className="mt-2 flex flex-wrap items-center gap-1 pl-9 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         {/* 今すぐ実行。実行中は disabled にしてラベルを "Running…" に切り替える。 */}
         <Button variant="default" size="sm" icon={Play} onClick={onRun} disabled={running}>
-          {running ? t('running') : t('runNow')}
+          {running ? t('runningEllipsis') : t('runNow')}
         </Button>
         <Button variant="ghost" size="sm" icon={HistoryIcon} onClick={onOpenRuns}>
-          {t('runs')}
+          {t('runsLabel')}
         </Button>
         <Button variant="ghost" size="sm" icon={Pencil} onClick={onEdit}>
           {t('edit')}
@@ -281,14 +281,14 @@ export function SchedulesPanel({ search }: { search: string }) {
     setRunningId(schedule.id);
     runNow.mutate(schedule.id, {
       onSuccess: () => {
-        toast.info(t('runStartedTitle'), t('runStartedBody', { name: schedule.name }));
+        toast.info(t('runStartedToast'), t('runStartedBody', { name: schedule.name }));
         setRunsFor(schedule);
       },
       onError: (error) => {
         if (error instanceof ApiClientError && error.status === 409) {
           toast.error(t('alreadyRunningTitle'), t('alreadyRunningBody'));
         } else {
-          toast.error(t('runFailedTitle'), t('runFailedBody'));
+          toast.error(t('runFailedTitle'), t('couldNotStartRun'));
         }
       },
       onSettled: () => setRunningId(null),
@@ -393,7 +393,7 @@ export function SchedulesPanel({ search }: { search: string }) {
             onSuccess: (created) => {
               toast.success(
                 t('scheduleCreatedTitle'),
-                t('scheduleCreatedBody', { name: created.name }),
+                t('entityReadyBody', { name: created.name }),
               );
               closeForm();
             },
@@ -409,7 +409,7 @@ export function SchedulesPanel({ search }: { search: string }) {
               onSuccess: (updated) => {
                 toast.success(
                   t('scheduleUpdatedTitle'),
-                  t('scheduleUpdatedBody', { name: updated.name }),
+                  t('entitySavedBody', { name: updated.name }),
                 );
                 closeForm();
               },

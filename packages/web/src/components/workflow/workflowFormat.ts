@@ -100,7 +100,7 @@ export function stepStatusTone(status: WorkflowStepRunStatus): WorkflowTone {
  */
 export function nextRunLabel(workflow: Workflow, now: Date, locale: Locale = 'en'): string {
   if (!workflow.cron) return t(workflowMessages, 'manualOnly', locale);
-  if (!workflow.enabled) return t(workflowMessages, 'scheduleDisabledLabel', locale);
+  if (!workflow.enabled) return t(commonMessages, 'disabledLabel', locale);
   if (!workflow.nextRunAt) return t(commonMessages, 'unknown', locale);
   const diffMs = new Date(workflow.nextRunAt).getTime() - now.getTime();
   if (Number.isNaN(diffMs)) return t(commonMessages, 'unknown', locale);

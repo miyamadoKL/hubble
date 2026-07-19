@@ -88,7 +88,7 @@ function WorkflowRow({
           {workflow.lastRun ? (
             <WorkflowStatusBadge status={workflow.lastRun.status} />
           ) : (
-            <span className="font-mono text-2xs text-ink-subtle">{t('neverRun')}</span>
+            <span className="font-mono text-2xs text-ink-subtle">{t('neverRunLabel')}</span>
           )}
           <DatasourceBadge datasourceId={workflow.datasourceId} datasources={datasources} />
           <span className="font-mono text-2xs text-ink-subtle">
@@ -97,7 +97,7 @@ function WorkflowRow({
           {/* cron 設定があれば次回予定、なければ手動のみであることを表示する。 */}
           <span className="font-mono text-2xs text-ink-subtle">
             {workflow.cron
-              ? t('nextRunPrefix', { label: nextRunLabel(workflow, now, locale) })
+              ? t('nextPrefix', { label: nextRunLabel(workflow, now, locale) })
               : t('manualOnly')}
           </span>
         </span>

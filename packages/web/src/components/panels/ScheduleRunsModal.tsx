@@ -39,7 +39,7 @@ const scheduleRunDict = { ...commonMessages, ...scheduleRunMessages } as const;
  */
 function RunRow({ run, now }: { run: ScheduleRun; now: Date }) {
   const { locale } = useLocale();
-  const t = useT(scheduleRunMessages);
+  const t = useT(scheduleRunDict);
   // 失敗かつ 2 回以上試行していた場合のみ「リトライ済み」として扱う。
   const retried = run.status === 'failed' && run.attempt > 1;
   return (
@@ -63,7 +63,7 @@ function RunRow({ run, now }: { run: ScheduleRun; now: Date }) {
       {/* 行数、所要時間、試行回数、trinoQueryId のメタデータ一覧 */}
       <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-2xs text-ink-subtle sm:grid-cols-4">
         <div className="flex gap-1.5">
-          <dt>{t('rowsItem')}</dt>
+          <dt>{t('rowsLabel')}</dt>
           <dd className="text-ink-muted">{run.rowCount != null ? formatInt(run.rowCount) : '—'}</dd>
         </div>
         <div className="flex gap-1.5">
@@ -78,7 +78,7 @@ function RunRow({ run, now }: { run: ScheduleRun; now: Date }) {
         </div>
         {run.trinoQueryId && (
           <div className="col-span-2 flex min-w-0 gap-1.5 sm:col-span-1">
-            <dt>{t('queryItem')}</dt>
+            <dt>{t('queryFragmentLabel')}</dt>
             <dd className="truncate text-ink-muted">{run.trinoQueryId}</dd>
           </div>
         )}
@@ -127,7 +127,7 @@ export function ScheduleRunsModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={schedule ? t('runsTitleFor', { name: schedule.name }) : t('runsTitle')}
+      title={schedule ? t('runsTitleFor', { name: schedule.name }) : t('runsLabel')}
       description={t('runsDescription')}
       className="max-w-2xl"
     >

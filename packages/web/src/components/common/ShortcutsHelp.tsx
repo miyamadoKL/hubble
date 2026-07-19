@@ -7,19 +7,23 @@ import { Modal } from './Modal';
 import { Kbd } from './Kbd';
 import { SHORTCUTS, type ShortcutId } from '../../hooks/shortcuts';
 import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { layoutMessages } from '../../i18n/messages/layout';
 
+/** ShortcutsHelp 内で使う辞書の合成。共通文言（Keyboard shortcuts/Format SQL 等）+ layout 固有文言。 */
+const shortcutsHelpDict = { ...commonMessages, ...layoutMessages } as const;
+
 // ShortcutsHelp が実際に使う辞書キーだけのリテラル union。`keyof typeof
-// layoutMessages`（辞書全体のキー）のままだと、`{name}` 等のプレースホルダーを
+// shortcutsHelpDict`（辞書全体のキー）のままだと、`{name}` 等のプレースホルダーを
 // 持つ他エントリの型が union に混ざり、`t()` の引数要求が不定になって
 // typecheck が通らないため、プレースホルダーを持たないこれらのキーだけに絞る
 // （Sidebar.tsx の SidebarLabelKey と同じ理由）。
 type ShortcutLabelKey =
   | 'shortcutRunActiveCell'
   | 'shortcutSaveDocument'
-  | 'shortcutFormatSql'
+  | 'formatSqlActionLabel'
   | 'shortcutFormatSqlAlt'
-  | 'shortcutCommandPalette'
+  | 'commandPaletteLabel'
   | 'shortcutToggleTheme'
   | 'shortcutTogglePresentation';
 
@@ -32,9 +36,9 @@ type ShortcutLabelKey =
 const SHORTCUT_LABEL_KEYS: Record<ShortcutId, ShortcutLabelKey> = {
   run: 'shortcutRunActiveCell',
   save: 'shortcutSaveDocument',
-  formatPrimary: 'shortcutFormatSql',
+  formatPrimary: 'formatSqlActionLabel',
   formatAlternate: 'shortcutFormatSqlAlt',
-  palette: 'shortcutCommandPalette',
+  palette: 'commandPaletteLabel',
   theme: 'shortcutToggleTheme',
   presentation: 'shortcutTogglePresentation',
 };
@@ -50,7 +54,7 @@ const SHORTCUT_LABEL_KEYS: Record<ShortcutId, ShortcutLabelKey> = {
  * @param onClose - モーダルを閉じる際に呼び出されるコールバック。
  */
 export function ShortcutsHelp({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const t = useT(layoutMessages);
+  const t = useT(shortcutsHelpDict);
   return (
     <Modal open={open} onClose={onClose} title={t('keyboardShortcutsTitle')} className="max-w-md">
       {/* SHORTCUTS レジストリの内容をそのまま一覧化し、各行にラベルとキー表示 (Kbd) を並べる */}

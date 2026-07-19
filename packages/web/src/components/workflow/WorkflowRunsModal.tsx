@@ -67,7 +67,7 @@ export function WorkflowRunsModal({
       ) : runs.isError ? (
         <EmptyState
           icon={HistoryIcon}
-          title={t('couldntLoadRunsTitle')}
+          title={t('couldntLoadRuns')}
           description={t('serverDidntRespond')}
           compact
         />

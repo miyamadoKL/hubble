@@ -222,7 +222,7 @@ function ScheduleFormModalBody({
           {savedQueries.length > 0 ? (
             <select
               className={TEXT_INPUT}
-              aria-label={t('savedQueryOption')}
+              aria-label={t('savedQueryLabel')}
               value={savedQueryId}
               onChange={(e) => setSavedQueryId(e.target.value)}
             >

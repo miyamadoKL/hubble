@@ -183,7 +183,7 @@ function SaveQueryModalBody({
             {t('cancel')}
           </Button>
           <Button variant="primary" onClick={submit} disabled={!canSave}>
-            {mutation.isPending ? t('savingEllipsis') : t('saveQueryModalTitle')}
+            {mutation.isPending ? t('savingButton') : t('saveQueryModalTitle')}
           </Button>
         </>
       }

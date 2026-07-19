@@ -22,7 +22,11 @@ import { Kbd } from '../common/Kbd';
 import { Tooltip } from '../common/Tooltip';
 import { cn } from '../../utils/cn';
 import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { notebookMessages } from '../../i18n/messages/notebook';
+
+/** CellToolbar 内で使う辞書の合成。共通文言（Stop 等）+ notebook 固有文言。 */
+const cellToolbarDict = { ...commonMessages, ...notebookMessages } as const;
 
 /**
  * Cell toolbar: collapse / kind badge / editable name, plus run /
@@ -121,7 +125,7 @@ export function CellToolbar({
   onSaveQuery,
   saveQueryDisabled = false,
 }: CellToolbarProps) {
-  const t = useT(notebookMessages);
+  const t = useT(cellToolbarDict);
   return (
     <div
       data-testid="cell-toolbar"
@@ -171,7 +175,7 @@ export function CellToolbar({
             label={
               running ? (
                 <span className="flex items-center gap-1.5">
-                  {t('stopTooltip')} <Kbd keys={['Ctrl', '↵']} />
+                  {t('stopButton')} <Kbd keys={['Ctrl', '↵']} />
                 </span>
               ) : runDisabled ? (
                 // Query Guard block: explain why the run is unavailable.
@@ -190,7 +194,7 @@ export function CellToolbar({
               // 実行中: 停止ボタン（危険色）を表示。
               <IconButton
                 icon={Square}
-                label={t('stopTooltip')}
+                label={t('stopButton')}
                 variant="danger"
                 size="sm"
                 tooltip={false}
@@ -269,7 +273,7 @@ export function CellToolbar({
  * @param onRename - 編集内容が確定したときに、トリム済みの新しい名前を渡して呼ばれる。
  */
 export function CellName({ name, onRename }: { name?: string; onRename: (name: string) => void }) {
-  const t = useT(notebookMessages);
+  const t = useT(cellToolbarDict);
   // editing: 編集モード中かどうか。true のときは <input> を表示する。
   const [editing, setEditing] = useState(false);
   // draft: 編集中の入力値（未確定の下書き）。
@@ -361,7 +365,7 @@ function LimitControl({
   onToggle?: () => void;
   onLimitChange?: (limit: number) => void;
 }) {
-  const t = useT(notebookMessages);
+  const t = useT(cellToolbarDict);
   // editing: LIMIT 値の編集モード中かどうか。
   const [editing, setEditing] = useState(false);
   // draft: 編集中の LIMIT 値（文字列のまま保持し、確定時に数値へ変換する）。

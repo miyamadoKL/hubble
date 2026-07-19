@@ -12,7 +12,11 @@ import { formatBytes, formatDuration, formatInt } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import type { EstimatePresentation, EstimateTone } from '../../execution/estimate';
 import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
 import { notebookMessages } from '../../i18n/messages/notebook';
+
+/** EstimateStrip 内で使う辞書の合成。共通文言（{n} 行）+ notebook 固有文言。 */
+const estimateStripDict = { ...commonMessages, ...notebookMessages } as const;
 
 /**
  * Query Guard のライブ見積もり帯。セルツールバーの直下に配置される、計器盤のような
@@ -66,7 +70,7 @@ interface EstimateStripProps {
  * @param loading - 見積もり取得中かどうか（true の間はスピナーを表示しつつ直前の数値を保持する）。
  */
 export function EstimateStrip({ presentation, loading }: EstimateStripProps) {
-  const t = useT(notebookMessages);
+  const t = useT(estimateStripDict);
   // 見積もりを表示すべきでない場合（対象 SQL がない等）は何も描画しない。
   if (!presentation.visible) return null;
   const {
@@ -91,7 +95,7 @@ export function EstimateStrip({ presentation, loading }: EstimateStripProps) {
 
   // 表示する数値群（行数、バイト数、推定時間）を、値が存在するものだけ組み立てる。
   const figures: string[] = [];
-  if (scanRows !== null) figures.push(t('estimateRowsUnit', { n: formatInt(scanRows) }));
+  if (scanRows !== null) figures.push(t('rowsCountUnit', { n: formatInt(scanRows) }));
   if (scanBytes !== null) figures.push(formatBytes(scanBytes));
   if (estimatedSeconds !== null)
     figures.push(`~${formatDuration(Math.round(estimatedSeconds * 1000))}`);

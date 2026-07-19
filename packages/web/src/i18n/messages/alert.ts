@@ -8,7 +8,6 @@ import { defineDictionary } from '../t';
 export const alertMessages = defineDictionary({
   // ---- AlertsPanel ----
   muted: { ja: 'ミュート中', en: 'Muted' },
-  nextEvalPrefix: { ja: '次回 {label}', en: 'next {label}' },
   // 「次回評価予定」が今すぐ到来している場合の表示。common.dueNow はスケジュールの
   // 「実行」を指す言い回しなので、Alert の「評価」の意味に合わせて別エントリにする
   // （レビュー指摘: 意味の異なる訳の使い回しを解消）。
@@ -58,19 +57,13 @@ export const alertMessages = defineDictionary({
     en: 'Could not evaluate the alert.',
   },
   alertCreatedTitle: { ja: 'アラートを作成しました', en: 'Alert created' },
-  alertCreatedBody: { ja: '「{name}」の準備ができました。', en: '“{name}” is ready.' },
   alertUpdatedTitle: { ja: 'アラートを更新しました', en: 'Alert updated' },
-  alertUpdatedBody: { ja: '「{name}」を保存しました。', en: '“{name}” saved.' },
   createFailedTitle: { ja: '作成に失敗しました', en: 'Create failed' },
   alertRemoved: { ja: 'アラートを削除しました。', en: 'Alert removed.' },
 
   // ---- AlertFormModal ----
   editAlert: { ja: 'アラートを編集', en: 'Edit alert' },
   newAlertTitle: { ja: '新規アラート', en: 'New alert' },
-  save: { ja: '保存', en: 'Save' },
-  saving: { ja: '保存中…', en: 'Saving…' },
-  nameLabel: { ja: '名前', en: 'Name' },
-  savedQueryLabel: { ja: '保存済みクエリ', en: 'Saved query' },
   columnLabel: { ja: '列', en: 'Column' },
   operatorLabel: { ja: '演算子', en: 'Operator' },
   thresholdLabel: { ja: 'しきい値', en: 'Threshold' },
@@ -79,11 +72,9 @@ export const alertMessages = defineDictionary({
   // （0 は再通知しない、1 は毎回）、「再アーム」という直訳では意味が伝わらない
   // （レビュー指摘）ため「再通知間隔」とする。en は既存表記を維持する。
   rearmSecondsLabel: { ja: '再通知間隔（秒）', en: 'Rearm (seconds)' },
-  scheduleLabel: { ja: 'スケジュール', en: 'Schedule' },
   mutedCheckbox: { ja: 'ミュート（通知しない）', en: 'Muted (no notifications)' },
   notificationsLegend: { ja: '通知', en: 'Notifications' },
   slackServerWebhook: { ja: 'Slack（サーバー webhook）', en: 'Slack (server webhook)' },
-  emailLabel: { ja: 'メール', en: 'Email' },
   webhookLabel: { ja: 'Webhook', en: 'Webhook' },
   emailPlaceholder: { ja: 'ops@example.com', en: 'ops@example.com' },
   webhookPlaceholder: { ja: 'https://example.com/hook', en: 'https://example.com/hook' },
