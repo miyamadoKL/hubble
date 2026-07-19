@@ -11,6 +11,8 @@ import type { ResultColumnProfile, ResultProfile } from '@hubble/contracts';
 import { fetchQueryProfile } from '../../execution/api';
 import { formatInt } from '../../utils/format';
 import { cn } from '../../utils/cn';
+import { useT, type TFn } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /** ColumnProfilePanel の props。 */
 interface ColumnProfilePanelProps {
@@ -27,6 +29,7 @@ interface ColumnProfilePanelProps {
  * @param props - 対象クエリ id と close コールバック。
  */
 export function ColumnProfilePanel({ queryId, onClose }: ColumnProfilePanelProps) {
+  const t = useT(notebookMessages);
   const { data: profile, error } = useQuery<ResultProfile>({
     queryKey: ['query-profile', queryId],
     queryFn: ({ signal }) => fetchQueryProfile(queryId, signal),
@@ -46,17 +49,17 @@ export function ColumnProfilePanel({ queryId, onClose }: ColumnProfilePanelProps
       >
         {error !== null && <p className="px-1 py-2 text-2xs text-danger">{error.message}</p>}
         {error === null && profile === undefined && (
-          <p className="px-1 py-2 text-2xs text-ink-subtle">Profiling result…</p>
+          <p className="px-1 py-2 text-2xs text-ink-subtle">{t('profilingResult')}</p>
         )}
         {profile !== undefined && (
           <>
             <p className="px-1 pb-1.5 font-mono text-2xs text-ink-subtle">
-              {formatInt(profile.rowCount)} rows profiled
+              {t('rowsProfiledSuffix', { n: formatInt(profile.rowCount) })}
               {/* 実行中でまだ行が増えうる場合はその旨を注記する。 */}
-              {!profile.complete && ' (still running)'}
+              {!profile.complete && t('stillRunningSuffix')}
             </p>
             {profile.columns.map((column, i) => (
-              <ColumnCard key={i} column={column} rowCount={profile.rowCount} />
+              <ColumnCard key={i} column={column} rowCount={profile.rowCount} t={t} />
             ))}
           </>
         )}
@@ -66,7 +69,15 @@ export function ColumnProfilePanel({ queryId, onClose }: ColumnProfilePanelProps
 }
 
 /** 1 列分のプロファイルカード。 */
-function ColumnCard({ column, rowCount }: { column: ResultColumnProfile; rowCount: number }) {
+function ColumnCard({
+  column,
+  rowCount,
+  t,
+}: {
+  column: ResultColumnProfile;
+  rowCount: number;
+  t: TFn<typeof notebookMessages>;
+}) {
   // null 率（%）。0 行のときは 0 とする。
   const nullPct = rowCount === 0 ? 0 : (column.nullCount / rowCount) * 100;
   return (
@@ -77,17 +88,21 @@ function ColumnCard({ column, rowCount }: { column: ResultColumnProfile; rowCoun
       </div>
       <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5">
         <ProfileStat
-          label="nulls"
+          label={t('profileNulls')}
           value={`${formatInt(column.nullCount)} (${nullPct.toFixed(1)}%)`}
           emphasize={column.nullCount > 0}
         />
         <ProfileStat
-          label="distinct"
+          label={t('profileDistinct')}
           // overflow 時は追跡上限までの下限値であることを ≥ で示す。
           value={`${column.distinctOverflow ? '≥ ' : ''}${formatInt(column.distinctCount)}`}
         />
-        {column.min !== undefined && <ProfileStat label="min" value={column.min} mono />}
-        {column.max !== undefined && <ProfileStat label="max" value={column.max} mono />}
+        {column.min !== undefined && (
+          <ProfileStat label={t('profileMin')} value={column.min} mono />
+        )}
+        {column.max !== undefined && (
+          <ProfileStat label={t('profileMax')} value={column.max} mono />
+        )}
       </dl>
       {column.topValues.length > 0 && (
         <div className="mt-1 border-t border-border-subtle pt-1">

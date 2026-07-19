@@ -48,6 +48,8 @@ import { cancelQuery, createQuery, fetchQueryRows } from '../../execution/api';
 import { subscribeQueryEvents } from '../../execution/sse';
 import { setActiveEditor, clearActiveEditor } from '../../editor/activeEditor';
 import { ExplainQueryLifecycle } from './explainLifecycle';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 const SqlEditor = lazy(() =>
   import('../../editor/SqlEditor').then((module) => ({ default: module.SqlEditor })),
@@ -176,6 +178,7 @@ export function SqlCell({
   variableValues,
   chrome,
 }: SqlCellProps) {
+  const t = useT(notebookMessages);
   // Query Guard機能のグローバル設定（mode等）を取得する。
   const guard = useGuardConfig();
   // 「Save query」モーダルの表示状態。接続先表示に使うデータソース一覧も取得する。
@@ -619,7 +622,7 @@ export function SqlCell({
             <Suspense
               fallback={
                 <div className="flex h-24 items-center justify-center text-xs text-ink-muted">
-                  Loading editor…
+                  {t('loadingEditor')}
                 </div>
               }
             >
@@ -629,17 +632,17 @@ export function SqlCell({
                 onExecute={handleExecute}
                 onReady={handleReady}
                 trinoLanguage={trinoLanguage}
-                ariaLabel={`SQL cell ${name ?? ''}`}
+                ariaLabel={t('sqlCellAriaPrefix', { name: name || t('untitledCell') })}
                 notebookId={context.notebookId}
                 cellId={cellId}
               />
             </Suspense>
           </div>
           {!costEstimateEnabled && (
-            <Tooltip label="This data source does not support scan estimates">
+            <Tooltip label={t('estimateUnavailableTooltip')}>
               <div className="flex items-center gap-1.5 border-b border-border-subtle bg-surface-inset px-3 py-1 font-mono text-2xs text-ink-subtle">
                 <Gauge size={12} strokeWidth={1.75} className="shrink-0 opacity-50" />
-                Estimate unavailable for this data source
+                {t('estimateUnavailableStrip')}
               </div>
             </Tooltip>
           )}
@@ -670,10 +673,8 @@ export function SqlCell({
               />
             </>
           ) : (
-            // No live result this session — surface the last persisted run, if any
-            // (再ロード時に「前回実行」を表示).
             // このセッションではまだ実行していない場合、永続化された前回の実行結果概要が
-            // あればそれを表示する。
+            // あればそれを表示する(リロード直後に「前回実行」を表示するケース)。
             resultMeta && <LastRunStrip meta={resultMeta} onRun={runWholeCell} />
           )}
         </>

@@ -170,9 +170,7 @@ describe('フォームモーダルの再初期化', () => {
         <SaveNotebookModal open targetId="notebook-a" initialName="Notebook A" {...common} />,
       ),
     );
-    expect(
-      (container.querySelector('[aria-label="Notebook name"]') as HTMLInputElement).value,
-    ).toBe('Notebook A');
+    expect((container.querySelector('[name="name"]') as HTMLInputElement).value).toBe('Notebook A');
 
     act(() =>
       root.render(
@@ -190,9 +188,7 @@ describe('フォームモーダルの再初期化', () => {
       ),
     );
 
-    expect(
-      (container.querySelector('[aria-label="Notebook name"]') as HTMLInputElement).value,
-    ).toBe('Notebook B');
+    expect((container.querySelector('[name="name"]') as HTMLInputElement).value).toBe('Notebook B');
     const save = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Save',
     );
@@ -215,7 +211,7 @@ describe('フォームモーダルの再初期化', () => {
         />,
       ),
     );
-    const input = container.querySelector('[aria-label="Notebook name"]') as HTMLInputElement;
+    const input = container.querySelector('[name="name"]') as HTMLInputElement;
     const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     act(() => {
       setInputValue?.call(input, 'Name typed for first target');
@@ -235,9 +231,9 @@ describe('フォームモーダルの再初期化', () => {
       ),
     );
 
-    expect(
-      (container.querySelector('[aria-label="Notebook name"]') as HTMLInputElement).value,
-    ).toBe('Untitled notebook');
+    expect((container.querySelector('[name="name"]') as HTMLInputElement).value).toBe(
+      'Untitled notebook',
+    );
     const save = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Save',
     );

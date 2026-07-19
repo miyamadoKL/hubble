@@ -25,6 +25,12 @@ import { createSavedQuery } from '../../api/savedQueries';
 import { resolveDatasourceLabel } from '../../hooks/useDatasources';
 import { ApiClientError } from '../../api/client';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { notebookMessages } from '../../i18n/messages/notebook';
+
+/** SaveQueryModal 内で使う辞書の合成。共通文言（Cancel 等）+ notebook 固有文言。 */
+const saveQueryDict = { ...commonMessages, ...notebookMessages } as const;
 
 // フォーム内のラベル/入力欄で共通利用する Tailwind クラス文字列。
 // ScheduleFormModal / SaveNotebookModal と揃えたスタイルにする。
@@ -86,6 +92,7 @@ function SaveQueryModalBody({
   datasources: DatasourceSummary[];
   onClose: () => void;
 }) {
+  const t = useT(saveQueryDict);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   // 契約上限超過など、送信直前の safeParse で見つかったエラー文言。
@@ -107,16 +114,18 @@ function SaveQueryModalBody({
       // SavedQueriesPanel が使う ['saved-queries', 'list', <search>] 系の
       // キャッシュをまとめて無効化し、パネルを開いたときに新規保存分を反映させる。
       void queryClient.invalidateQueries({ queryKey: ['saved-queries', 'list'] });
-      toast.success('Saved query created', `“${saved.name}” was saved.`);
+      toast.success(
+        t('saveQueryCreatedToastTitle'),
+        t('saveQueryCreatedToastBody', { name: saved.name }),
+      );
       onClose();
     },
     onError: (error: unknown) => {
-      const message =
-        error instanceof ApiClientError ? error.message : 'Could not reach the server.';
-      toast.error('Save failed', message);
+      const message = error instanceof ApiClientError ? error.message : t('couldNotReachServer');
+      toast.error(t('saveFailedToastTitle'), message);
     },
     onSettled: () => {
-      // 成功・失敗いずれで終わっても、次の送信を受け付けられるようロックを解除する。
+      // 成功しても失敗しても、次の送信を受け付けられるようロックを解除する。
       isSubmittingRef.current = false;
     },
   });
@@ -153,7 +162,7 @@ function SaveQueryModalBody({
     const body = buildRequestBody();
     const parsed = createSavedQueryRequestSchema.safeParse(body);
     if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? 'Invalid input.');
+      setFormError(parsed.error.issues[0]?.message ?? t('invalidInputFallback'));
       return;
     }
 
@@ -166,62 +175,65 @@ function SaveQueryModalBody({
     <Modal
       open
       onClose={onClose}
-      title="Save query"
-      description="Save this cell's SQL as a saved query you can find and reuse later."
+      title={t('saveQueryModalTitle')}
+      description={t('saveQueryModalDescription')}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
-            Cancel
+            {t('cancel')}
           </Button>
           <Button variant="primary" onClick={submit} disabled={!canSave}>
-            {mutation.isPending ? 'Saving…' : 'Save query'}
+            {mutation.isPending ? t('savingEllipsis') : t('saveQueryModalTitle')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
-        {/* 名前(必須)。MAX_NAME_LENGTH を超える入力は input 側で打ち切る。 */}
+        {/* 名前(必須)。MAX_NAME_LENGTH を超える入力は input 側で打ち切る。
+            aria-label は可視ラベル(span)と重複するため持たせず、label 要素の
+            implicit association に委ねる（レビュー指摘: Phase 1 の規約と同様）。
+            テストからの特定用に name 属性を付与する。 */}
         <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Name</span>
+          <span className={FIELD_LABEL}>{t('nameLabel')}</span>
           <input
             autoFocus
+            name="name"
             value={name}
-            aria-label="Saved query name"
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit();
             }}
             maxLength={MAX_NAME_LENGTH}
-            placeholder="e.g. Daily active users"
+            placeholder={t('savedQueryNamePlaceholder')}
             className={cn(TEXT_INPUT, name.length > 0 && !nameValid && 'border-error')}
           />
           {name.length > 0 && !nameValid && (
             <p role="alert" className="font-mono text-2xs text-error">
-              Name is required.
+              {t('nameRequiredError')}
             </p>
           )}
         </label>
 
-        {/* 説明(任意)。 */}
+        {/* 説明(任意)。名前欄と同じ理由で aria-label は持たせず、name 属性のみ付与する。 */}
         <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Description (optional)</span>
+          <span className={FIELD_LABEL}>{t('descriptionOptionalLabel')}</span>
           <textarea
+            name="description"
             value={description}
-            aria-label="Saved query description"
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
             maxLength={MAX_DESCRIPTION_LENGTH}
-            placeholder="What this query is for"
+            placeholder={t('savedQueryDescriptionPlaceholder')}
             className={cn(TEXT_INPUT, 'resize-y')}
           />
         </label>
 
         {/* 接続先表示: データソース名と catalog / schema を読み取り専用で提示する。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Connection</span>
+          <span className={FIELD_LABEL}>{t('connectionLabel')}</span>
           <div className="flex flex-wrap items-center gap-1.5 font-mono text-2xs text-ink-muted">
             <span className="rounded-full bg-surface-sunken px-2 py-0.5">
-              {connectionLabel ?? 'Server default'}
+              {connectionLabel ?? t('serverDefaultLabel')}
             </span>
             {context.catalog && (
               <span className="rounded-full bg-surface-sunken px-2 py-0.5">
@@ -234,7 +246,7 @@ function SaveQueryModalBody({
 
         {/* 保存対象の SQL プレビュー(読み取り専用、数行で truncate)。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>SQL preview</span>
+          <span className={FIELD_LABEL}>{t('sqlPreviewLabel')}</span>
           <pre className="max-h-32 overflow-auto rounded-md border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-2xs whitespace-pre-wrap text-ink-base">
             {statement}
           </pre>

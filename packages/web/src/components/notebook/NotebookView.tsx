@@ -45,6 +45,12 @@ import {
   type ExecutionUnit,
 } from '../../execution';
 import { useActiveNotebook, useNotebookStore, substituteVariables } from '../../notebook';
+import { useT, type TFn } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { notebookMessages } from '../../i18n/messages/notebook';
+
+/** NotebookView 内で使う辞書の合成。共通文言（Cancel 等）+ notebook 固有文言。 */
+const notebookViewDict = { ...commonMessages, ...notebookMessages } as const;
 
 /**
  * NotebookView: the active notebook's editable header, variable
@@ -91,6 +97,7 @@ export function NotebookView({
   costEstimateEnabled = true,
   trinoLanguage = true,
 }: NotebookViewProps) {
+  const t = useT(notebookViewDict);
   const entry = useActiveNotebook();
   const store = useNotebookStore;
 
@@ -139,8 +146,8 @@ export function NotebookView({
       >
         <EmptyState
           icon={NotebookText}
-          title="No notebook open"
-          description="Create a notebook to start composing SQL cells."
+          title={t('noNotebookOpenTitle')}
+          description={t('noNotebookOpenDesc')}
         />
       </NotebookWidthFrame>
     );
@@ -167,8 +174,10 @@ export function NotebookView({
     const { text, missing } = substituteVariables(unit.text, variableValues);
     if (missing.length > 0) {
       toast.error(
-        'Missing variable value',
-        `Provide a value for ${missing.map((m) => `\${${m}}`).join(', ')} before running.`,
+        t('missingVariableToastTitle'),
+        t('missingVariableToastBody', {
+          vars: missing.map((m) => `\${${m}}`).join(', '),
+        }),
       );
       return null;
     }
@@ -219,7 +228,7 @@ export function NotebookView({
     if (!targetId) return;
     const cell = nb.cells.find((c) => c.id === targetId);
     if (!cell || cell.kind !== 'sql') return; // SQL セル以外（Markdown）は実行対象にしない
-    runCellById(cell, cellContext, defaultLimit, variableValues);
+    runCellById(cell, cellContext, defaultLimit, variableValues, t);
   };
 
   // ---- Drag and drop (native, on the grip handle) ----
@@ -346,19 +355,19 @@ export function NotebookView({
       <Modal
         open={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
-        title="Delete cell?"
+        title={t('deleteCellModalTitle')}
         description={
           pendingDelete
-            ? `This ${pendingDelete.kind === 'sql' ? 'SQL' : 'Markdown'} cell has content. Deleting it cannot be undone.`
+            ? t('deleteCellModalDesc', { kind: pendingDelete.kind === 'sql' ? 'SQL' : 'Markdown' })
             : undefined
         }
         footer={
           <>
             <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-              Cancel
+              {t('cancel')}
             </Button>
             <Button variant="danger" onClick={() => pendingDelete && doDelete(pendingDelete.id)}>
-              Delete cell
+              {t('deleteCellConfirmButton')}
             </Button>
           </>
         }
@@ -407,6 +416,7 @@ function NotebookWidthHandle({
   /** ダブルクリックで既定幅へ戻すハンドラー。 */
   onReset: () => void;
 }) {
+  const t = useT(notebookViewDict);
   // 右ハンドルは ArrowRight で拡大、左ハンドルは ArrowLeft で拡大というように、
   // 辺ごとに矢印キーの意味が逆になる（どちらも「外側へ広げる」操作として揃える）。
   const sign = edge === 'right' ? 1 : -1;
@@ -414,7 +424,7 @@ function NotebookWidthHandle({
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="ノートブックの幅を調整"
+      aria-label={t('notebookWidthAria')}
       aria-valuenow={width}
       aria-valuemin={NOTEBOOK_WIDTH_MIN}
       aria-valuemax={max}
@@ -533,6 +543,7 @@ export function ViewportCell({
   forceVisible: boolean;
   children: ReactNode;
 }) {
+  const t = useT(notebookViewDict);
   const rootRef = useRef<HTMLDivElement>(null);
   const execution = useCellExecution(cell.id);
   const [visible, setVisible] = useState(
@@ -568,10 +579,10 @@ export function ViewportCell({
       ) : (
         <div className="my-2 rounded-md border border-border bg-surface px-4 py-3 text-sm text-muted">
           <div className="font-medium text-foreground">
-            {cell.name || `${cell.kind.toUpperCase()} cell`}
+            {cell.name || t('cellKindFallback', { kind: cell.kind.toUpperCase() })}
           </div>
           <div className="mt-1 truncate font-mono">
-            {cell.source.trim().split('\n')[0] || 'Empty cell'}
+            {cell.source.trim().split('\n')[0] || t('emptyCellFallback')}
           </div>
         </div>
       )}
@@ -593,13 +604,17 @@ function runCellById(
   context: ExecutionContext,
   defaultLimit: number,
   values: Record<string, string>,
+  t: TFn<typeof notebookViewDict>,
 ): void {
   if (cell.kind !== 'sql') return;
   // Query Guard: refuse a blocked cell (variable panel's Ctrl/Cmd+Enter path).
   // Query Guard によりこのセルの直近見積もりがブロック判定なら、サーバへ送らず中断する。
   const block = getCellBlock(cell.id);
   if (block) {
-    toast.error('Blocked by Query Guard', block.reasons[0] ?? 'This query exceeds the scan limit.');
+    toast.error(
+      t('blockedByQueryGuardToastTitle'),
+      block.reasons[0] ?? t('exceedsScanLimitFallback'),
+    );
     return;
   }
   const opts = { autoLimit: true, limit: defaultLimit };
@@ -609,8 +624,10 @@ function runCellById(
     const { text, missing } = substituteVariables(u.text, values);
     if (missing.length > 0) {
       toast.error(
-        'Missing variable value',
-        `Provide a value for ${missing.map((m) => `\${${m}}`).join(', ')}.`,
+        t('missingVariableToastTitle'),
+        t('missingVariableToastBodyShort', {
+          vars: missing.map((m) => `\${${m}}`).join(', '),
+        }),
       );
       return;
     }
@@ -650,6 +667,7 @@ export function NotebookHeader({
   /** GitHub 同期コントロール (連携無効時は null を描画するコンポーネント)。 */
   gitControl?: ReactNode;
 }) {
+  const t = useT(notebookViewDict);
   // 名前と説明それぞれに「編集中か」フラグと編集中ドラフト値を持つ（互いに独立して編集できる）。
   const [editingName, setEditingName] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
@@ -668,7 +686,7 @@ export function NotebookHeader({
               <input
                 autoFocus
                 value={nameDraft}
-                aria-label="Notebook name"
+                aria-label={t('notebookNameLabel')}
                 onChange={(e) => setNameDraft(e.target.value)}
                 onBlur={() => {
                   setEditingName(false);
@@ -687,7 +705,7 @@ export function NotebookHeader({
           ) : (
             <h1
               className="cursor-text text-lg font-semibold text-ink-strong"
-              title="Click to rename"
+              title={t('clickToRenameTitle')}
               onClick={() => {
                 setNameDraft(name);
                 setEditingName(true);
@@ -707,7 +725,7 @@ export function NotebookHeader({
               <input
                 autoFocus
                 value={descDraft}
-                aria-label="Notebook description"
+                aria-label={t('notebookDescriptionAria')}
                 onChange={(e) => setDescDraft(e.target.value)}
                 onBlur={() => {
                   setEditingDesc(false);
@@ -720,7 +738,7 @@ export function NotebookHeader({
                     setEditingDesc(false);
                   }
                 }}
-                placeholder="Add a description…"
+                placeholder={t('addDescriptionPlaceholder')}
                 // block: 実ブラウザで計測すると、表示用 <p> と編集用 <input> は
                 // line-height、font-size、height、padding、border、margin が完全に
                 // 一致しているにもかかわらず、上端の位置だけ 3px ずれていた
@@ -737,13 +755,15 @@ export function NotebookHeader({
           ) : (
             <p
               className="mt-0.5 cursor-text text-sm text-ink-muted"
-              title="Click to edit description"
+              title={t('clickToEditDescriptionTitle')}
               onClick={() => {
                 setDescDraft(description);
                 setEditingDesc(true);
               }}
             >
-              {description || <span className="text-ink-subtle italic">Add a description…</span>}
+              {description || (
+                <span className="text-ink-subtle italic">{t('addDescriptionPlaceholder')}</span>
+              )}
             </p>
           )}
         </div>
@@ -752,12 +772,12 @@ export function NotebookHeader({
           {gitControl}
           {readOnly && (
             <span className="rounded-full bg-surface-sunken px-2.5 py-0.5 font-mono text-2xs text-ink-muted">
-              Read-only
+              {t('readOnlyBadge')}
             </span>
           )}
           {canShare && (
             <Button variant="ghost" size="sm" icon={Share2} onClick={onShare}>
-              Share
+              {t('shareButton')}
             </Button>
           )}
         </div>

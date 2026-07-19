@@ -12,6 +12,8 @@ import { CircleAlert, OctagonX } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { parseQueryBlocked } from '../../execution';
 import { formatBytes, formatInt } from '../../utils/format';
+import { useT, type TFn } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
  * Execution error panel (メッセージ + trinoErrorName + 位置).
@@ -31,6 +33,7 @@ import { formatBytes, formatInt } from '../../utils/format';
  * @param className - 外側の要素に追加で適用する任意の CSS クラス。
  */
 export function ErrorPanel({ error, className }: { error: ApiErrorDetail; className?: string }) {
+  const t = useT(notebookMessages);
   if (error.code === WRITE_NOT_ALLOWED) {
     return (
       <div
@@ -42,11 +45,10 @@ export function ErrorPanel({ error, className }: { error: ApiErrorDetail; classN
         <CircleAlert size={16} strokeWidth={2} className="mt-0.5 shrink-0 text-error" />
         <div className="min-w-0 flex-1">
           <span className="rounded-sm bg-error/15 px-1.5 py-0.5 font-mono text-2xs font-semibold tracking-wide text-error uppercase">
-            Read-only role
+            {t('readOnlyRoleBadge')}
           </span>
           <p className="mt-1.5 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-ink-base">
-            読み取り専用ロールのため、この SQL は実行できません。書き込みが必要な場合は管理者に
-            相談してください。
+            {t('readOnlyRoleMessage')}
           </p>
         </div>
       </div>
@@ -59,6 +61,8 @@ export function ErrorPanel({ error, className }: { error: ApiErrorDetail; classN
   if (blocked) return <QueryBlockedPanel error={error} blocked={blocked} className={className} />;
 
   // エラー発生位置（行と列）を "line N:M" 形式の文字列に整形する。行番号が無ければ位置情報自体を表示しない。
+  // Monaco のエラーマーカー表記と揃えるため、位置表記自体は言語を問わず "line N:M" の
+  // まま統一する（契約値ではないが、エディタ側の表記と一致させる技術表記として翻訳対象外）。
   const position =
     error.line !== undefined
       ? `line ${error.line}${error.column !== undefined ? `:${error.column}` : ''}`
@@ -103,19 +107,21 @@ function ScanRow({
   value,
   limit,
   kind,
+  t,
 }: {
   label: string;
   value: number | null;
   limit: number;
   kind: 'rows' | 'bytes';
+  t: TFn<typeof notebookMessages>;
 }) {
   // 0 means "no limit"; null means "unknown estimate".
   // 見積もりが不明（null）かつ上限も設定されていない場合は、表示する情報が無いので何も描画しない。
   if (value === null && limit <= 0) return null;
   // 単位種別に応じてフォーマット関数を切り替える（バイト表示 or 整数のカンマ区切り表示）。
   const fmt = kind === 'bytes' ? formatBytes : formatInt;
-  const valueText = value === null ? 'unknown' : fmt(value);
-  const limitText = limit > 0 ? fmt(limit) : 'no limit';
+  const valueText = value === null ? t('unknownValue') : fmt(value);
+  const limitText = limit > 0 ? fmt(limit) : t('noLimitValue');
   // 見積もり値が上限を超えているかどうか（超えていれば赤字強調する）。
   const over = value !== null && limit > 0 && value > limit;
   return (
@@ -123,7 +129,7 @@ function ScanRow({
       <span className="text-2xs tracking-wide text-ink-muted uppercase">{label}</span>
       <span className="font-mono text-xs tabular-nums text-ink-base">
         <span className={cn(over && 'font-semibold text-error')}>{valueText}</span>
-        <span className="text-ink-subtle"> / limit {limitText}</span>
+        <span className="text-ink-subtle">{t('scanLimitSuffix', { limit: limitText })}</span>
       </span>
     </div>
   );
@@ -146,6 +152,7 @@ function QueryBlockedPanel({
   blocked: NonNullable<ReturnType<typeof parseQueryBlocked>>;
   className?: string;
 }) {
+  const t = useT(notebookMessages);
   const { estimate, limits } = blocked;
   // ブロック理由の一覧。verdict に理由が無ければ元のエラーメッセージをフォールバックとして使う。
   const reasons = estimate.verdict.reasons.length > 0 ? estimate.verdict.reasons : [error.message];
@@ -161,11 +168,9 @@ function QueryBlockedPanel({
         {/* 見出し：「Query blocked」バッジと簡潔な説明文 */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-sm bg-error/15 px-1.5 py-0.5 font-mono text-2xs font-semibold tracking-wide text-error uppercase">
-            Query blocked
+            {t('queryBlockedBadge')}
           </span>
-          <span className="text-2xs text-ink-muted">
-            scan estimate exceeds the configured limit
-          </span>
+          <span className="text-2xs text-ink-muted">{t('scanEstimateExceedsLimit')}</span>
         </div>
 
         {/* ブロック理由の一覧（Query Guard の verdict から取得、複数ありうる） */}
@@ -180,16 +185,18 @@ function QueryBlockedPanel({
         {/* スキャン行数とスキャンバイト数それぞれの見積もり対上限の内訳表示 */}
         <div className="mt-2 rounded-sm border border-error/20 bg-surface-raised/40 px-2.5 py-1.5">
           <ScanRow
-            label="scan rows"
+            label={t('scanRowsLabel')}
             value={estimate.scanRows}
             limit={limits.maxScanRows}
             kind="rows"
+            t={t}
           />
           <ScanRow
-            label="scan bytes"
+            label={t('scanBytesLabel')}
             value={estimate.scanBytes}
             limit={limits.maxScanBytes}
             kind="bytes"
+            t={t}
           />
         </div>
       </div>

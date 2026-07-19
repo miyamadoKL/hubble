@@ -16,6 +16,8 @@ import { buildChartOption, readChartTheme, type ChartConfig } from '../../chart'
 import type { ResultRow } from '../../execution';
 import { useUiStore } from '../../stores/uiStore';
 import { Spinner } from '../common/Spinner';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
  * The ECharts canvas for a result chart. ECharts is loaded lazily
@@ -49,6 +51,7 @@ export function ChartView({
   height?: number;
   fill?: boolean;
 }) {
+  const t = useT(notebookMessages);
   // ECharts のキャンバスをマウントする DOM 要素への参照。
   const hostRef = useRef<HTMLDivElement | null>(null);
   // 初期化済みの ECharts インスタンスへの参照（アンマウント時に dispose するために保持）。
@@ -115,7 +118,7 @@ export function ChartView({
       {/* ECharts の読み込みと初期化が完了するまでの間だけ表示するローディングオーバーレイ。 */}
       {!ready && (
         <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 font-mono text-2xs text-ink-subtle">
-          <Spinner size={14} /> Loading chart…
+          <Spinner size={14} /> {t('loadingChart')}
         </div>
       )}
       {/* ECharts が init() でキャンバスを描画する対象の DOM 要素。 */}

@@ -21,6 +21,8 @@ import { IconButton } from '../common/IconButton';
 import { Kbd } from '../common/Kbd';
 import { Tooltip } from '../common/Tooltip';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
  * Cell toolbar: collapse / kind badge / editable name, plus run /
@@ -119,12 +121,16 @@ export function CellToolbar({
   onSaveQuery,
   saveQueryDisabled = false,
 }: CellToolbarProps) {
+  const t = useT(notebookMessages);
   return (
-    <div className="flex items-center gap-1.5 border-b border-border-subtle bg-surface-raised px-2 py-1.5">
+    <div
+      data-testid="cell-toolbar"
+      className="flex items-center gap-1.5 border-b border-border-subtle bg-surface-raised px-2 py-1.5"
+    >
       {/* 折りたたみ/展開トグルボタン。collapsed の値によって矢印アイコンを出し分ける。 */}
       <button
         type="button"
-        aria-label={collapsed ? 'Expand cell' : 'Collapse cell'}
+        aria-label={collapsed ? t('expandCell') : t('collapseCell')}
         onClick={onToggleCollapse}
         className="rounded-sm p-0.5 text-ink-subtle hover:text-ink-strong"
       >
@@ -165,17 +171,17 @@ export function CellToolbar({
             label={
               running ? (
                 <span className="flex items-center gap-1.5">
-                  Stop <Kbd keys={['Ctrl', '↵']} />
+                  {t('stopTooltip')} <Kbd keys={['Ctrl', '↵']} />
                 </span>
               ) : runDisabled ? (
                 // Query Guard block: explain why the run is unavailable.
                 // Query Guard によって実行がブロックされている場合、その理由をツールチップに表示する。
                 <span className="block max-w-xs whitespace-normal text-left">
-                  {runDisabledReason ?? 'Blocked by Query Guard'}
+                  {runDisabledReason ?? t('blockedByQueryGuard')}
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5">
-                  Run cell <Kbd keys={['Ctrl', '↵']} />
+                  {t('runCellTooltip')} <Kbd keys={['Ctrl', '↵']} />
                 </span>
               )
             }
@@ -184,7 +190,7 @@ export function CellToolbar({
               // 実行中: 停止ボタン（危険色）を表示。
               <IconButton
                 icon={Square}
-                label="Stop"
+                label={t('stopTooltip')}
                 variant="danger"
                 size="sm"
                 tooltip={false}
@@ -194,7 +200,7 @@ export function CellToolbar({
               // 非実行中: 実行ボタン。Query Guard によるブロック時は disabled にする。
               <IconButton
                 icon={Play}
-                label={runDisabled ? 'Run blocked by Query Guard' : 'Run cell'}
+                label={runDisabled ? t('runBlockedByQueryGuard') : t('runCellTooltip')}
                 variant="accent"
                 size="sm"
                 tooltip={false}
@@ -210,7 +216,7 @@ export function CellToolbar({
         {kind === 'sql' && onSaveQuery && (
           <IconButton
             icon={Bookmark}
-            label="Save query"
+            label={t('saveQueryButton')}
             size="sm"
             disabled={saveQueryDisabled}
             onClick={onSaveQuery}
@@ -219,7 +225,7 @@ export function CellToolbar({
         {/* セルを上へ移動するボタン。先頭セルなど移動不可な場合は disabled。 */}
         <IconButton
           icon={ChevronUp}
-          label="Move up"
+          label={t('moveUp')}
           size="sm"
           disabled={!canMoveUp}
           onClick={onMoveUp}
@@ -227,7 +233,7 @@ export function CellToolbar({
         {/* セルを下へ移動するボタン。末尾セルなど移動不可な場合は disabled。 */}
         <IconButton
           icon={ChevronDown}
-          label="Move down"
+          label={t('moveDown')}
           size="sm"
           disabled={!canMoveDown}
           onClick={onMoveDown}
@@ -235,7 +241,7 @@ export function CellToolbar({
         {/* セル削除ボタン。 */}
         <IconButton
           icon={Trash2}
-          label="Delete cell"
+          label={t('deleteCellAria')}
           variant="danger"
           size="sm"
           onClick={onDelete}
@@ -243,7 +249,7 @@ export function CellToolbar({
         {/* ドラッグして並べ替えるためのグリップハンドル。dragHandleProps は DnD ライブラリから渡される。 */}
         <span
           {...dragHandleProps}
-          aria-label="Drag to reorder"
+          aria-label={t('dragToReorder')}
           role="button"
           tabIndex={0}
           className="ml-0.5 cursor-grab text-ink-subtle hover:text-ink-muted active:cursor-grabbing"
@@ -263,6 +269,7 @@ export function CellToolbar({
  * @param onRename - 編集内容が確定したときに、トリム済みの新しい名前を渡して呼ばれる。
  */
 export function CellName({ name, onRename }: { name?: string; onRename: (name: string) => void }) {
+  const t = useT(notebookMessages);
   // editing: 編集モード中かどうか。true のときは <input> を表示する。
   const [editing, setEditing] = useState(false);
   // draft: 編集中の入力値（未確定の下書き）。
@@ -289,7 +296,7 @@ export function CellName({ name, onRename }: { name?: string; onRename: (name: s
       <input
         ref={inputRef}
         value={draft}
-        aria-label="Cell name"
+        aria-label={t('cellNameAria')}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
@@ -300,7 +307,7 @@ export function CellName({ name, onRename }: { name?: string; onRename: (name: s
             setEditing(false);
           }
         }}
-        placeholder="Cell name"
+        placeholder={t('cellNamePlaceholder')}
         className="w-40 bg-transparent text-xs font-medium text-ink-base focus:outline-none"
       />
     );
@@ -315,7 +322,7 @@ export function CellName({ name, onRename }: { name?: string; onRename: (name: s
         setDraft(name ?? '');
         setEditing(true);
       }}
-      title="Double-click to rename"
+      title={t('doubleClickToRename')}
       className={cn(
         // pr-0.5: `truncate` は padding の内側で文字を切り詰めるが、プレースホルダー末尾の
         // イタリック体グリフは字送り幅からはみ出す。「Untitled cell」の "l" の先端が
@@ -329,7 +336,7 @@ export function CellName({ name, onRename }: { name?: string; onRename: (name: s
         name ? 'text-ink-base' : 'text-ink-subtle italic',
       )}
     >
-      {name || 'Untitled cell'}
+      {name || t('untitledCell')}
     </button>
   );
 }
@@ -354,6 +361,7 @@ function LimitControl({
   onToggle?: () => void;
   onLimitChange?: (limit: number) => void;
 }) {
+  const t = useT(notebookMessages);
   // editing: LIMIT 値の編集モード中かどうか。
   const [editing, setEditing] = useState(false);
   // draft: 編集中の LIMIT 値（文字列のまま保持し、確定時に数値へ変換する）。
@@ -382,7 +390,7 @@ function LimitControl({
         type="button"
         role="switch"
         aria-checked={autoLimit}
-        aria-label="Toggle auto LIMIT"
+        aria-label={t('toggleAutoLimit')}
         onClick={onToggle}
         className="font-semibold tracking-wide uppercase hover:text-ink-strong"
       >
@@ -403,7 +411,7 @@ function LimitControl({
               setEditing(false);
             }
           }}
-          aria-label="LIMIT value"
+          aria-label={t('limitValueAria')}
           className="w-14 bg-transparent tabular-nums focus:outline-none"
         />
       ) : (
@@ -411,7 +419,7 @@ function LimitControl({
         // 自動付与が OFF のときは取り消し線で「値は設定されているが適用されない」ことを示す。
         <button
           type="button"
-          aria-label="Edit LIMIT value"
+          aria-label={t('editLimitValue')}
           onClick={() => {
             setDraft(String(limit));
             setEditing(true);

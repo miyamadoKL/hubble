@@ -273,18 +273,25 @@ function registerHoverProvider(monacoNs: typeof monaco, getDeps: () => TrinoLang
  * 呼び出すたびに古い登録が蓄積する）。返り値は登録した全 disposable を
  * まとめた 1 個の disposable で、呼び出し側はエディター破棄時にこれを
  * dispose してキーバインドとコマンド登録を確実に解除しなければならない。
+ *
+ * `labels` はコマンドパレット/右クリックメニューに表示されるアクション名を
+ * ロケールに合わせて差し替えるための任意引数（i18n Phase 2a）。このファイル自体は
+ * i18n 辞書に依存させたくない（Monaco 言語サービスという性質上、locale 非依存を
+ * 保ちたい）ため、翻訳済み文字列を呼び出し元（SqlEditor.tsx）から受け取るだけに
+ * とどめている。省略時は英語のデフォルト文言を使う。
  */
 export function attachEditorCommands(
   monacoNs: typeof monaco,
   editor: monaco.editor.IStandaloneCodeEditor,
   deps: Pick<TrinoLanguageDeps, 'onExecute'>,
+  labels?: { run?: string; format?: string },
 ): monaco.IDisposable {
   // Ctrl/Cmd+Enter: 現在のカーソル/選択範囲に基づく実行コマンドを呼び出し元に委譲する。
   // addCommand ではなく addAction を使うのは、後者だけがキーバインド解除用の
   // disposable を返すため。
   const executeAction = editor.addAction({
     id: 'fable.executeSql',
-    label: 'Run SQL',
+    label: labels?.run ?? 'Run SQL',
     keybindings: [monacoNs.KeyMod.CtrlCmd | monacoNs.KeyCode.Enter],
     run: (ed) => {
       deps.onExecute?.(ed);
@@ -293,7 +300,7 @@ export function attachEditorCommands(
   // SQL 整形アクションをコマンドパレット/右クリックメニュー/ショートカットに登録する。
   const formatAction = editor.addAction({
     id: 'fable.formatSql',
-    label: 'Format SQL',
+    label: labels?.format ?? 'Format SQL',
     // Ctrl/Cmd+I と Ctrl/Cmd+Shift+F のどちらでも整形する。
     keybindings: [
       monacoNs.KeyMod.CtrlCmd | monacoNs.KeyCode.KeyI,

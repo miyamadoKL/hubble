@@ -29,6 +29,8 @@ import {
   resultHeightMax,
   setResultHeight,
 } from '../../notebook/resultHeight';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 // @tanstack/react-table への置換は見送っている。2026 年 7 月 18 日の read-only preflight
 // （@tanstack/react-virtual は維持する前提）で計測したところ、本ファイルは 598 物理行/443
@@ -239,6 +241,7 @@ export function ResultGrid({
   notebookId,
   cellId,
 }: ResultGridProps) {
+  const t = useT(notebookMessages);
   // 仮想化スクロールコンテナへの参照。useVirtualizer にスクロール要素として渡す。
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 明示的に調整された高さ（px）。null なら未調整で、内容に応じて伸びつつ
@@ -414,7 +417,7 @@ export function ResultGrid({
           {/* 列メニューを開くトグルボタン。非表示列が1つでもあればアクティブ表示にする。 */}
           <IconButton
             icon={Columns3}
-            label="Show / hide columns"
+            label={t('showHideColumns')}
             size="sm"
             active={hidden.size > 0}
             onClick={() => setColMenuOpen((o) => !o)}
@@ -434,7 +437,7 @@ export function ResultGrid({
           <div className="relative">
             <IconButton
               icon={Sigma}
-              label="Column stats"
+              label={t('columnStats')}
               size="sm"
               active={profileOpen}
               onClick={() => setProfileOpen((o) => !o)}
@@ -447,7 +450,7 @@ export function ResultGrid({
         {/* フィルタ入力欄の表示/非表示を切り替えるトグルボタン。入力中や検索語がある場合はアクティブ表示。 */}
         <IconButton
           icon={Search}
-          label="Filter rows"
+          label={t('filterRowsAria')}
           size="sm"
           active={showFilter || filter.length > 0}
           onClick={() => setShowFilter((s) => !s)}
@@ -460,8 +463,12 @@ export function ResultGrid({
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               // server-side モードでは未ロード分も含む全行が対象になる。
-              placeholder={serverCapable ? 'Filter all rows (server)…' : 'Filter loaded rows…'}
-              aria-label="Filter rows"
+              placeholder={
+                serverCapable
+                  ? t('filterAllRowsServerPlaceholder')
+                  : t('filterLoadedRowsPlaceholder')
+              }
+              aria-label={t('filterRowsAria')}
               className={cn(
                 'h-6 w-full rounded-sm border border-border-base bg-surface-raised px-2 pr-6',
                 'font-mono text-2xs text-ink-base placeholder:text-ink-subtle',
@@ -472,7 +479,7 @@ export function ResultGrid({
             {filter && (
               <button
                 type="button"
-                aria-label="Clear filter"
+                aria-label={t('clearFilterAria')}
                 onClick={() => setFilter('')}
                 className="absolute top-1/2 right-1 -translate-y-1/2 text-ink-subtle hover:text-ink-strong"
               >
@@ -487,12 +494,20 @@ export function ResultGrid({
         <span className="ml-auto font-mono text-2xs text-ink-subtle tabular-nums">
           {serverActive
             ? serverView.loading
-              ? 'searching…'
+              ? t('searchingEllipsis')
               : (serverView.error ??
                 (serverView.totalMatched > serverView.rows.length
-                  ? `first ${formatInt(serverView.rows.length)} of ${formatInt(serverView.totalMatched)} matched (server)`
-                  : `${formatInt(serverView.totalMatched)} matched (server)`))
-            : `${filter ? `${formatInt(viewLength)} / ` : ''}${formatInt(rows.length)} loaded`}
+                  ? t('firstNOfMMatchedServer', {
+                      first: formatInt(serverView.rows.length),
+                      total: formatInt(serverView.totalMatched),
+                    })
+                  : t('nMatchedServer', { total: formatInt(serverView.totalMatched) })))
+            : filter
+              ? t('filteredLoadedCount', {
+                  filtered: formatInt(viewLength),
+                  total: formatInt(rows.length),
+                })
+              : t('loadedCount', { n: formatInt(rows.length) })}
         </span>
       </div>
 
@@ -529,7 +544,7 @@ export function ResultGrid({
                   key={index}
                   type="button"
                   onClick={() => toggleSort(index)}
-                  title={`${col.name} (${col.type}) — click to sort`}
+                  title={t('columnSortTitle', { name: col.name, type: col.type })}
                   className={cn(
                     'flex items-center gap-1.5 border-r border-b border-border-base px-3',
                     'text-2xs font-semibold tracking-wider text-ink-muted uppercase',
@@ -610,7 +625,7 @@ export function ResultGrid({
           ドラッグ、ダブルクリックでのリセット（未調整状態に戻す）、フォーカス時の
           上下矢印キー（16px刻み）による調整に対応する。 */}
       <VerticalResizeHandle
-        ariaLabel="結果表示域の高さを調整"
+        ariaLabel={t('resultHeightAria')}
         // 未調整状態（customHeight === null）では、内容量に応じて128〜384pxの間で
         // 変動する実際の表示高さ（measuredHeight、ResizeObserver で追跡）を通知する。
         // 計測前やResizeObserver非対応環境では下限（RESULT_HEIGHT_MIN）にフォールバックする。
@@ -654,6 +669,7 @@ interface ColumnMenuProps {
  * 背景（バックドロップ）をクリックすると onClose が呼ばれて閉じる。
  */
 function ColumnMenu({ columns, hidden, onToggle, onClose }: ColumnMenuProps) {
+  const t = useT(notebookMessages);
   // メニュー内のカラム名検索クエリ。
   const [search, setSearch] = useState('');
   // 検索クエリに部分一致するカラムだけを、元のインデックス付きで抽出する。
@@ -672,8 +688,8 @@ function ColumnMenu({ columns, hidden, onToggle, onClose }: ColumnMenuProps) {
             autoFocus
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search columns…"
-            aria-label="Search columns"
+            placeholder={t('searchColumnsPlaceholder')}
+            aria-label={t('searchColumnsAria')}
             className="h-6 flex-1 bg-transparent text-xs text-ink-base placeholder:text-ink-subtle focus:outline-none"
           />
         </div>
@@ -697,7 +713,7 @@ function ColumnMenu({ columns, hidden, onToggle, onClose }: ColumnMenuProps) {
           ))}
           {/* 検索条件に一致するカラムが1つもない場合のメッセージ。 */}
           {filtered.length === 0 && (
-            <p className="px-2 py-2 text-2xs text-ink-subtle">No matching columns.</p>
+            <p className="px-2 py-2 text-2xs text-ink-subtle">{t('noMatchingColumns')}</p>
           )}
         </div>
       </div>
