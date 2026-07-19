@@ -24,6 +24,10 @@ export const scheduleMessages = defineDictionary({
     ja: 'cron の実行間隔でクエリを実行するスケジュールを作成しましょう。',
     en: 'Create a schedule to run a query on a cron cadence.',
   },
+  saveQueryFirstHint: {
+    ja: 'まずクエリを保存してから、スケジュールを作成してください。',
+    en: 'Save a query first, then create a schedule.',
+  },
   couldntLoadSchedules: { ja: 'スケジュールを読み込めませんでした', en: "Couldn't load schedules" },
 
   // トースト。
@@ -46,8 +50,8 @@ export const scheduleMessages = defineDictionary({
   editSchedule: { ja: 'スケジュールを編集', en: 'Edit schedule' },
   newScheduleTitle: { ja: '新規スケジュール', en: 'New schedule' },
   formDescription: {
-    ja: 'cron スケジュールで SQL 文を実行します。文は実行前に検証されます。',
-    en: 'Run a SQL statement on a cron schedule. The statement is validated before it runs.',
+    ja: '保存済みクエリを cron スケジュールで実行します。SQL 文と実行先は選択したクエリのものが使われます。',
+    en: 'Run a saved query on a cron schedule. The statement and datasource come from the query you pick.',
   },
   saveChanges: { ja: '変更を保存', en: 'Save changes' },
   createSchedule: { ja: 'スケジュールを作成', en: 'Create schedule' },
@@ -55,30 +59,16 @@ export const scheduleMessages = defineDictionary({
   namePlaceholder: { ja: '例: 夜間の国別集計', en: 'Nightly nation count' },
   queryLabel: { ja: 'クエリ', en: 'Query' },
   savedQueryOption: { ja: '保存済みクエリ', en: 'Saved query' },
-  directSqlOption: { ja: '直接 SQL 入力', en: 'Direct SQL' },
   noSavedQueriesYet: {
-    ja: '保存済みクエリがまだありません。ノートブックから保存するか、直接 SQL 入力に切り替えてください。',
-    en: 'No saved queries yet — save one from the notebook, or switch to Direct SQL.',
+    ja: '保存済みクエリがまだありません。ノートブックから SQL を保存してください。',
+    en: 'No saved queries yet — save one from the notebook first.',
   },
-  sqlPlaceholder: {
-    ja: 'SELECT count(*) FROM tpch.tiny.nation',
-    en: 'SELECT count(*) FROM tpch.tiny.nation',
-  },
-  // SQL 直接入力欄の accessible name。近くに専用の可視ラベルが無い（親の「Query」は
-  // Saved query / Direct SQL 共通の見出し）ため、単独の accessible name として残す。
-  sqlStatementAria: { ja: 'SQL 文', en: 'SQL statement' },
-  syntaxError: { ja: '構文エラー', en: 'Syntax error' },
   // 行/列情報の断片。呼び出し側（JSX）で "(...)" や前後の空白を組み立てる。
   locatedWithColumn: { ja: '{line} 行目、{column} 列目', en: 'line {line}, col {column}' },
   locatedLineOnly: { ja: '{line} 行目', en: 'line {line}' },
-  checkedLocally: {
-    ja: '毎回実行前にブラウザ内で検証しています（無効な SQL は保存できません）。',
-    en: "Checked locally before every run — invalid SQL can't be saved.",
-  },
-  dataSourceLabel: { ja: 'データソース', en: 'Data source' },
-  catalogLabel: { ja: 'カタログ', en: 'Catalog' },
-  schemaLabel: { ja: 'スキーマ', en: 'Schema' },
-  noneValuePlaceholder: { ja: '（未指定）', en: '(none)' },
+  connectionLabel: { ja: '接続先', en: 'Connection' },
+  serverDefaultLabel: { ja: 'サーバーの既定', en: 'Server default' },
+  sqlPreviewLabel: { ja: 'SQL プレビュー', en: 'SQL preview' },
   scheduleLabel: { ja: 'スケジュール', en: 'Schedule' },
   retryPolicyLegend: { ja: 'リトライポリシー', en: 'Retry policy' },
   maxAttemptsLabel: { ja: '最大試行回数', en: 'Max attempts' },

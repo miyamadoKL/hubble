@@ -31,6 +31,11 @@ export interface FailureNotificationInput {
   schedule: ScheduleRecord;
   /** 失敗した run の id。 */
   runId: string;
+  /**
+   * 実行のたびに saved query から解決した実行先データソース id。
+   * schedule 自体はデータソースを保持しないため、解決できていれば outcome から渡す。
+   */
+  datasourceId: string | null;
   /** エンジンまたは実行基盤から得たエラー種別。 */
   errorType: string | null;
   /** 通知本文に載せる失敗理由。本文側で上限文字数に切り詰める。 */
@@ -289,7 +294,7 @@ export class NotificationService
     return [
       'Hubble schedule failed',
       `Schedule: ${input.schedule.name}`,
-      `Datasource: ${input.schedule.datasourceId}`,
+      `Datasource: ${input.datasourceId ?? 'unknown'}`,
       `Owner: ${input.schedule.owner}`,
       `Execution time: ${input.scheduledFor}`,
       `Finished at: ${input.finishedAt}`,
@@ -322,7 +327,7 @@ export class NotificationService
       actor: input.schedule.owner,
       action: 'notification.send',
       target: input.schedule.id,
-      datasource: input.schedule.datasourceId,
+      ...(input.datasourceId !== null ? { datasource: input.datasourceId } : {}),
       detail: {
         scheduleId: input.schedule.id,
         runId: input.runId,

@@ -7,7 +7,6 @@ import {
   runStatusLabel,
   summarizeLastRun,
   attemptLabel,
-  checkStatement,
   formatApiError,
   CRON_PRESETS,
   clampRetryField,
@@ -71,28 +70,6 @@ describe('attemptLabel', () => {
   test('singular vs plural', () => {
     expect(attemptLabel(1)).toBe('1 attempt');
     expect(attemptLabel(3)).toBe('3 attempts');
-  });
-});
-
-describe('checkStatement (client-side run-prevention)', () => {
-  test('accepts a valid statement', () => {
-    const result = checkStatement('SELECT count(*) FROM tpch.tiny.nation');
-    expect(result.ok).toBe(true);
-    expect(result.message).toBeUndefined();
-  });
-
-  test('rejects a syntactically invalid statement with a located message', () => {
-    const result = checkStatement('SELECT FROM WHERE');
-    expect(result.ok).toBe(false);
-    expect(result.message).toBeTruthy();
-    expect(result.line).toBeGreaterThanOrEqual(1);
-    expect(result.column).toBeGreaterThanOrEqual(1);
-  });
-
-  test('empty input is not ok but carries no error message (required, not broken)', () => {
-    const result = checkStatement('   ');
-    expect(result.ok).toBe(false);
-    expect(result.message).toBeUndefined();
   });
 });
 

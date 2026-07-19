@@ -1,6 +1,7 @@
-// ScheduleFormModal のクエリ入力モード（saved query 参照 / SQL 直接入力）切替と、
-// 送信ペイロードの組み立てを検証する。cron ビルダー自体の変換ロジックは
-// scheduleCron.test.ts でカバーしているため、ここではフォームの配線のみを見る。
+// ScheduleFormModal の保存済みクエリピッカーと送信ペイロードの組み立てを検証する。
+// schedule は常に savedQueryId 参照のみを持ち（SQL 直書きは廃止済み）、cron
+// ビルダー自体の変換ロジックは scheduleCron.test.ts でカバーしているため、ここでは
+// フォームの配線のみを見る。
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { DatasourceSummary, SavedQuery, Schedule } from '@hubble/contracts';
@@ -66,10 +67,7 @@ function schedule(over: Partial<Schedule> = {}): Schedule {
   return {
     id: 'sch-1',
     name: 'Existing schedule',
-    statement: 'SELECT 1',
-    savedQueryId: null,
-    catalog: 'catalog',
-    schema: 'schema',
+    savedQueryId: 'saved-1',
     cron: '0 9 * * *',
     enabled: true,
     retry: { maxAttempts: 3, backoffSeconds: 60, backoffMultiplier: 2 },
@@ -78,7 +76,6 @@ function schedule(over: Partial<Schedule> = {}): Schedule {
     updatedAt: timestamp,
     nextRunAt: null,
     lastRun: null,
-    datasourceId: 'trino-default',
     ...over,
   };
 }
@@ -95,7 +92,7 @@ afterAll(() => {
   ).IS_REACT_ACT_ENVIRONMENT = false;
 });
 
-describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', () => {
+describe('ScheduleFormModal: 保存済みクエリピッカーと送信ペイロード', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -111,14 +108,6 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
     container.remove();
   });
 
-  function radio(label: string): HTMLButtonElement {
-    const found = [...container.querySelectorAll('button[role="radio"]')].find(
-      (b) => b.textContent === label,
-    );
-    if (!found) throw new Error(`radio "${label}" not found`);
-    return found as HTMLButtonElement;
-  }
-
   function clickSave(label = 'Create schedule'): void {
     const save = [...container.querySelectorAll('button')].find((b) => b.textContent === label);
     act(() => save!.click());
@@ -127,25 +116,34 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
   // React は input/textarea の value を独自のプロパティディスクリプタで追跡しているため、
   // DOM の value を直接書き換えて input イベントを投げただけでは onChange が発火しない。
   // ネイティブの setter 経由で書き込むことで、React 管理下でも変更を検知させる。
-  function typeInto(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
-    const proto =
-      el instanceof HTMLTextAreaElement
-        ? window.HTMLTextAreaElement.prototype
-        : window.HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
+  function typeInto(el: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )!.set!;
     act(() => {
       setter.call(el, value);
       el.dispatchEvent(new Event('input', { bubbles: true }));
     });
   }
 
-  test('新規作成は既定で saved query 参照モードになる', () => {
+  function setSelectValue(select: HTMLSelectElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLSelectElement.prototype,
+      'value',
+    )!.set!;
+    act(() => {
+      setter.call(select, value);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  test('新規作成では保存済みクエリピッカーだけが表示される（SQL 直書き欄は無い）', () => {
     act(() =>
       root.render(
         <ScheduleFormModal
           open
           schedule={null}
-          context={{}}
           datasources={datasources}
           savedQueries={savedQueries}
           submitting={false}
@@ -156,20 +154,19 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         />,
       ),
     );
-    expect(radio('Saved query').getAttribute('aria-checked')).toBe('true');
-    // saved query モードでは SQL テキストエリアが表示されない。
     expect(container.querySelector('[aria-label="SQL statement"]')).toBeNull();
     expect(container.querySelector('[aria-label="Saved query"]')).not.toBeNull();
+    // 先頭の saved query が既定選択され、SQL プレビューに反映されている。
+    expect(container.textContent).toContain('SELECT count(*) FROM tpch.tiny.nation');
   });
 
-  test('saved query モードで作成すると savedQueryId のみを送る', () => {
+  test('作成すると name と savedQueryId のみを含むリクエストを送る', () => {
     const onCreate = vi.fn();
     act(() =>
       root.render(
         <ScheduleFormModal
           open
           schedule={null}
-          context={{}}
           datasources={datasources}
           savedQueries={savedQueries}
           submitting={false}
@@ -189,18 +186,18 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
     );
     const body = onCreate.mock.calls[0]![0];
     expect(body.statement).toBeUndefined();
-    // saved query の datasourceId が prefill されている。
-    expect(body.datasourceId).toBe('trino-default');
+    expect(body.catalog).toBeUndefined();
+    expect(body.schema).toBeUndefined();
+    expect(body.datasourceId).toBeUndefined();
   });
 
-  test('Direct SQL へ切り替えると statement のみを送る', () => {
+  test('保存済みクエリを選び直すと送信される savedQueryId とプレビューが切り替わる', () => {
     const onCreate = vi.fn();
     act(() =>
       root.render(
         <ScheduleFormModal
           open
           schedule={null}
-          context={{}}
           datasources={datasources}
           savedQueries={savedQueries}
           submitting={false}
@@ -211,34 +208,24 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         />,
       ),
     );
-    act(() => radio('Direct SQL').click());
-    expect(container.querySelector('[aria-label="SQL statement"]')).not.toBeNull();
+    const select = container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement;
+    setSelectValue(select, 'saved-2');
+    expect(container.textContent).toContain('SELECT * FROM sales.rollup');
+    expect(container.textContent).toContain('MySQL analytics');
 
     const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
-    const statementInput = container.querySelector(
-      '[aria-label="SQL statement"]',
-    ) as HTMLTextAreaElement;
-    typeInto(nameInput, 'Direct schedule');
-    typeInto(statementInput, 'SELECT count(*) FROM tpch.tiny.nation');
+    typeInto(nameInput, 'Rollup schedule');
     clickSave('Create schedule');
 
-    expect(onCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'Direct schedule',
-        statement: 'SELECT count(*) FROM tpch.tiny.nation',
-      }),
-    );
-    const body = onCreate.mock.calls[0]![0];
-    expect(body.savedQueryId).toBeUndefined();
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ savedQueryId: 'saved-2' }));
   });
 
-  test('既存スケジュール（直書き statement）の編集は Direct SQL モードで開く', () => {
+  test('既存スケジュールの編集は現在参照している保存済みクエリで開く', () => {
     act(() =>
       root.render(
         <ScheduleFormModal
           open
-          schedule={schedule({ statement: 'SELECT 1', savedQueryId: null })}
-          context={{}}
+          schedule={schedule({ savedQueryId: 'saved-2' })}
           datasources={datasources}
           savedQueries={savedQueries}
           submitting={false}
@@ -249,32 +236,9 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         />,
       ),
     );
-    expect(radio('Direct SQL').getAttribute('aria-checked')).toBe('true');
-    expect(
-      (container.querySelector('[aria-label="SQL statement"]') as HTMLTextAreaElement).value,
-    ).toBe('SELECT 1');
-  });
-
-  test('既存スケジュール（saved query 参照）の編集は Saved query モードで開く', () => {
-    act(() =>
-      root.render(
-        <ScheduleFormModal
-          open
-          schedule={schedule({ statement: null, savedQueryId: 'saved-1' })}
-          context={{}}
-          datasources={datasources}
-          savedQueries={savedQueries}
-          submitting={false}
-          serverError={null}
-          onClose={vi.fn()}
-          onCreate={vi.fn()}
-          onUpdate={vi.fn()}
-        />,
-      ),
-    );
-    expect(radio('Saved query').getAttribute('aria-checked')).toBe('true');
     const select = container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement;
-    expect(select.value).toBe('saved-1');
+    expect(select.value).toBe('saved-2');
+    expect(container.textContent).toContain('SELECT * FROM sales.rollup');
   });
 
   // 指摘1: saved query 一覧の取得が完了する前にモーダルを開くと、初回マウント時点では
@@ -285,7 +249,6 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         <ScheduleFormModal
           open
           schedule={null}
-          context={{}}
           datasources={datasources}
           savedQueries={[]}
           submitting={false}
@@ -306,7 +269,6 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         <ScheduleFormModal
           open
           schedule={null}
-          context={{}}
           datasources={datasources}
           savedQueries={savedQueries}
           submitting={false}
@@ -320,165 +282,6 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
     const select = container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement;
     expect(select).not.toBeNull();
     expect(select.value).toBe('saved-1');
-    // 先頭候補の datasourceId/catalog/schema も 3 点セットで prefill されている。
-    expect((container.querySelector('[name="catalog"]') as HTMLInputElement).value).toBe('tpch');
-    expect((container.querySelector('[name="schema"]') as HTMLInputElement).value).toBe('tiny');
-  });
-
-  // 指摘2: saved query を選び直すと、その保存済みクエリの datasourceId/catalog/schema を
-  // 3 点セットで prefill する（3 つがバラバラの組み合わせのまま送信されるのを防ぐ）。
-  test('saved query を選び直すと datasourceId/catalog/schema を 3 点セットで prefill する', () => {
-    act(() =>
-      root.render(
-        <ScheduleFormModal
-          open
-          schedule={null}
-          context={{ catalog: 'notebook_catalog', schema: 'notebook_schema' }}
-          datasources={datasources}
-          savedQueries={savedQueries}
-          submitting={false}
-          serverError={null}
-          onClose={vi.fn()}
-          onCreate={vi.fn()}
-          onUpdate={vi.fn()}
-        />,
-      ),
-    );
-    // 初期選択（先頭の saved-1）の時点では notebook のコンテキストではなく saved query の値。
-    expect((container.querySelector('[name="catalog"]') as HTMLInputElement).value).toBe('tpch');
-
-    const select = container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement;
-    act(() => {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLSelectElement.prototype,
-        'value',
-      )!.set!;
-      setter.call(select, 'saved-2');
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-
-    expect((container.querySelector('[name="catalog"]') as HTMLInputElement).value).toBe('sales');
-    expect((container.querySelector('[name="schema"]') as HTMLInputElement).value).toBe('rollup');
-    const dsTrigger = [...container.querySelectorAll('button')].find(
-      (b) => b.textContent === 'MySQL analytics',
-    );
-    expect(dsTrigger).not.toBeUndefined();
-  });
-
-  // 再レビュー指摘1: Direct SQL モードのまま saved query 一覧が届いた場合、一覧到着時点
-  // では復旧されない（queryMode !== 'saved' のため）。その後 Saved query モードへ
-  // 切り替えた時点で復旧されることを確認する（切替ハンドラー側の復旧処理の回帰テスト）。
-  test('直書き編集を一覧取得前に開く→一覧到着→saved へ切替、の順で選択が復旧する', () => {
-    act(() =>
-      root.render(
-        <ScheduleFormModal
-          open
-          schedule={schedule({ statement: 'SELECT 1', savedQueryId: null })}
-          context={{}}
-          datasources={datasources}
-          savedQueries={[]}
-          submitting={false}
-          serverError={null}
-          onClose={vi.fn()}
-          onCreate={vi.fn()}
-          onUpdate={vi.fn()}
-        />,
-      ),
-    );
-    expect(radio('Direct SQL').getAttribute('aria-checked')).toBe('true');
-
-    // savedQueries が非同期に届く。schedule は direct モードのままなので、この時点では
-    // まだ何も選択されない（select 自体も描画されない）。
-    act(() =>
-      root.render(
-        <ScheduleFormModal
-          open
-          schedule={schedule({ statement: 'SELECT 1', savedQueryId: null })}
-          context={{}}
-          datasources={datasources}
-          savedQueries={savedQueries}
-          submitting={false}
-          serverError={null}
-          onClose={vi.fn()}
-          onCreate={vi.fn()}
-          onUpdate={vi.fn()}
-        />,
-      ),
-    );
-    expect(container.querySelector('[aria-label="Saved query"]')).toBeNull();
-
-    // ここで Saved query モードへ切り替える。切替時点で先頭候補へ復旧するはず。
-    act(() => radio('Saved query').click());
-    const select = container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement;
-    expect(select).not.toBeNull();
-    expect(select.value).toBe('saved-1');
-    expect((container.querySelector('[name="catalog"]') as HTMLInputElement).value).toBe('tpch');
-  });
-
-  // 再レビュー指摘2: datasourceId 未設定の saved query へ選択変更すると、前に選んでいた
-  // query の datasourceId が取り残されてはいけない。意味上の既定データソース
-  // （defaultDatasourceId、なければ datasources[0]）へ必ず更新されることを確認する。
-  test('datasourceId 未設定の saved query へ選び直すと既定データソースへリセットされる', () => {
-    const savedQueriesWithoutDatasource: SavedQuery[] = [
-      ...savedQueries,
-      {
-        id: 'saved-3',
-        name: 'No datasource set',
-        description: '',
-        statement: 'SELECT 1',
-        catalog: 'legacy_catalog',
-        schema: 'legacy_schema',
-        // datasourceId 未設定（古い saved query を想定）。
-        isFavorite: false,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        myPermission: 'owner',
-      },
-    ];
-    act(() =>
-      root.render(
-        <ScheduleFormModal
-          open
-          schedule={null}
-          context={{}}
-          datasources={datasources}
-          savedQueries={savedQueriesWithoutDatasource}
-          submitting={false}
-          serverError={null}
-          onClose={vi.fn()}
-          onCreate={vi.fn()}
-          onUpdate={vi.fn()}
-        />,
-      ),
-    );
-
-    const select = container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement;
-    const setSelectValue = (value: string) => {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLSelectElement.prototype,
-        'value',
-      )!.set!;
-      act(() => {
-        setter.call(select, value);
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-      });
-    };
-
-    // まず mysql-analytics を選び、datasourceId がそちらへ prefill されることを確認する。
-    setSelectValue('saved-2');
-    expect(
-      [...container.querySelectorAll('button')].some((b) => b.textContent === 'MySQL analytics'),
-    ).toBe(true);
-
-    // 続けて datasourceId 未設定の saved-3 へ選び直すと、前の mysql-analytics が
-    // 残らず、既定データソース（datasources[0] の Trino）へリセットされる。
-    setSelectValue('saved-3');
-    expect(
-      [...container.querySelectorAll('button')].some((b) => b.textContent === 'MySQL analytics'),
-    ).toBe(false);
-    expect(
-      [...container.querySelectorAll('button')].some((b) => b.textContent === 'Trino (default)'),
-    ).toBe(true);
   });
 
   // 指摘3: server は cron を server local timezone で評価するため、読み下しに
@@ -489,7 +292,6 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         <ScheduleFormModal
           open
           schedule={null}
-          context={{}}
           datasources={datasources}
           savedQueries={savedQueries}
           submitting={false}
@@ -509,7 +311,6 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         <ScheduleFormModal
           open
           schedule={null}
-          context={{}}
           datasources={datasources}
           savedQueries={savedQueries}
           submitting={false}

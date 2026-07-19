@@ -2,18 +2,17 @@
  * `ScheduleRepository` / `ScheduleRunRepository`（packages/server/src/store/schedules.ts）
  * の振る舞いを検証するテストスイート。PostgreSQLのワーカー用スキーマを使い、
  * CRUD、所有者分離、カスケード、実行履歴の結果を検証する。
+ * schedule は常に savedQueryId 参照のみを持ち、statement/catalog/schema/datasourceId は
+ * 保持しない（それらは参照先の saved query が持つ値を実行のたびに解決する）。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { openTestDatabase } from '../test/dbBackends';
-import { DEFAULT_DATASOURCE_ID } from '../test/testEngine';
 import {
   ScheduleRepository,
   ScheduleRunClaimConflictError,
   ScheduleRunRepository,
 } from './schedules';
-
-const ds = { datasourceId: DEFAULT_DATASOURCE_ID };
 
 /**
  * Schedule + schedule-run repository suite. CRUD、owner分離、アプリ側の
@@ -38,22 +37,18 @@ describe('schedule repositories', () => {
   }
 
   describe('ScheduleRepository', () => {
-    // 作成→一覧→取得→更新（null クリア含む）→削除の一連のライフサイクルと、
-    // 所有者による隔離（他の所有者からは見えない、操作できない）を検証する。
+    // 作成→一覧→取得→更新→削除の一連のライフサイクルと、所有者による隔離
+    // （他の所有者からは見えない、操作できない）を検証する。
     it('creates, lists, gets, updates, deletes; owner-scoped', async () => {
       const repo = new ScheduleRepository(await open());
 
       const created = await repo.create('alice', {
         name: 'nightly',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '0 0 * * *',
-        catalog: 'tpch',
-        schema: 'tiny',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
-      expect(created.datasourceId).toBe(DEFAULT_DATASOURCE_ID);
+      expect(created.savedQueryId).toBe('sq_1');
       expect(created.id).toMatch(/^sch_/);
       expect(created.enabled).toBe(true);
       expect(created.retry).toEqual({
@@ -68,7 +63,7 @@ describe('schedule repositories', () => {
 
       const list = await repo.list('alice');
       expect(list).toHaveLength(1);
-      expect(list[0]!.catalog).toBe('tpch');
+      expect(list[0]!.savedQueryId).toBe('sq_1');
 
       const updated = await repo.update('alice', created.id, {
         enabled: false,
@@ -81,109 +76,39 @@ describe('schedule repositories', () => {
       // 更新対象外のフィールドが維持されることを確認する。
       expect(updated?.name).toBe('nightly');
 
-      // catalogとschemaをnullへクリアできることを確認する。
-      const nulled = await repo.update('alice', created.id, { catalog: null, schema: null });
-      expect(nulled?.catalog).toBeNull();
-      expect(nulled?.schema).toBeNull();
+      // savedQueryId を切り替えられることを確認する。
+      const switched = await repo.update('alice', created.id, { savedQueryId: 'sq_2' });
+      expect(switched?.savedQueryId).toBe('sq_2');
 
       expect(await repo.delete('bob', created.id)).toBe(false);
       expect(await repo.delete('alice', created.id)).toBe(true);
       expect(await repo.get('alice', created.id)).toBeUndefined();
     });
 
-    // savedQueryId 参照モードでの作成/読み出しと、direct statement ⇔ savedQueryId
-    // の相互切替（片方を指定するともう片方が null にリセットされること）を検証する。
-    it('round-trips savedQueryId and toggles exclusively with statement on update', async () => {
-      const repo = new ScheduleRepository(await open());
-
-      const created = await repo.create('alice', {
-        name: 'via saved query',
-        savedQueryId: 'sq_1',
-        cron: '0 9 * * *',
-        ...ds,
-        principalSnapshot: { user: 'alice' },
-      });
-      expect(created.savedQueryId).toBe('sq_1');
-      expect(created.statement).toBeNull();
-
-      const fetched = await repo.get('alice', created.id);
-      expect(fetched?.savedQueryId).toBe('sq_1');
-      expect(fetched?.statement).toBeNull();
-
-      // statement を指定して更新すると、savedQueryId は null にリセットされる。
-      const toDirect = await repo.update('alice', created.id, { statement: 'SELECT 1' });
-      expect(toDirect?.statement).toBe('SELECT 1');
-      expect(toDirect?.savedQueryId).toBeNull();
-
-      // savedQueryId を指定して更新すると、statement は null にリセットされる。
-      const toSaved = await repo.update('alice', created.id, { savedQueryId: 'sq_2' });
-      expect(toSaved?.savedQueryId).toBe('sq_2');
-      expect(toSaved?.statement).toBeNull();
-    });
-
-    // 指摘5: statement / saved_query_id の排他は契約層の refine だけでなく、
-    // DB 側にも CHECK 制約として二重に持たせている
-    // (migrations/0002_schedule_saved_query.sql の schedules_statement_xor_saved_query)。
-    // repository/契約層を経由しない直接の INSERT でも拒否されることを、生 SQL で確認する。
-    it('rejects statement and saved_query_id both non-null at the DB level (CHECK constraint)', async () => {
+    // saved_query_id は NOT NULL 制約が付いている
+    // (migrations/0003_schedule_saved_query_only.sql)。repository/契約層を経由しない
+    // 直接の INSERT でも拒否されることを、生 SQL で確認する。
+    it('rejects a null saved_query_id at the DB level (NOT NULL constraint)', async () => {
       const database = await open();
       const nowIso = new Date().toISOString();
       await expect(
         database.run(
           `INSERT INTO schedules
-             (id, owner, name, statement, saved_query_id, catalog, schema, cron, enabled,
+             (id, owner, name, saved_query_id, cron, enabled,
               retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
-              notifications, datasource_id, principal_snapshot, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+              notifications, principal_snapshot, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
           [
             'sch_check_test',
             'alice',
-            'both-set',
-            'SELECT 1', // statement 非 null
-            'sq_1', // saved_query_id も非 null → 排他違反
-            null,
-            null,
+            'null-saved-query',
+            null, // saved_query_id が NULL → NOT NULL 制約違反
             '* * * * *',
             1,
             3,
             60,
             2,
             '{}',
-            DEFAULT_DATASOURCE_ID,
-            null,
-            nowIso,
-            nowIso,
-          ],
-        ),
-      ).rejects.toThrow();
-    });
-
-    // 両方 null（statement も saved_query_id も未指定）も同じ CHECK 制約で拒否される。
-    it('rejects statement and saved_query_id both null at the DB level (CHECK constraint)', async () => {
-      const database = await open();
-      const nowIso = new Date().toISOString();
-      await expect(
-        database.run(
-          `INSERT INTO schedules
-             (id, owner, name, statement, saved_query_id, catalog, schema, cron, enabled,
-              retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
-              notifications, datasource_id, principal_snapshot, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-          [
-            'sch_check_test_2',
-            'alice',
-            'neither-set',
-            null,
-            null,
-            null,
-            null,
-            '* * * * *',
-            1,
-            3,
-            60,
-            2,
-            '{}',
-            DEFAULT_DATASOURCE_ID,
             null,
             nowIso,
             nowIso,
@@ -198,26 +123,21 @@ describe('schedule repositories', () => {
       const repo = new ScheduleRepository(await open());
       await repo.create('alice', {
         name: 'on',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '* * * * *',
-        ...ds,
         principalSnapshot: { user: 'alice' },
       });
       await repo.create('bob', {
         name: 'off',
-        statement: 'SELECT 2',
+        savedQueryId: 'sq_2',
         cron: '* * * * *',
         enabled: false,
-        ...ds,
-
         principalSnapshot: { user: 'bob' },
       });
       await repo.create('carol', {
         name: 'on2',
-        statement: 'SELECT 3',
+        savedQueryId: 'sq_3',
         cron: '* * * * *',
-        ...ds,
-
         principalSnapshot: { user: 'carol' },
       });
 
@@ -233,10 +153,8 @@ describe('schedule repositories', () => {
       const runs = new ScheduleRunRepository(db2, 50);
       const s = await repo.create('alice', {
         name: 's',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '* * * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
       const runId = await runs.start({
@@ -264,10 +182,8 @@ describe('schedule repositories', () => {
       const runs = new ScheduleRunRepository(db2, 50);
       const schedule = await repo.create('alice', {
         name: 'rollback',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '* * * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
       await runs.start({
@@ -301,31 +217,14 @@ describe('schedule repositories', () => {
       }
     });
 
-    it('persists datasource_id from create input', async () => {
-      const repo = new ScheduleRepository(await open());
-      const created = await repo.create('alice', {
-        name: 'ds-test',
-        statement: 'SELECT 1',
-        cron: '0 0 * * *',
-        datasourceId: 'custom-trino',
-
-        principalSnapshot: { user: 'alice' },
-      });
-      expect(created.datasourceId).toBe('custom-trino');
-      const fetched = await repo.get('alice', created.id);
-      expect(fetched?.datasourceId).toBe('custom-trino');
-    });
-
     it('warns when a stored principal snapshot is not valid JSON', async () => {
       const db2 = await open();
       const repo = new ScheduleRepository(db2);
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const created = await repo.create('alice', {
         name: 'bad-json-principal',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '0 0 * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
       await db2.run('UPDATE schedules SET principal_snapshot = $1 WHERE id = $2', [
@@ -348,10 +247,8 @@ describe('schedule repositories', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const created = await repo.create('alice', {
         name: 'bad-shape-principal',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '0 0 * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
       await db2.run('UPDATE schedules SET principal_snapshot = $1 WHERE id = $2', [
@@ -376,10 +273,8 @@ describe('schedule repositories', () => {
       const runs = new ScheduleRunRepository(db2, 50);
       const schedule = await schedules.create('alice', {
         name: 'claim',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '* * * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
       const input = {
@@ -407,10 +302,8 @@ describe('schedule repositories', () => {
       const runs = new ScheduleRunRepository(db2, 50);
       const s = await repo.create('alice', {
         name: 's',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '* * * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
 
@@ -462,18 +355,14 @@ describe('schedule repositories', () => {
       const runs = new ScheduleRunRepository(db2, 50);
       const first = await schedules.create('alice', {
         name: 'first',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '* * * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
       const second = await schedules.create('alice', {
         name: 'second',
-        statement: 'SELECT 2',
+        savedQueryId: 'sq_2',
         cron: '* * * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
       const firstRun = await runs.start({
@@ -520,10 +409,8 @@ describe('schedule repositories', () => {
       const runs = new ScheduleRunRepository(db2, 3); // keep only 3
       const s = await repo.create('alice', {
         name: 's',
-        statement: 'SELECT 1',
+        savedQueryId: 'sq_1',
         cron: '* * * * *',
-        ...ds,
-
         principalSnapshot: { user: 'alice' },
       });
 

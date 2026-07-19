@@ -98,12 +98,17 @@ describe('schedule execution role resolution', () => {
     'uses the saved principal snapshot for $name under email-localpart',
     async ({ assignment, headers }) => {
       const ctx = await createSnapshotSchedule(assignment);
+      // email-localpart マッピングなので、principal.user はメールの @ より前 ('alice') になる。
+      const saved = await ctx.services.savedQueries.create('alice', {
+        name: 'snapshot-sq',
+        statement: 'SELECT 1 AS snapshot_value',
+      });
       const createRes = await ctx.app.request('/api/schedules', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           name: 'snapshot',
-          statement: 'SELECT 1 AS snapshot_value',
+          savedQueryId: saved.id,
           cron: '* * * * *',
         }),
       });

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { RetryPolicy, ScheduleNotifications } from '@hubble/contracts';
 import { openTestDatabase } from '../test/dbBackends';
 import type { SqlDatabase } from '../db/sqlDatabase';
 import { EstimateService } from '../query/estimateService';
-import { ScheduleRepository, ScheduleRunRepository } from '../store/schedules';
+import { ScheduleRepository, ScheduleRunRepository, type ScheduleRecord } from '../store/schedules';
 import { SavedQueryRepository } from '../store/savedQueries';
 import { DocumentShareRepository } from '../store/documentShares';
 import { FakeTrino, type FakeScenario } from '../test/fakeTrino';
@@ -11,6 +12,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadRbac } from '../rbac/loader';
 import type { LoadedRbac } from '../rbac/types';
+import type { PrincipalIdentity } from '../auth/principal';
 import { DEFAULT_DATASOURCE_ID, makeEnginesMap } from '../test/testEngine';
 import { LeasedEngine } from '../engine/leasedEngine';
 import type { QueryEngine } from '../engine/types';
@@ -175,6 +177,40 @@ async function makeHarness(
   };
 }
 
+/**
+ * 直書き SQL 時代のテストをそのまま流用するためのヘルパー。schedule は常に
+ * savedQueryId 参照のみを持つため、まず指定した statement で saved query を
+ * 作ってから、それを参照する schedule を作る。FakeTrino のシナリオ一致は
+ * statement の文字列そのものに依存するため、statement の値はそのまま引き継ぐ。
+ */
+async function createScheduleWithStatement(
+  h: Harness,
+  owner: string,
+  opts: {
+    name: string;
+    statement: string;
+    cron: string;
+    retry?: RetryPolicy;
+    notifications?: ScheduleNotifications;
+    enabled?: boolean;
+    principalSnapshot?: PrincipalIdentity;
+  },
+): Promise<ScheduleRecord> {
+  const savedQuery = await h.savedQueries.create(owner, {
+    name: `${opts.name}-sq`,
+    statement: opts.statement,
+  });
+  return h.schedules.create(owner, {
+    name: opts.name,
+    savedQueryId: savedQuery.id,
+    cron: opts.cron,
+    ...(opts.retry !== undefined ? { retry: opts.retry } : {}),
+    ...(opts.notifications !== undefined ? { notifications: opts.notifications } : {}),
+    ...(opts.enabled !== undefined ? { enabled: opts.enabled } : {}),
+    principalSnapshot: opts.principalSnapshot ?? { user: owner },
+  });
+}
+
 describe('Scheduler run matrix', () => {
   let h: Harness;
   afterEach(async () => {
@@ -190,11 +226,10 @@ describe('Scheduler run matrix', () => {
         pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
       },
     ]);
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'ok',
       statement: 'SELECT_OK',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -245,11 +280,10 @@ describe('Scheduler run matrix', () => {
     h.fake.holdAdvance = new Promise<void>((resolve) => {
       releaseAdvance = resolve;
     });
-    const schedule = await h.schedules.create('alice', {
+    const schedule = await createScheduleWithStatement(h, 'alice', {
       name: 'leased',
       statement: 'SELECT_LEASED',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -277,12 +311,11 @@ describe('Scheduler run matrix', () => {
         pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
       },
     ]);
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'ok notify',
       statement: 'SELECT_OK_NOTIFY',
       cron: '* * * * *',
       notifications: { onFailure: true, channels: ['slack'] },
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -309,13 +342,12 @@ describe('Scheduler run matrix', () => {
         await notificationGate;
       },
     });
-    const schedule = await h.schedules.create('alice', {
+    const schedule = await createScheduleWithStatement(h, 'alice', {
       name: 'notify fail',
       statement: 'SELECT 1 /* NOTIFY_FAIL */',
       cron: '* * * * *',
       retry: { maxAttempts: 1, backoffSeconds: 1, backoffMultiplier: 1 },
       notifications: { onFailure: true, channels: ['slack'] },
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -335,11 +367,10 @@ describe('Scheduler run matrix', () => {
 
   it('waits for a manual run that is still creating its DB claim', async () => {
     h = await makeHarness([VALIDATE_OK]);
-    const schedule = await h.schedules.create('alice', {
+    const schedule = await createScheduleWithStatement(h, 'alice', {
       name: 'claim pending',
       statement: 'SELECT 1',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -381,12 +412,11 @@ describe('Scheduler run matrix', () => {
         },
       },
     ]);
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'bad',
       statement: 'SELECT_BAD',
       cron: '* * * * *',
       retry: { maxAttempts: 5, backoffSeconds: 60, backoffMultiplier: 2 },
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -434,13 +464,12 @@ describe('Scheduler run matrix', () => {
       holder.fake?.setScenarios([VALIDATE_OK, flakyOk]);
     });
     holder.fake = h.fake;
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'flaky',
       statement: 'SELECT 1 /* SELECT_FLAKY */',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       notifications: { onFailure: true, channels: ['slack'] },
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -472,12 +501,11 @@ describe('Scheduler run matrix', () => {
       {},
       () => sleepGate,
     );
-    const schedule = await h.schedules.create('alice', {
+    const schedule = await createScheduleWithStatement(h, 'alice', {
       name: 'backoff abort',
       statement: 'SELECT 1 /* BACKOFF_ABORT */',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -502,12 +530,11 @@ describe('Scheduler run matrix', () => {
         },
       },
     ]);
-    const schedule = await h.schedules.create('alice', {
+    const schedule = await createScheduleWithStatement(h, 'alice', {
       name: 'write once',
       statement: 'INSERT INTO audit_log VALUES (1) /* WRITE_RESPONSE_LOST */',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -540,13 +567,12 @@ describe('Scheduler run matrix', () => {
         },
       },
     ]);
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'down',
       statement: 'SELECT 1 /* SELECT_DOWN */',
       cron: '* * * * *',
       retry: { maxAttempts: 3, backoffSeconds: 30, backoffMultiplier: 2 },
       notifications: { onFailure: true, channels: ['slack'] },
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -586,11 +612,10 @@ defaultRole: trino-prod-only
       );
       const rbac = () => loadRbac({ env: { RBAC_PATH: join(dir, 'rbac.yaml') }, cwd: dir });
       h = await makeHarness([VALIDATE_OK], {}, undefined, rbac);
-      const s = await h.schedules.create('alice', {
+      const s = await createScheduleWithStatement(h, 'alice', {
         name: 'denied',
         statement: 'SELECT 1',
         cron: '* * * * *',
-        datasourceId: DEFAULT_DATASOURCE_ID,
 
         principalSnapshot: { user: 'alice' },
       });
@@ -608,11 +633,10 @@ defaultRole: trino-prod-only
 
   it('blocks a historical schedule when its principal snapshot is missing', async () => {
     h = await makeHarness([VALIDATE_OK]);
-    const schedule = await h.schedules.create('alice', {
+    const schedule = await createScheduleWithStatement(h, 'alice', {
       name: 'missing snapshot',
       statement: 'SELECT 1',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
       principalSnapshot: { user: 'alice' },
     });
     await h.db.run('UPDATE schedules SET principal_snapshot = NULL WHERE id = $1', [schedule.id]);
@@ -646,12 +670,11 @@ defaultRole: trino-prod-only
       ],
       { guardMode: 'enforce' },
     );
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'big',
       statement: 'SELECT_BIG',
       cron: '* * * * *',
       retry: { maxAttempts: 5, backoffSeconds: 60, backoffMultiplier: 2 },
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -696,11 +719,10 @@ describe('Scheduler overlap and concurrency', () => {
       },
     ]);
     h.fake.holdAdvance = new Promise(() => {}); // never resolves
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'hold',
       statement: 'SELECT_HOLD',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -725,19 +747,17 @@ describe('Scheduler overlap and concurrency', () => {
     h.fake.holdAdvance = new Promise<void>((resolve) => {
       releaseAdvance = resolve;
     });
-    const first = await h.schedules.create('alice', {
+    const first = await createScheduleWithStatement(h, 'alice', {
       name: 'first',
       statement: 'SELECT 1 /* SELECT_HOLD first */',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
-    const second = await h.schedules.create('alice', {
+    const second = await createScheduleWithStatement(h, 'alice', {
       name: 'second',
       statement: 'SELECT 2 /* SELECT_HOLD second */',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -767,11 +787,10 @@ describe('Scheduler tick + lifecycle', () => {
         pages: [{ columns: [{ name: 'n', type: 'bigint' }], data: [[1]] }],
       },
     ]);
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'tick',
       statement: 'SELECT_TICK',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -801,11 +820,10 @@ describe('Scheduler tick + lifecycle', () => {
       ],
       { maxConcurrent: 1 },
     );
-    const schedule = await h.schedules.create('alice', {
+    const schedule = await createScheduleWithStatement(h, 'alice', {
       name: 'tick blocked',
       statement: 'SELECT 1 /* SELECT_TICK_BLOCKED */',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -822,11 +840,10 @@ describe('Scheduler tick + lifecycle', () => {
 
   it('aborts orphaned running rows on start (crash recovery)', async () => {
     h = await makeHarness([VALIDATE_OK]);
-    const s = await h.schedules.create('alice', {
+    const s = await createScheduleWithStatement(h, 'alice', {
       name: 'orphan',
       statement: 'SELECT 1',
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
 
       principalSnapshot: { user: 'alice' },
     });
@@ -873,7 +890,6 @@ describe('Scheduler saved query resolution', () => {
       name: 'via saved query',
       savedQueryId: savedQuery.id,
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
       principalSnapshot: { user: 'alice' },
     });
 
@@ -913,7 +929,6 @@ describe('Scheduler saved query resolution', () => {
       name: 'dangling reference',
       savedQueryId: savedQuery.id,
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
       principalSnapshot: { user: 'alice' },
     });
     // saved query を削除する（共有解除や他人による削除と同じ「解決不能」状態を再現する）。
@@ -950,7 +965,6 @@ describe('Scheduler saved query resolution', () => {
       name: 'ticked',
       savedQueryId: savedQuery.id,
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
       principalSnapshot: { user: 'alice' },
     });
     await h.scheduler.start();
@@ -996,7 +1010,6 @@ describe('Scheduler saved query resolution', () => {
       name: 'via shared saved query',
       savedQueryId: savedQuery.id,
       cron: '* * * * *',
-      datasourceId: DEFAULT_DATASOURCE_ID,
       principalSnapshot: { user: 'bob' },
     });
 
@@ -1066,7 +1079,6 @@ defaultRole: read-only
         name: 'read then write',
         savedQueryId: savedQuery.id,
         cron: '* * * * *',
-        datasourceId: DEFAULT_DATASOURCE_ID,
         principalSnapshot: { user: 'alice' },
       });
 
@@ -1097,9 +1109,9 @@ defaultRole: read-only
   });
 
   // コーディネーター指摘4-3: 実行間に RBAC の datasource allowlist を変更すると、
-  // 次回実行がブロックされる。saved query 参照 schedule でも、datasourceId の
-  // allowlist チェック自体は schedule.datasourceId（authoritative）に対して
-  // 行われることを確認する。
+  // 次回実行がブロックされる。schedule は datasourceId を保持しないため、
+  // allowlist チェックは実行のたびに saved query から解決した datasourceId に
+  // 対して行われることを確認する。
   it('blocks the next run when the RBAC datasource allowlist changes between runs', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'hubble-sched-allowlist-'));
     try {
@@ -1135,7 +1147,6 @@ defaultRole: scoped
         name: 'allowlisted',
         savedQueryId: savedQuery.id,
         cron: '* * * * *',
-        datasourceId: DEFAULT_DATASOURCE_ID,
         principalSnapshot: { user: 'alice' },
       });
 
@@ -1165,11 +1176,10 @@ describe('Scheduler disabled', () => {
     vi.useFakeTimers();
     try {
       const h = await makeHarness([VALIDATE_OK], { enabled: false });
-      const s = await h.schedules.create('alice', {
+      const s = await createScheduleWithStatement(h, 'alice', {
         name: 'x',
         statement: 'SELECT 1',
         cron: '* * * * *',
-        datasourceId: DEFAULT_DATASOURCE_ID,
 
         principalSnapshot: { user: 'alice' },
       });

@@ -19,9 +19,21 @@ const timestamp = '2026-07-12T00:00:00.000Z';
 const savedQueries: SavedQuery[] = [
   {
     id: 'saved-1',
-    name: 'Saved query',
+    name: 'Saved query 1',
     description: '',
     statement: 'SELECT 1',
+    catalog: '',
+    schema: '',
+    isFavorite: false,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    myPermission: 'owner',
+  },
+  {
+    id: 'saved-2',
+    name: 'Saved query 2',
+    description: '',
+    statement: 'SELECT 2',
     catalog: '',
     schema: '',
     isFavorite: false,
@@ -52,14 +64,11 @@ function alert(id: string, name: string): Alert {
   };
 }
 
-function schedule(id: string, name: string, statement: string): Schedule {
+function schedule(id: string, name: string, savedQueryId: string): Schedule {
   return {
     id,
     name,
-    statement,
-    savedQueryId: null,
-    catalog: 'catalog',
-    schema: 'schema',
+    savedQueryId,
     cron: '0 * * * *',
     enabled: true,
     retry: { maxAttempts: 3, backoffSeconds: 60, backoffMultiplier: 2 },
@@ -68,7 +77,6 @@ function schedule(id: string, name: string, statement: string): Schedule {
     updatedAt: timestamp,
     nextRunAt: null,
     lastRun: null,
-    datasourceId: 'datasource-1',
   };
 }
 
@@ -124,12 +132,11 @@ describe('フォームモーダルの再初期化', () => {
     expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ name: 'Alert B' }));
   });
 
-  test('Scheduleの編集対象を切り替えるとnameとstatementを再初期化する', () => {
+  test('Scheduleの編集対象を切り替えるとnameとsavedQueryIdを再初期化する', () => {
     const onUpdate = vi.fn();
     const common = {
-      context: {},
       datasources: [],
-      savedQueries: [],
+      savedQueries,
       submitting: false,
       serverError: null,
       onClose: vi.fn(),
@@ -138,27 +145,27 @@ describe('フォームモーダルの再初期化', () => {
     };
     act(() =>
       root.render(
-        <ScheduleFormModal open schedule={schedule('a', 'Schedule A', 'SELECT 1')} {...common} />,
+        <ScheduleFormModal open schedule={schedule('a', 'Schedule A', 'saved-1')} {...common} />,
       ),
     );
     expect((container.querySelector('[name="name"]') as HTMLInputElement).value).toBe('Schedule A');
 
     act(() =>
       root.render(
-        <ScheduleFormModal open schedule={schedule('b', 'Schedule B', 'SELECT 2')} {...common} />,
+        <ScheduleFormModal open schedule={schedule('b', 'Schedule B', 'saved-2')} {...common} />,
       ),
     );
 
     expect((container.querySelector('[name="name"]') as HTMLInputElement).value).toBe('Schedule B');
-    expect(
-      (container.querySelector('[aria-label="SQL statement"]') as HTMLTextAreaElement).value,
-    ).toBe('SELECT 2');
+    expect((container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement).value).toBe(
+      'saved-2',
+    );
     const save = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Save changes',
     );
     act(() => save!.click());
     expect(onUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Schedule B', statement: 'SELECT 2' }),
+      expect.objectContaining({ name: 'Schedule B', savedQueryId: 'saved-2' }),
     );
   });
 

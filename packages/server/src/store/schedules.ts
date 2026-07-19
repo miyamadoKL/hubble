@@ -2,8 +2,9 @@
  * スケジュール実行機能（Query Scheduling）の永続化層。
  *
  * - `ScheduleRepository`: `schedules` テーブルに対する CRUD。スケジュール定義
- *   （実行する SQL 文、cron 式、リトライポリシーなど）を owner（principal）ごとに
- *   管理する。
+ *   （参照する保存済みクエリ id、cron 式、リトライポリシーなど）を owner（principal）
+ *   ごとに管理する。実行する SQL 文と実行先（datasource/catalog/schema）は
+ *   savedQueryId の参照先が持つ値を使うため、このテーブルでは保持しない。
  * - `ScheduleRunRepository`: `schedule_runs` テーブルに対する CRUD。個々の
  *   実行結果（成功/失敗、行数、経過時間など）を記録し、スケジュールごとの
  *   保持件数（retention）を超えた古い行を間引く。
@@ -50,14 +51,11 @@ export interface ScheduleRecord {
   /** スケジュールの所有者（principal）。全操作の絞り込みキーになる。 */
   owner: string;
   name: string;
-  /** 定期実行される SQL 文。savedQueryId 参照の場合は null。 */
-  statement: string | null;
-  /** 参照する保存済みクエリの id。直書き statement の場合は null。 */
-  savedQueryId: string | null;
-  /** 既定のカタログ（未指定なら null）。 */
-  catalog: string | null;
-  /** 既定のスキーマ（未指定なら null）。 */
-  schema: string | null;
+  /**
+   * 参照する保存済みクエリの id。SQL 文と実行先（datasource/catalog/schema）は
+   * すべてこの参照先が持つ値を実行のたびに解決して使う（schedule 側では保持しない）。
+   */
+  savedQueryId: string;
   /** 実行タイミングを表す cron 式。 */
   cron: string;
   /** 無効化されたスケジュールはスケジューラーが拾わない。 */
@@ -66,8 +64,6 @@ export interface ScheduleRecord {
   retry: RetryPolicy;
   /** 確定失敗時の外部通知設定。 */
   notifications: ScheduleNotifications;
-  /** 実行先データソース id（作成/更新時に解決して永続化）。 */
-  datasourceId: string;
   /**
    * 作成/更新時点の principal スナップショット。歴史的な null は読み出せるが、実行時に拒否する。
    */
@@ -82,19 +78,13 @@ export interface ScheduleRecord {
  */
 export interface CreateScheduleInput {
   name: string;
-  /** 直書きの SQL 文。savedQueryId とはどちらか一方のみ指定する（契約層の refine で保証済み）。 */
-  statement?: string | null;
-  /** 参照する保存済みクエリの id。statement とはどちらか一方のみ指定する。 */
-  savedQueryId?: string | null;
-  catalog?: string | null;
-  schema?: string | null;
+  /** 参照する保存済みクエリの id。 */
+  savedQueryId: string;
   cron: string;
   enabled?: boolean;
   retry?: RetryPolicy;
   /** 確定失敗時の外部通知設定。 */
   notifications?: ScheduleNotifications;
-  /** 実行先データソース id（ルート層で省略時は既定に解決済み）。 */
-  datasourceId: string;
   /** 作成時点の principal。email/group assignment を実行時にも再現するため保存する。 */
   principalSnapshot: PrincipalIdentity;
 }
@@ -105,18 +95,12 @@ export interface CreateScheduleInput {
  */
 export interface UpdateScheduleInput {
   name?: string;
-  /** 直書きの SQL 文に切り替える場合に指定する。 */
-  statement?: string;
-  /** 保存済みクエリ参照に切り替える場合に指定する。statement 指定時は無視される想定はなく、
-   * ルート層が契約層の refine で排他を保証してから渡す。 */
+  /** 参照する保存済みクエリを切り替える場合に指定する。 */
   savedQueryId?: string;
-  catalog?: string | null;
-  schema?: string | null;
   cron?: string;
   enabled?: boolean;
   retry?: RetryPolicy;
   notifications?: ScheduleNotifications;
-  datasourceId?: string;
   /**
    * owner 本人がスケジュールを更新した時点の principal。
    * 今回はそれ以外の契機で email/groups を再解決しない。
@@ -133,17 +117,13 @@ interface ScheduleRow {
   id: string;
   owner: string;
   name: string;
-  statement: string | null;
-  saved_query_id: string | null;
-  catalog: string | null;
-  schema: string | null;
+  saved_query_id: string;
   cron: string;
   enabled: number;
   retry_max_attempts: number;
   retry_backoff_seconds: number;
   retry_backoff_multiplier: number;
   notifications: string | null;
-  datasource_id: string;
   principal_snapshot: string | null;
   created_at: string;
   updated_at: string;
@@ -222,10 +202,7 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
     id: row.id,
     owner: row.owner,
     name: row.name,
-    statement: row.statement ?? null,
-    savedQueryId: row.saved_query_id ?? null,
-    catalog: row.catalog ?? null,
-    schema: row.schema ?? null,
+    savedQueryId: row.saved_query_id,
     cron: row.cron,
     // PostgreSQLのINTEGER列を数値化してから 0 かどうかで真偽値化する。
     enabled: Number(row.enabled) !== 0,
@@ -237,7 +214,6 @@ function rowToSchedule(row: ScheduleRow): ScheduleRecord {
       backoffMultiplier: Number(row.retry_backoff_multiplier),
     }),
     notifications: parseNotifications(row.id, row.notifications),
-    datasourceId: row.datasource_id,
     principalSnapshot: parsePrincipalSnapshot(row.id, row.principal_snapshot),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -271,17 +247,19 @@ export class ScheduleRepository {
     return rows[0] ? rowToSchedule(rows[0]) : undefined;
   }
 
-  /** Fetch a schedule by id without owner scoping (scheduler internals only). */
-  // owner による絞り込みなしで id のみでスケジュールを取得する。
-  // スケジューラー内部（tick 処理）専用で、ルート層からは使わないこと。
+  /**
+   * owner による絞り込みなしで id のみでスケジュールを取得する。
+   * スケジューラー内部（tick 処理）専用で、ルート層からは使わないこと。
+   */
   async getById(id: string): Promise<ScheduleRecord | undefined> {
     const rows = await this.db.query<ScheduleRow>('SELECT * FROM schedules WHERE id = $1', [id]);
     return rows[0] ? rowToSchedule(rows[0]) : undefined;
   }
 
-  /** All enabled schedules across every owner (scheduler tick). */
-  // 全 owner を横断して enabled = 1 のスケジュールを id 順に返す。
-  // cron スケジューラーが毎 tick でどのスケジュールが実行対象かを判定するために使う。
+  /**
+   * 全 owner を横断して enabled = 1 のスケジュールを id 順に返す。
+   * cron スケジューラーが毎 tick でどのスケジュールが実行対象かを判定するために使う。
+   */
   async listAllEnabled(): Promise<ScheduleRecord[]> {
     const rows = await this.db.query<ScheduleRow>(
       'SELECT * FROM schedules WHERE enabled = 1 ORDER BY id',
@@ -304,26 +282,21 @@ export class ScheduleRepository {
       id: newId('sch_'),
       owner,
       name: input.name,
-      // statement / savedQueryId はどちらか一方のみが渡される（契約層の refine で保証済み）。
-      statement: input.statement ?? null,
-      savedQueryId: input.savedQueryId ?? null,
-      catalog: input.catalog ?? null,
-      schema: input.schema ?? null,
+      savedQueryId: input.savedQueryId,
       cron: input.cron,
       enabled: input.enabled ?? true,
       retry,
       notifications: input.notifications ?? defaultScheduleNotifications,
-      datasourceId: input.datasourceId,
       principalSnapshot: input.principalSnapshot,
       createdAt: nowIso,
       updatedAt: nowIso,
     };
     await this.db.run(
       `INSERT INTO schedules
-         (id, owner, name, statement, saved_query_id, catalog, schema, cron, enabled,
+         (id, owner, name, saved_query_id, cron, enabled,
           retry_max_attempts, retry_backoff_seconds, retry_backoff_multiplier,
-          notifications, datasource_id, principal_snapshot, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          notifications, principal_snapshot, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       insertParams(record),
     );
     return record;
@@ -331,7 +304,7 @@ export class ScheduleRepository {
 
   /**
    * 既存スケジュールを部分更新する。未指定のフィールドは既存値を維持する
-   * （catalog/schema は「未指定」と「明示的に null」を区別するため
+   * （principalSnapshot は「未指定」と「明示的に undefined」を区別するため
    * `!== undefined` で判定する）。対象が owner のスケジュールとして
    * 存在しない場合は undefined を返す。
    */
@@ -342,29 +315,14 @@ export class ScheduleRepository {
   ): Promise<ScheduleRecord | undefined> {
     const existing = await this.get(owner, id);
     if (!existing) return undefined;
-    // statement / savedQueryId の切替: 片方が指定されたらもう片方は null にリセットする
-    // （ルート層の契約バリデーションにより両方同時に指定されることはない）。
-    let statement = existing.statement;
-    let savedQueryId = existing.savedQueryId;
-    if (input.statement !== undefined) {
-      statement = input.statement;
-      savedQueryId = null;
-    } else if (input.savedQueryId !== undefined) {
-      savedQueryId = input.savedQueryId;
-      statement = null;
-    }
     const merged: ScheduleRecord = {
       ...existing,
       name: input.name ?? existing.name,
-      statement,
-      savedQueryId,
-      catalog: input.catalog !== undefined ? input.catalog : existing.catalog,
-      schema: input.schema !== undefined ? input.schema : existing.schema,
+      savedQueryId: input.savedQueryId ?? existing.savedQueryId,
       cron: input.cron ?? existing.cron,
       enabled: input.enabled ?? existing.enabled,
       retry: input.retry ?? existing.retry,
       notifications: input.notifications ?? existing.notifications,
-      datasourceId: input.datasourceId ?? existing.datasourceId,
       principalSnapshot:
         input.principalSnapshot !== undefined
           ? input.principalSnapshot
@@ -373,23 +331,19 @@ export class ScheduleRepository {
     };
     await this.db.run(
       `UPDATE schedules SET
-         name = $1, statement = $2, saved_query_id = $3, catalog = $4, schema = $5, cron = $6, enabled = $7,
-         retry_max_attempts = $8, retry_backoff_seconds = $9, retry_backoff_multiplier = $10,
-         notifications = $11, datasource_id = $12, principal_snapshot = $13, updated_at = $14
-       WHERE id = $15 AND owner = $16`,
+         name = $1, saved_query_id = $2, cron = $3, enabled = $4,
+         retry_max_attempts = $5, retry_backoff_seconds = $6, retry_backoff_multiplier = $7,
+         notifications = $8, principal_snapshot = $9, updated_at = $10
+       WHERE id = $11 AND owner = $12`,
       [
         merged.name,
-        merged.statement,
         merged.savedQueryId,
-        merged.catalog,
-        merged.schema,
         merged.cron,
         merged.enabled ? 1 : 0,
         merged.retry.maxAttempts,
         merged.retry.backoffSeconds,
         merged.retry.backoffMultiplier,
         serializeNotifications(merged.notifications),
-        merged.datasourceId,
         serializePrincipalSnapshot(merged.principalSnapshot),
         merged.updatedAt,
         id,
@@ -421,17 +375,13 @@ function insertParams(s: ScheduleRecord): SqlParam[] {
     s.id,
     s.owner,
     s.name,
-    s.statement,
     s.savedQueryId,
-    s.catalog,
-    s.schema,
     s.cron,
     s.enabled ? 1 : 0,
     s.retry.maxAttempts,
     s.retry.backoffSeconds,
     s.retry.backoffMultiplier,
     serializeNotifications(s.notifications),
-    s.datasourceId,
     serializePrincipalSnapshot(s.principalSnapshot),
     s.createdAt,
     s.updatedAt,

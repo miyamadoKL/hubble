@@ -379,11 +379,13 @@ export async function seedSavedQuery(
 
 /**
  * API 経由でスケジュールを作成し、その id を返す（i18n レイアウト検証など、
- * SchedulesPanel に実データを表示させたいテストで使う）。
+ * SchedulesPanel に実データを表示させたいテストで使う）。schedule は直書き SQL を
+ * 廃止し常に savedQueryId 参照のみを持つため、呼び出し元は `seedSavedQuery` で
+ * あらかじめ保存済みクエリを作ってから、その id を渡す（seedAlert と同じ流儀）。
  */
 export async function seedSchedule(
   request: APIRequestContext,
-  q: { name: string; statement: string; cron?: string },
+  q: { name: string; savedQueryId: string; cron?: string },
 ): Promise<string> {
   const res = await request.post('/api/schedules', {
     headers: { 'Sec-Fetch-Site': 'same-origin' },

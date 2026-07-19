@@ -300,7 +300,15 @@ describe('schedule datasource persistence', () => {
       cacheTtlSeconds: 0,
       bytesPerSecond: 0,
     });
-    const { loadRbac } = await import('../rbac/loader');
+    // savedQueryId 解決には (engine 解決より先に) ロール解決が必要になったため、
+    // 実ファイルに依存しないインラインの unrestricted ロールを使う。
+    const rbac: import('../rbac/types').LoadedRbac = {
+      roles: new Map([
+        ['unrestricted', { permissions: new Set(['query.write']), datasources: ['*'] }],
+      ]),
+      assignments: [],
+      defaultRole: 'unrestricted',
+    };
     const scheduler = new Scheduler({
       schedules,
       runs,
@@ -308,7 +316,7 @@ describe('schedule datasource persistence', () => {
       engines,
       defaultDatasourceId,
       estimate,
-      getRbac: () => loadRbac({}),
+      getRbac: () => rbac,
       guardConfig: {
         mode: 'off',
         maxScanBytes: 0,
@@ -329,12 +337,15 @@ describe('schedule datasource persistence', () => {
       sleep: () => Promise.resolve(),
     });
 
+    const saved = await savedQueries.create('alice', {
+      name: 'gone-sq',
+      statement: 'SELECT 1',
+      datasourceId: 'removed-ds',
+    });
     const schedule = await schedules.create('alice', {
       name: 'gone',
-      statement: 'SELECT 1',
+      savedQueryId: saved.id,
       cron: '* * * * *',
-      datasourceId: 'removed-ds',
-
       principalSnapshot: { user: 'alice' },
     });
 

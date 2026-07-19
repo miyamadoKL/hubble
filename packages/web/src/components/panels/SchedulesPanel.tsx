@@ -9,7 +9,7 @@
  * ポーリングされており、実行中のスケジュールが完了すると自動で状態が更新される。
  */
 import { useMemo, useState } from 'react';
-import type { Schedule } from '@hubble/contracts';
+import type { SavedQuery, Schedule } from '@hubble/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarClock, History as HistoryIcon, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import { EmptyState } from '../common/EmptyState';
@@ -30,7 +30,6 @@ import {
   useDeleteSchedule,
   useRunScheduleNow,
 } from '../../hooks/useSchedules';
-import { useUiStore } from '../../stores/uiStore';
 import { useDatasources } from '../../hooks/useDatasources';
 import { DatasourceBadge } from '../common/DatasourceBadge';
 import { cn } from '../../utils/cn';
@@ -91,6 +90,7 @@ function ScheduleRow({
   schedule,
   now,
   datasources,
+  savedQuery,
   onToggleEnabled,
   onRun,
   onEdit,
@@ -101,6 +101,8 @@ function ScheduleRow({
   schedule: Schedule;
   now: Date;
   datasources: ReturnType<typeof useDatasources>['datasources'];
+  /** schedule.savedQueryId が指す保存済みクエリ（未取得/アクセス不能なら undefined）。 */
+  savedQuery: SavedQuery | undefined;
   onToggleEnabled: () => void;
   onRun: () => void;
   onEdit: () => void;
@@ -144,14 +146,16 @@ function ScheduleRow({
         </button>
       </div>
 
-      {/* 最終実行の状態バッジ（未実行なら「未実行」）と、次回実行予定の相対表示。 */}
+      {/* 最終実行の状態バッジ（未実行なら「未実行」）と、次回実行予定の相対表示。
+          実行先データソースは schedule 自体では保持しないため、参照している
+          保存済みクエリ（savedQuery）から解決する。 */}
       <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-9">
         {schedule.lastRun ? (
           <ScheduleStatusBadge status={schedule.lastRun.status} />
         ) : (
           <span className="font-mono text-2xs text-ink-subtle">{t('neverRun')}</span>
         )}
-        <DatasourceBadge datasourceId={schedule.datasourceId} datasources={datasources} />
+        <DatasourceBadge datasourceId={savedQuery?.datasourceId} datasources={datasources} />
         <span className="font-mono text-2xs text-ink-subtle">
           {t('nextRunPrefix', { label: nextRunLabel(schedule, now, t) })}
         </span>
@@ -194,17 +198,23 @@ function ScheduleRow({
  */
 export function SchedulesPanel({ search }: { search: string }) {
   const t = useT(scheduleDict);
-  // ノートブックの現在の実行コンテキスト（catalog / schema）。新規作成フォームの初期値に使う。
-  const context = useUiStore((s) => s.shellContext);
-  const { datasources, selectedId } = useDatasources();
+  const { datasources } = useDatasources();
   const list = useSchedules();
-  // saved query 参照モードのピッカー用。Alert パネルと同じキャッシュキーを使い、
+  // saved query ピッカー用。Alert パネルと同じキャッシュキーを使い、
   // 両パネルを行き来しても再フェッチが重複しないようにする。
   const savedQueriesQuery = useQuery({
     queryKey: ['saved-queries', 'list'],
     queryFn: () => listSavedQueries(),
   });
-  const savedQueries = savedQueriesQuery.data ?? [];
+  // savedQueriesQuery.data ?? [] は毎レンダーで新しい配列を作ってしまい、依存配列に
+  // 渡すと後続の useMemo が常に再計算されてしまうため、この参照自体もメモ化する。
+  const savedQueries = useMemo(() => savedQueriesQuery.data ?? [], [savedQueriesQuery.data]);
+  // schedule.savedQueryId → SavedQuery の解決マップ。一覧表示（クエリ名、
+  // 実行先データソースの表示）と検索の両方で使う。
+  const savedQueryById = useMemo(
+    () => new Map(savedQueries.map((q) => [q.id, q] as const)),
+    [savedQueries],
+  );
   const create = useCreateSchedule();
   const update = useUpdateSchedule();
   const remove = useDeleteSchedule();
@@ -246,18 +256,23 @@ export function SchedulesPanel({ search }: { search: string }) {
   };
 
   // 検索語でスケジュール一覧を絞り込み、名前順に並べ替えた結果をメモ化する。
-  // 名前または SQL 文（大小文字無視）のいずれかに検索語を含むものが対象。
+  // schedule 自体は SQL 文を持たないため、名前に加えて参照先の保存済みクエリの
+  // 名前/SQL 文（大小文字無視）のいずれかに検索語を含むものも対象にする。
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const items = list.data ?? [];
     const matched = q
-      ? items.filter(
-          (s) =>
-            s.name.toLowerCase().includes(q) || (s.statement?.toLowerCase().includes(q) ?? false),
-        )
+      ? items.filter((s) => {
+          if (s.name.toLowerCase().includes(q)) return true;
+          const sq = savedQueryById.get(s.savedQueryId);
+          return (
+            (sq?.name.toLowerCase().includes(q) ?? false) ||
+            (sq?.statement.toLowerCase().includes(q) ?? false)
+          );
+        })
       : items;
     return [...matched].sort((a, b) => a.name.localeCompare(b.name));
-  }, [list.data, search]);
+  }, [list.data, search, savedQueryById]);
 
   // 「今すぐ実行」を実行するハンドラー。実行中は runningId をセットしてボタンを無効化し、
   // 成功時は実行履歴モーダルを開いて経過を確認できるようにする。既に実行中（409）の場合は
@@ -311,7 +326,9 @@ export function SchedulesPanel({ search }: { search: string }) {
 
   return (
     <div className="flex flex-col">
-      {/* 新規スケジュール作成ボタン。押すと create モードでフォームモーダルを開く。 */}
+      {/* 新規スケジュール作成ボタン。押すと create モードでフォームモーダルを開く。
+          参照できる保存済みクエリが 1 件も無い場合は、まずクエリを保存してもらう必要が
+          あるため無効化する（AlertsPanel と同じ導線）。 */}
       <div className="px-3 pb-2">
         <Button
           variant="default"
@@ -319,6 +336,7 @@ export function SchedulesPanel({ search }: { search: string }) {
           icon={Plus}
           onClick={openCreate}
           className="w-full justify-center"
+          disabled={savedQueries.length === 0}
         >
           {t('newSchedule')}
         </Button>
@@ -329,7 +347,13 @@ export function SchedulesPanel({ search }: { search: string }) {
         <EmptyState
           icon={CalendarClock}
           title={search.trim() ? t('noMatches') : t('noSchedules')}
-          description={search.trim() ? t('tryDifferentSearchTerm') : t('createScheduleHint')}
+          description={
+            search.trim()
+              ? t('tryDifferentSearchTerm')
+              : savedQueries.length === 0
+                ? t('saveQueryFirstHint')
+                : t('createScheduleHint')
+          }
           compact
         />
       ) : (
@@ -340,6 +364,7 @@ export function SchedulesPanel({ search }: { search: string }) {
               schedule={schedule}
               now={now}
               datasources={datasources}
+              savedQuery={savedQueryById.get(schedule.savedQueryId)}
               running={runningId === schedule.id}
               onToggleEnabled={() => toggleEnabled(schedule)}
               onRun={() => runSchedule(schedule)}
@@ -357,9 +382,7 @@ export function SchedulesPanel({ search }: { search: string }) {
       <ScheduleFormModal
         open={formOpen}
         schedule={editing}
-        context={context}
         datasources={datasources}
-        defaultDatasourceId={selectedId}
         savedQueries={savedQueries}
         submitting={create.isPending || update.isPending}
         serverError={serverError}

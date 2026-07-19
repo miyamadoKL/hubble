@@ -2,15 +2,15 @@
  * スケジュール作成と編集のモーダル（クエリスケジューラー機能）。
  *
  * アシストサイドバーの SchedulesPanel から「New schedule」ボタン、または各行の
- * 「Edit」ボタンを押したときに開くフォームダイアログ。名前、SQL 文、catalog / schema、
- * cron 式、有効フラグ、リトライポリシーを入力させ、保存時に呼び出し元（SchedulesPanel）
- * へ CreateScheduleRequest / UpdateScheduleRequest を渡す。SQL 文はブラウザ内蔵の
- * trino-lang パーサーでその場で構文チェックし、サーバーの EXPLAIN (TYPE VALIDATE) を
- * 呼ぶ前にクライアント側で保存ボタンを無効化する「実行前バリデーション」を行う。送信後に
- * サーバーから VALIDATION_ERROR（Trino のエラーメッセージ + 行/列）が返った場合は
- * serverError として画面下部に表示する。
+ * 「Edit」ボタンを押したときに開くフォームダイアログ。名前、参照する保存済みクエリ、
+ * cron 式、有効フラグ、リトライポリシー、失敗通知を入力させ、保存時に呼び出し元
+ * （SchedulesPanel）へ CreateScheduleRequest / UpdateScheduleRequest を渡す。
+ * SQL 文と実行先（datasource/catalog/schema）は常に選択した保存済みクエリが持つ値を
+ * 使うため（schedule 側では二重管理しない）、このフォームでは編集できない
+ * 読み取り専用プレビューとしてのみ表示する。送信後にサーバーから VALIDATION_ERROR
+ * （Trino のエラーメッセージ + 行/列）が返った場合は serverError として画面下部に表示する。
  */
-import { useId, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type {
   DatasourceSummary,
   SavedQuery,
@@ -22,10 +22,10 @@ import { defaultRetryPolicy, defaultScheduleNotifications } from '@hubble/contra
 import { AlertTriangle } from 'lucide-react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
-import { checkStatement, clampRetryField, RETRY_BOUNDS, type FormError } from './scheduleFormat';
+import { clampRetryField, RETRY_BOUNDS, type FormError } from './scheduleFormat';
 import { ScheduleBuilder } from './ScheduleBuilder';
 import { cn } from '../../utils/cn';
-import { Dropdown } from '../common/Dropdown';
+import { resolveDatasourceLabel } from '../../hooks/useDatasources';
 import { useT } from '../../i18n/t';
 import { commonMessages } from '../../i18n/messages/common';
 import { scheduleMessages } from '../../i18n/messages/schedule';
@@ -33,31 +33,15 @@ import { scheduleMessages } from '../../i18n/messages/schedule';
 /** ScheduleFormModal 内で使う辞書の合成。共通文言 + Schedule 固有文言を 1 つの t() で引けるようにする。 */
 const scheduleFormDict = { ...commonMessages, ...scheduleMessages } as const;
 
-/** クエリの入力方式。saved は既存の保存済みクエリ参照、direct は SQL 直接入力。 */
-type QueryMode = 'saved' | 'direct';
-
-/**
- * Create / edit form for a schedule (Query Scheduling feature). Modeled on the
- * SaveNotebookModal convention but richer: name / statement / catalog·schema /
- * cron / enabled / retry. The statement is checked client-side with the
- * trino-lang parser — a syntax error disables the save button and shows the
- * error inline (the run-prevention UI). Server VALIDATION_ERROR (Trino's
- * message + line/column) is surfaced after submit.
- */
-
 interface ScheduleFormModalProps {
   /** モーダルの開閉状態。false の間は何も描画しない（後述の early return）。 */
   open: boolean;
   /** Existing schedule when editing; null/undefined for create. */
   // 編集対象の既存スケジュール。未指定や null のときは新規作成モードとして扱う。
   schedule?: Schedule | null;
-  /** フォーム初期値に使う catalog / schema。ノートブックの現在の実行コンテキスト。 */
-  context: { catalog?: string; schema?: string };
-  /** データソース一覧（セレクタ表示用）。 */
+  /** 接続先表示用のデータソース一覧（プレビューの接続先バッジに使う）。 */
   datasources: DatasourceSummary[];
-  /** 新規作成時の既定データソース id。 */
-  defaultDatasourceId?: string;
-  /** 保存済みクエリ一覧（saved query 参照モードのピッカー表示用）。 */
+  /** 保存済みクエリ一覧（ピッカーと SQL プレビュー表示用）。 */
   savedQueries: SavedQuery[];
   /** 作成と更新のミューテーションが実行中かどうか。true の間は保存ボタンを無効化する。 */
   submitting: boolean;
@@ -87,7 +71,7 @@ function parseEmailRecipients(value: string): string[] {
 /**
  * スケジュールの作成と編集のモーダル本体。
  * `schedule` prop の有無で編集モードか新規作成モードかを判定し（`editing`）、
- * 各フィールドをローカル state として保持する。保存ボタンは名前必須、SQL 構文有効、
+ * 各フィールドをローカル state として保持する。保存ボタンは名前必須、保存済みクエリ選択必須、
  * cron 式有効、送信中でない、をすべて満たしたときだけ活性化する。
  */
 export function ScheduleFormModal({ open, ...props }: ScheduleFormModalProps) {
@@ -103,9 +87,7 @@ export function ScheduleFormModal({ open, ...props }: ScheduleFormModalProps) {
 /** 開くたびにマウントし直す、Schedule フォームの状態保持部分。 */
 function ScheduleFormModalBody({
   schedule,
-  context,
   datasources,
-  defaultDatasourceId,
   savedQueries,
   submitting,
   serverError,
@@ -115,33 +97,10 @@ function ScheduleFormModalBody({
 }: Omit<ScheduleFormModalProps, 'open'>) {
   const t = useT(scheduleFormDict);
   const editing = Boolean(schedule);
-  // 「Query」見出し（可視ラベル）を Query source radiogroup の accessible name として
-  // 使い回すための id。aria-label に固定の英語文言を複製するのではなく、
-  // aria-labelledby で可視ラベルそのものを参照する（レビュー指摘: aria-label が
-  // 可視ラベルより優先されるため、複製した aria-label だけを翻訳し忘れると
-  // 支援技術利用者だけ英語のままになってしまう）。
-  const queryLabelId = useId();
 
   const [name, setName] = useState(schedule?.name ?? '');
-  // クエリの入力方式: saved query 参照が既定（ユーザー指摘 2 の一貫性要件）。
-  // 編集時は既存スケジュールの現在のモードを復元する。
-  const [queryMode, setQueryMode] = useState<QueryMode>(
-    schedule ? (schedule.savedQueryId ? 'saved' : 'direct') : 'saved',
-  );
-  const initialSavedQueryId = schedule?.savedQueryId ?? savedQueries[0]?.id ?? '';
-  const [savedQueryId, setSavedQueryId] = useState(initialSavedQueryId);
-  const [statement, setStatement] = useState(schedule?.statement ?? '');
-  // 新規作成（schedule 未指定）かつ saved query が選択済みの場合、その保存済みクエリの
-  // catalog / schema / datasourceId を初期値の 3 点セットとして使う。編集時は既存
-  // schedule の値が authoritative なので、この初期値は使わない（下の各 useState 参照）。
-  const initialSavedQuery = !schedule
-    ? savedQueries.find((q) => q.id === initialSavedQueryId)
-    : undefined;
-  const [catalog, setCatalog] = useState(
-    schedule?.catalog ?? initialSavedQuery?.catalog ?? context.catalog ?? '',
-  );
-  const [schema, setSchema] = useState(
-    schedule?.schema ?? initialSavedQuery?.schema ?? context.schema ?? '',
+  const [savedQueryId, setSavedQueryId] = useState(
+    schedule?.savedQueryId ?? savedQueries[0]?.id ?? '',
   );
   const [cron, setCron] = useState(schedule?.cron ?? '0 9 * * *');
   const [cronValid, setCronValid] = useState(true);
@@ -154,67 +113,34 @@ function ScheduleFormModalBody({
   const [notifyEmailTo, setNotifyEmailTo] = useState(
     initialNotifications.emailTo?.join(', ') ?? '',
   );
-  const [datasourceId, setDatasourceId] = useState(
-    () =>
-      schedule?.datasourceId ??
-      initialSavedQuery?.datasourceId ??
-      defaultDatasourceId ??
-      datasources[0]?.id ??
-      '',
-  );
-
-  // saved query を選び直すたびに、その保存済みクエリの実行コンテキスト
-  // （datasourceId、catalog、schema）を 3 点セットで prefill する（schedule 側の
-  // 各値は引き続きユーザーが編集できる authoritative な値）。datasourceId は
-  // sq 自身が持っていなくても、意味上の既定データソースへ必ず更新する
-  // （前に選ばれていた別の saved query の datasourceId が取り残されるのを防ぐ）。
-  const applySavedQuery = (sq: SavedQuery) => {
-    setSavedQueryId(sq.id);
-    setDatasourceId(sq.datasourceId ?? defaultDatasourceId ?? datasources[0]?.id ?? '');
-    setCatalog(sq.catalog ?? '');
-    setSchema(sq.schema ?? '');
-  };
-  const selectSavedQuery = (id: string) => {
-    const sq = savedQueries.find((q) => q.id === id);
-    if (sq) applySavedQuery(sq);
-    else setSavedQueryId(id);
-  };
-  // 未選択のまま saved query 一覧が使える状態になったら、先頭候補へ復旧する
-  // （新規に届いた一覧、または後から saved モードへ切り替えた場合の両方で使う）。
-  const recoverSavedQuerySelection = () => {
-    if (savedQueryId) return;
-    const first = savedQueries[0];
-    if (first) applySavedQuery(first);
-  };
 
   // saved query 一覧はモーダルを開いた後に非同期で届く（SchedulesPanel 側のクエリが
   // 完了する前にモーダルを開くと、初回マウント時点では savedQueries が空配列）。
-  // saved モードで未選択のまま一覧が届いた場合、先頭候補へ復旧させる
-  // （プルダウンが「候補ゼロ」のまま固まって見える問題への対応）。direct モードで
-  // 一覧が届いた場合はここでは復旧せず、後で saved モードへ切り替えた時点
-  // （下の Saved query ボタンの onClick）で復旧する。
-  // React が推奨する「レンダー中に state を調整する」パターン (useEffect は使わない):
-  // props である savedQueries の参照が変わった回のレンダー中にだけ判定し、
-  // 前回の参照を state に保存しておくことで多重発火を防ぐ。
+  // 未選択のまま一覧が届いた場合、先頭候補へ復旧させる（プルダウンが「候補ゼロ」の
+  // まま固まって見える問題への対応）。React が推奨する「レンダー中に state を調整する」
+  // パターン (useEffect は使わない): props である savedQueries の参照が変わった回の
+  // レンダー中にだけ判定し、前回の参照を state に保存しておくことで多重発火を防ぐ。
   const [syncedSavedQueries, setSyncedSavedQueries] = useState(savedQueries);
   if (savedQueries !== syncedSavedQueries) {
     setSyncedSavedQueries(savedQueries);
-    if (queryMode === 'saved') recoverSavedQuerySelection();
+    if (!savedQueryId) {
+      const first = savedQueries[0];
+      if (first) setSavedQueryId(first.id);
+    }
   }
 
-  // フォームのバリデーション: クエリ入力（direct なら SQL 構文チェック、saved なら
-  // 選択必須）、cron 式の妥当性、名前の必須チェックをまとめて評価する。
-  // いずれかが不成立、または送信中であれば保存不可。
-  const check =
-    queryMode === 'direct'
-      ? checkStatement(statement, catalog || undefined, schema || undefined)
-      : { ok: true as const };
-  const savedQueryValid = queryMode === 'saved' ? savedQueryId.length > 0 : true;
+  const selectedSavedQuery = savedQueries.find((q) => q.id === savedQueryId);
+  const connectionLabel = selectedSavedQuery?.datasourceId
+    ? resolveDatasourceLabel(datasources, selectedSavedQuery.datasourceId)
+    : undefined;
+
+  // フォームのバリデーション: 保存済みクエリの選択必須、cron 式の妥当性、名前の
+  // 必須チェックをまとめて評価する。いずれかが不成立、または送信中であれば保存不可。
   const nameValid = name.trim().length > 0;
+  const savedQueryValid = savedQueryId.length > 0;
   const emailRecipients = parseEmailRecipients(notifyEmailTo);
   const notificationValid = !notifyOnFailure || !notifyEmail || emailRecipients.length > 0;
-  const canSave =
-    nameValid && check.ok && savedQueryValid && cronValid && notificationValid && !submitting;
+  const canSave = nameValid && savedQueryValid && cronValid && notificationValid && !submitting;
 
   // リトライ設定の数値入力（文字列）をコントラクト定義の範囲にクランプしてから state に反映する。
   const setRetryField = (field: keyof typeof RETRY_BOUNDS, raw: string) => {
@@ -223,8 +149,7 @@ function ScheduleFormModalBody({
   };
 
   // 保存ボタン押下時のハンドラー。編集モードなら UpdateScheduleRequest、新規作成モードなら
-  // CreateScheduleRequest を組み立てて呼び出し元へ渡す。catalog / schema は空文字なら
-  // 未指定として送信する（編集時は null、新規作成時は undefined と、契約の差異に合わせる）。
+  // CreateScheduleRequest を組み立てて呼び出し元へ渡す。
   const submit = () => {
     if (!canSave) return;
     const notifications = {
@@ -235,33 +160,24 @@ function ScheduleFormModalBody({
       ],
       ...(emailRecipients.length > 0 ? { emailTo: emailRecipients } : {}),
     };
-    // クエリ入力は statement / savedQueryId のどちらか一方のみを送る
-    // (契約層の refine が両方指定を拒否するため)。
-    const queryFields = queryMode === 'saved' ? { savedQueryId } : { statement };
     if (editing && schedule) {
       const body: UpdateScheduleRequest = {
         name: name.trim(),
-        ...queryFields,
-        catalog: catalog.trim() ? catalog.trim() : null,
-        schema: schema.trim() ? schema.trim() : null,
+        savedQueryId,
         cron,
         enabled,
         retry,
         notifications,
-        datasourceId: datasourceId || undefined,
       };
       onUpdate(body);
     } else {
       const body: CreateScheduleRequest = {
         name: name.trim(),
-        ...queryFields,
-        catalog: catalog.trim() || undefined,
-        schema: schema.trim() || undefined,
+        savedQueryId,
         cron,
         enabled,
         retry,
         notifications,
-        datasourceId: datasourceId || undefined,
       };
       onCreate(body);
     }
@@ -299,155 +215,54 @@ function ScheduleFormModalBody({
           />
         </label>
 
-        {/* クエリの入力方式。saved query 参照が既定（ユーザー指摘 2: Alert との一貫性）。
-            Notebook で編集して保存したクエリをここから呼び出すのが基本の流れで、
-            SQL 直接入力は上級者向けの代替手段として残す。 */}
+        {/* 保存済みクエリのピッカー。SQL 直書きは廃止済みで、schedule は必ず
+            savedQueryId を参照する。 */}
         <div className="flex flex-col gap-1.5">
-          {/* この span の id を radiogroup の aria-labelledby から参照する。
-              aria-label に英語文言を複製すると、翻訳漏れ時に可視ラベルと支援技術向けの
-              名前が食い違う（レビュー指摘）ため、可視ラベル自身を参照させる。 */}
-          <span id={queryLabelId} className={FIELD_LABEL}>
-            {t('queryLabel')}
-          </span>
-          <div className="flex gap-1.5" role="radiogroup" aria-labelledby={queryLabelId}>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={queryMode === 'saved'}
-              onClick={() => {
-                setQueryMode('saved');
-                // direct モードのまま一覧が届いていた場合、切替の時点で復旧する
-                // （一覧到着時は queryMode !== 'saved' だったため復旧されていない）。
-                recoverSavedQuerySelection();
-              }}
-              className={cn(
-                'rounded-full px-2.5 py-1 text-2xs font-medium transition-colors',
-                queryMode === 'saved'
-                  ? 'bg-accent-soft text-accent'
-                  : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
-              )}
+          <span className={FIELD_LABEL}>{t('queryLabel')}</span>
+          {savedQueries.length > 0 ? (
+            <select
+              className={TEXT_INPUT}
+              aria-label={t('savedQueryOption')}
+              value={savedQueryId}
+              onChange={(e) => setSavedQueryId(e.target.value)}
             >
-              {t('savedQueryOption')}
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={queryMode === 'direct'}
-              onClick={() => setQueryMode('direct')}
-              className={cn(
-                'rounded-full px-2.5 py-1 text-2xs font-medium transition-colors',
-                queryMode === 'direct'
-                  ? 'bg-accent-soft text-accent'
-                  : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
-              )}
-            >
-              {t('directSqlOption')}
-            </button>
-          </div>
-
-          {queryMode === 'saved' ? (
-            savedQueries.length > 0 ? (
-              // 「Query」見出しは saved/direct 共通の総称であり、この select 専用の
-              // 可視ラベルは無いため、単独の accessible name として aria-label を残す
-              // （辞書化済みの savedQueryOption を再利用: 「保存済みクエリ」/"Saved query"）。
-              <select
-                className={TEXT_INPUT}
-                aria-label={t('savedQueryOption')}
-                value={savedQueryId}
-                onChange={(e) => selectSavedQuery(e.target.value)}
-              >
-                {savedQueries.map((sq) => (
-                  <option key={sq.id} value={sq.id}>
-                    {sq.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <p className="font-mono text-2xs text-ink-subtle">{t('noSavedQueriesYet')}</p>
-            )
+              {savedQueries.map((sq) => (
+                <option key={sq.id} value={sq.id}>
+                  {sq.name}
+                </option>
+              ))}
+            </select>
           ) : (
-            <>
-              {/* 同様に専用の可視ラベルが無いため、単独の accessible name を辞書化して使う。 */}
-              <textarea
-                value={statement}
-                aria-label={t('sqlStatementAria')}
-                spellCheck={false}
-                onChange={(e) => setStatement(e.target.value)}
-                placeholder={t('sqlPlaceholder')}
-                rows={5}
-                className={cn(
-                  TEXT_INPUT,
-                  'resize-y font-mono text-xs leading-relaxed',
-                  !check.ok && check.message && 'border-error focus:border-error',
-                )}
-              />
-              {/* 構文エラーがあればメッセージ（行/列があれば付記）を表示し、なければ
-                  「実行前にローカル検証済み」という補足説明を表示する分岐。 */}
-              {!check.ok && check.message ? (
-                <p role="alert" className="flex items-start gap-1.5 font-mono text-2xs text-error">
-                  <AlertTriangle size={13} strokeWidth={1.75} className="mt-px shrink-0" />
-                  <span>
-                    {t('syntaxError')}
-                    {check.line != null && (
-                      <span className="text-ink-subtle">
-                        {' '}
-                        (
-                        {check.column != null
-                          ? t('locatedWithColumn', { line: check.line, column: check.column })
-                          : t('locatedLineOnly', { line: check.line })}
-                        )
-                      </span>
-                    )}
-                    : {check.message}
-                  </span>
-                </p>
-              ) : (
-                <p className="font-mono text-2xs text-ink-subtle">{t('checkedLocally')}</p>
-              )}
-            </>
+            <p className="font-mono text-2xs text-ink-subtle">{t('noSavedQueriesYet')}</p>
           )}
         </div>
 
-        {/* Data source */}
-        {datasources.length > 0 && (
-          // Dropdown のトリガーはネイティブ <button>（label でラップ可能な要素）なので、
-          // aria-label を複製せず label の可視テキストにアクセシブルネームを委ねる。
-          <label className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>{t('dataSourceLabel')}</span>
-            <Dropdown
-              value={datasourceId}
-              options={datasources.map((d) => ({
-                value: d.id,
-                label: d.displayName,
-              }))}
-              onChange={setDatasourceId}
-            />
-          </label>
+        {/* 選択中クエリの読み取り専用プレビュー（SaveQueryModal と同じ流儀）。
+            接続先と SQL 文は選択したクエリが持つ値であり、ここでは編集できない。 */}
+        {selectedSavedQuery && (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>{t('connectionLabel')}</span>
+              <div className="flex flex-wrap items-center gap-1.5 font-mono text-2xs text-ink-muted">
+                <span className="rounded-full bg-surface-sunken px-2 py-0.5">
+                  {connectionLabel ?? t('serverDefaultLabel')}
+                </span>
+                {selectedSavedQuery.catalog && (
+                  <span className="rounded-full bg-surface-sunken px-2 py-0.5">
+                    {selectedSavedQuery.catalog}
+                    {selectedSavedQuery.schema ? `.${selectedSavedQuery.schema}` : ''}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <span className={FIELD_LABEL}>{t('sqlPreviewLabel')}</span>
+              <pre className="max-h-32 overflow-auto rounded-md border border-border-subtle bg-surface-sunken px-2.5 py-2 font-mono text-2xs whitespace-pre-wrap text-ink-base">
+                {selectedSavedQuery.statement}
+              </pre>
+            </div>
+          </>
         )}
-
-        {/* Catalog / schema */}
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>{t('catalogLabel')}</span>
-            <input
-              name="catalog"
-              value={catalog}
-              onChange={(e) => setCatalog(e.target.value)}
-              placeholder={t('noneValuePlaceholder')}
-              className={TEXT_INPUT}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>{t('schemaLabel')}</span>
-            <input
-              name="schema"
-              value={schema}
-              onChange={(e) => setSchema(e.target.value)}
-              placeholder={t('noneValuePlaceholder')}
-              className={TEXT_INPUT}
-            />
-          </label>
-        </div>
 
         {/* Schedule: 毎時/毎日/毎週/毎月のプリセット、または上級者向けの cron 直接入力
             （ユーザー指摘 1: cron 生入力は非エンジニアに使えない）。 */}

@@ -31,15 +31,11 @@ function schedule(overrides: Partial<ScheduleRecord> = {}): ScheduleRecord {
     id: 'sch_1',
     owner: 'alice',
     name: 'nightly',
-    statement: 'SELECT * FROM secret_table',
-    savedQueryId: null,
-    catalog: 'tpch',
-    schema: 'tiny',
+    savedQueryId: 'sq_1',
     cron: '* * * * *',
     enabled: true,
     retry: defaultRetryPolicy,
     notifications: { onFailure: true, channels: ['slack'] },
-    datasourceId: 'trino-default',
     principalSnapshot: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -51,6 +47,9 @@ function input(overrides: Partial<ScheduleRecord> = {}) {
   return {
     schedule: schedule(overrides),
     runId: 'run_1',
+    // schedule 自体はデータソースを保持しないため、実行のたびに saved query から
+    // 解決した値を outcome 経由でここへ渡す想定（テストでは固定値）。
+    datasourceId: 'trino-default',
     errorType: 'INTERNAL_ERROR',
     errorMessage: 'x'.repeat(600),
     scheduledFor: '2026-01-01T00:00:00.000Z',

@@ -69,15 +69,11 @@ function toSchedule(record: ScheduleRecord, latest?: ScheduleRunRecord): Schedul
   return {
     id: record.id,
     name: record.name,
-    statement: record.statement,
     savedQueryId: record.savedQueryId,
-    catalog: record.catalog,
-    schema: record.schema,
     cron: record.cron,
     enabled: record.enabled,
     retry: record.retry,
     notifications: record.notifications,
-    datasourceId: record.datasourceId,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     // 現在時刻を基準に計算し、無効なスケジュールには次回実行時刻を設定しない。
@@ -91,18 +87,6 @@ async function loadSchedule(services: Services, record: ScheduleRecord): Promise
   return toSchedule(record, await services.scheduleRuns.latest(record.id));
 }
 
-/**
- * Turn a non-OK validation into a thrown AppError, or return for an `ok`/
- * `unavailable` result (create/update are lenient when Trino is unreachable —
- * the statement is re-validated at run time). A `user_error` becomes a 400
- * VALIDATION_ERROR carrying Trino's message + line/column.
- *
- * スケジュール作成/更新時のバリデーション結果を検査し、書き込みを許可してよいかを判定する
- * ゲート関数。`ok` または Trino 未到達による `unavailable` は許容し（実行時に再検証されるため）、
- * `user_error`（Trino が構文/意味エラーと判定）の場合のみ 400 の `AppError` を送出して書き込みを拒否する。
- * @param result - 対象エンジンの `validate()` の結果。
- * @throws {AppError} `result.kind === 'user_error'` のとき、行/列情報付きの 400 VALIDATION_ERROR。
- */
 /**
  * owner のロールで書き込み文のスケジュール登録を拒否する（query.write 第 1 層）。
  */
@@ -136,14 +120,21 @@ async function assertScheduleStatementWritable(
  * ここでの確認は作成/更新リクエストの入力検証であり、実行時認可（scheduler が
  * 発火のたびに再解決する owner ロールでのアクセス可否）を代替するものではない
  * (scheduleRoutes.md の設計コメント、および scheduler.ts の実行時解決を参照)。
- * @returns アクセス可能な saved query の現在の statement (作成/更新時の
- *   EXPLAIN VALIDATE 事前検証に使う)。
+ * statement/catalog/schema/実行先データソースは schedule 側では保持せず、常に
+ * この参照先から解決する（datasourceId は saved query 未指定なら既定データソースへ
+ * フォールバックする）。
+ * @returns 作成/更新時の EXPLAIN VALIDATE 事前検証と datasource 認可チェックに使う値一式。
  */
 async function assertSavedQueryAccessible(
   services: Services,
   principal: { user: string; groups?: string[]; role: { name: string } },
   savedQueryId: string,
-): Promise<{ statement: string }> {
+): Promise<{
+  statement: string;
+  catalog: string | null;
+  schema: string | null;
+  datasourceId: string;
+}> {
   const sq = await services.savedQueries.get(
     { user: principal.user, groups: principal.groups ?? [], role: principal.role.name },
     savedQueryId,
@@ -151,14 +142,26 @@ async function assertSavedQueryAccessible(
   if (!sq) {
     throw AppError.notFound(`Saved query ${savedQueryId} not found`);
   }
-  return { statement: sq.statement };
+  return {
+    statement: sq.statement,
+    catalog: sq.catalog ?? null,
+    schema: sq.schema ?? null,
+    datasourceId: sq.datasourceId ?? services.defaultDatasourceId,
+  };
 }
 
+/**
+ * スケジュール作成/更新時のバリデーション結果を検査し、書き込みを許可してよいかを判定する
+ * ゲート関数。`ok` または Trino 未到達による `unavailable` は許容し（実行時に再検証されるため）、
+ * `user_error`（Trino が構文/意味エラーと判定）の場合のみ 400 の `AppError` を送出して書き込みを拒否する。
+ * @param result - 対象エンジンの `validate()` の結果。
+ * @throws {AppError} `result.kind === 'user_error'` のとき、行/列情報付きの 400 VALIDATION_ERROR。
+ */
 function assertValidationAllowsWrite(result: ValidationResult): void {
   if (result.ok) return;
-  if (result.kind === 'unavailable') return; // lenient: allow, re-checked at run time
-  // Deterministic statement error: reject the write.
-  // Trino が確定的に「ステートメントが不正」と判定した場合のみ書き込みを拒否する。
+  // Trino 未到達などで検証自体が行えなかった場合は許容する（実行時に再検証される）。
+  if (result.kind === 'unavailable') return;
+  // ここまで来るのは確定的な構文/意味エラー（user_error）のみ。書き込みを拒否する。
   const detail: Record<string, unknown> = { trinoMessage: result.message };
   if (result.line !== undefined) detail.line = result.line;
   if (result.column !== undefined) detail.column = result.column;
@@ -170,12 +173,10 @@ function assertValidationAllowsWrite(result: ValidationResult): void {
 }
 
 /**
- * Schedule routes (Query Scheduling feature), mounted under `/api/schedules`.
- * Owner-scoped. Create/update validate the statement with
- * `EXPLAIN (TYPE VALIDATE)`; manual run + run history mirror the scheduler.
- *
  * スケジュール CRUD、手動実行、実行履歴取得エンドポイントをまとめた Hono サブルーターを構築する
- * ファクトリ関数。
+ * ファクトリ関数。`/api/schedules` 配下にマウントされ、全操作が owner スコープで絞り込まれる。
+ * 作成/更新は参照する saved query の statement を `EXPLAIN (TYPE VALIDATE)` で検証し、
+ * 手動実行と実行履歴取得はスケジューラーの実行結果をそのまま反映する。
  * @param services - DI コンテナ。スケジュールストア、実行履歴ストア、バリデータ、
  *   スケジューラーなど、このルーターが必要とする協調オブジェクト一式を保持する。
  * @returns `/api/schedules` 配下にマウントする Hono サブアプリケーション。
@@ -194,29 +195,26 @@ export function scheduleRoutes(services: Services): App {
     return c.json(schedules);
   });
 
-  // POST /api/schedules: 新規スケジュールを作成する。作成前に EXPLAIN (TYPE VALIDATE) で検証する。
-  // statement と savedQueryId はどちらか一方のみ (契約層の refine で保証済み)。
+  // POST /api/schedules: 新規スケジュールを作成する。statement/catalog/schema/実行先は
+  // 常に savedQueryId の参照先から解決し、作成前に EXPLAIN (TYPE VALIDATE) で検証する。
   app.post('/', async (c) => {
     const owner = c.var.principal.user;
     const body = await parseJsonBody(c, createScheduleRequestSchema);
-    const targetDatasourceId = body.datasourceId ?? services.defaultDatasourceId;
-    requireDatasourceAccess(c.var.principal.role, targetDatasourceId);
-    const { datasourceId, engine } = resolveEngine(
-      services.engines,
-      body.datasourceId,
-      services.defaultDatasourceId,
-    );
-    // savedQueryId 指定時は、まずこの時点で owner がアクセスできる saved query かを
-    // 確認する (できなければ 404)。検証に使う statement はその時点の内容だが、
+    // まずこの時点で owner がアクセスできる saved query かを確認する (できなければ 404)。
+    // 検証に使う statement/catalog/schema/datasourceId はその時点の内容だが、
     // 実行時 (scheduler) は毎回 savedQueries.get() で再解決するため、ここでの
     // 検証結果をキャッシュして使い回すことはない。
-    const statementForValidation = body.statement
-      ? body.statement
-      : (await assertSavedQueryAccessible(services, c.var.principal, body.savedQueryId!)).statement;
+    const resolved = await assertSavedQueryAccessible(services, c.var.principal, body.savedQueryId);
+    requireDatasourceAccess(c.var.principal.role, resolved.datasourceId);
+    const { engine } = resolveEngine(
+      services.engines,
+      resolved.datasourceId,
+      services.defaultDatasourceId,
+    );
     const validation = await engine.validate({
-      statement: statementForValidation,
-      catalog: body.catalog,
-      schema: body.schema,
+      statement: resolved.statement,
+      catalog: resolved.catalog,
+      schema: resolved.schema,
       principal: owner,
       roleName: c.var.principal.role.name,
     });
@@ -224,22 +222,18 @@ export function scheduleRoutes(services: Services): App {
     await assertScheduleStatementWritable(
       services,
       c.var.principal,
-      statementForValidation,
+      resolved.statement,
       engine,
-      body.catalog,
-      body.schema,
+      resolved.catalog,
+      resolved.schema,
     );
     const record = await services.schedules.create(owner, {
       name: body.name,
-      statement: body.statement,
       savedQueryId: body.savedQueryId,
-      catalog: body.catalog,
-      schema: body.schema,
       cron: body.cron,
       enabled: body.enabled,
       retry: body.retry,
       notifications: body.notifications,
-      datasourceId,
       principalSnapshot: c.var.principal,
     });
     return c.json(await loadSchedule(services, record), 201);
@@ -253,8 +247,10 @@ export function scheduleRoutes(services: Services): App {
     return c.json(await loadSchedule(services, record));
   });
 
-  // PATCH /api/schedules/:id: 部分更新。ステートメント/catalog/schema/cron/datasourceId の
-  // いずれかが変わる場合のみ再検証する。
+  // PATCH /api/schedules/:id: 部分更新。savedQueryId/cron のいずれかが変わる場合のみ
+  // EXPLAIN VALIDATE による再検証を行う。schedule は実行先データソースを保持しないため、
+  // datasource 認可チェックは (disableOnly を除き) 常に有効な savedQueryId (更新後の値、
+  // 無ければ既存値) を解決してから行う。
   app.patch('/:id', async (c) => {
     const owner = c.var.principal.user;
     const id = c.req.param('id');
@@ -262,63 +258,28 @@ export function scheduleRoutes(services: Services): App {
     if (!existing) throw AppError.notFound(`Schedule ${id} not found`);
     const body = await parseJsonBody(c, updateScheduleRequestSchema);
     const disableOnly = Object.keys(body).length === 1 && body.enabled === false;
+
     if (!disableOnly) {
-      requireDatasourceAccess(c.var.principal.role, existing.datasourceId);
-    }
-
-    // Re-validate when the statement or its execution context changes.
-    // 実行に影響しうるフィールドが変更された場合のみ、コストのかかる再検証を行う。
-    const statementChanges =
-      body.statement !== undefined ||
-      body.savedQueryId !== undefined ||
-      body.catalog !== undefined ||
-      body.schema !== undefined ||
-      body.cron !== undefined ||
-      body.datasourceId !== undefined;
-    if (statementChanges) {
-      const targetDatasourceId = body.datasourceId ?? existing.datasourceId;
-      if (targetDatasourceId !== existing.datasourceId) {
-        requireDatasourceAccess(c.var.principal.role, targetDatasourceId);
-      }
-      const { engine } = resolveEngine(
-        services.engines,
-        targetDatasourceId,
-        services.defaultDatasourceId,
+      const effectiveSavedQueryId = body.savedQueryId ?? existing.savedQueryId;
+      const resolved = await assertSavedQueryAccessible(
+        services,
+        c.var.principal,
+        effectiveSavedQueryId,
       );
-      // 検証に使う statement を決める。
-      // - body.statement が来た場合: 直書きモードへの切替/更新。それを使う。
-      // - body.savedQueryId が来た場合: 参照モードへの切替/更新。この時点で
-      //   アクセス可能か確認し (できなければ 404)、その現在の statement を使う。
-      // - どちらも来ていない場合: 既存の設定を維持。既存が savedQueryId 参照なら
-      //   その時点の statement を best-effort で取得し、取得できなければ
-      //   (共有解除/削除等) 再検証自体をスキップする。この場合の実行時失敗検出は
-      //   scheduler の実行時解決 (毎回 savedQueries.get) が担う。
-      let statementForValidation: string | undefined;
-      if (body.statement !== undefined) {
-        statementForValidation = body.statement;
-      } else if (body.savedQueryId !== undefined) {
-        statementForValidation = (
-          await assertSavedQueryAccessible(services, c.var.principal, body.savedQueryId)
-        ).statement;
-      } else if (existing.savedQueryId) {
-        const sq = await services.savedQueries.get(
-          {
-            user: c.var.principal.user,
-            groups: c.var.principal.groups ?? [],
-            role: c.var.principal.role.name,
-          },
-          existing.savedQueryId,
-        );
-        statementForValidation = sq?.statement;
-      } else {
-        statementForValidation = existing.statement ?? undefined;
-      }
+      requireDatasourceAccess(c.var.principal.role, resolved.datasourceId);
 
-      if (statementForValidation !== undefined) {
+      // savedQueryId か cron が変わる場合のみ、コストのかかる再検証を行う。
+      const revalidate = body.savedQueryId !== undefined || body.cron !== undefined;
+      if (revalidate) {
+        const { engine } = resolveEngine(
+          services.engines,
+          resolved.datasourceId,
+          services.defaultDatasourceId,
+        );
         const validation = await engine.validate({
-          statement: statementForValidation,
-          catalog: body.catalog !== undefined ? body.catalog : existing.catalog,
-          schema: body.schema !== undefined ? body.schema : existing.schema,
+          statement: resolved.statement,
+          catalog: resolved.catalog,
+          schema: resolved.schema,
           principal: owner,
           roleName: c.var.principal.role.name,
         });
@@ -326,10 +287,10 @@ export function scheduleRoutes(services: Services): App {
         await assertScheduleStatementWritable(
           services,
           c.var.principal,
-          statementForValidation,
+          resolved.statement,
           engine,
-          body.catalog !== undefined ? body.catalog : existing.catalog,
-          body.schema !== undefined ? body.schema : existing.schema,
+          resolved.catalog,
+          resolved.schema,
         );
       }
     }
@@ -360,7 +321,14 @@ export function scheduleRoutes(services: Services): App {
       services.rbac,
       schedulePrincipalIdentity(owner, record.principalSnapshot),
     );
-    requireDatasourceAccess(ownerRole, record.datasourceId);
+    // schedule 自体は実行先データソースを保持しないため、参照先の saved query から
+    // 解決する（scheduler.runManual も発火のたびに同じ解決をやり直す）。
+    const sq = await services.savedQueries.get(
+      { user: owner, groups: record.principalSnapshot?.groups ?? [], role: ownerRole.name },
+      record.savedQueryId,
+    );
+    if (!sq) throw AppError.notFound(`Saved query ${record.savedQueryId} not found`);
+    requireDatasourceAccess(ownerRole, sq.datasourceId ?? services.defaultDatasourceId);
     try {
       const { runId } = await services.scheduler.runManual(record);
       return c.json({ runId }, 202);
