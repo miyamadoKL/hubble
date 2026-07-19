@@ -98,12 +98,18 @@ async function waitForResultRef(
   queryId: string,
   owner = 'admin',
 ): Promise<HistoryResultRef> {
-  for (let i = 0; i < 20; i++) {
-    const ref = await ctx.services.history.getResultRef(owner, queryId);
-    if (ref) return ref;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('result ref was not recorded');
+  // 結果永続化はQueryServiceがqueryIdごとにバックグラウンドタスクとして追跡して
+  // おり、`waitForResultPersisted()` はそのタスクの完了を確定的に待てる(履歴更新
+  // など無関係な他のバックグラウンドタスクは待たない)。以前は固定10ms間隔・
+  // 最大20回のポーリングだったため、CPU負荷が高い並列実行下ではバックグラウンド
+  // 書き込みが間に合わず "result ref was not recorded" で timeout するflakeが
+  // あった。なお `drain()` は履歴更新タスクも含めて待つため粒度が粗すぎ、履歴
+  // 更新を意図的にブロックするテスト(「atomically records terminal history
+  // fields with the result link」等)ではデッドロックしてしまう。
+  await ctx.services.queries.waitForResultPersisted(queryId);
+  const ref = await ctx.services.history.getResultRef(owner, queryId);
+  if (!ref) throw new Error('result ref was not recorded');
+  return ref;
 }
 
 function dropExecution(ctx: Awaited<ReturnType<typeof createTestContext>>, queryId: string): void {
