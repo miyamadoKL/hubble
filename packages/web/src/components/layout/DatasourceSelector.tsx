@@ -10,6 +10,8 @@ import { Dropdown } from '../common/Dropdown';
 import { Spinner } from '../common/Spinner';
 import { DATASOURCE_KIND_LABEL } from '../../utils/datasourceKind';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { layoutMessages } from '../../i18n/messages/layout';
 
 /**
  * データソース選択ドロップダウン。
@@ -25,11 +27,12 @@ export function DatasourceSelector({
   onChange: (id: string) => void;
   loading?: boolean;
 }) {
+  const t = useT(layoutMessages);
   if (loading) {
     return (
       <div className="flex h-8 items-center gap-1.5 rounded-md border border-border-base bg-surface-raised px-2.5">
         <Spinner size={12} />
-        <span className="font-mono text-2xs text-ink-subtle">Datasources</span>
+        <span className="font-mono text-2xs text-ink-subtle">{t('datasourcesLabel')}</span>
       </div>
     );
   }
@@ -46,7 +49,7 @@ export function DatasourceSelector({
         hint: DATASOURCE_KIND_LABEL[d.kind],
       }))}
       onChange={onChange}
-      ariaLabel="Data source"
+      ariaLabel={t('dataSourceSelectorAria')}
       className="w-44"
       leading={
         <>

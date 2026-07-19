@@ -42,51 +42,81 @@ import { listNotebooks } from '../../api/notebooks';
 import { getNotebook } from '../../api/notebooks';
 import { useNotebookStore } from '../../notebook';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { layoutMessages } from '../../i18n/messages/layout';
 
-/** アイコンレールに並べる1項目の定義（タブID、アイコン、アクセシビリティラベル）。 */
+// アイコンレール/パネル見出し/検索プレースホルダーで使う辞書キーの型。
+// `keyof typeof layoutMessages`（辞書全体のキー）のままだと、`{name}` 等の
+// プレースホルダーを持つ他エントリの型が union に混ざり、`t()` の引数要求が
+// 不定になって typecheck が通らないため、プレースホルダーを持たない
+// これらのキーだけのリテラル union に絞る。
+type SidebarLabelKey =
+  | 'railData'
+  | 'railNotebooks'
+  | 'railSaved'
+  | 'railHistory'
+  | 'railSchedules'
+  | 'railAlerts'
+  | 'railDashboards'
+  | 'railWorkflows'
+  | 'railOperations'
+  | 'panelTitleData'
+  | 'panelTitleSaved'
+  | 'filterTables'
+  | 'searchNotebooks'
+  | 'searchSavedQueries'
+  | 'searchHistory'
+  | 'searchSchedules'
+  | 'searchAlerts'
+  | 'searchDashboards'
+  | 'searchWorkflows'
+  | 'filterQueries';
+
+/** アイコンレールに並べる1項目の定義（タブID、アイコン、ラベルの辞書キー）。 */
 interface RailItem {
   id: SidebarTab;
   icon: LucideIcon;
-  label: string;
+  labelKey: SidebarLabelKey;
 }
 
 // レールに表示するタブの並び。表示順もここで決まる。
 const RAIL: RailItem[] = [
-  { id: 'data', icon: Database, label: 'Data' },
-  { id: 'notebooks', icon: NotebookText, label: 'Notebooks' },
-  { id: 'saved', icon: BookMarked, label: 'Saved' },
-  { id: 'history', icon: History, label: 'History' },
-  { id: 'schedules', icon: CalendarClock, label: 'Schedules' },
-  { id: 'alerts', icon: Bell, label: 'Alerts' },
-  { id: 'dashboards', icon: LayoutDashboard, label: 'Dashboards' },
-  { id: 'workflows', icon: Workflow, label: 'Workflows' },
-  { id: 'operations', icon: Activity, label: 'Operations' },
+  { id: 'data', icon: Database, labelKey: 'railData' },
+  { id: 'notebooks', icon: NotebookText, labelKey: 'railNotebooks' },
+  { id: 'saved', icon: BookMarked, labelKey: 'railSaved' },
+  { id: 'history', icon: History, labelKey: 'railHistory' },
+  { id: 'schedules', icon: CalendarClock, labelKey: 'railSchedules' },
+  { id: 'alerts', icon: Bell, labelKey: 'railAlerts' },
+  { id: 'dashboards', icon: LayoutDashboard, labelKey: 'railDashboards' },
+  { id: 'workflows', icon: Workflow, labelKey: 'railWorkflows' },
+  { id: 'operations', icon: Activity, labelKey: 'railOperations' },
 ];
 
-// 各タブのパネル見出しに表示する文言。
-const PANEL_TITLE: Record<SidebarTab, string> = {
-  data: 'Data browser',
-  notebooks: 'Notebooks',
-  saved: 'Saved queries',
-  history: 'History',
-  schedules: 'Schedules',
-  alerts: 'Alerts',
-  dashboards: 'Dashboards',
-  workflows: 'Workflows',
-  operations: 'Operations',
+// 各タブのパネル見出しに表示する文言の辞書キー。data/saved はレール表示と異なる
+// 文言を持つため専用キーを、それ以外はレールと同一文言なので railXxx を再利用する。
+const PANEL_TITLE_KEY: Record<SidebarTab, SidebarLabelKey> = {
+  data: 'panelTitleData',
+  notebooks: 'railNotebooks',
+  saved: 'panelTitleSaved',
+  history: 'railHistory',
+  schedules: 'railSchedules',
+  alerts: 'railAlerts',
+  dashboards: 'railDashboards',
+  workflows: 'railWorkflows',
+  operations: 'railOperations',
 };
 
-// 各タブの検索欄に表示するプレースホルダー文言。
-const PANEL_PLACEHOLDER: Record<SidebarTab, string> = {
-  data: 'Filter tables…',
-  notebooks: 'Search notebooks…',
-  saved: 'Search saved queries…',
-  history: 'Search history…',
-  schedules: 'Search schedules…',
-  alerts: 'Search alerts…',
-  dashboards: 'Search dashboards…',
-  workflows: 'Search workflows…',
-  operations: 'Filter queries…',
+// 各タブの検索欄に表示するプレースホルダー文言の辞書キー。
+const PANEL_PLACEHOLDER_KEY: Record<SidebarTab, SidebarLabelKey> = {
+  data: 'filterTables',
+  notebooks: 'searchNotebooks',
+  saved: 'searchSavedQueries',
+  history: 'searchHistory',
+  schedules: 'searchSchedules',
+  alerts: 'searchAlerts',
+  dashboards: 'searchDashboards',
+  workflows: 'searchWorkflows',
+  operations: 'filterQueries',
 };
 
 /**
@@ -112,6 +142,7 @@ export function Sidebar({
   datasourceId?: string;
   flattenCatalog?: boolean;
 }) {
+  const t = useT(layoutMessages);
   const { data: me } = useMe();
   const canViewOperations = hasPermission(me, 'queries.viewAll');
   const tab = useUiStore((s) => s.sidebarTab);
@@ -131,8 +162,8 @@ export function Sidebar({
   // コマンドパレットの「Go to …」コマンドから要求されたとき、パネルの検索欄へフォーカスする。
   useEffect(() => {
     if (focusNonce === 0) return;
-    const t = setTimeout(() => searchRef.current?.focus(), 0);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => searchRef.current?.focus(), 0);
+    return () => clearTimeout(timer);
   }, [focusNonce]);
 
   const onPointerMove = useCallback(
@@ -177,11 +208,12 @@ export function Sidebar({
         {visibleRail.map((item) => {
           const active = effectiveTab === item.id && !collapsed;
           const Icon = item.icon;
+          const label = t(item.labelKey);
           return (
-            <Tooltip key={item.id} label={item.label} side="right">
+            <Tooltip key={item.id} label={label} side="right">
               <button
                 type="button"
-                aria-label={item.label}
+                aria-label={label}
                 aria-current={active || undefined}
                 onClick={() => {
                   if (effectiveTab === item.id && !collapsed) toggleSidebar();
@@ -213,12 +245,12 @@ export function Sidebar({
           {/* パネル見出しと折りたたみボタン。 */}
           <div className="flex items-center justify-between px-3 pt-3 pb-2">
             <h2 className="text-2xs font-semibold tracking-[0.14em] text-ink-muted uppercase">
-              {PANEL_TITLE[effectiveTab]}
+              {t(PANEL_TITLE_KEY[effectiveTab])}
             </h2>
-            <Tooltip label="Collapse sidebar" side="bottom">
+            <Tooltip label={t('collapseSidebar')} side="bottom">
               <button
                 type="button"
-                aria-label="Collapse sidebar"
+                aria-label={t('collapseSidebar')}
                 onClick={toggleSidebar}
                 className="rounded-sm p-1 text-ink-subtle hover:text-ink-strong"
               >
@@ -234,7 +266,7 @@ export function Sidebar({
                 inputRef={searchRef}
                 value={search}
                 onChange={onSearchChange}
-                placeholder={PANEL_PLACEHOLDER[effectiveTab]}
+                placeholder={t(PANEL_PLACEHOLDER_KEY[effectiveTab])}
               />
             </div>
           )}
@@ -266,7 +298,7 @@ export function Sidebar({
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize sidebar"
+            aria-label={t('resizeSidebar')}
             aria-valuenow={width}
             aria-valuemin={SIDEBAR_MIN_WIDTH}
             aria-valuemax={SIDEBAR_MAX_WIDTH}

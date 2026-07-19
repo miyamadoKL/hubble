@@ -8,6 +8,8 @@ import { ShieldAlert } from 'lucide-react';
 import { Logo } from '../layout/Logo';
 import { EmptyState } from '../common/EmptyState';
 import { Button } from '../common/Button';
+import { useT } from '../../i18n/t';
+import { authMessages } from '../../i18n/messages/auth';
 
 /**
  * 全画面表示の「認証が必要です」状態を表すコンポーネント。
@@ -21,6 +23,7 @@ import { Button } from '../common/Button';
  * このコンポーネントは props を受け取らない。
  */
 export function AuthRequired() {
+  const t = useT(authMessages);
   return (
     // 画面全体を覆うコンテナ。ロゴと空状態表示を縦に中央揃えで配置する。
     <div className="flex h-screen flex-col items-center justify-center gap-8 bg-surface-base px-6 text-ink-base">
@@ -29,11 +32,11 @@ export function AuthRequired() {
       {/* 認証が必要である旨のメッセージと、再読み込みを促すアクションボタン */}
       <EmptyState
         icon={ShieldAlert}
-        title="認証が必要です"
-        description="このセッションは認証されていません。シングルサインオンでログインし直してください。"
+        title={t('authRequiredTitle')}
+        description={t('authRequiredDescription')}
         action={
           <Button variant="primary" onClick={() => window.location.reload()}>
-            再読み込み
+            {t('reloadButton')}
           </Button>
         }
       />

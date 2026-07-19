@@ -11,6 +11,12 @@ import { fetchCatalogs, fetchSchemas, metadataQueryKeys, META_STALE_MS } from '.
 import { readRecentContexts, type ContextValue } from '../../notebook';
 import { Spinner } from '../common/Spinner';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { layoutMessages } from '../../i18n/messages/layout';
+
+/** ContextSelector 内で使う辞書の合成。共通の loading/noMatches はここから引く。 */
+const contextSelectorDict = { ...commonMessages, ...layoutMessages } as const;
 
 /**
  * ポップオーバーの外側クリックと Escape キーで `onClose` を呼ぶ共通フック。
@@ -63,6 +69,7 @@ export function ContextSelector({
   onChange: (next: { catalog: string; schema: string }) => void;
   className?: string;
 }) {
+  const t = useT(contextSelectorDict);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   // 選択中に右ペインへ表示する schema がどの catalog のものか（ホバー中のプレビュー値）。
@@ -133,7 +140,7 @@ export function ContextSelector({
       {/* 現在の catalog.schema を表示するトリガーボタン。クリックでポップオーバーの開閉を切り替える。 */}
       <button
         type="button"
-        aria-label="catalog.schema context"
+        aria-label={t('catalogSchemaContext')}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => (open ? setOpen(false) : openPopover())}
@@ -161,7 +168,7 @@ export function ContextSelector({
       {open && (
         <div
           role="dialog"
-          aria-label="Select context"
+          aria-label={t('selectContext')}
           className="absolute right-0 z-50 mt-1 w-80 overflow-hidden rounded-md border border-border-strong bg-surface-overlay shadow-lg animate-[fadeIn_150ms_ease-out]"
         >
           {/* catalog/schema を横断してフィルタする検索入力欄。 */}
@@ -171,7 +178,10 @@ export function ContextSelector({
               ref={searchRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter catalogs / schemas…"
+              placeholder={t('filterCatalogsSchemas')}
+              // レビュー指摘: placeholder だけでは支援技術に検索欄の目的が伝わらないため、
+              // 同じ翻訳済み文言をアクセシブルネームとしても付与する。
+              aria-label={t('filterCatalogsSchemas')}
               className="min-w-0 flex-1 bg-transparent text-sm text-ink-base placeholder:text-ink-subtle focus:outline-none"
             />
           </div>
@@ -180,7 +190,7 @@ export function ContextSelector({
           {recents.length > 0 && !needle && (
             <div className="border-b border-border-subtle px-2 py-1.5">
               <p className="mb-1 px-1 text-2xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
-                Recent
+                {t('recent')}
               </p>
               <div className="flex flex-col">
                 {recents.map((r) => (
@@ -204,15 +214,15 @@ export function ContextSelector({
             {/* 左ペイン: catalog 一覧。読み込み中/エラー/一覧をそれぞれ出し分ける。 */}
             <div className="overflow-auto border-r border-border-subtle py-1">
               <p className="px-2.5 pb-1 text-2xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
-                Catalog
+                {t('catalogLabel')}
               </p>
               {catalogs.isPending && (
                 <p className="flex items-center gap-1.5 px-2.5 py-1 font-mono text-2xs text-ink-subtle">
-                  <Spinner size={11} /> Loading…
+                  <Spinner size={11} /> {t('loading')}
                 </p>
               )}
               {catalogs.isError && (
-                <p className="px-2.5 py-1 font-mono text-2xs text-error">Failed to load.</p>
+                <p className="px-2.5 py-1 font-mono text-2xs text-error">{t('failedToLoad')}</p>
               )}
               {catalogItems.map((c) => (
                 <button
@@ -237,19 +247,19 @@ export function ContextSelector({
             {/* 右ペイン: 左でホバー/選択中の catalog に属する schema 一覧。 */}
             <div className="overflow-auto py-1">
               <p className="px-2.5 pb-1 text-2xs font-semibold tracking-[0.12em] text-ink-subtle uppercase">
-                Schema
+                {t('schemaLabel')}
               </p>
               {schemas.isPending && (
                 <p className="flex items-center gap-1.5 px-2.5 py-1 font-mono text-2xs text-ink-subtle">
-                  <Spinner size={11} /> Loading…
+                  <Spinner size={11} /> {t('loading')}
                 </p>
               )}
               {schemas.isError && (
-                <p className="px-2.5 py-1 font-mono text-2xs text-error">Failed to load.</p>
+                <p className="px-2.5 py-1 font-mono text-2xs text-error">{t('failedToLoad')}</p>
               )}
               {schemas.data && schemaItems.length === 0 && (
                 <p className="px-2.5 py-1 font-mono text-2xs text-ink-subtle italic">
-                  {needle ? 'No matches' : 'No schemas'}
+                  {needle ? t('noMatches') : t('noSchemas')}
                 </p>
               )}
               {schemaItems.map((s) => {

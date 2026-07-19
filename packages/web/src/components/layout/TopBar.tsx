@@ -34,6 +34,8 @@ import { useConfig } from '../../hooks/useConfig';
 import { useMe } from '../../hooks/useMe';
 import { hasPermission } from '../../permissions';
 import type { ExecutionContext } from '../../stores/datasourceStore';
+import { useT } from '../../i18n/t';
+import { layoutMessages } from '../../i18n/messages/layout';
 
 /**
  * TopBar 本体コンポーネント。
@@ -57,6 +59,7 @@ export function TopBar({
   onContextChange: (next: { catalog: string; schema: string }) => void;
   defaultLimit: number;
 }) {
+  const t = useT(layoutMessages);
   // テーマ（ライト/ダーク）とコマンドパレットの開閉、保存ダイアログのリクエストは
   // すべて uiStore（グローバル UI 状態）から取得する。
   const theme = useUiStore((s) => s.theme);
@@ -163,17 +166,17 @@ export function TopBar({
           <Tooltip
             label={
               <span className="flex items-center gap-1.5">
-                {running ? 'Stop' : 'Run all cells'} <Kbd keys={['Ctrl', '↵']} />
+                {running ? t('stopButton') : t('runAllCellsTooltip')} <Kbd keys={['Ctrl', '↵']} />
               </span>
             }
           >
             <Button variant="primary" icon={running ? Square : Play} onClick={onRunAll}>
-              {running ? 'Stop' : 'Run'}
+              {running ? t('stopButton') : t('runButton')}
             </Button>
           </Tooltip>
           {/* アクティブなノートブックを保存するボタン。 */}
           <Button variant="default" icon={Save} onClick={() => void onSave()}>
-            Save
+            {t('saveButton')}
           </Button>
 
           <div className="h-5 w-px bg-border-subtle" aria-hidden />
@@ -182,22 +185,22 @@ export function TopBar({
           {aiAvailable && (
             <IconButton
               icon={Sparkles}
-              label={aiPanelOpen ? 'Close AI assistant' : 'AI assistant'}
+              label={aiPanelOpen ? t('closeAiAssistant') : t('aiAssistant')}
               active={aiPanelOpen}
               onClick={toggleAiPanel}
             />
           )}
           {/* コマンドパレットの起動ボタン。 */}
-          <IconButton icon={Command} label="Command palette  (Ctrl K)" onClick={togglePalette} />
+          <IconButton icon={Command} label={t('commandPalette')} onClick={togglePalette} />
           {/* ライト/ダークテーマの切り替えボタン。切り替え時にトースト通知も出す。 */}
           <IconButton
             icon={theme === 'dark' ? Sun : Moon}
-            label={theme === 'dark' ? 'Light theme' : 'Dark theme'}
+            label={theme === 'dark' ? t('lightTheme') : t('darkTheme')}
             onClick={() => {
               toggleTheme();
               toast.info(
-                theme === 'dark' ? 'Light theme' : 'Dark theme',
-                'Theme preference saved.',
+                theme === 'dark' ? t('lightTheme') : t('darkTheme'),
+                t('themePreferenceSavedBody'),
               );
             }}
           />
@@ -214,16 +217,12 @@ export function TopBar({
       <Modal
         open={closing !== null}
         onClose={() => setClosing(null)}
-        title="Close notebook?"
-        description={
-          closing
-            ? `“${closing.name}” has unsaved changes. Closing it will discard them.`
-            : undefined
-        }
+        title={t('closeNotebookTitle')}
+        description={closing ? t('closeNotebookDescription', { name: closing.name }) : undefined}
         footer={
           <>
             <Button variant="ghost" onClick={() => setClosing(null)}>
-              Cancel
+              {t('cancelButton')}
             </Button>
             <Button
               variant="danger"
@@ -232,7 +231,7 @@ export function TopBar({
                 setClosing(null);
               }}
             >
-              Discard &amp; close
+              {t('discardAndClose')}
             </Button>
           </>
         }

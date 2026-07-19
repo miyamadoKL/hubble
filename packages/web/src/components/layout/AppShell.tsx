@@ -23,7 +23,9 @@ import { useMe } from '../../hooks/useMe';
 import { hasPermission } from '../../permissions';
 import { EditorRuntimeProvider } from '../../editor/EditorRuntime';
 import { useUiStore } from '../../stores/uiStore';
-import { LocaleProvider } from '../../i18n/locale';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { layoutMessages } from '../../i18n/messages/layout';
 import { useDatasourceStore, type ExecutionContext } from '../../stores/datasourceStore';
 import {
   useActiveNotebook,
@@ -35,12 +37,16 @@ import {
   recordRecentContext,
 } from '../../notebook';
 
+/** AppShell 内で使う辞書の合成。共通の couldNotReachServer はここから引く。 */
+const appShellDict = { ...commonMessages, ...layoutMessages } as const;
+
 /**
  * アプリのルートシェルコンポーネント。props は取らず、内部で context（catalog/schema）、
  * ノートブックワークスペース、保存ダイアログ、ヘルプ/プレゼンテーションモードなどの
  * 画面横断状態をすべて所有する。
  */
 export function AppShell() {
+  const t = useT(appShellDict);
   const defaultLimit = useDefaultLimit();
   const { data: config } = useConfig();
   const { datasources, selectedId: datasourceId, selected: selectedDatasource } = useDatasources();
@@ -201,8 +207,8 @@ export function AppShell() {
       };
       useNotebookStore.getState().openNotebook(clone, { draft: true, activate: true });
       const saved = await persistNewNotebook(clone.id, name);
-      if (saved) toast.success('Saved', `“${saved.name}” saved.`);
-      else toast.error('Save failed', 'Could not reach the server.');
+      if (saved) toast.success(t('savedToastTitle'), t('savedToastBody', { name: saved.name }));
+      else toast.error(t('saveFailedToastTitle'), t('couldNotReachServer'));
       return;
     }
     // ドラフトの初回保存、またはドラフトへ名前を付ける操作。ドラフトなら新規作成として
@@ -212,83 +218,80 @@ export function AppShell() {
       ? await persistNewNotebook(activeId, name)
       : (useNotebookStore.getState().renameNotebook(activeId, name),
         await persistSavedNotebook(activeId));
-    if (saved) toast.success('Saved', `“${saved.name}” saved.`);
-    else toast.error('Save failed', 'Could not reach the server.');
+    if (saved) toast.success(t('savedToastTitle'), t('savedToastBody', { name: saved.name }));
+    else toast.error(t('saveFailedToastTitle'), t('couldNotReachServer'));
   };
 
   return (
-    // アプリ全体にロケール状態を配線する。第 1 フェーズでは Schedule/Alert 領域のみが
-    // 実際に翻訳されるが、Provider 自体はここで一度だけ配線し、以後の領域追加時に
-    // 各コンポーネントが useT/useLocale を呼ぶだけで済むようにする。
-    <LocaleProvider>
-      <div className="flex h-screen flex-col overflow-hidden bg-surface-base text-ink-base">
-        {/* 最上部の TopBar。context の表示/変更と全セル実行のデフォルト行数上限を渡す。 */}
-        <TopBar
-          context={executionContext}
-          onDatasourceChange={handleDatasourceChange}
-          onContextChange={handleContextChange}
-          defaultLimit={defaultLimit}
-        />
-        {/* TopBar 直下の1px の装飾ライン。左端だけアクセントカラーのグラデーションを乗せる。 */}
-        <div className="relative h-px shrink-0 bg-border-base">
-          <span className="absolute top-0 left-0 h-px w-24 bg-gradient-to-r from-accent/60 to-transparent" />
-        </div>
-
-        {/* 本体: 左に Sidebar、右に NotebookView（エディタランタイム配下）を配置する2カラム。 */}
-        <div className="flex min-h-0 flex-1">
-          <Sidebar
-            search={search}
-            onSearchChange={setSearch}
-            activeNotebookId={activeId ?? ''}
-            context={context}
-            datasourceId={executionContext.datasourceId ?? datasourceId}
-            flattenCatalog={selectedDatasource ? !selectedDatasource.capabilities.catalogs : false}
-          />
-          <main className="min-w-0 flex-1 overflow-auto bg-surface-base">
-            {/* ワークフロー/ダッシュボードビューが開かれている間はノートブックの代わりに表示する。 */}
-            {workflowView ? (
-              <WorkflowView />
-            ) : dashboardView ? (
-              <DashboardView />
-            ) : (
-              executionContext.datasourceId && (
-                <EditorRuntimeProvider
-                  context={context}
-                  datasourceId={executionContext.datasourceId}
-                  datasourceKind={selectedDatasource?.kind ?? 'trino'}
-                >
-                  <NotebookView
-                    context={executionContext}
-                    defaultLimit={defaultLimit}
-                    costEstimateEnabled={selectedDatasource?.capabilities.costEstimate ?? false}
-                    trinoLanguage={selectedDatasource?.kind === 'trino'}
-                  />
-                </EditorRuntimeProvider>
-              )
-            )}
-          </main>
-          {/* AI アシスタントパネル（メインエリアの右側）。 */}
-          {showAiPanel && <AiPanel />}
-        </div>
-
-        {/* 画面横断のオーバーレイ群: コマンドパレット、ショートカットヘルプ、
-          プレゼンテーションモード（有効時のみ描画）、トースト通知。 */}
-        <CommandPalette context={executionContext} defaultLimit={defaultLimit} />
-        <ShortcutsHelp open={shortcutsHelpOpen} onClose={() => setShortcutsHelpOpen(false)} />
-        {presentationMode && <PresentationView />}
-        <ToastViewport />
-        {/* 保存ダイアログ。uiStore.saveRequest が非 null のときだけ開く。
-          mode によってタイトル/確定ボタンのラベルが「保存」「名前を付けて保存」で切り替わる。 */}
-        <SaveNotebookModal
-          open={saveRequest !== null}
-          targetId={activeId}
-          initialName={activeEntry?.notebook.name ?? 'Untitled notebook'}
-          title={saveRequest?.mode === 'saveAs' ? 'Save notebook as' : 'Save notebook'}
-          confirmLabel={saveRequest?.mode === 'saveAs' ? 'Save a copy' : 'Save'}
-          onClose={closeSaveModal}
-          onConfirm={(name) => void onSaveConfirm(name)}
-        />
+    <div className="flex h-screen flex-col overflow-hidden bg-surface-base text-ink-base">
+      {/* 最上部の TopBar。context の表示/変更と全セル実行のデフォルト行数上限を渡す。 */}
+      <TopBar
+        context={executionContext}
+        onDatasourceChange={handleDatasourceChange}
+        onContextChange={handleContextChange}
+        defaultLimit={defaultLimit}
+      />
+      {/* TopBar 直下の1px の装飾ライン。左端だけアクセントカラーのグラデーションを乗せる。 */}
+      <div className="relative h-px shrink-0 bg-border-base">
+        <span className="absolute top-0 left-0 h-px w-24 bg-gradient-to-r from-accent/60 to-transparent" />
       </div>
-    </LocaleProvider>
+
+      {/* 本体: 左に Sidebar、右に NotebookView（エディタランタイム配下）を配置する2カラム。 */}
+      <div className="flex min-h-0 flex-1">
+        <Sidebar
+          search={search}
+          onSearchChange={setSearch}
+          activeNotebookId={activeId ?? ''}
+          context={context}
+          datasourceId={executionContext.datasourceId ?? datasourceId}
+          flattenCatalog={selectedDatasource ? !selectedDatasource.capabilities.catalogs : false}
+        />
+        <main className="min-w-0 flex-1 overflow-auto bg-surface-base">
+          {/* ワークフロー/ダッシュボードビューが開かれている間はノートブックの代わりに表示する。 */}
+          {workflowView ? (
+            <WorkflowView />
+          ) : dashboardView ? (
+            <DashboardView />
+          ) : (
+            executionContext.datasourceId && (
+              <EditorRuntimeProvider
+                context={context}
+                datasourceId={executionContext.datasourceId}
+                datasourceKind={selectedDatasource?.kind ?? 'trino'}
+              >
+                <NotebookView
+                  context={executionContext}
+                  defaultLimit={defaultLimit}
+                  costEstimateEnabled={selectedDatasource?.capabilities.costEstimate ?? false}
+                  trinoLanguage={selectedDatasource?.kind === 'trino'}
+                />
+              </EditorRuntimeProvider>
+            )
+          )}
+        </main>
+        {/* AI アシスタントパネル（メインエリアの右側）。 */}
+        {showAiPanel && <AiPanel />}
+      </div>
+
+      {/* 画面横断のオーバーレイ群: コマンドパレット、ショートカットヘルプ、
+        プレゼンテーションモード（有効時のみ描画）、トースト通知。 */}
+      <CommandPalette context={executionContext} defaultLimit={defaultLimit} />
+      <ShortcutsHelp open={shortcutsHelpOpen} onClose={() => setShortcutsHelpOpen(false)} />
+      {presentationMode && <PresentationView />}
+      <ToastViewport />
+      {/* 保存ダイアログ。uiStore.saveRequest が非 null のときだけ開く。
+        mode によってタイトル/確定ボタンのラベルが「保存」「名前を付けて保存」で切り替わる。 */}
+      <SaveNotebookModal
+        open={saveRequest !== null}
+        targetId={activeId}
+        initialName={activeEntry?.notebook.name ?? t('untitledNotebook')}
+        title={saveRequest?.mode === 'saveAs' ? t('saveNotebookAsTitle') : t('saveNotebookTitle')}
+        confirmLabel={
+          saveRequest?.mode === 'saveAs' ? t('saveAsConfirmLabel') : t('saveConfirmLabel')
+        }
+        onClose={closeSaveModal}
+        onConfirm={(name) => void onSaveConfirm(name)}
+      />
+    </div>
   );
 }

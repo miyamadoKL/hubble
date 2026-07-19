@@ -6,6 +6,8 @@
 import { Search, X } from 'lucide-react';
 import type { InputHTMLAttributes, Ref } from 'react';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { layoutMessages } from '../../i18n/messages/layout';
 
 /**
  * SearchInput コンポーネントの props。
@@ -29,7 +31,7 @@ interface SearchInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, '
  * @param value 入力欄の現在値。
  * @param onChange 値の変更を親に通知するコールバック。
  * @param onClear クリアボタン押下時に呼ばれる追加コールバック(任意)。
- * @param placeholder プレースホルダー文字列(デフォルトは 'Search…')。
+ * @param placeholder プレースホルダー文字列(省略時はロケールに応じた既定文言「検索…」/「Search…」)。
  * @param className ルート要素に追加するクラス名(任意)。
  * @param inputRef 内部 input 要素への ref(任意)。
  * @param rest その他の input 属性はそのまま `<input>` に渡される。
@@ -38,11 +40,15 @@ export function SearchInput({
   value,
   onChange,
   onClear,
-  placeholder = 'Search…',
+  placeholder,
   className,
   inputRef,
   ...rest
 }: SearchInputProps) {
+  const t = useT(layoutMessages);
+  // placeholder が省略された場合はロケールに応じた既定文言を使う（デフォルト引数だと
+  // フック呼び出しができないため、ここで解決する）。
+  const effectivePlaceholder = placeholder ?? t('searchPlaceholderDefault');
   return (
     // 検索アイコン、入力欄、クリアボタンを横に並べる枠。フォーカス時に枠線をハイライトする
     <div
@@ -59,7 +65,11 @@ export function SearchInput({
         ref={inputRef}
         type="text"
         value={value}
-        placeholder={placeholder}
+        placeholder={effectivePlaceholder}
+        // アクセシブルネームを persistent placeholder と同じ翻訳済み文言にする
+        // （レビュー指摘: placeholder だけでは支援技術に検索欄の目的が伝わらない）。
+        // rest で呼び出し元が明示的に aria-label を渡した場合はそちらを優先する。
+        aria-label={effectivePlaceholder}
         onChange={(e) => onChange(e.target.value)}
         className="min-w-0 flex-1 bg-transparent text-sm text-ink-base placeholder:text-ink-subtle focus:outline-none"
         {...rest}
@@ -68,7 +78,7 @@ export function SearchInput({
       {value && (
         <button
           type="button"
-          aria-label="Clear search"
+          aria-label={t('clearSearchAria')}
           onClick={() => {
             // 値を空文字にリセットし、任意で親のクリア処理も呼び出す
             onChange('');

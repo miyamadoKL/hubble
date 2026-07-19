@@ -11,6 +11,8 @@ import { Spinner } from './Spinner';
 import { toast } from './Toast';
 import { cn } from '../../utils/cn';
 import { findDuplicateShareIndices, type ShareDraftRow } from '../../utils/documentShare';
+import { useT } from '../../i18n/t';
+import { shareMessages } from '../../i18n/messages/share';
 
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
 const TEXT_INPUT =
@@ -92,6 +94,7 @@ function ShareModalBody({
   fetchShares: () => Promise<{ shares: DocumentShare[] }>;
   updateShares: (shares: ShareDraftRow[]) => Promise<{ shares: DocumentShare[] }>;
 }) {
+  const t = useT(shareMessages);
   const [rows, setRows] = useState<ShareDraftRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -141,17 +144,17 @@ function ShareModalBody({
     const payload = toSavePayload(rows);
     const dup = findDuplicateShareIndices(payload);
     if (dup) {
-      setValidationError(`Duplicate share subject (rows ${dup[0] + 1} and ${dup[1] + 1}).`);
+      setValidationError(t('duplicateShareSubject', { a: dup[0] + 1, b: dup[1] + 1 }));
       return;
     }
     setValidationError(null);
     setSaving(true);
     try {
       await updateShares(payload);
-      toast.success('Shares updated', `Sharing settings for “${documentName}” were saved.`);
+      toast.success(t('sharesUpdatedTitle'), t('sharesUpdatedBody', { name: documentName }));
       onClose();
     } catch {
-      toast.error('Save failed', 'Could not update shares.');
+      toast.error(t('saveFailedTitle'), t('saveSharesFailedBody'));
     } finally {
       setSaving(false);
     }
@@ -161,32 +164,32 @@ function ShareModalBody({
     <Modal
       open
       onClose={onClose}
-      title="Share"
-      description={`Manage who can access “${documentName}”.`}
+      title={t('shareTitle')}
+      description={t('shareDescription', { name: documentName })}
       className="max-w-2xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
-            Cancel
+            {t('cancelButton')}
           </Button>
           <Button
             variant="primary"
             onClick={() => void save()}
             disabled={loading || saving || loadError}
           >
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t('savingButton') : t('saveButton')}
           </Button>
         </>
       }
     >
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-6 font-mono text-2xs text-ink-subtle">
-          <Spinner size={14} /> Loading shares…
+          <Spinner size={14} /> {t('loadingShares')}
         </div>
       ) : loadError ? (
         <div className="flex flex-col items-start gap-3">
           <p className="w-full rounded-md border border-error/30 bg-error/5 px-3 py-2 text-sm text-error">
-            Could not load shares.
+            {t('loadSharesFailed')}
           </p>
           <Button
             variant="default"
@@ -195,7 +198,7 @@ function ShareModalBody({
               setLoadAttempt((attempt) => attempt + 1);
             }}
           >
-            Retry
+            {t('retryButton')}
           </Button>
         </div>
       ) : (
@@ -212,49 +215,49 @@ function ShareModalBody({
                 className="grid grid-cols-[minmax(0,7rem)_minmax(0,1fr)_minmax(0,7rem)_auto] items-end gap-2"
               >
                 <label className="flex flex-col gap-1">
-                  <span className={FIELD_LABEL}>Type</span>
+                  <span className={FIELD_LABEL}>{t('typeLabel')}</span>
                   <select
                     value={row.subjectType}
-                    aria-label={`Share type row ${index + 1}`}
+                    aria-label={t('shareTypeRowAria', { n: index + 1 })}
                     onChange={(e) =>
                       updateRow(index, { subjectType: e.target.value as ShareSubjectType })
                     }
                     className={cn(TEXT_INPUT, 'py-1.5')}
                   >
-                    <option value="user">User</option>
-                    <option value="group">Group</option>
-                    <option value="role">Role</option>
+                    <option value="user">{t('subjectTypeUser')}</option>
+                    <option value="group">{t('subjectTypeGroup')}</option>
+                    <option value="role">{t('subjectTypeRole')}</option>
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className={FIELD_LABEL}>Subject</span>
+                  <span className={FIELD_LABEL}>{t('subjectLabel')}</span>
                   <input
                     value={row.subjectValue}
-                    aria-label={`Share subject row ${index + 1}`}
+                    aria-label={t('shareSubjectRowAria', { n: index + 1 })}
                     onChange={(e) => updateRow(index, { subjectValue: e.target.value })}
-                    placeholder="user id, group, or role name"
+                    placeholder={t('subjectPlaceholder')}
                     className={TEXT_INPUT}
                   />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className={FIELD_LABEL}>Permission</span>
+                  <span className={FIELD_LABEL}>{t('permissionLabel')}</span>
                   <select
                     value={row.permission}
-                    aria-label={`Share permission row ${index + 1}`}
+                    aria-label={t('sharePermissionRowAria', { n: index + 1 })}
                     onChange={(e) =>
                       updateRow(index, { permission: e.target.value as SharePermission })
                     }
                     className={cn(TEXT_INPUT, 'py-1.5')}
                   >
-                    <option value="view">Can view</option>
-                    <option value="edit">Can edit</option>
+                    <option value="view">{t('sharePermissionView')}</option>
+                    <option value="edit">{t('sharePermissionEdit')}</option>
                   </select>
                 </label>
                 <Button
                   variant="ghost"
                   size="sm"
                   icon={Trash2}
-                  aria-label={`Remove share row ${index + 1}`}
+                  aria-label={t('removeShareRowAria', { n: index + 1 })}
                   onClick={() => removeRow(index)}
                   className="mb-0.5 text-ink-subtle hover:text-error"
                 />
@@ -262,7 +265,7 @@ function ShareModalBody({
             ))}
           </ul>
           <Button variant="ghost" size="sm" icon={Plus} onClick={addRow} className="self-start">
-            Add share
+            {t('addShare')}
           </Button>
         </div>
       )}

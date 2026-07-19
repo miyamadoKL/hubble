@@ -12,6 +12,12 @@ import { githubConnectUrl } from '../../api/github';
 import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { layoutMessages } from '../../i18n/messages/layout';
+
+/** UserChip 内で使う辞書の合成。共通の couldNotReachServer はここから引く。 */
+const userChipDict = { ...commonMessages, ...layoutMessages } as const;
 
 /**
  * 現在ログイン中のユーザーを示すチップを描画する。props は取らず、
@@ -19,6 +25,7 @@ import { cn } from '../../utils/cn';
  * 未取得時、または authMode が 'none'（認証なし運用）の場合は何も描画しない。
  */
 export function UserChip() {
+  const t = useT(userChipDict);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   // サーバーから現在のユーザー情報を取得する。
@@ -83,7 +90,7 @@ export function UserChip() {
       {open && (
         <div
           role="dialog"
-          aria-label="Current identity"
+          aria-label={t('currentIdentity')}
           className="absolute top-full right-0 z-50 mt-2 w-80 rounded-md border border-border-strong bg-surface-overlay p-3 text-sm text-ink-base shadow-lg"
         >
           <div className="min-w-0 border-b border-border-subtle pb-3">
@@ -97,7 +104,7 @@ export function UserChip() {
             <section>
               <div className="mb-1.5 flex items-center gap-1.5 text-2xs font-semibold text-ink-muted uppercase">
                 <ShieldCheck size={13} strokeWidth={1.75} />
-                Role
+                {t('roleLabel')}
               </div>
               <div className="inline-flex rounded-sm border border-border-subtle bg-surface-sunken px-2 py-1 font-mono text-xs">
                 {me.role}
@@ -106,7 +113,7 @@ export function UserChip() {
 
             <section>
               <div className="mb-1.5 text-2xs font-semibold text-ink-muted uppercase">
-                Permissions
+                {t('permissionsLabel')}
               </div>
               {permissions.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
@@ -120,14 +127,14 @@ export function UserChip() {
                   ))}
                 </div>
               ) : (
-                <div className="text-xs text-ink-muted">No permissions</div>
+                <div className="text-xs text-ink-muted">{t('noPermissions')}</div>
               )}
             </section>
 
             <section>
               <div className="mb-1.5 flex items-center gap-1.5 text-2xs font-semibold text-ink-muted uppercase">
                 <Database size={13} strokeWidth={1.75} />
-                Datasources
+                {t('datasourcesLabel')}
               </div>
               {me.datasources.length > 0 ? (
                 <div className="max-h-40 space-y-1 overflow-auto">
@@ -144,7 +151,7 @@ export function UserChip() {
                   ))}
                 </div>
               ) : (
-                <div className="text-xs text-ink-muted">No datasources</div>
+                <div className="text-xs text-ink-muted">{t('noDatasources')}</div>
               )}
             </section>
 
@@ -153,7 +160,7 @@ export function UserChip() {
               <section>
                 <div className="mb-1.5 flex items-center gap-1.5 text-2xs font-semibold text-ink-muted uppercase">
                   <GitFork size={13} strokeWidth={1.75} />
-                  GitHub
+                  {t('githubLabel')}
                 </div>
                 {github.connected ? (
                   <div className="flex items-center justify-between gap-2">
@@ -163,14 +170,15 @@ export function UserChip() {
                       size="sm"
                       onClick={() =>
                         disconnectGithub.mutate(undefined, {
-                          onSuccess: () => toast.info('Disconnected', 'GitHub account unlinked.'),
+                          onSuccess: () =>
+                            toast.info(t('githubDisconnectedTitle'), t('githubDisconnectedBody')),
                           onError: () =>
-                            toast.error('Disconnect failed', 'Could not reach the server.'),
+                            toast.error(t('disconnectFailedTitle'), t('couldNotReachServer')),
                         })
                       }
                       disabled={disconnectGithub.isPending}
                     >
-                      Disconnect
+                      {t('disconnectButton')}
                     </Button>
                   </div>
                 ) : (
@@ -180,7 +188,7 @@ export function UserChip() {
                     icon={GitFork}
                     onClick={() => window.location.assign(githubConnectUrl())}
                   >
-                    Connect GitHub
+                    {t('connectGithubButton')}
                   </Button>
                 )}
               </section>
