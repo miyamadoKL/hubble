@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   builderStateToCron,
   cronToBuilderState,
+  describeCronForList,
   describeCronState,
   describeCronStateWithTimeZone,
   isCronStateValid,
@@ -178,10 +179,37 @@ describe('describeCronState (日本語読み下し)', () => {
     );
   });
 
-  test('custom', () => {
+  test('custom: 式を埋め込まず簡潔な文言のみ返す（直下の入力欄に式が見えているため）', () => {
     expect(describeCronState(state({ mode: 'custom', custom: '*/5 * * * *' }))).toBe(
-      'カスタム設定で実行: */5 * * * *',
+      'カスタム設定で実行',
     );
+    expect(describeCronState(state({ mode: 'custom', custom: '*/5 * * * *' }))).not.toContain(
+      '*/5',
+    );
+  });
+});
+
+describe('describeCronForList (一覧行向け。式を埋め込まない基本形)', () => {
+  test('プリセットに一致する cron 式は describeCronState と同じ読み下しになる', () => {
+    expect(describeCronForList('0 9 * * *')).toBe('毎日 09:00 に実行');
+    expect(describeCronForList('15 * * * *')).toBe('毎時 15 分に実行');
+    expect(describeCronForList('0 9 * * 1,3,5')).toBe('毎週 月、水、金の 09:00 に実行');
+  });
+
+  test('タイムゾーンの括弧書きは付けない（一覧行の狭い幅向けの基本形）', () => {
+    expect(describeCronForList('0 9 * * *')).not.toContain('サーバー時刻');
+  });
+
+  test('プリセットへ逆変換できないカスタム式は「カスタムスケジュール」とだけ返し、式は含まない', () => {
+    const text = describeCronForList('*/7 2-4 * * *');
+    expect(text).toBe('カスタムスケジュール');
+    expect(text).not.toContain('*/7');
+    expect(text).not.toContain('2-4');
+  });
+
+  test('en ロケールでは "Custom schedule" を返す', () => {
+    expect(describeCronForList('*/7 2-4 * * *', 'en')).toBe('Custom schedule');
+    expect(describeCronForList('0 9 * * *', 'en')).toBe('Daily at 09:00');
   });
 });
 

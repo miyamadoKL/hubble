@@ -27,6 +27,7 @@ import { useLocale } from '../../i18n/locale';
 import { commonMessages } from '../../i18n/messages/common';
 import { alertMessages } from '../../i18n/messages/alert';
 import { alertSelectorLabel, alertStateLabel } from './alertFormat';
+import { describeCronForList } from './scheduleCron';
 
 /** AlertsPanel 内で使う辞書の合成。共通文言 + Alert 固有文言を 1 つの t() で引けるようにする。 */
 const alertDict = { ...commonMessages, ...alertMessages } as const;
@@ -107,10 +108,12 @@ function AlertRow({
         </div>
       </div>
 
-      {/* 状態バッジと cron、次回評価予定の相対表示 (SchedulesPanel と同じ 2 段目レイアウト)。 */}
+      {/* 状態バッジと cron の読み下し、次回評価予定の相対表示 (SchedulesPanel と同じ
+          2 段目レイアウト)。生の cron 式は表示せず、SchedulesPanel と同じ
+          describeCronForList で読み下す（UI/UX から cron 式表示を極力排除する方針）。 */}
       <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-9">
         <AlertStateBadge state={alert.state} />
-        <span className="font-mono text-2xs text-ink-subtle">{alert.cron}</span>
+        <span className="text-2xs text-ink-subtle">{describeCronForList(alert.cron, locale)}</span>
         <span className="font-mono text-2xs text-ink-subtle">
           {t('nextPrefix', { label: nextEvalLabel(alert, now, t) })}
         </span>
