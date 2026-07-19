@@ -85,18 +85,25 @@ class MemoryResultStore implements ResultStore {
   async close(): Promise<void> {}
 }
 
-/** 永続化結果の history 記録を待つ（resultStore.test.ts と同じ流儀）。 */
+/**
+ * 永続化結果の history 記録を待つ（resultStore.test.ts と同じ流儀）。
+ *
+ * 結果永続化はQueryServiceがqueryIdごとにバックグラウンドタスクとして追跡して
+ * おり、`waitForResultPersisted()` はそのタスクの完了だけを確定的に待てる
+ * (履歴更新など無関係な他のバックグラウンドタスクは待たない。全タスクを待つ
+ * `drain()` は粒度が粗すぎ、履歴更新を意図的にブロックするテストでは
+ * デッドロックする)。以前の固定10ms間隔・最大20回のポーリングは、CPU負荷が
+ * 高い並列実行下でバックグラウンド書き込みが間に合わずtimeoutするflakeの
+ * 原因だった。
+ */
 async function waitForResultRef(
   ctx: Awaited<ReturnType<typeof createTestContext>>,
   queryId: string,
   owner = 'admin',
 ): Promise<void> {
-  for (let i = 0; i < 20; i++) {
-    const ref = await ctx.services.history.getResultRef(owner, queryId);
-    if (ref) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('result ref was not recorded');
+  await ctx.services.queries.waitForResultPersisted(queryId);
+  const ref = await ctx.services.history.getResultRef(owner, queryId);
+  if (!ref) throw new Error('result ref was not recorded');
 }
 
 /** registry からメモリ上の実行を消し、永続化フォールバック経路を強制する。 */

@@ -216,9 +216,16 @@ describe('query governance persistence', () => {
       schema: 'reporting',
     });
     await waitForTerminal(ctx.services, queryId);
-    await vi.waitFor(() => {
-      expect(store.objects.size).toBeGreaterThan(0);
-    });
+    // 結果の永続化(store.putへのupload、historyへのresult object紐付け、
+    // audit記録)はQueryServiceがqueryIdごとに追跡するバックグラウンドタスク
+    // として走る。以前はstore.objects.sizeだけをvi.waitForでポーリングしていた
+    // が、そのpredicateが真になった時点(=upload完了直後)ではまだaudit記録が
+    // 完了しておらず、CPU負荷が高い並列実行下ではaudit行の読み取りが早すぎて
+    // flakeしていた。waitForResultPersisted()でこのクエリの結果永続化タスク
+    // だけを確定的に待つ(履歴更新など無関係なタスクまで待つ`drain()`は粒度が
+    // 粗すぎ、履歴更新を意図的にブロックする他のテストではデッドロックする)。
+    await ctx.services.queries.waitForResultPersisted(queryId);
+    expect(store.objects.size).toBeGreaterThan(0);
     const auditRows = await ctx.services.audit.listForTest();
     expect(auditRows.some((row) => row.action === 'query.result.persist')).toBe(true);
   });

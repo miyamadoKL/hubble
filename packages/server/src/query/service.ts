@@ -73,6 +73,13 @@ export interface SubmitQueryParams {
  */
 export class QueryService {
   private readonly backgroundTasks = new Set<Promise<void>>();
+  // クエリごとの「結果永続化」バックグラウンドタスク（resultPersisted）を
+  // queryId で追跡する。`drain()` は履歴更新など他のバックグラウンドタスクも
+  // まとめて待つため粒度が粗すぎる場面がある（例: テストが履歴更新だけを
+  // 意図的にブロックしつつ結果永続化の完了だけを観測したい場合）。
+  // `waitForResultPersisted()` はそうした場面向けに、このクエリの結果永続化
+  // タスクだけを待てるようにするための test seam。
+  private readonly resultPersistedTasks = new Map<string, Promise<void>>();
 
   constructor(private readonly params: QueryServiceParams) {}
 
@@ -80,6 +87,19 @@ export class QueryService {
   // レジストリ固有の操作を直接呼べるようにするため）。
   get registry(): QueryRegistry {
     return this.params.registry;
+  }
+
+  /**
+   * 指定クエリの結果永続化バックグラウンドタスク（historyへのresult object
+   * 紐付けとaudit記録を含む）の完了を待つ。`persistResult: false` のクエリや
+   * 追跡から既に外れた（完了済みの）queryIdに対しては即座に返る。
+   *
+   * `drain()` と異なり、履歴更新など他の無関係なバックグラウンドタスクの
+   * 完了は待たない。テストが「結果が永続化されたか」だけを確定的に検証したい
+   * 場合に使う。
+   */
+  async waitForResultPersisted(queryId: string): Promise<void> {
+    await this.resultPersistedTasks.get(queryId);
   }
 
   /**
@@ -241,6 +261,16 @@ export class QueryService {
           console.error('failed to record query result persistence', err);
         });
       this.trackBackground(resultPersisted);
+      // waitForResultPersisted() から参照できるよう queryId で追跡する。
+      // タスク完了後はMapから取り除き、長時間稼働プロセスでの無制限な
+      // メモリ増加を防ぐ（呼び出し元は完了前に既にPromiseを取得済みのため
+      // 削除しても待機自体には影響しない）。
+      this.resultPersistedTasks.set(
+        exec.queryId,
+        resultPersisted.finally(() => {
+          this.resultPersistedTasks.delete(exec.queryId);
+        }),
+      );
     }
 
     return exec;
