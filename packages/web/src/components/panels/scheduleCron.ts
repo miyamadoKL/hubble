@@ -229,9 +229,9 @@ export function describeCronState(state: ScheduleCronState, locale: Locale = 'ja
       });
     case 'custom':
     default:
-      return t(scheduleBuilderMessages, 'describeCustom', locale, {
-        cron: state.custom || t(scheduleBuilderMessages, 'describeCustomEmpty', locale),
-      });
+      // custom モードは直下の入力欄に生の cron 式が見えているため、読み下し文には
+      // 式を埋め込まない（UI/UX から cron 式表示を極力排除する方針）。
+      return t(scheduleBuilderMessages, 'describeCustom', locale);
   }
 }
 
@@ -252,4 +252,20 @@ export function describeCronStateWithTimeZone(
     ? t(scheduleBuilderMessages, 'timeZoneWithName', locale, { tz: timeZone })
     : t(scheduleBuilderMessages, 'timeZoneUnknown', locale);
   return `${describeCronState(state, locale)}${suffix}`;
+}
+
+/**
+ * 一覧行（SchedulesPanel/AlertsPanel）向けの cron 読み下し。
+ * サーバー時刻タイムゾーンの括弧書きは行の横幅が狭いため付けない基本形を使う
+ * （タイムゾーン付きの詳細な読み下しはフォーム内の `describeCronStateWithTimeZone` に
+ * 任せる）。プリセットへ逆変換できないカスタム式は、生の cron 式を一覧に出さない方針
+ * （UI/UX から cron 式表示を極力排除する）のため、式を埋め込まず `customScheduleLabel`
+ * のみを返す（式は編集フォームのカスタム欄でのみ確認できる）。
+ */
+export function describeCronForList(cron: string, locale: Locale = 'ja'): string {
+  const state = cronToBuilderState(cron);
+  if (state.mode === 'custom') {
+    return t(scheduleBuilderMessages, 'customScheduleLabel', locale);
+  }
+  return describeCronState(state, locale);
 }

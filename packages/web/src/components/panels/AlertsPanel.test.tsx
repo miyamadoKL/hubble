@@ -61,8 +61,8 @@ afterAll(() => {
   ).IS_REACT_ACT_ENVIRONMENT = false;
 });
 
-function renderPanel() {
-  Object.defineProperty(window.navigator, 'language', { value: 'ja-JP', configurable: true });
+function renderPanel(language: string = 'ja-JP') {
+  Object.defineProperty(window.navigator, 'language', { value: language, configurable: true });
   window.localStorage.clear();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const container = document.createElement('div');
@@ -142,5 +142,43 @@ describe('AlertsPanel: ja ロケールで契約値の生表示が残らない', 
     // AlertStateBadge と同じ翻訳ラベル「発火中」を含む本文になる。
     expect(body).toContain('発火中');
     expect(body).not.toContain('triggered');
+  });
+
+  // UI/UX から cron 式表示を極力排除する方針（scheduleCron.ts の describeCronForList）
+  // に沿って、一覧行が生の cron 式を出さないことを検証する。
+  test('一覧行: プリセット式（0 9 * * *）が読み下し文になり、生の式は出ない', async () => {
+    vi.mocked(listAlerts).mockResolvedValue([alert({ cron: '0 9 * * *' })]);
+    vi.mocked(listSavedQueries).mockResolvedValue([]);
+    ({ container, root } = renderPanel());
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Row count guard');
+    });
+    expect(container.textContent).toContain('毎日 09:00 に実行');
+    expect(container.textContent).not.toContain('0 9 * * *');
+  });
+
+  test('一覧行: カスタム式（*/7 2-4 * * *）が「カスタムスケジュール」になり、生の式は出ない', async () => {
+    vi.mocked(listAlerts).mockResolvedValue([alert({ cron: '*/7 2-4 * * *' })]);
+    vi.mocked(listSavedQueries).mockResolvedValue([]);
+    ({ container, root } = renderPanel());
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Row count guard');
+    });
+    expect(container.textContent).toContain('カスタムスケジュール');
+    expect(container.textContent).not.toContain('*/7 2-4 * * *');
+  });
+
+  test('en 一覧行: プリセット式は読み下し文、カスタム式は "Custom schedule" になる', async () => {
+    vi.mocked(listAlerts).mockResolvedValue([alert({ id: 'alert-3', cron: '0 9 * * *' })]);
+    vi.mocked(listSavedQueries).mockResolvedValue([]);
+    ({ container, root } = renderPanel('en-US'));
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Row count guard');
+    });
+    expect(container.textContent).toContain('Daily at 09:00');
+    expect(container.textContent).not.toContain('0 9 * * *');
   });
 });

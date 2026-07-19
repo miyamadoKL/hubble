@@ -34,8 +34,10 @@ import { useDatasources } from '../../hooks/useDatasources';
 import { DatasourceBadge } from '../common/DatasourceBadge';
 import { cn } from '../../utils/cn';
 import { useT, type TFn } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
 import { commonMessages } from '../../i18n/messages/common';
 import { scheduleMessages } from '../../i18n/messages/schedule';
+import { describeCronForList } from './scheduleCron';
 
 /** SchedulesPanel 内で使う辞書の合成。共通文言 + Schedule 固有文言を 1 つの t() で引けるようにする。 */
 const scheduleDict = { ...commonMessages, ...scheduleMessages } as const;
@@ -111,6 +113,7 @@ function ScheduleRow({
   running: boolean;
 }) {
   const t = useT(scheduleDict);
+  const { locale } = useLocale();
   return (
     <li className="group border-b border-border-subtle px-3 py-2.5">
       <div className="flex items-start gap-2">
@@ -134,7 +137,11 @@ function ScheduleRow({
           />
         </button>
 
-        {/* 名前と cron 式。クリックすると実行履歴モーダルを開く。 */}
+        {/* 名前と cron の読み下し。クリックすると実行履歴モーダルを開く。
+            生の cron 式は表示せず（UI/UX から cron 式表示を極力排除する方針）、
+            プリセットに一致する場合は「毎日 9:00 に実行」等の文へ、逆変換できない
+            カスタム式は「カスタムスケジュール」とだけ表示する（式は編集フォームの
+            カスタム欄でのみ確認できる）。 */}
         <button
           type="button"
           onClick={onOpenRuns}
@@ -142,7 +149,9 @@ function ScheduleRow({
           title={t('viewRunHistory')}
         >
           <p className="truncate text-sm font-medium text-ink-strong">{schedule.name}</p>
-          <p className="mt-0.5 truncate font-mono text-2xs text-ink-subtle">{schedule.cron}</p>
+          <p className="mt-0.5 truncate text-2xs text-ink-subtle">
+            {describeCronForList(schedule.cron, locale)}
+          </p>
         </button>
       </div>
 

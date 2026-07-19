@@ -51,14 +51,20 @@ export const scheduleBuilderMessages = defineDictionary({
   weekdayFri: { ja: '金', en: 'Fri' },
   weekdaySat: { ja: '土', en: 'Sat' },
 
-  // 現在の設定の読み下し文（describeCronState）。
+  // 現在の設定の読み下し文（describeCronState）。custom は直下の入力欄に生の cron 式が
+  // 見えているため、読み下し側では式を埋め込まず簡潔な文言にとどめる
+  // （UI/UX から cron 式表示を極力排除する方針）。
   describeHourly: { ja: '毎時 {minute} 分に実行', en: 'Every hour at minute {minute}' },
   describeDaily: { ja: '毎日 {time} に実行', en: 'Daily at {time}' },
   describeWeekly: { ja: '毎週 {days}の {time} に実行', en: 'Every week on {days} at {time}' },
   describeWeeklyEmpty: { ja: '曜日が選択されていません', en: 'No weekday selected' },
   describeMonthly: { ja: '毎月 {day} 日の {time} に実行', en: 'Monthly on day {day} at {time}' },
-  describeCustom: { ja: 'カスタム設定で実行: {cron}', en: 'Custom timing: {cron}' },
-  describeCustomEmpty: { ja: '(未入力)', en: '(empty)' },
+  describeCustom: { ja: 'カスタム設定で実行', en: 'Custom timing' },
+
+  // 一覧行（SchedulesPanel/AlertsPanel）でプリセットへ逆変換できないカスタム式を
+  // 表示するときの文言。式そのものは表示せず、この文言だけを出す（式は編集フォームの
+  // カスタム欄でのみ確認できる、という一貫方針）。
+  customScheduleLabel: { ja: 'カスタムスケジュール', en: 'Custom schedule' },
 
   // 曜日リストの列挙。2 項は「と」/"and"、3 項以上は読点/カンマで並べる
   // （japanese-tech-writing 規範: 日本語の並列で中黒は使わない）。
