@@ -12,6 +12,33 @@ import type { QueryColumn, QueryWidget } from '@hubble/contracts';
 import { Spinner } from '../common/Spinner';
 import { describeColumns, reconcileConfig, toLabel, toNumber } from '../../chart';
 import type { ResultRow } from '../../execution';
+import { useT, type TFn } from '../../i18n/t';
+import { dashboardMessages } from '../../i18n/messages/dashboard';
+
+/**
+ * widgetQueryCoordinator (business logic 層) が投げる代表的なエラーメッセージの
+ * 生文字列 → 辞書キーの対応表。coordinator 側は英語の生メッセージのまま Error を
+ * 投げ続け (ロケールに依存しない business logic に留める)、表示層であるここでだけ
+ * 既知のパターンに一致すれば翻訳する。未知のメッセージ (サーバー由来の実行時エラー等)
+ * はそのまま表示する。
+ */
+// プレースホルダーを持たないキーのみに絞った union。
+// `keyof typeof dashboardMessages` のような全キー union にすると、t() 呼び出し時に
+// プレースホルダー付きキー (showingFirstRows 等) との合成型になり、
+// 「引数なしで呼べるはず」の呼び出しが型エラーになるため、意図的に絞り込む。
+type NoParamErrorKey = 'queryTimedOutError' | 'queryFailedError' | 'queryCanceledError';
+
+const KNOWN_ERROR_KEYS: Record<string, NoParamErrorKey> = {
+  'Query timed out': 'queryTimedOutError',
+  'Query failed': 'queryFailedError',
+  'Query canceled': 'queryCanceledError',
+};
+
+/** 既知のエラーメッセージであれば翻訳し、未知であればそのまま返す。 */
+function translateWidgetError(t: TFn<typeof dashboardMessages>, message: string): string {
+  const key = KNOWN_ERROR_KEYS[message];
+  return key ? t(key) : message;
+}
 
 const ChartView = lazy(() =>
   import('../notebook/ChartView').then((module) => ({ default: module.ChartView })),
@@ -32,6 +59,7 @@ function WidgetError({ message }: { message: string }) {
 
 /** 単純なテーブル表示 (ノートブックの ResultGrid は実行ストア結合のため使わない)。 */
 function WidgetTable({ columns, rows }: { columns: QueryColumn[]; rows: ResultRow[] }) {
+  const t = useT(dashboardMessages);
   const view = rows.slice(0, TABLE_MAX_ROWS);
   return (
     <div className="h-full overflow-auto">
@@ -65,7 +93,7 @@ function WidgetTable({ columns, rows }: { columns: QueryColumn[]; rows: ResultRo
       </table>
       {rows.length > TABLE_MAX_ROWS && (
         <p className="px-2 py-1.5 font-mono text-2xs text-ink-subtle">
-          Showing first {TABLE_MAX_ROWS} of {rows.length} rows
+          {t('showingFirstRows', { max: TABLE_MAX_ROWS, total: rows.length })}
         </p>
       )}
     </div>
@@ -82,10 +110,11 @@ function WidgetCounter({
   columns: QueryColumn[];
   rows: ResultRow[];
 }) {
+  const t = useT(dashboardMessages);
   const idx = widget.counter?.columnIndex ?? 0;
   const column = columns[idx];
   if (!column) {
-    return <WidgetError message={`Column index ${idx} not found in the result`} />;
+    return <WidgetError message={t('columnIndexNotFound', { idx })} />;
   }
   const raw = rows[0]?.[idx];
   const num = toNumber(raw);
@@ -123,6 +152,7 @@ export function QueryWidgetBody({
   columns: QueryColumn[];
   rows: ResultRow[];
 }) {
+  const t = useT(dashboardMessages);
   // チャート表示用に、保存済みの chart 設定を現在の列構成へ補正する。
   const cols = useMemo(() => describeColumns(columns), [columns]);
   const chartConfig = useMemo(
@@ -133,17 +163,17 @@ export function QueryWidgetBody({
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center gap-2 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> Running…
+        <Spinner size={14} /> {t('runningStatus')}
       </div>
     );
   }
   if (error) {
-    return <WidgetError message={error} />;
+    return <WidgetError message={translateWidgetError(t, error)} />;
   }
   if (rows.length === 0) {
     return (
       <div className="flex h-full items-center justify-center font-mono text-2xs text-ink-subtle">
-        No rows
+        {t('noRows')}
       </div>
     );
   }
@@ -153,14 +183,14 @@ export function QueryWidgetBody({
   }
   if (widget.viz === 'chart') {
     if (!chartConfig) {
-      return <WidgetError message="Nothing to plot: the result has no numeric column" />;
+      return <WidgetError message={t('nothingToPlot')} />;
     }
     return (
       <div className="h-full min-h-0 p-1">
         <Suspense
           fallback={
             <div className="flex h-full items-center justify-center gap-2 text-xs text-ink-muted">
-              <Spinner size={14} /> Loading chart…
+              <Spinner size={14} /> {t('loadingChart')}
             </div>
           }
         >

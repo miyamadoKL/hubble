@@ -31,6 +31,12 @@ import {
 } from '../../hooks/useGithub';
 import { GitStatusBadge } from './GitStatusBadge';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { githubPanelMessages } from '../../i18n/messages/githubPanel';
+
+/** GithubSyncModal 内で使う辞書の合成。共通文言 + GitHub 同期固有文言を 1 つの t() で引けるようにする。 */
+const githubSyncDict = { ...commonMessages, ...githubPanelMessages } as const;
 
 const TEXT_INPUT =
   'w-full rounded-md border border-border-base bg-surface-base px-3 py-2 text-sm text-ink-strong placeholder:text-ink-subtle focus:border-accent focus:outline-none';
@@ -56,6 +62,7 @@ export function GithubSyncModal({
   documentName: string;
   onClose: () => void;
 }) {
+  const t = useT(githubSyncDict);
   const global = useGithubStatus();
   const enabled = global.data?.enabled ?? false;
   const status = useDocumentGitStatus(type, open ? id : null, enabled);
@@ -80,28 +87,27 @@ export function GithubSyncModal({
 
   // API エラーをトーストに変換する共通ハンドラ。
   const onError = (title: string) => (err: unknown) => {
-    const detail =
-      err instanceof ApiClientError ? err.detail.message : 'Could not reach the server.';
+    const detail = err instanceof ApiClientError ? err.detail.message : t('couldNotReachServer');
     toast.error(title, detail);
   };
 
   const doPush = () => {
     push.mutate(message.trim() || undefined, {
       onSuccess: (res) => {
-        toast.success('Pushed to GitHub', `${res.branch} @ ${res.commitSha.slice(0, 7)}`);
+        toast.success(t('pushedToastTitle'), `${res.branch} @ ${res.commitSha.slice(0, 7)}`);
         setMessage('');
       },
-      onError: onError('Push failed'),
+      onError: onError(t('pushFailedToastTitle')),
     });
   };
 
   const doCreatePr = () => {
     createPr.mutate(undefined, {
       onSuccess: (res) => {
-        toast.success('Pull request ready', `#${res.prNumber}`);
+        toast.success(t('prReadyToastTitle'), `#${res.prNumber}`);
         window.open(res.prUrl, '_blank', 'noopener,noreferrer');
       },
-      onError: onError('Pull request failed'),
+      onError: onError(t('prFailedToastTitle')),
     });
   };
 
@@ -111,7 +117,10 @@ export function GithubSyncModal({
     setConfirmPull(false);
     pull.mutate(undefined, {
       onSuccess: async (res) => {
-        toast.success('Reverted to main', `Now at ${res.commit.slice(0, 7)} (approved).`);
+        toast.success(
+          t('revertedToastTitle'),
+          t('revertedToastDescription', { commit: res.commit.slice(0, 7) }),
+        );
         if (type === 'notebook') {
           try {
             const updated = await getNotebook(id);
@@ -121,7 +130,7 @@ export function GithubSyncModal({
           }
         }
       },
-      onError: onError('Revert failed'),
+      onError: onError(t('revertFailedToastTitle')),
     });
   };
 
@@ -129,8 +138,8 @@ export function GithubSyncModal({
     <Modal
       open
       onClose={close}
-      title="GitHub sync"
-      description={`Version control and review for “${documentName}”.`}
+      title={t('modalTitle')}
+      description={t('modalDescription', { documentName })}
       footer={
         <>
           {/* main へ戻す (強制上書き)。リンク済みかつ承認内容が存在するときのみ。
@@ -142,17 +151,17 @@ export function GithubSyncModal({
               onClick={() => (confirmPull ? doPull() : setConfirmPull(true))}
               disabled={busy}
               className="mr-auto"
-              title="Discard local changes and restore the approved version from the default branch"
+              title={t('revertButtonTitle')}
             >
               {pull.isPending
-                ? 'Reverting…'
+                ? t('revertPending')
                 : confirmPull
-                  ? 'Discard local changes?'
-                  : 'Revert to main'}
+                  ? t('revertConfirm')
+                  : t('revertButton')}
             </Button>
           )}
           <Button variant="ghost" onClick={close} disabled={busy}>
-            Close
+            {t('closeButton')}
           </Button>
           {connected && (
             <>
@@ -161,12 +170,12 @@ export function GithubSyncModal({
                 icon={GitPullRequest}
                 onClick={doCreatePr}
                 disabled={busy || !doc?.branch}
-                title={doc?.branch ? undefined : 'Push the document first'}
+                title={doc?.branch ? undefined : t('createPrDisabledTitle')}
               >
-                {createPr.isPending ? 'Creating…' : 'Create pull request'}
+                {createPr.isPending ? t('createPrPending') : t('createPrButton')}
               </Button>
               <Button variant="primary" icon={UploadCloud} onClick={doPush} disabled={busy}>
-                {push.isPending ? 'Pushing…' : 'Push to GitHub'}
+                {push.isPending ? t('pushPending') : t('pushButton')}
               </Button>
             </>
           )}
@@ -175,7 +184,7 @@ export function GithubSyncModal({
     >
       {status.isPending || global.isPending ? (
         <div className="flex items-center justify-center gap-2 py-8 font-mono text-2xs text-ink-subtle">
-          <Spinner size={14} /> Checking status…
+          <Spinner size={14} /> {t('checkingStatus')}
         </div>
       ) : (
         <div className="flex flex-col gap-3">
@@ -193,14 +202,10 @@ export function GithubSyncModal({
 
           {/* ステータスの意味を短く説明し、次にとるべき操作を分かるようにする。 */}
           <p className="text-xs text-ink-muted">
-            {doc?.status === 'approved' &&
-              'This document matches the approved version on the default branch.'}
-            {doc?.status === 'in_review' &&
-              'The latest content is pushed and waiting for review. Merge the pull request to approve it.'}
-            {doc?.status === 'modified' &&
-              'Local changes are not on GitHub yet. Push and open a pull request to get them reviewed.'}
-            {doc?.status === 'unlinked' &&
-              'This document has never been pushed. Push it to start version control and review.'}
+            {doc?.status === 'approved' && t('statusDescriptionApproved')}
+            {doc?.status === 'in_review' && t('statusDescriptionInReview')}
+            {doc?.status === 'modified' && t('statusDescriptionModified')}
+            {doc?.status === 'unlinked' && t('statusDescriptionUnlinked')}
           </p>
 
           {/* PR / ブランチへのリンク。 */}
@@ -212,7 +217,8 @@ export function GithubSyncModal({
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
               >
-                <GitPullRequest size={12} strokeWidth={2} /> PR #{doc.prNumber}
+                <GitPullRequest size={12} strokeWidth={2} />{' '}
+                {t('prLinkPrefix', { prNumber: doc.prNumber ?? '' })}
                 <ExternalLink size={11} strokeWidth={2} />
               </a>
             )}
@@ -228,7 +234,7 @@ export function GithubSyncModal({
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
               >
-                View on GitHub <ExternalLink size={11} strokeWidth={2} />
+                {t('viewOnGithub')} <ExternalLink size={11} strokeWidth={2} />
               </a>
             )}
           </div>
@@ -237,21 +243,21 @@ export function GithubSyncModal({
             /* コミットメッセージ入力 (任意)。 */
             <label className="flex flex-col gap-1">
               <span className="text-2xs font-semibold tracking-wide text-ink-muted uppercase">
-                Commit message (optional)
+                {t('commitMessageLabel')}
               </span>
               <input
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder={`Update ${doc?.path ?? 'document'} via Hubble`}
+                placeholder={t('commitMessagePlaceholder', {
+                  path: doc?.path ?? t('commitMessagePlaceholderFallback'),
+                })}
                 className={cn(TEXT_INPUT, 'font-mono text-xs')}
               />
             </label>
           ) : (
             /* 未接続時は接続導線を出す。接続後はコールバックでアプリへ戻る。 */
             <div className="rounded-md border border-border-subtle bg-surface-sunken px-3 py-2.5">
-              <p className="text-xs text-ink-muted">
-                Connect your GitHub account to push this document. Commits are authored as you.
-              </p>
+              <p className="text-xs text-ink-muted">{t('connectPrompt')}</p>
               <Button
                 variant="default"
                 size="sm"
@@ -259,7 +265,7 @@ export function GithubSyncModal({
                 className="mt-2"
                 onClick={() => window.location.assign(githubConnectUrl())}
               >
-                Connect GitHub
+                {t('connectButton')}
               </Button>
             </div>
           )}

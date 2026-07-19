@@ -9,6 +9,12 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { cn } from '../../utils/cn';
 import type { WorkflowDraft } from './workflowFormat';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { workflowMessages } from '../../i18n/messages/workflow';
+
+/** WorkflowSettingsModal 内で使う辞書の合成。共通文言 + workflow 固有文言を 1 つの t() で引けるようにする。 */
+const workflowSettingsDict = { ...commonMessages, ...workflowMessages } as const;
 
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
 const TEXT_INPUT =
@@ -72,6 +78,7 @@ function WorkflowSettingsBody({
   onApply: (settings: WorkflowSettings) => void;
   onClose: () => void;
 }) {
+  const t = useT(workflowSettingsDict);
   const [description, setDescription] = useState(draft.description);
   const [datasourceId, setDatasourceId] = useState(draft.datasourceId);
   // cron 入力欄の生文字列。空文字は「スケジュールなし (手動のみ)」を表す。
@@ -85,11 +92,11 @@ function WorkflowSettingsBody({
     <Modal
       open
       onClose={onClose}
-      title="Workflow settings"
+      title={t('workflowSettingsTitle')}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
-            Cancel
+            {t('cancel')}
           </Button>
           <Button
             variant="primary"
@@ -103,28 +110,28 @@ function WorkflowSettingsBody({
               })
             }
           >
-            Apply
+            {t('applyButton')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-3">
+        {/* input/select は <label> でラップ済みのため、可視の span ラベルと重複する
+            aria-label は持たせず label の implicit association に委ねる。 */}
         <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>Description</span>
+          <span className={FIELD_LABEL}>{t('descriptionFieldLabel')}</span>
           <input
             value={description}
-            aria-label="Workflow description"
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What does this workflow produce?"
+            placeholder={t('descriptionPlaceholder')}
             className={TEXT_INPUT}
           />
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>Default datasource</span>
+          <span className={FIELD_LABEL}>{t('defaultDatasourceFieldLabel')}</span>
           <select
             value={datasourceId}
-            aria-label="Default datasource"
             onChange={(e) => setDatasourceId(e.target.value)}
             className={cn(TEXT_INPUT, 'py-1.5')}
           >
@@ -137,29 +144,27 @@ function WorkflowSettingsBody({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>Schedule (cron, optional)</span>
+          <span className={FIELD_LABEL}>{t('scheduleCronFieldLabel')}</span>
           <input
             value={cronText}
-            aria-label="Cron expression"
             onChange={(e) => setCronText(e.target.value)}
-            placeholder="e.g. 0 7 * * 1-5 (leave empty for manual only)"
+            placeholder={t('cronPlaceholder')}
             className={cn(TEXT_INPUT, 'font-mono text-xs', !cronValid && 'border-error')}
           />
-          {!cronValid && (
-            <span className="text-2xs text-error">
-              Must be a 5-field cron expression (minute hour day month weekday).
-            </span>
-          )}
+          {!cronValid && <span className="text-2xs text-error">{t('cronValidationError')}</span>}
         </label>
 
         {/* cron が設定されているときだけ有効/無効トグルを見せる (操作項目を最小限に)。 */}
         {cronTrimmed !== '' && (
           <label className="flex items-center gap-2">
+            {/* button の aria-label はトグル操作の動的な状態説明（disable/enable）であり、
+                隣接する可視テキスト「スケジュール有効」（現在の状態を表す名詞句）とは
+                意味が異なるため、複製とはみなさず両方を翻訳する。 */}
             <button
               type="button"
               role="switch"
               aria-checked={enabled}
-              aria-label={enabled ? 'Disable schedule' : 'Enable schedule'}
+              aria-label={enabled ? t('disableScheduleAria') : t('enableScheduleAria')}
               onClick={() => setEnabled((v) => !v)}
               className={cn(
                 'flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors',
@@ -173,7 +178,7 @@ function WorkflowSettingsBody({
                 )}
               />
             </button>
-            <span className="text-sm text-ink-base">Schedule enabled</span>
+            <span className="text-sm text-ink-base">{t('scheduleEnabledLabel')}</span>
           </label>
         )}
       </div>

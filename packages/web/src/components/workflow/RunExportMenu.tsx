@@ -15,6 +15,12 @@ import {
 } from '../../api/workflows';
 import { ApiClientError } from '../../api/client';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { workflowMessages } from '../../i18n/messages/workflow';
+
+/** RunExportMenu 内で使う辞書の合成。共通文言 + workflow 固有文言を 1 つの t() で引けるようにする。 */
+const runExportDict = { ...commonMessages, ...workflowMessages } as const;
 
 // メニューに並べるエクスポート形式。
 type RunExportAction = 'csv-zip' | 'xlsx' | 'sheets';
@@ -39,6 +45,7 @@ function startBlobDownload(blob: Blob, filename: string): void {
  * @param disabled 実行中や永続化結果なしのときに操作を無効化する。
  */
 export function RunExportMenu({ runId, disabled }: { runId: string; disabled: boolean }) {
+  const t = useT(runExportDict);
   // Dropdown は「現在値」を持つ select 系のため、直前に選んだ形式を保持する。
   const [action, setAction] = useState<RunExportAction>('csv-zip');
   const [busy, setBusy] = useState(false);
@@ -61,12 +68,11 @@ export function RunExportMenu({ runId, disabled }: { runId: string; disabled: bo
         return;
       }
       const response = await exportWorkflowRunToSheets(runId);
-      toast.success('Exported to Google Sheets', response.url);
+      toast.success(t('exportedToGoogleSheets'), response.url);
       window.open(response.url, '_blank', 'noopener,noreferrer');
     } catch (err) {
-      const message =
-        err instanceof ApiClientError ? err.detail.message : 'Could not reach the server.';
-      toast.error('Export failed', message);
+      const message = err instanceof ApiClientError ? err.detail.message : t('couldNotReachServer');
+      toast.error(t('exportFailed'), message);
     } finally {
       setBusy(false);
     }
@@ -79,11 +85,11 @@ export function RunExportMenu({ runId, disabled }: { runId: string; disabled: bo
         onChange={(next) => void runExport(next)}
         leading={<Download size={13} strokeWidth={1.75} />}
         options={[
-          { value: 'csv-zip', label: 'CSV (zip)' },
-          { value: 'xlsx', label: 'Excel (multi-sheet)' },
-          { value: 'sheets', label: 'Google Sheets' },
+          { value: 'csv-zip', label: t('exportFormatCsvZip') },
+          { value: 'xlsx', label: t('exportFormatXlsx') },
+          { value: 'sheets', label: t('exportFormatSheets') },
         ]}
-        ariaLabel="Export run results"
+        ariaLabel={t('exportRunResultsAria')}
         align="end"
         className="h-7 text-xs"
       />

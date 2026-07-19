@@ -14,6 +14,8 @@ import { Tooltip } from '../common/Tooltip';
 import { QueryWidgetBody } from './QueryWidgetBody';
 import { useDashboardWidgetData } from './DashboardWidgetData';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { dashboardMessages } from '../../i18n/messages/dashboard';
 
 /** query widget のカード本体 (データ取得込み)。 */
 function QueryWidgetCard({
@@ -25,6 +27,7 @@ function QueryWidgetCard({
   editing: boolean;
   onRemove: () => void;
 }) {
+  const t = useT(dashboardMessages);
   const cardRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
   useEffect(() => {
@@ -48,10 +51,10 @@ function QueryWidgetCard({
         editing={editing}
         onRemove={onRemove}
         actions={
-          <Tooltip label="Refresh" side="bottom">
+          <Tooltip label={t('refreshTooltip')} side="bottom">
             <button
               type="button"
-              aria-label="Refresh widget"
+              aria-label={t('refreshWidgetAria')}
               onClick={data.refresh}
               disabled={data.loading}
               className="rounded-sm p-1 text-ink-subtle hover:text-ink-strong disabled:opacity-50"
@@ -91,6 +94,7 @@ function WidgetChrome({
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const t = useT(dashboardMessages);
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-md border border-border-base bg-surface-base shadow-sm">
       <div
@@ -103,10 +107,10 @@ function WidgetChrome({
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink-strong">{title}</span>
         {actions}
         {editing && (
-          <Tooltip label="Remove widget" side="bottom">
+          <Tooltip label={t('removeWidgetLabel')} side="bottom">
             <button
               type="button"
-              aria-label="Remove widget"
+              aria-label={t('removeWidgetLabel')}
               onClick={onRemove}
               className="rounded-sm p-1 text-ink-subtle hover:text-error"
             >
@@ -135,11 +139,12 @@ export function WidgetCard({
   editing: boolean;
   onRemove: () => void;
 }) {
+  const t = useT(dashboardMessages);
   if (widget.kind === 'query') {
     return <QueryWidgetCard widget={widget} editing={editing} onRemove={onRemove} />;
   }
   return (
-    <WidgetChrome title="Text" editing={editing} onRemove={onRemove}>
+    <WidgetChrome title={t('textWidgetTitle')} editing={editing} onRemove={onRemove}>
       <div className="h-full overflow-auto p-3">
         <Markdown source={widget.text} />
       </div>

@@ -17,6 +17,7 @@ import {
   runStatusTone,
   stepStatusTone,
   totalSteps,
+  triggerLabel,
 } from './workflowFormat';
 
 // テスト用のワークフローを組み立てるヘルパー。
@@ -87,6 +88,31 @@ describe('draftProblem', () => {
   it('完全なドラフトは保存可能 (null)', () => {
     expect(draftProblem(draftFromWorkflow(sampleWorkflow()))).toBeNull();
   });
+
+  // レビュー指摘: draftProblem() は以前 locale を無視して英語文言を生で返していた
+  // (WorkflowView.tsx のタイトル属性にそのまま表示されていた)。ja ロケールで
+  // 実際に翻訳済みメッセージが返ることを固定する。
+  it('ja ロケールでは日本語の不備メッセージを返す', () => {
+    const nameEmpty = draftFromWorkflow(sampleWorkflow());
+    nameEmpty.name = ' ';
+    expect(draftProblem(nameEmpty, 'ja')).toBe('ワークフローに名前を付けてください。');
+
+    const noSteps = blankDraft('trino-main');
+    noSteps.name = 'x';
+    expect(draftProblem(noSteps, 'ja')).toBe('ステップを少なくとも 1 つ追加してください。');
+
+    const missingStatement = draftFromWorkflow(sampleWorkflow());
+    missingStatement.stages[1]!.steps[0]!.statement = '';
+    expect(draftProblem(missingStatement, 'ja')).toBe(
+      'ステップ「Report A」には名前と SQL 文が必要です。',
+    );
+
+    const untitledStep = draftFromWorkflow(sampleWorkflow());
+    untitledStep.stages[0]!.steps[0]!.name = '   ';
+    expect(draftProblem(untitledStep, 'ja')).toBe(
+      'ステップ「無題のステップ」には名前と SQL 文が必要です。',
+    );
+  });
 });
 
 describe('draftToCreateRequest / draftToUpdateRequest', () => {
@@ -130,6 +156,20 @@ describe('ステータスのトーン変換', () => {
   it('step: blocked は error、skipped は neutral', () => {
     expect(stepStatusTone('blocked')).toBe('error');
     expect(stepStatusTone('skipped')).toBe('neutral');
+  });
+});
+
+describe('triggerLabel', () => {
+  // レビュー指摘: WorkflowRunsModal の run 行が trigger (manual/cron) という
+  // 契約値をそのまま生表示していた。ja ロケールで翻訳済みラベルになることを固定する。
+  it('ja ロケールで manual/cron を翻訳済みラベルにする', () => {
+    expect(triggerLabel('manual', 'ja')).toBe('手動');
+    expect(triggerLabel('cron', 'ja')).toBe('cron');
+  });
+
+  it('locale 省略時は既存呼び出し元互換のため en を返す', () => {
+    expect(triggerLabel('manual')).toBe('manual');
+    expect(triggerLabel('cron')).toBe('cron');
   });
 });
 

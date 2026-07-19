@@ -21,6 +21,13 @@ import { DatasourceBadge } from '../common/DatasourceBadge';
 import { WorkflowStatusBadge } from './WorkflowStatusBadge';
 import { nextRunLabel, totalSteps, draftFromWorkflow } from './workflowFormat';
 import { cn } from '../../utils/cn';
+import { useT, type TFn } from '../../i18n/t';
+import { useLocale, type Locale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
+import { workflowMessages } from '../../i18n/messages/workflow';
+
+/** WorkflowsPanel 内で使う辞書の合成。共通文言 + workflow 固有文言を 1 つの t() で引けるようにする。 */
+const workflowsPanelDict = { ...commonMessages, ...workflowMessages } as const;
 
 /**
  * ワークフロー一覧の 1 行分を描画するコンポーネント。
@@ -28,7 +35,10 @@ import { cn } from '../../utils/cn';
  * @param workflow 表示対象のワークフロー。
  * @param now 次回実行の相対表示に使う現在時刻。
  * @param active 現在メインエリアで開かれているかどうか (行のハイライトに使う)。
+ * @param datasources データソースバッジ表示用の一覧。
  * @param onOpen 行クリック時にワークフロービューを開くコールバック。
+ * @param t 呼び出し元 (WorkflowsPanel) から渡す翻訳関数。
+ * @param locale 次回実行の相対表示に使う現在ロケール。
  */
 function WorkflowRow({
   workflow,
@@ -36,12 +46,16 @@ function WorkflowRow({
   active,
   datasources,
   onOpen,
+  t,
+  locale,
 }: {
   workflow: Workflow;
   now: Date;
   active: boolean;
   datasources: ReturnType<typeof useDatasources>['datasources'];
   onOpen: () => void;
+  t: TFn<typeof workflowsPanelDict>;
+  locale: Locale;
 }) {
   const steps = totalSteps(draftFromWorkflow(workflow));
   return (
@@ -74,15 +88,17 @@ function WorkflowRow({
           {workflow.lastRun ? (
             <WorkflowStatusBadge status={workflow.lastRun.status} />
           ) : (
-            <span className="font-mono text-2xs text-ink-subtle">never run</span>
+            <span className="font-mono text-2xs text-ink-subtle">{t('neverRun')}</span>
           )}
           <DatasourceBadge datasourceId={workflow.datasourceId} datasources={datasources} />
           <span className="font-mono text-2xs text-ink-subtle">
-            {steps} step{steps === 1 ? '' : 's'}
+            {steps === 1 ? t('stepCountSingular') : t('stepCountPlural', { n: steps })}
           </span>
           {/* cron 設定があれば次回予定、なければ手動のみであることを表示する。 */}
           <span className="font-mono text-2xs text-ink-subtle">
-            {workflow.cron ? `next ${nextRunLabel(workflow, now)}` : 'manual only'}
+            {workflow.cron
+              ? t('nextRunPrefix', { label: nextRunLabel(workflow, now, locale) })
+              : t('manualOnly')}
           </span>
         </span>
       </button>
@@ -96,6 +112,8 @@ function WorkflowRow({
  *   名前または説明への部分一致 (大文字小文字無視) でクライアント側絞り込みを行う。
  */
 export function WorkflowsPanel({ search }: { search: string }) {
+  const t = useT(workflowsPanelDict);
+  const { locale } = useLocale();
   const list = useWorkflows();
   const { datasources } = useDatasources();
   const workflowView = useUiStore((s) => s.workflowView);
@@ -119,7 +137,7 @@ export function WorkflowsPanel({ search }: { search: string }) {
   if (list.isPending) {
     return (
       <div className="flex items-center justify-center gap-2 py-8 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> Loading…
+        <Spinner size={14} /> {t('loading')}
       </div>
     );
   }
@@ -129,8 +147,8 @@ export function WorkflowsPanel({ search }: { search: string }) {
     return (
       <EmptyState
         icon={WorkflowIcon}
-        title="Couldn't load workflows"
-        description="The server didn't respond."
+        title={t('couldntLoadWorkflowsTitle')}
+        description={t('serverDidntRespond')}
         compact
       />
     );
@@ -147,19 +165,15 @@ export function WorkflowsPanel({ search }: { search: string }) {
           onClick={openNewWorkflow}
           className="w-full justify-center"
         >
-          New workflow
+          {t('newWorkflowButton')}
         </Button>
       </div>
 
       {filtered.length === 0 ? (
         <EmptyState
           icon={WorkflowIcon}
-          title={search.trim() ? 'No matches' : 'No workflows'}
-          description={
-            search.trim()
-              ? 'Try a different search term.'
-              : 'Chain queries into stages and run them together.'
-          }
+          title={search.trim() ? t('noMatches') : t('noWorkflowsTitle')}
+          description={search.trim() ? t('tryDifferentSearchTerm') : t('noWorkflowsDescription')}
           compact
         />
       ) : (
@@ -172,6 +186,8 @@ export function WorkflowsPanel({ search }: { search: string }) {
               active={workflowView?.kind === 'workflow' && workflowView.id === workflow.id}
               datasources={datasources}
               onOpen={() => openWorkflow(workflow.id)}
+              t={t}
+              locale={locale}
             />
           ))}
         </ul>

@@ -8,6 +8,8 @@ import type { DocumentGitType } from '@hubble/contracts';
 import { useDocumentGitStatus, useGithubStatus } from '../../hooks/useGithub';
 import { GitStatusBadge } from './GitStatusBadge';
 import { GithubSyncModal } from './GithubSyncModal';
+import { useT } from '../../i18n/t';
+import { githubPanelMessages } from '../../i18n/messages/githubPanel';
 
 /**
  * GitHub 同期コントロールを描画する。
@@ -24,6 +26,7 @@ export function GitSyncControl({
   id: string | null;
   documentName: string;
 }) {
+  const t = useT(githubPanelMessages);
   const [open, setOpen] = useState(false);
   const global = useGithubStatus();
   const enabled = global.data?.enabled ?? false;
@@ -37,8 +40,8 @@ export function GitSyncControl({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="GitHub sync"
-        title="GitHub sync"
+        aria-label={t('syncButtonLabel')}
+        title={t('syncButtonLabel')}
         className="rounded-full transition-opacity hover:opacity-80"
       >
         <GitStatusBadge status={status.data?.status ?? 'unlinked'} stale={status.data?.stale} />

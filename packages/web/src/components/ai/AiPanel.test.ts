@@ -7,8 +7,11 @@ import {
   AiRequestCoordinator,
   applyCapturedSql,
   beginPanelResize,
+  taskLabelKey,
   type CapturedTarget,
 } from './AiPanel';
+import { t } from '../../i18n/t';
+import { aiMessages } from '../../i18n/messages/ai';
 
 const range = { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 9 };
 
@@ -102,6 +105,18 @@ describe('applyCapturedSql', () => {
     expect(applyCapturedSql(target.target, 'SELECT 2')).toBe(true);
     expect(target.editor.executeEdits).toHaveBeenCalledTimes(2);
     expect(target.tracking.set).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('taskLabelKey', () => {
+  // レビュー指摘: 応答エリアの直前タスク表示 (lastTask) が契約値
+  // (explain/fix/draft/rewrite) をそのまま生表示していた。taskLabelKey() が
+  // 各タスクを正しい辞書キーへ変換し、ja ロケールで翻訳済みラベルになることを固定する。
+  it('契約値ごとの辞書キーを返し、ja ロケールで翻訳済みラベルになる', () => {
+    expect(t(aiMessages, taskLabelKey('explain'), 'ja')).toBe('説明');
+    expect(t(aiMessages, taskLabelKey('fix'), 'ja')).toBe('エラー修正');
+    expect(t(aiMessages, taskLabelKey('draft'), 'ja')).toBe('下書き');
+    expect(t(aiMessages, taskLabelKey('rewrite'), 'ja')).toBe('書き換え');
   });
 });
 

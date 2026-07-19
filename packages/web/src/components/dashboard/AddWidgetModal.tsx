@@ -14,17 +14,16 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { listSavedQueries } from '../../api/savedQueries';
 import { uid } from '../../utils/id';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { dashboardMessages } from '../../i18n/messages/dashboard';
+
+/** AddWidgetModal 内で使う辞書の合成。共通文言 + Dashboard 固有文言。 */
+const addWidgetDict = { ...commonMessages, ...dashboardMessages } as const;
 
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
 const TEXT_INPUT =
   'w-full rounded-md border border-border-base bg-surface-base px-3 py-2 text-sm text-ink-strong placeholder:text-ink-subtle focus:border-accent focus:outline-none';
-
-/** 表示形式の選択肢とラベル。 */
-const VIZ_OPTIONS: { value: WidgetViz; label: string }[] = [
-  { value: 'table', label: 'Table' },
-  { value: 'chart', label: 'Chart' },
-  { value: 'counter', label: 'Counter' },
-];
 
 /**
  * widget 追加モーダル。
@@ -41,11 +40,19 @@ export function AddWidgetModal({
   onClose: () => void;
   onAdd: (widget: DashboardWidget) => void;
 }) {
+  const t = useT(addWidgetDict);
   const [kind, setKind] = useState<'query' | 'text'>('query');
   const [savedQueryId, setSavedQueryId] = useState('');
   const [viz, setViz] = useState<WidgetViz>('table');
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
+
+  // 表示形式の選択肢とラベル。ロケールに追随させるためコンポーネント内で t() を使って組み立てる。
+  const VIZ_OPTIONS: { value: WidgetViz; label: string }[] = [
+    { value: 'table', label: t('vizTableLabel') },
+    { value: 'chart', label: t('vizChartLabel') },
+    { value: 'counter', label: t('vizCounterLabel') },
+  ];
 
   // 保存済みクエリの選択肢。モーダルを開いている間だけ取得する。
   const savedQueries = useQuery({
@@ -85,14 +92,14 @@ export function AddWidgetModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Add widget"
+      title={t('addWidgetTitle')}
       footer={
         <>
           <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancel
+            {t('cancel')}
           </Button>
           <Button variant="primary" size="sm" disabled={!canAdd} onClick={add}>
-            Add
+            {t('addButtonLabel')}
           </Button>
         </>
       }
@@ -100,7 +107,7 @@ export function AddWidgetModal({
       <div className="flex flex-col gap-4">
         {/* widget 種別の切り替え。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Type</span>
+          <span className={FIELD_LABEL}>{t('typeLabel')}</span>
           <div className="flex gap-2">
             {(['query', 'text'] as const).map((k) => (
               <Button
@@ -109,7 +116,7 @@ export function AddWidgetModal({
                 size="sm"
                 onClick={() => setKind(k)}
               >
-                {k === 'query' ? 'Query' : 'Text'}
+                {k === 'query' ? t('queryKindLabel') : t('textKindLabel')}
               </Button>
             ))}
           </div>
@@ -118,13 +125,13 @@ export function AddWidgetModal({
         {kind === 'query' ? (
           <>
             <label className="flex flex-col gap-1.5">
-              <span className={FIELD_LABEL}>Saved query</span>
+              <span className={FIELD_LABEL}>{t('savedQueryLabel')}</span>
               <select
                 value={savedQueryId}
                 onChange={(e) => setSavedQueryId(e.target.value)}
                 className={TEXT_INPUT}
               >
-                <option value="">Select a saved query…</option>
+                <option value="">{t('selectSavedQueryPlaceholder')}</option>
                 {(savedQueries.data ?? []).map((sq) => (
                   <option key={sq.id} value={sq.id}>
                     {sq.name}
@@ -133,7 +140,7 @@ export function AddWidgetModal({
               </select>
             </label>
             <div className="flex flex-col gap-1.5">
-              <span className={FIELD_LABEL}>Display as</span>
+              <span className={FIELD_LABEL}>{t('displayAsLabel')}</span>
               <div className="flex gap-2">
                 {VIZ_OPTIONS.map((opt) => (
                   <Button
@@ -148,24 +155,24 @@ export function AddWidgetModal({
               </div>
             </div>
             <label className="flex flex-col gap-1.5">
-              <span className={FIELD_LABEL}>Title (optional)</span>
+              <span className={FIELD_LABEL}>{t('titleOptionalLabel')}</span>
               <input
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Defaults to the saved query name"
+                placeholder={t('titlePlaceholder')}
                 className={TEXT_INPUT}
               />
             </label>
           </>
         ) : (
           <label className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>Markdown</span>
+            <span className={FIELD_LABEL}>{t('markdownLabel')}</span>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={6}
-              placeholder="# Heading&#10;Some **markdown** text…"
+              placeholder={t('markdownPlaceholder')}
               className={TEXT_INPUT}
             />
           </label>

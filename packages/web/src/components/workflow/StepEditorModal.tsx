@@ -10,6 +10,12 @@ import { Trash2 } from 'lucide-react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { workflowMessages } from '../../i18n/messages/workflow';
+
+/** StepEditorModal 内で使う辞書の合成。共通文言 + workflow 固有文言を 1 つの t() で引けるようにする。 */
+const stepEditorDict = { ...commonMessages, ...workflowMessages } as const;
 
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
 const TEXT_INPUT =
@@ -80,6 +86,7 @@ function StepEditorBody({
   onDelete?: () => void;
   onClose: () => void;
 }) {
+  const t = useT(stepEditorDict);
   const [draft, setDraft] = useState<WorkflowStep>({ ...step });
 
   const canApply = draft.name.trim() !== '' && draft.statement.trim() !== '';
@@ -88,7 +95,7 @@ function StepEditorBody({
     <Modal
       open
       onClose={onClose}
-      title={isNew ? 'Add step' : 'Edit step'}
+      title={isNew ? t('addStepTitle') : t('editStepTitle')}
       className="max-w-2xl"
       footer={
         <>
@@ -100,36 +107,36 @@ function StepEditorBody({
               onClick={onDelete}
               className="mr-auto text-ink-subtle hover:text-error"
             >
-              Remove step
+              {t('removeStepButton')}
             </Button>
           )}
           <Button variant="ghost" onClick={onClose}>
-            Cancel
+            {t('cancel')}
           </Button>
           <Button variant="primary" onClick={() => onApply(draft)} disabled={!canApply}>
-            {isNew ? 'Add step' : 'Apply'}
+            {isNew ? t('addStepTitle') : t('applyButton')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-3">
+        {/* input は <label> でラップ済みのため、可視の span ラベルと重複する aria-label は
+            持たせず label の implicit association に委ねる。 */}
         <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>Name</span>
+          <span className={FIELD_LABEL}>{t('nameFieldLabel')}</span>
           <input
             autoFocus
             value={draft.name}
-            aria-label="Step name"
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            placeholder="e.g. Build daily aggregate"
+            placeholder={t('stepNamePlaceholder')}
             className={TEXT_INPUT}
           />
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>SQL statement</span>
+          <span className={FIELD_LABEL}>{t('sqlStatementFieldLabel')}</span>
           <textarea
             value={draft.statement}
-            aria-label="Step SQL statement"
             onChange={(e) => setDraft({ ...draft, statement: e.target.value })}
             placeholder="SELECT …"
             rows={10}
@@ -141,10 +148,9 @@ function StepEditorBody({
         {/* 実行先と失敗時ポリシー。1 行に収めて操作項目を最小限に見せる。 */}
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>Datasource</span>
+            <span className={FIELD_LABEL}>{t('datasourceFieldLabel')}</span>
             <select
               value={draft.datasourceId ?? ''}
-              aria-label="Step datasource"
               onChange={(e) => {
                 const value = e.target.value;
                 const next = { ...draft };
@@ -154,7 +160,9 @@ function StepEditorBody({
               }}
               className={cn(TEXT_INPUT, 'py-1.5')}
             >
-              <option value="">Workflow default ({defaultDatasourceLabel})</option>
+              <option value="">
+                {t('workflowDefaultOption', { label: defaultDatasourceLabel })}
+              </option>
               {datasources.map((ds) => (
                 <option key={ds.id} value={ds.id}>
                   {ds.displayName || ds.id}
@@ -163,17 +171,16 @@ function StepEditorBody({
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>If this step fails</span>
+            <span className={FIELD_LABEL}>{t('onFailureFieldLabel')}</span>
             <select
               value={draft.onFailure}
-              aria-label="On failure policy"
               onChange={(e) =>
                 setDraft({ ...draft, onFailure: e.target.value as WorkflowStep['onFailure'] })
               }
               className={cn(TEXT_INPUT, 'py-1.5')}
             >
-              <option value="stop">Stop the workflow</option>
-              <option value="continue">Continue to the next stage</option>
+              <option value="stop">{t('onFailureStopOption')}</option>
+              <option value="continue">{t('onFailureContinueOption')}</option>
             </select>
           </label>
         </div>
@@ -181,10 +188,9 @@ function StepEditorBody({
         {/* catalog/schema の上書き (任意)。 */}
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>Catalog (optional)</span>
+            <span className={FIELD_LABEL}>{t('catalogOptionalFieldLabel')}</span>
             <input
               value={draft.catalog ?? ''}
-              aria-label="Step catalog"
               onChange={(e) => {
                 const value = e.target.value;
                 const next = { ...draft };
@@ -196,10 +202,9 @@ function StepEditorBody({
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>Schema (optional)</span>
+            <span className={FIELD_LABEL}>{t('schemaOptionalFieldLabel')}</span>
             <input
               value={draft.schema ?? ''}
-              aria-label="Step schema"
               onChange={(e) => {
                 const value = e.target.value;
                 const next = { ...draft };

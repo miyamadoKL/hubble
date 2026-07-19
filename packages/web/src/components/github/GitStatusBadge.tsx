@@ -7,20 +7,41 @@ import type { DocumentGitStatus } from '@hubble/contracts';
 import { GitBranch, GitPullRequest, CircleCheck, CircleDashed } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { githubPanelMessages } from '../../i18n/messages/githubPanel';
 
-// ステータスごとの表示定義 (ラベル、色、アイコン)。
+// ステータスラベルの辞書キー（プレースホルダーを持たないキーのみに限定する）。
+// keyof typeof githubPanelMessages のような広い union にすると、t() の引数型が
+// プレースホルダーありのキーとの union になり呼び出し側で型エラーになるため、
+// 使用するキーだけの union で narrow している。
+type StatusLabelKey = 'statusApproved' | 'statusInReview' | 'statusModified' | 'statusUnlinked';
+
+// ステータスごとの表示定義 (ラベルキー、色、アイコン)。ラベルは辞書キーで持ち、
+// 実際の文字列は描画時に useT で引く。
 const STATUS_VIEW: Record<
   DocumentGitStatus,
-  { label: string; className: string; icon: LucideIcon }
+  { labelKey: StatusLabelKey; className: string; icon: LucideIcon }
 > = {
-  approved: { label: 'approved', className: 'bg-success-soft text-success', icon: CircleCheck },
+  approved: {
+    labelKey: 'statusApproved',
+    className: 'bg-success-soft text-success',
+    icon: CircleCheck,
+  },
   in_review: {
-    label: 'in review',
+    labelKey: 'statusInReview',
     className: 'bg-running-soft text-running',
     icon: GitPullRequest,
   },
-  modified: { label: 'modified', className: 'bg-warning-soft text-warning', icon: GitBranch },
-  unlinked: { label: 'unlinked', className: 'bg-surface-inset text-ink-muted', icon: CircleDashed },
+  modified: {
+    labelKey: 'statusModified',
+    className: 'bg-warning-soft text-warning',
+    icon: GitBranch,
+  },
+  unlinked: {
+    labelKey: 'statusUnlinked',
+    className: 'bg-surface-inset text-ink-muted',
+    icon: CircleDashed,
+  },
 };
 
 /**
@@ -38,6 +59,7 @@ export function GitStatusBadge({
   stale?: boolean;
   className?: string;
 }) {
+  const t = useT(githubPanelMessages);
   const view = STATUS_VIEW[status];
   const Icon = view.icon;
   return (
@@ -48,10 +70,10 @@ export function GitStatusBadge({
         view.className,
         className,
       )}
-      title={stale ? 'GitHub could not be reached; showing cached status' : undefined}
+      title={stale ? t('staleStatusTitle') : undefined}
     >
       <Icon size={11} strokeWidth={2} />
-      {view.label}
+      {t(view.labelKey)}
       {stale && <span aria-hidden>*</span>}
     </span>
   );

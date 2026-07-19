@@ -5,6 +5,7 @@
 import type { WorkflowRunStatus } from '@hubble/contracts';
 import { StatusBadge } from '../common/StatusBadge';
 import { runStatusLabel, runStatusTone } from './workflowFormat';
+import { useLocale } from '../../i18n/locale';
 
 /**
  * @param status 表示対象のワークフロー実行状態。
@@ -17,10 +18,11 @@ export function WorkflowStatusBadge({
   status: WorkflowRunStatus;
   className?: string;
 }) {
+  const { locale } = useLocale();
   return (
     <StatusBadge
       tone={runStatusTone(status)}
-      label={runStatusLabel(status)}
+      label={runStatusLabel(status, locale)}
       className={className}
     />
   );

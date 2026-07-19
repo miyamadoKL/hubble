@@ -41,6 +41,12 @@ import {
   continueDocumentNavigation,
   saveActiveDocument,
 } from '../../navigation/documentNavigation';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { dashboardMessages } from '../../i18n/messages/dashboard';
+
+/** DashboardView 内で使う辞書の合成。共通文言 + Dashboard 固有文言。 */
+const dashboardViewDict = { ...commonMessages, ...dashboardMessages } as const;
 
 /** グリッドの列数 (Redash と同じ感覚の 6 列)。 */
 const GRID_COLS = 6;
@@ -81,6 +87,7 @@ function placeAtBottom(widgets: DashboardWidget[], widget: DashboardWidget): Das
  * 既存ダッシュボードの取得状態を処理してからエディタ本体をマウントする。
  */
 export function DashboardView() {
+  const t = useT(dashboardViewDict);
   const view = useUiStore((s) => s.dashboardView);
   const close = useUiStore((s) => s.closeDashboard);
   const id = view?.kind === 'dashboard' ? view.id : null;
@@ -96,7 +103,7 @@ export function DashboardView() {
   if (query.isPending) {
     return (
       <div className="flex h-full items-center justify-center gap-2 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> Loading dashboard…
+        <Spinner size={14} /> {t('loadingDashboard')}
       </div>
     );
   }
@@ -105,8 +112,8 @@ export function DashboardView() {
       <div className="flex h-full items-center justify-center">
         <EmptyState
           icon={LayoutDashboard}
-          title="Couldn't load dashboard"
-          description="It may have been deleted, or the server didn't respond."
+          title={t('couldntLoadDashboardTitle')}
+          description={t('couldntLoadDashboardDescription')}
         />
       </div>
     );
@@ -134,10 +141,11 @@ function DashboardEditor({
   dashboard: Dashboard | null;
   onClose: () => void;
 }) {
+  const t = useT(dashboardViewDict);
   const isNew = dashboard === null;
   // 新規作成は最初から編集モードで開く。
   const [editing, setEditing] = useState(isNew);
-  const [name, setName] = useState(dashboard?.name ?? 'Untitled dashboard');
+  const [name, setName] = useState(dashboard?.name ?? t('untitledDashboard'));
   const [widgets, setWidgets] = useState<DashboardWidget[]>(dashboard?.widgets ?? []);
   const [dirty, setDirty] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -163,35 +171,35 @@ function DashboardEditor({
     try {
       if (isNew) {
         const created = await createMutation.mutateAsync({
-          name: name.trim() || 'Untitled dashboard',
+          name: name.trim() || t('untitledDashboard'),
           widgets,
         });
         // 作成後は保存済みダッシュボードとして開き直す。
         continueDocumentNavigation(navigationOwner, () =>
           useUiStore.getState().openDashboard(created.id),
         );
-        toast.success('Dashboard created');
+        toast.success(t('dashboardCreatedToast'));
       } else {
         await updateMutation.mutateAsync({
           id: dashboard.id,
           body: {
-            name: name.trim() || 'Untitled dashboard',
+            name: name.trim() || t('untitledDashboard'),
             description: dashboard.description,
             widgets,
           },
         });
         setDirty(false);
         setEditing(false);
-        toast.success('Dashboard saved');
+        toast.success(t('dashboardSavedToast'));
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save dashboard');
+      toast.error(err instanceof Error ? err.message : t('saveDashboardFailedToast'));
     }
   };
 
   useDocumentNavigationGuard(
     {
-      label: name.trim() || 'Untitled dashboard',
+      label: name.trim() || t('untitledDashboard'),
       dirty,
       save,
     },
@@ -202,10 +210,10 @@ function DashboardEditor({
     if (isNew) return;
     try {
       await deleteMutation.mutateAsync(dashboard.id);
-      toast.success('Dashboard deleted');
+      toast.success(t('dashboardDeletedToast'));
       continueDocumentNavigation(navigationOwner, onClose);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete dashboard');
+      toast.error(err instanceof Error ? err.message : t('deleteDashboardFailedToast'));
     }
   };
 
@@ -214,7 +222,7 @@ function DashboardEditor({
       {/* ヘッダー: [戻る] [名前] … [Add widget] [Edit/Save] [Delete] */}
       <header className="flex shrink-0 items-center gap-2 border-b border-border-base px-3 py-2">
         <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={onClose}>
-          Back
+          {t('backButton')}
         </Button>
         <LayoutDashboard size={16} strokeWidth={1.75} className="shrink-0 text-ink-muted" />
         {editing ? (
@@ -225,7 +233,7 @@ function DashboardEditor({
               setName(e.target.value);
               setDirty(true);
             }}
-            aria-label="Dashboard name"
+            aria-label={t('dashboardNameAria')}
             className="min-w-0 flex-1 rounded-md border border-border-base bg-surface-base px-2 py-1 text-sm font-medium text-ink-strong focus:border-accent focus:outline-none"
           />
         ) : (
@@ -236,7 +244,7 @@ function DashboardEditor({
         <div className="flex shrink-0 items-center gap-1.5">
           {editing && (
             <Button variant="default" size="sm" icon={Plus} onClick={() => setAddOpen(true)}>
-              Add widget
+              {t('addWidgetTitle')}
             </Button>
           )}
           {canEdit &&
@@ -248,16 +256,16 @@ function DashboardEditor({
                 disabled={saving}
                 onClick={() => void saveActiveDocument()}
               >
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? t('savingButton') : t('saveButton')}
               </Button>
             ) : (
               <Button variant="default" size="sm" icon={Pencil} onClick={() => setEditing(true)}>
-                Edit
+                {t('edit')}
               </Button>
             ))}
           {isOwner && (
             <Button variant="ghost" size="sm" icon={Share2} onClick={() => setShareOpen(true)}>
-              Share
+              {t('shareButton')}
             </Button>
           )}
           {isOwner && (
@@ -265,7 +273,7 @@ function DashboardEditor({
               variant="ghost"
               size="sm"
               icon={Trash2}
-              aria-label="Delete dashboard"
+              aria-label={t('deleteDashboardAria')}
               onClick={() => setConfirmDelete(true)}
             />
           )}
@@ -278,11 +286,11 @@ function DashboardEditor({
           <div className="flex h-full items-center justify-center">
             <EmptyState
               icon={LayoutDashboard}
-              title="Empty dashboard"
+              title={t('emptyDashboardTitle')}
               description={
                 editing
-                  ? 'Add a widget to get started.'
-                  : 'This dashboard has no widgets yet. Click Edit to add some.'
+                  ? t('emptyDashboardEditingDescription')
+                  : t('emptyDashboardViewingDescription')
               }
             />
           </div>
@@ -321,7 +329,7 @@ function DashboardEditor({
       {/* 未保存変更のヒント。 */}
       {editing && dirty && (
         <div className="shrink-0 border-t border-border-subtle px-3 py-1.5 font-mono text-2xs text-ink-subtle">
-          Unsaved changes
+          {t('unsavedChanges')}
         </div>
       )}
 
@@ -349,12 +357,12 @@ function DashboardEditor({
       <Modal
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
-        title="Delete dashboard?"
-        description={`“${name}” will be permanently removed. Saved queries it references are not affected.`}
+        title={t('deleteDashboardConfirmTitle')}
+        description={t('deleteDashboardConfirmDescription', { name })}
         footer={
           <>
             <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>
-              Cancel
+              {t('cancel')}
             </Button>
             <Button
               variant="danger"
@@ -362,7 +370,7 @@ function DashboardEditor({
               disabled={deleteMutation.isPending}
               onClick={() => void remove()}
             >
-              Delete
+              {t('delete')}
             </Button>
           </>
         }

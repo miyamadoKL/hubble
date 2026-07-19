@@ -31,6 +31,12 @@ import { IconButton } from '../common/IconButton';
 import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
 import { invalidateEditorSchemaCache } from '../../editor/EditorRuntime';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { dataMessages } from '../../i18n/messages/data';
+
+/** SchemaTree 内で使う辞書の合成。共通文言 + データブラウザ固有文言を 1 つの t() で引けるようにする。 */
+const schemaTreeDict = { ...commonMessages, ...dataMessages } as const;
 
 /*
  * このファイルの責務:
@@ -155,13 +161,15 @@ function NodeStatus({
   depth,
   state,
   onRetry,
-  emptyLabel = 'Empty',
+  emptyLabel,
 }: {
   depth: number;
   state: 'loading' | 'error' | 'empty';
   onRetry?: () => void;
+  /** 未指定時は「空」の汎用ラベルを使う。 */
   emptyLabel?: string;
 }) {
+  const t = useT(schemaTreeDict);
   return (
     <div
       style={{ paddingLeft: `${depth * 14 + 26}px` }}
@@ -171,21 +179,23 @@ function NodeStatus({
           （3状態は排他的で、通常は複数が同時に真になることはない）。 */}
       {state === 'loading' && (
         <>
-          <Spinner size={11} /> Loading…
+          <Spinner size={11} /> {t('loading')}
         </>
       )}
-      {state === 'empty' && <span className="text-ink-subtle italic">{emptyLabel}</span>}
+      {state === 'empty' && (
+        <span className="text-ink-subtle italic">{emptyLabel ?? t('empty')}</span>
+      )}
       {state === 'error' && (
         <>
           <AlertCircle size={11} className="text-error" />
-          <span className="text-error">Failed</span>
+          <span className="text-error">{t('failed')}</span>
           {onRetry && (
             <button
               type="button"
               onClick={onRetry}
               className="text-accent underline-offset-2 hover:underline"
             >
-              retry
+              {t('retry')}
             </button>
           )}
         </>
@@ -258,6 +268,7 @@ function TableNode({
   onToggle: () => void;
   onShowDetail: (target: TableTarget) => void;
 }) {
+  const t = useT(schemaTreeDict);
   // テーブル詳細（カラム一覧、コメント）は expanded の間だけ取得する（enabled: expanded）。
   // これがこのツリーの「遅延読み込み」の核心である。折りたたまれたテーブルのために
   // 無駄なリクエストを発行しない。
@@ -292,7 +303,7 @@ function TableNode({
         trailing={
           <button
             type="button"
-            aria-label={`Details for ${table}`}
+            aria-label={t('detailsForTable', { table })}
             onClick={(e) => {
               // 行本体のクリック（テーブル名挿入 + 展開トグル）を発火させないよう伝播を止める。
               e.stopPropagation();
@@ -312,7 +323,7 @@ function TableNode({
             <NodeStatus depth={depth + 1} state="error" onRetry={() => void detail.refetch()} />
           )}
           {detail.data && detail.data.columns.length === 0 && (
-            <NodeStatus depth={depth + 1} state="empty" emptyLabel="No columns" />
+            <NodeStatus depth={depth + 1} state="empty" emptyLabel={t('noColumns')} />
           )}
           {detail.data && (
             <ColumnList
@@ -355,6 +366,7 @@ function SchemaNode({
   toggle: (key: string) => void;
   onShowDetail: (target: TableTarget) => void;
 }) {
+  const t = useT(schemaTreeDict);
   // テーブル一覧も expanded の間だけ取得（遅延読み込み）。
   const tables = useQuery({
     queryKey: metadataQueryKeys.tables(datasourceId, catalog, schema),
@@ -392,7 +404,7 @@ function SchemaNode({
             <NodeStatus
               depth={depth + 1}
               state="empty"
-              emptyLabel={needle ? 'No matches' : 'No tables'}
+              emptyLabel={needle ? t('noMatches') : t('noTables')}
             />
           )}
           {visible.map((t) => {
@@ -449,6 +461,7 @@ function CatalogNode({
   /** true のときカタログ行を描画せず schema 階層だけをルートに出す。 */
   hideCatalogRow?: boolean;
 }) {
+  const t = useT(schemaTreeDict);
   // スキーマ一覧も expanded の間だけ取得（遅延読み込み）。
   const schemas = useQuery({
     queryKey: metadataQueryKeys.schemas(datasourceId, catalog),
@@ -483,7 +496,7 @@ function CatalogNode({
             <NodeStatus depth={statusDepth} state="error" onRetry={() => void schemas.refetch()} />
           )}
           {schemas.data && schemas.data.items.length === 0 && (
-            <NodeStatus depth={statusDepth} state="empty" emptyLabel="No schemas" />
+            <NodeStatus depth={statusDepth} state="empty" emptyLabel={t('noSchemas')} />
           )}
           {(schemas.data?.items ?? []).map((s) => (
             <SchemaNode
@@ -529,6 +542,7 @@ export function SchemaTree({
   /** true のとき合成カタログ 1 件分を畳み、schema から表示する。 */
   flattenCatalog?: boolean;
 }) {
+  const t = useT(schemaTreeDict);
   const queryClient = useQueryClient();
   // ユーザーが手動でクリックして開閉したノードキーの集合（catalog / catalog::schema /
   // catalog::schema::table のいずれか）。ツリー全体の展開状態の単一の真実の情報源。
@@ -564,9 +578,12 @@ export function SchemaTree({
     onSuccess: (outcome) => {
       invalidateEditorSchemaCache(outcome.datasourceId);
       void queryClient.invalidateQueries({ queryKey: ['metadata', outcome.datasourceId] });
-      toast.info('Metadata refreshed', `Datasource ${outcome.datasourceId} schema cache reloaded.`);
+      toast.info(
+        t('metadataRefreshedTitle'),
+        t('metadataRefreshedDescription', { datasourceId: outcome.datasourceId }),
+      );
     },
-    onError: () => toast.error('Refresh failed', 'Could not reach the server.'),
+    onError: () => toast.error(t('refreshFailedTitle'), t('couldNotReachServer')),
   });
 
   // 検索文字列を正規化（前後空白除去、小文字化）してから各ノードへ配る。
@@ -619,13 +636,13 @@ export function SchemaTree({
         <span className="font-mono text-2xs text-ink-subtle">
           {catalogs.data
             ? syntheticCatalog
-              ? 'schemas'
-              : `${catalogs.data.items.length} catalogs`
+              ? t('schemasLabel')
+              : t('catalogsCount', { count: catalogs.data.items.length })
             : ' '}
         </span>
         <IconButton
           icon={RefreshCw}
-          label="Refresh metadata"
+          label={t('refreshMetadataLabel')}
           size="sm"
           disabled={refresh.isPending}
           onClick={() => refresh.mutate()}
@@ -641,7 +658,7 @@ export function SchemaTree({
           <NodeStatus depth={0} state="error" onRetry={() => void catalogs.refetch()} />
         )}
         {catalogs.data && catalogs.data.items.length === 0 && (
-          <NodeStatus depth={0} state="empty" emptyLabel="No catalogs" />
+          <NodeStatus depth={0} state="empty" emptyLabel={t('noCatalogs')} />
         )}
         {syntheticCatalog ? (
           <CatalogNode
