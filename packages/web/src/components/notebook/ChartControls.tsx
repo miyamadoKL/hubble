@@ -31,6 +31,8 @@ import {
   type LimitOption,
   type SortOrder,
 } from '../../chart';
+import { useT, type TFn } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
  * The compact chart control row: chart-type icons, X / Y axis
@@ -38,13 +40,22 @@ import {
  * scatter. Pure presentation — config flows down, edits flow up via `onChange`.
  */
 
-// チャート種別ごとのアイコンとラベルの対応表。セグメントコントロールの描画に使う。
-const TYPES: { type: ChartType; icon: LucideIcon; label: string }[] = [
-  { type: 'bars', icon: BarChart3, label: 'Bars' },
-  { type: 'lines', icon: LineChartIcon, label: 'Lines' },
-  { type: 'timeline', icon: TrendingUp, label: 'Timeline' },
-  { type: 'pie', icon: PieChartIcon, label: 'Pie' },
-  { type: 'scatter', icon: ChartScatter, label: 'Scatter' },
+// チャート種別ごとのアイコンと辞書キーの対応表。セグメントコントロールの描画に使う。
+// type 値（'bars' 等）自体は ChartConfig の契約値なので翻訳しない。表示ラベルのみ
+// notebookMessages の対応キーから引く。
+type ChartTypeLabelKey =
+  | 'chartTypeBars'
+  | 'chartTypeLines'
+  | 'chartTypeTimeline'
+  | 'chartTypePie'
+  | 'chartTypeScatter';
+
+const TYPES: { type: ChartType; icon: LucideIcon; labelKey: ChartTypeLabelKey }[] = [
+  { type: 'bars', icon: BarChart3, labelKey: 'chartTypeBars' },
+  { type: 'lines', icon: LineChartIcon, labelKey: 'chartTypeLines' },
+  { type: 'timeline', icon: TrendingUp, labelKey: 'chartTypeTimeline' },
+  { type: 'pie', icon: PieChartIcon, labelKey: 'chartTypePie' },
+  { type: 'scatter', icon: ChartScatter, labelKey: 'chartTypeScatter' },
 ];
 
 /**
@@ -64,6 +75,7 @@ export function ChartControls({
   config: ChartConfig;
   onChange: (next: ChartConfig) => void;
 }) {
+  const t = useT(notebookMessages);
   // X 軸、Y 軸、グループ化に使用できる列の候補を、現在のチャート種別に応じて算出する。
   const xs = xCandidates(cols, config.type);
   const ys = yCandidates(cols);
@@ -73,8 +85,8 @@ export function ChartControls({
   const patch = (p: Partial<ChartConfig>) => onChange({ ...config, ...p });
 
   // チャート種別によって X/Y 軸ラベルの文言を変える（散布図は「measure」、円グラフは「Value」など）。
-  const xLabel = config.type === 'scatter' ? 'X (measure)' : 'X axis';
-  const yLabel = config.type === 'pie' ? 'Value' : 'Y axis';
+  const xLabel = config.type === 'scatter' ? t('xAxisMeasureLabel') : t('xAxisLabel');
+  const yLabel = config.type === 'pie' ? t('yAxisValueLabel') : t('yAxisLabel');
 
   return (
     <div
@@ -84,9 +96,10 @@ export function ChartControls({
       {/* Chart type — icon segmented control. */}
       {/* チャート種別をアイコンで切り替えるセグメントコントロール。 */}
       <div className="inline-flex items-center gap-0.5 rounded-md border border-border-base bg-surface-inset p-0.5">
-        {TYPES.map(({ type, icon: Icon, label }) => {
+        {TYPES.map(({ type, icon: Icon, labelKey }) => {
           // active: このボタンが現在選択中のチャート種別かどうか（強調表示に使う）。
           const active = config.type === type;
+          const label = t(labelKey);
           return (
             <button
               key={type}
@@ -114,7 +127,7 @@ export function ChartControls({
           value={config.xIndex === null ? '' : String(config.xIndex)}
           options={xs.map((c) => ({ value: String(c.index), label: c.name, hint: c.type }))}
           onChange={(v) => patch({ xIndex: v === '' ? null : Number(v) })}
-          ariaLabel="X axis column"
+          ariaLabel={t('xAxisColumnAria')}
           className="h-7 min-w-[7.5rem] text-xs"
         />
       </Field>
@@ -126,7 +139,7 @@ export function ChartControls({
             value={config.yIndices[0] === undefined ? '' : String(config.yIndices[0])}
             options={ys.map((c) => ({ value: String(c.index), label: c.name, hint: c.type }))}
             onChange={(v) => patch({ yIndices: v === '' ? [] : [Number(v)] })}
-            ariaLabel="Y axis column"
+            ariaLabel={t('yAxisColumnAria')}
             className="h-7 min-w-[7.5rem] text-xs"
           />
         ) : (
@@ -134,6 +147,7 @@ export function ChartControls({
             options={ys}
             selected={config.yIndices}
             onChange={(yIndices) => patch({ yIndices })}
+            t={t}
           />
         )}
       </Field>
@@ -142,28 +156,28 @@ export function ChartControls({
       {config.type === 'scatter' && (
         <>
           {/* 散布図の点を色分けするグループ化列（未選択可）。 */}
-          <Field label="Group">
+          <Field label={t('groupLabel')}>
             <Dropdown<string>
               value={config.groupIndex == null ? '' : String(config.groupIndex)}
               options={[
-                { value: '', label: 'None' },
+                { value: '', label: t('noneOption') },
                 ...groups.map((c) => ({ value: String(c.index), label: c.name, hint: c.type })),
               ]}
               onChange={(v) => patch({ groupIndex: v === '' ? null : Number(v) })}
-              ariaLabel="Scatter grouping column"
+              ariaLabel={t('scatterGroupingColumnAria')}
               className="h-7 min-w-[6.5rem] text-xs"
             />
           </Field>
           {/* 散布図の点の大きさを決める数値列（未選択可）。 */}
-          <Field label="Size">
+          <Field label={t('sizeLabel')}>
             <Dropdown<string>
               value={config.sizeIndex == null ? '' : String(config.sizeIndex)}
               options={[
-                { value: '', label: 'None' },
+                { value: '', label: t('noneOption') },
                 ...ys.map((c) => ({ value: String(c.index), label: c.name, hint: c.type })),
               ]}
               onChange={(v) => patch({ sizeIndex: v === '' ? null : Number(v) })}
-              ariaLabel="Scatter point-size column"
+              ariaLabel={t('scatterSizeColumnAria')}
               className="h-7 min-w-[6.5rem] text-xs"
             />
           </Field>
@@ -171,22 +185,22 @@ export function ChartControls({
       )}
 
       {/* 並び替え順（なし、昇順、降順）の選択。 */}
-      <Field label="Sort" icon={ArrowDownNarrowWide}>
+      <Field label={t('sortLabel')} icon={ArrowDownNarrowWide}>
         <Dropdown<SortOrder>
           value={config.sort}
           options={[
-            { value: 'none', label: 'None' },
-            { value: 'asc', label: 'Ascending' },
-            { value: 'desc', label: 'Descending' },
+            { value: 'none', label: t('noneOption') },
+            { value: 'asc', label: t('ascendingOption') },
+            { value: 'desc', label: t('descendingOption') },
           ]}
           onChange={(sort) => patch({ sort })}
-          ariaLabel="Sort order"
+          ariaLabel={t('sortOrderAria')}
           className="h-7 min-w-[6rem] text-xs"
         />
       </Field>
 
       {/* 表示する行数の上限。'all' を選ぶとロード済みの全行を対象にする。 */}
-      <Field label="Limit">
+      <Field label={t('limitLabel')}>
         <Dropdown<string>
           value={String(config.limit)}
           options={[
@@ -195,10 +209,10 @@ export function ChartControls({
             { value: '25', label: '25' },
             { value: '50', label: '50' },
             { value: '100', label: '100' },
-            { value: 'all', label: 'All loaded' },
+            { value: 'all', label: t('allLoadedOption') },
           ]}
           onChange={(v) => patch({ limit: (v === 'all' ? 'all' : Number(v)) as LimitOption })}
-          ariaLabel="Row limit"
+          ariaLabel={t('rowLimitAria')}
           className="h-7 min-w-[5.5rem] text-xs"
         />
       </Field>
@@ -246,10 +260,12 @@ function MultiSelect({
   options,
   selected,
   onChange,
+  t,
 }: {
   options: ColumnInfo[];
   selected: number[];
   onChange: (next: number[]) => void;
+  t: TFn<typeof notebookMessages>;
 }) {
   // open: ポップオーバー（選択肢一覧）が開いているかどうか。
   const [open, setOpen] = useState(false);
@@ -281,10 +297,10 @@ function MultiSelect({
   // それ以上なら件数のみを表示する。
   const summary =
     selectedNames.length === 0
-      ? 'Select…'
+      ? t('selectEllipsis')
       : selectedNames.length <= 2
         ? selectedNames.join(', ')
-        : `${selectedNames.length} columns`;
+        : t('nColumnsSummary', { n: selectedNames.length });
 
   return (
     <div ref={rootRef} className="relative inline-flex">
@@ -293,7 +309,7 @@ function MultiSelect({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="Y axis columns"
+        aria-label={t('yAxisColumnsAria')}
         onClick={() => setOpen((o) => !o)}
         className={cn(
           'inline-flex h-7 min-w-[8rem] items-center gap-1.5 rounded-md border border-border-base bg-surface-raised px-2.5 text-xs text-ink-base',
@@ -347,7 +363,7 @@ function MultiSelect({
           })}
           {/* 数値列が一つもない場合の空表示。 */}
           {options.length === 0 && (
-            <li className="px-2 py-2 text-2xs text-ink-subtle">No numeric columns.</li>
+            <li className="px-2 py-2 text-2xs text-ink-subtle">{t('noNumericColumns')}</li>
           )}
         </ul>
       )}

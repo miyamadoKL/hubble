@@ -9,6 +9,8 @@
 import { Variable as VariableIcon } from 'lucide-react';
 import type { Variable } from '@hubble/contracts';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
  * Variable substitution panel (shown only when the
@@ -31,6 +33,7 @@ export function VariablePanel({
   onChange: (name: string, value: string) => void;
   onRunActive: () => void;
 }) {
+  const t = useT(notebookMessages);
   // 変数が1つも無ければパネルごと非表示にする。
   if (variables.length === 0) return null;
 
@@ -44,7 +47,7 @@ export function VariablePanel({
 
   return (
     <section
-      aria-label="Notebook variables"
+      aria-label={t('notebookVariablesAria')}
       data-testid="variable-panel"
       className="mb-4 rounded-lg border border-border-base bg-surface-raised shadow-sm"
     >
@@ -52,10 +55,12 @@ export function VariablePanel({
       <header className="flex items-center gap-2 border-b border-border-subtle px-4 py-2">
         <VariableIcon size={14} strokeWidth={1.75} className="text-accent" />
         <h2 className="text-2xs font-semibold tracking-[0.14em] text-ink-muted uppercase">
-          Variables
+          {t('variablesHeading')}
         </h2>
         <span className="font-mono text-2xs text-ink-subtle">
-          {variables.length} parameter{variables.length === 1 ? '' : 's'}
+          {variables.length === 1
+            ? t('parameterCountOne', { n: variables.length })
+            : t('parameterCountOther', { n: variables.length })}
         </span>
       </header>
       {/* 変数ごとの入力フィールドをグリッドで並べる（画面幅に応じて列数が変わる） */}

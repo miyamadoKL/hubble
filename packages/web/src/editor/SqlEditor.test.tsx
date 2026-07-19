@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { loadMonaco } from './monacoLoader';
 import { useEditorRuntime } from './EditorRuntime';
 import { useUiStore } from '../stores/uiStore';
+import { LocaleProvider, useLocale } from '../i18n/locale';
 import {
   attachDiagnostics,
   registerTrinoLanguage,
@@ -51,6 +52,7 @@ const model = {
 // import しない）。
 interface ActionDescriptor {
   id: string;
+  label?: string;
   keybindings?: number[];
   run: (editor: unknown) => unknown;
 }
@@ -110,6 +112,21 @@ async function waitForReady(host: HTMLElement) {
 
 function Harness({ trinoLanguage }: { trinoLanguage: boolean }) {
   return <SqlEditor value="SELECT 1" trinoLanguage={trinoLanguage} />;
+}
+
+// ロケール切替（setLocale('ja')）を実際に発火させるための最小限のハーネス。
+// LocaleProvider の外側から locale を直接差し替える手段がないため、ボタン経由で
+// useLocale().setLocale を呼ぶ。
+function LocaleSwitchHarness() {
+  const { setLocale } = useLocale();
+  return (
+    <div>
+      <button type="button" onClick={() => setLocale('ja')}>
+        switch to ja
+      </button>
+      <SqlEditor value="SELECT 1" trinoLanguage={false} />
+    </div>
+  );
 }
 
 describe('SqlEditor datasource language switch', () => {
@@ -280,5 +297,58 @@ describe('SqlEditor datasource language switch', () => {
 
     // 直前のインスタンス分は蓄積されず、新しいインスタンスの2件だけが登録される。
     expect(editor.addAction).toHaveBeenCalledTimes(2);
+  });
+
+  // i18n Phase 2a 回帰テスト: ロケール切替の即時反映契約（setLocale が呼ばれた瞬間に
+  // 画面全体が新ロケールへ切り替わる）に、Monaco のアクション名（コマンドパレット/
+  // 右クリックメニューの Run SQL / Format SQL ラベル）も追随することを検証する。
+  // addAction は登録済みラベルを差し替えられないため、旧登録が dispose され、
+  // 同じ id で新ロケールのラベルが再登録されているはずである。
+  test('re-registers Monaco action labels when the locale changes', async () => {
+    Object.defineProperty(window.navigator, 'language', {
+      value: 'en-US',
+      configurable: true,
+    });
+    window.localStorage.clear();
+
+    root.render(
+      <LocaleProvider>
+        <LocaleSwitchHarness />
+      </LocaleProvider>,
+    );
+    await waitForReady(container);
+
+    expect(editor.addAction).toHaveBeenCalledTimes(2);
+    const initialRun = editor.addAction.mock.calls.find(
+      ([descriptor]) => descriptor.id === 'fable.executeSql',
+    );
+    const initialFormat = editor.addAction.mock.calls.find(
+      ([descriptor]) => descriptor.id === 'fable.formatSql',
+    );
+    expect(initialRun?.[0].label).toBe('Run SQL');
+    expect(initialFormat?.[0].label).toBe('Format SQL');
+    const initialRunDispose = editor.addAction.mock.results[0]?.value.dispose;
+    const initialFormatDispose = editor.addAction.mock.results[1]?.value.dispose;
+
+    // ロケール切替ボタンを押して ja へ切り替える。
+    const button = container.querySelector('button')!;
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushPromises();
+
+    // 旧登録（英語ラベル）が dispose され、新しいロケール（ja）のラベルで
+    // ちょうど1組だけ再登録されている。
+    expect(initialRunDispose).toHaveBeenCalledTimes(1);
+    expect(initialFormatDispose).toHaveBeenCalledTimes(1);
+    expect(editor.addAction).toHaveBeenCalledTimes(4);
+    const latestRun = [...editor.addAction.mock.calls]
+      .reverse()
+      .find(([descriptor]) => descriptor.id === 'fable.executeSql');
+    const latestFormat = [...editor.addAction.mock.calls]
+      .reverse()
+      .find(([descriptor]) => descriptor.id === 'fable.formatSql');
+    expect(latestRun?.[0].label).toBe('SQL を実行');
+    expect(latestFormat?.[0].label).toBe('SQL を整形');
   });
 });

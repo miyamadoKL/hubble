@@ -33,31 +33,31 @@ import {
   isCellRunning,
   type CellExecution,
 } from '../../execution';
+import { useT, type TFn } from '../../i18n/t';
+import { useLocale, type Locale } from '../../i18n/locale';
+import { notebookMessages, queryStateLabel } from '../../i18n/messages/notebook';
+
+// Intl API 用のロケールタグへ変換する（ja → 'ja-JP', en → 'en-US'）。
+// 日時の絶対表示（Details タブの送信日時/完了日時）でのみ使う。
+function toIntlLocale(locale: Locale): string {
+  return locale === 'ja' ? 'ja-JP' : 'en-US';
+}
 
 const ChartPanel = lazy(() =>
   import('./ChartPanel').then((module) => ({ default: module.ChartPanel })),
 );
-
-/**
- * Live result pane with per-cell tabs (Grid / Chart / Explain /
- * Details + Error). Driven entirely by the cell's `CellExecution` record from
- * the execution store. EXPLAIN runs a separate query through `onExplain` and
- * shows its plan text here.
- */
 
 // 結果ペインで切り替え可能なタブの種類。
 type ResultTab = 'grid' | 'chart' | 'explain' | 'details';
 
 /** ResultPane の props */
 interface ResultPaneProps {
-  /** The notebook cell id (keys the per-cell chart config). */
   // ノートブックのセルID（セルごとのチャート設定、結果表示域の高さの紐付けに使う）。
   cellId: string;
   /** 結果表示域の高さ調整を永続化するためのノートブックID。未確定（context.notebookId 未設定）なら高さ調整は無効化される。 */
   notebookId?: string;
   // このセルの実行状態全体（列、行、統計、エラー、状態など）を持つレコード。
   cell: CellExecution;
-  /** Plain plan text from an EXPLAIN run (single-column rows joined by newline). */
   // EXPLAIN実行結果のプレーンテキスト（単一列の各行を改行で連結したもの）。
   explainText?: string;
   // EXPLAINクエリが現在実行中かどうか。
@@ -100,6 +100,8 @@ export function ResultPane({
   explainRunning,
   onExplain,
 }: ResultPaneProps) {
+  const t = useT(notebookMessages);
+  const { locale } = useLocale();
   // 現在選択中のタブ（初期値は Grid）。
   const [tab, setTab] = useState<ResultTab>('grid');
   // 「結果をコピー」ボタンの一時的な成功表示（コピー完了アイコンを1.5秒だけ出す）用フラグ。
@@ -109,13 +111,12 @@ export function ResultPane({
 
   // タブバーに表示するタブの定義（id、ラベル、アイコン）。
   const TABS: TabItem<ResultTab>[] = [
-    { id: 'grid', label: 'Grid', icon: Table2 },
-    { id: 'chart', label: 'Chart', icon: BarChart3 },
-    { id: 'explain', label: 'Explain', icon: FileText },
-    { id: 'details', label: 'Details', icon: Info },
+    { id: 'grid', label: t('gridTab'), icon: Table2 },
+    { id: 'chart', label: t('chartTab'), icon: BarChart3 },
+    { id: 'explain', label: t('explainTab'), icon: FileText },
+    { id: 'details', label: t('detailsTab'), icon: Info },
   ];
 
-  // Trigger the EXPLAIN run the first time its tab is opened (or re-run via btn).
   // Explainタブが選択され、かつまだ実行計画テキストを取得しておらず実行中でもなければ、
   // EXPLAINクエリを自動的にトリガーする（初回タブオープン時のみ発火させたいので、
   // 依存配列はあえて tab のみにしている＝exhaustive-deps を無効化）。
@@ -145,17 +146,19 @@ export function ResultPane({
 
   return (
     <div className="animate-[slideUp_150ms_ease-out]" data-testid="result-pane">
-      {/* Error banner takes priority above the tabs. */}
       {/* エラーバナー: タブより優先して最上部に表示する。 */}
       {hasError && cell.error && <ErrorPanel error={cell.error} />}
 
-      {/* タブ切り替えバー + 右側のアクションボタン群（コピー・CSVダウンロード）。 */}
-      <div className="flex items-center justify-between gap-2 pr-2">
+      {/* タブ切り替えバー + 右側のアクションボタン群（コピーと CSV ダウンロード）。 */}
+      <div
+        data-testid="result-pane-toolbar"
+        className="flex items-center justify-between gap-2 pr-2"
+      >
         <Tabs items={TABS} value={tab} onChange={setTab} className="flex-1" />
         <div className="flex items-center gap-0.5">
           <IconButton
             icon={copied ? Check : Clipboard}
-            label={copied ? 'Copied' : 'Copy as TSV + HTML'}
+            label={copied ? t('copiedLabel') : t('copyAsTsvHtml')}
             size="sm"
             disabled={cell.rows.length === 0}
             onClick={onCopy}
@@ -165,6 +168,7 @@ export function ResultPane({
             disabled={!cell.queryId || running}
             truncated={cell.truncated}
             csvReexecAllowed={cell.csvReexecAllowed}
+            t={t}
           />
         </div>
       </div>
@@ -176,12 +180,8 @@ export function ResultPane({
           <div className="bg-surface-sunken">
             <EmptyState
               icon={Table2}
-              title={hasError ? 'No result' : 'No rows'}
-              description={
-                hasError
-                  ? 'The statement failed — see the error above.'
-                  : 'This statement returned no rows.'
-              }
+              title={hasError ? t('noResultTitle') : t('noRowsTitle')}
+              description={hasError ? t('statementFailedDesc') : t('noRowsDesc')}
               compact
             />
           </div>
@@ -201,13 +201,16 @@ export function ResultPane({
             />
             <div className="flex items-center justify-between border-t border-border-base bg-surface-base px-3 py-1.5">
               <span className="font-mono text-2xs text-ink-subtle">
-                {formatInt(cell.rowCount)} rows · {cell.columns.length} columns
+                {t('resultFooter', {
+                  rows: formatInt(cell.rowCount),
+                  columns: cell.columns.length,
+                })}
               </span>
               {/* 行数上限で結果が打ち切られている場合の警告表示。 */}
               {cell.truncated && (
                 <span className="inline-flex items-center gap-1 text-2xs font-medium text-warning">
                   <TriangleAlert size={11} strokeWidth={2} />
-                  result truncated at the row cap
+                  {t('resultTruncatedWarning')}
                 </span>
               )}
             </div>
@@ -219,7 +222,7 @@ export function ResultPane({
         <Suspense
           fallback={
             <div className="flex h-80 items-center justify-center text-xs text-ink-muted">
-              Loading chart…
+              {t('loadingChart')}
             </div>
           }
         >
@@ -234,35 +237,61 @@ export function ResultPane({
 
       {/* Explainタブ: EXPLAIN実行結果のプレーンテキストを表示する（下記 ExplainView 参照）。 */}
       {tab === 'explain' && (
-        <ExplainView text={explainText} running={explainRunning} onRun={onExplain} />
+        <ExplainView text={explainText} running={explainRunning} onRun={onExplain} t={t} />
       )}
 
       {/* Detailsタブ: クエリID、実行時刻、統計情報などのメタ情報を一覧表示する。 */}
       {tab === 'details' && (
         <div className="bg-surface-sunken px-4 py-2">
-          <DetailRow label="Query id" value={cell.queryId || '—'} />
-          <DetailRow label="Trino query id" value={cell.trinoQueryId ?? '—'} />
+          <DetailRow label={t('detailQueryId')} value={cell.queryId || '—'} />
+          <DetailRow label={t('detailTrinoQueryId')} value={cell.trinoQueryId ?? '—'} />
           <DetailRow
-            label="Submitted"
-            value={cell.startedAt ? new Date(cell.startedAt).toLocaleString() : '—'}
+            label={t('detailSubmitted')}
+            value={
+              cell.startedAt ? new Date(cell.startedAt).toLocaleString(toIntlLocale(locale)) : '—'
+            }
             mono={false}
           />
           <DetailRow
-            label="Finished"
-            value={cell.finishedAt ? new Date(cell.finishedAt).toLocaleString() : '—'}
+            label={t('detailFinished')}
+            value={
+              cell.finishedAt ? new Date(cell.finishedAt).toLocaleString(toIntlLocale(locale)) : '—'
+            }
             mono={false}
           />
-          <DetailRow label="State" value={cell.state} mono={false} />
-          <DetailRow label="Elapsed" value={formatDuration(stats?.elapsedTimeMillis ?? 0)} />
-          <DetailRow label="Wall time" value={formatDuration(stats?.wallTimeMillis ?? 0)} />
-          <DetailRow label="Processed rows" value={formatInt(stats?.processedRows ?? 0)} />
-          <DetailRow label="Processed bytes" value={formatBytes(stats?.processedBytes ?? 0)} />
-          <DetailRow label="Peak memory" value={formatBytes(stats?.peakMemoryBytes ?? 0)} />
           <DetailRow
-            label="Splits"
+            label={t('detailState')}
+            value={queryStateLabel(cell.state, locale)}
+            mono={false}
+          />
+          <DetailRow
+            label={t('detailElapsed')}
+            value={formatDuration(stats?.elapsedTimeMillis ?? 0)}
+          />
+          <DetailRow
+            label={t('detailWallTime')}
+            value={formatDuration(stats?.wallTimeMillis ?? 0)}
+          />
+          <DetailRow
+            label={t('detailProcessedRows')}
+            value={formatInt(stats?.processedRows ?? 0)}
+          />
+          <DetailRow
+            label={t('detailProcessedBytes')}
+            value={formatBytes(stats?.processedBytes ?? 0)}
+          />
+          <DetailRow
+            label={t('detailPeakMemory')}
+            value={formatBytes(stats?.peakMemoryBytes ?? 0)}
+          />
+          <DetailRow
+            label={t('detailSplits')}
             value={`${formatInt(stats?.completedSplits ?? 0)} / ${formatInt(stats?.totalSplits ?? 0)}`}
           />
-          <DetailRow label="Worker nodes" value={stats?.nodes ? formatInt(stats.nodes) : '—'} />
+          <DetailRow
+            label={t('detailWorkerNodes')}
+            value={stats?.nodes ? formatInt(stats.nodes) : '—'}
+          />
         </div>
       )}
     </div>
@@ -278,6 +307,7 @@ function ExplainView({
   text,
   running,
   onRun,
+  t,
 }: {
   // EXPLAIN結果のプレーンテキスト（未取得ならundefined）
   text?: string;
@@ -285,12 +315,13 @@ function ExplainView({
   running?: boolean;
   // 「Run EXPLAIN」ボタン押下時のハンドラー
   onRun?: () => void;
+  t: TFn<typeof notebookMessages>;
 }) {
   // 実行中は専用のローディングメッセージを表示する。
   if (running) {
     return (
       <div className="bg-surface-sunken px-4 py-6 text-center font-mono text-xs text-ink-muted">
-        Running EXPLAIN…
+        {t('explainRunningMessage')}
       </div>
     );
   }
@@ -300,13 +331,13 @@ function ExplainView({
       <div className="bg-surface-sunken">
         <EmptyState
           icon={FileText}
-          title="Explain plan"
-          description="Run EXPLAIN on the current statement to see its distributed plan."
+          title={t('explainPlanTitle')}
+          description={t('explainPlanDesc')}
           compact
           action={
             onRun ? (
               <Button size="sm" icon={FileText} onClick={onRun}>
-                Run EXPLAIN
+                {t('runExplainButton')}
               </Button>
             ) : undefined
           }
@@ -317,7 +348,7 @@ function ExplainView({
   // 実行計画のテキストをそのまま整形済みテキストとして表示する（空文字なら "(empty plan)"）。
   return (
     <pre className="max-h-96 overflow-auto bg-surface-sunken px-4 py-3 font-mono text-xs leading-relaxed text-ink-base">
-      {text || '(empty plan)'}
+      {text || t('emptyPlanText')}
     </pre>
   );
 }
@@ -384,11 +415,13 @@ function ExportMenu({
   disabled,
   truncated,
   csvReexecAllowed,
+  t,
 }: {
   queryId: string;
   disabled: boolean;
   truncated: boolean;
   csvReexecAllowed: boolean;
+  t: TFn<typeof notebookMessages>;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -429,13 +462,13 @@ function ExportMenu({
               gzip: action === 's3-csv' ? true : undefined,
             });
       if (response.destination === 's3') {
-        toast.success('Exported to S3', response.objectKey);
+        toast.success(t('exportedToS3Toast'), response.objectKey);
       } else {
-        toast.success('Exported to Google Sheets', response.url);
+        toast.success(t('exportedToSheetsToast'), response.url);
         window.open(response.url, '_blank', 'noopener,noreferrer');
       }
     } catch (err) {
-      toast.error('Export failed', err instanceof Error ? err.message : String(err));
+      toast.error(t('exportFailedToast'), err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -446,7 +479,7 @@ function ExportMenu({
       {/* トリガー: 固定ラベル「Export」。IconButton (sm) と同じ h-6 で高さを揃える。 */}
       <button
         type="button"
-        aria-label="Export result"
+        aria-label={t('exportResultAria')}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
@@ -460,7 +493,7 @@ function ExportMenu({
         )}
       >
         <Download size={13} strokeWidth={1.75} />
-        Export
+        {t('exportTrigger')}
         <ChevronDown
           size={12}
           strokeWidth={1.75}
@@ -476,43 +509,42 @@ function ExportMenu({
             'animate-[fadeIn_150ms_ease-out]',
           )}
         >
-          <ExportMenuLabel>Download</ExportMenuLabel>
+          <ExportMenuLabel>{t('downloadSectionLabel')}</ExportMenuLabel>
           <ExportMenuItem
             href={downloadCsvUrl(queryId, 'zip')}
             download={`result-${queryId}.zip`}
             onSelect={() => setOpen(false)}
           >
-            CSV (zip)
+            {t('csvZipOption')}
           </ExportMenuItem>
           <ExportMenuItem
             href={downloadCsvUrl(queryId, 'csv')}
             download={`result-${queryId}.csv`}
             onSelect={() => setOpen(false)}
           >
-            CSV
+            {t('csvOption')}
           </ExportMenuItem>
           <ExportMenuItem
             href={downloadXlsxUrl(queryId)}
             download={`result-${queryId}.xlsx`}
             onSelect={() => setOpen(false)}
           >
-            XLSX
+            {t('xlsxOption')}
           </ExportMenuItem>
-          <ExportMenuLabel>Export to</ExportMenuLabel>
+          <ExportMenuLabel>{t('exportToSectionLabel')}</ExportMenuLabel>
           <ExportMenuItem disabled={busy} onSelect={() => void runExport('s3-csv')}>
-            S3 (CSV, gzip)
+            {t('s3CsvOption')}
           </ExportMenuItem>
           <ExportMenuItem disabled={busy} onSelect={() => void runExport('s3-xlsx')}>
-            S3 (XLSX)
+            {t('s3XlsxOption')}
           </ExportMenuItem>
           <ExportMenuItem disabled={busy} onSelect={() => void runExport('sheets')}>
-            Google Sheets
+            {t('googleSheetsOption')}
           </ExportMenuItem>
           {/* 打ち切り済みで再実行もできない場合、ダウンロードが部分データになる旨を注記する。 */}
           {partialOnly && (
             <p className="border-t border-border-subtle px-2 pt-1.5 pb-1 text-2xs text-warning">
-              Downloads include buffered rows only ({CSV_REEXEC_UNAVAILABLE}: full download cannot
-              re-run this statement).
+              {t('partialDownloadNote', { code: CSV_REEXEC_UNAVAILABLE })}
             </p>
           )}
         </div>

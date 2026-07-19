@@ -10,12 +10,10 @@ import { CircleCheck, CircleX, History, Play } from 'lucide-react';
 import type { CellResultMeta } from '@hubble/contracts';
 import { formatDuration, formatInt, formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { notebookMessages, queryStateLabel } from '../../i18n/messages/notebook';
 
-/**
- * "Last run" strip. Shown on a reloaded SQL cell that
- * has a persisted execution summary but no live result yet — full result rows
- * are never persisted, so this is the empty-state stand-in until the user re-runs.
- */
 /**
  * セルの最終実行サマリー（meta）を表示する帯コンポーネント。
  *
@@ -23,12 +21,14 @@ import { cn } from '../../utils/cn';
  * @param onRun - 「Re-run」ボタン押下時のコールバック。未指定の場合はボタン自体を表示しない。
  */
 export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: () => void }) {
+  const t = useT(notebookMessages);
+  const { locale } = useLocale();
   // 実行が失敗状態だったかどうか。表示アイコンや配色の分岐に使う。
   const failed = meta.state === 'failed';
   // 失敗時は×アイコン、それ以外（成功）は✓アイコンを使う。
   const Icon = failed ? CircleX : CircleCheck;
   // 実行日時を「〜前」形式の相対時刻テキストに変換する（実行日時が無ければ null）。
-  const when = meta.executedAt ? formatRelativeTime(meta.executedAt) : null;
+  const when = meta.executedAt ? formatRelativeTime(meta.executedAt, new Date(), locale) : null;
 
   return (
     <div
@@ -38,9 +38,12 @@ export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: ()
       {/* 「Last run」ラベル（履歴アイコン付き）。 */}
       <span className="inline-flex items-center gap-1.5 text-2xs font-semibold tracking-wide text-ink-muted uppercase">
         <History size={12} strokeWidth={2} />
-        Last run
+        {t('lastRunLabel')}
       </span>
-      {/* 実行結果の状態バッジ。失敗時は赤系、それ以外は緑系の配色にする。 */}
+      {/* 実行結果の状態バッジ。失敗時は赤系、それ以外は緑系の配色にする。state 値自体は
+          契約値（QueryState と同種）のため変更しないが、表示ラベルは queryStateLabel で
+          ロケールに応じて翻訳する。CellResultMeta.state は緩い string 型のため、未知の
+          値が来た場合は queryStateLabel が元の文字列をそのまま返す。 */}
       <span
         className={cn(
           'inline-flex items-center gap-1 text-xs font-medium',
@@ -48,12 +51,12 @@ export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: ()
         )}
       >
         <Icon size={13} strokeWidth={2} />
-        {meta.state ?? 'finished'}
+        {queryStateLabel(meta.state ?? 'finished', locale)}
       </span>
       {/* 失敗していない場合のみ、取得した行数を表示する（rowCount が存在するとき）。 */}
       {!failed && meta.rowCount !== undefined && (
         <span className="font-mono text-2xs text-ink-muted tabular-nums">
-          {formatInt(meta.rowCount)} rows
+          {t('lastRunRowsUnit', { n: formatInt(meta.rowCount) })}
         </span>
       )}
       {/* 実行にかかった所要時間（elapsedMs が存在するとき）。 */}
@@ -81,7 +84,7 @@ export function LastRunStrip({ meta, onRun }: { meta: CellResultMeta; onRun?: ()
             className="inline-flex items-center gap-1 rounded-sm border border-border-base bg-surface-raised px-1.5 py-0.5 text-2xs font-medium text-ink-muted hover:border-accent/40 hover:text-accent"
           >
             <Play size={10} strokeWidth={2.5} />
-            Re-run
+            {t('rerunButton')}
           </button>
         )}
       </div>

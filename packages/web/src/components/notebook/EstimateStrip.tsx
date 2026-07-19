@@ -11,22 +11,23 @@ import { Tooltip } from '../common/Tooltip';
 import { formatBytes, formatDuration, formatInt } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import type { EstimatePresentation, EstimateTone } from '../../execution/estimate';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
- * Query Guard live-estimate strip (Query Guard feature). A compact, instrument-
- * grade badge that sits just under the cell toolbar and surfaces the scan-cost
- * estimate + guard verdict for the statement the run button would execute:
+ * Query Guard のライブ見積もり帯。セルツールバーの直下に配置される、計器盤のような
+ * コンパクトなバッジで、実行ボタンが実際に実行しようとしている SQL 文に対する
+ * スキャンコスト見積もりと guard の判定結果を表示する。表示例:
  *
  *   ⏱  ESTIMATED SCAN  6,001,215 rows · 747.7 MB · ~7.8 s   [block reasons →]
  *
- * Tone (info / warning / error / unavailable) is driven entirely by design
- * tokens (tokens.css); warn/block reasons hang off a tooltip and, for a block,
- * are shown inline so the user sees why the run is disabled. Loading is a quiet,
- * non-flickering spinner that keeps the prior figures (placeholderData).
+ * トーン（info / warning / error / unavailable）はすべてデザイントークン
+ * （tokens.css）で決まる。警告/ブロック時の理由はツールチップに、ブロック時のみ
+ * 追加でインライン表示し、実行不可の理由をすぐに確認できるようにする。ローディング中は
+ * 直前の数値（placeholderData）を保持したまま、点滅しない静かなスピナーを表示する。
  */
 
 /**
- * Per-tone token classes (no raw hex — design tokens only).
  * トーン（info / warning / error / unavailable）ごとの配色クラス。
  * 生の hex 値は使わず、必ずデザイントークン（tokens.css）由来のクラスのみを使用する。
  */
@@ -52,7 +53,6 @@ function ToneIcon({ tone }: { tone: EstimateTone }) {
 interface EstimateStripProps {
   /** 表示すべき見積もり情報一式（トーン、ラベル、行数/バイト数/推定秒数、理由、ブロック有無、表示要否など）。 */
   presentation: EstimatePresentation;
-  /** True while a (debounced) estimate request is in flight. */
   /** デバウンスされた見積もりリクエストが実行中（未完了）の間 true。ローディング表示に使う。 */
   loading?: boolean;
 }
@@ -66,13 +66,32 @@ interface EstimateStripProps {
  * @param loading - 見積もり取得中かどうか（true の間はスピナーを表示しつつ直前の数値を保持する）。
  */
 export function EstimateStrip({ presentation, loading }: EstimateStripProps) {
+  const t = useT(notebookMessages);
   // 見積もりを表示すべきでない場合（対象 SQL がない等）は何も描画しない。
   if (!presentation.visible) return null;
-  const { tone, label, scanRows, scanBytes, estimatedSeconds, reasons, blocked } = presentation;
+  const {
+    tone,
+    label: rawLabel,
+    scanRows,
+    scanBytes,
+    estimatedSeconds,
+    reasons,
+    blocked,
+  } = presentation;
+  // rawLabel は execution/estimate.ts が返す固定の英語ステータス文言
+  // （'estimated scan' | 'estimate unavailable'）。サーバー由来ではなく UI 側の
+  // 定数なので、ここでロケール別ラベルへ変換する。想定外の値が来た場合は
+  // 元の文字列をそのまま表示する（fail-safe）。
+  const label =
+    rawLabel === 'estimated scan'
+      ? t('estimateScanBadgeLabel')
+      : rawLabel === 'estimate unavailable'
+        ? t('estimateUnavailableBadgeLabel')
+        : rawLabel;
 
   // 表示する数値群（行数、バイト数、推定時間）を、値が存在するものだけ組み立てる。
   const figures: string[] = [];
-  if (scanRows !== null) figures.push(`${formatInt(scanRows)} rows`);
+  if (scanRows !== null) figures.push(t('estimateRowsUnit', { n: formatInt(scanRows) }));
   if (scanBytes !== null) figures.push(formatBytes(scanBytes));
   if (estimatedSeconds !== null)
     figures.push(`~${formatDuration(Math.round(estimatedSeconds * 1000))}`);
@@ -97,9 +116,8 @@ export function EstimateStrip({ presentation, loading }: EstimateStripProps) {
         <ToneIcon tone={tone} />
       )}
       <span className="font-semibold tracking-wide uppercase">{label}</span>
-      {/* 行数、バイト数、推定時間などの数値群（存在するもののみ「・」区切りで表示）。 */}
+      {/* 行数、バイト数、推定時間などの数値群を、値が存在するものだけ区切り文字でつなげて表示する。 */}
       {figures.length > 0 && <span className="text-ink-base">{figures.join(' · ')}</span>}
-      {/* Block reasons are shown inline (the run is disabled — the user needs them). */}
       {/* 実行がブロックされている場合、最初の理由文をインラインで表示する（実行不可の理由をすぐわかるように）。 */}
       {blocked && reasons.length > 0 && (
         <span className="truncate font-sans font-medium not-italic">— {reasons[0]}</span>
@@ -107,7 +125,6 @@ export function EstimateStrip({ presentation, loading }: EstimateStripProps) {
     </span>
   );
 
-  // Warn/unavailable reasons (not already shown inline) hang off a tooltip.
   // ブロックされていないが警告/取得不可の理由がある場合は、ツールチップとしてまとめて表示する。
   if (!blocked && reasons.length > 0) {
     return (

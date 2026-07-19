@@ -17,6 +17,8 @@ import { EmptyState } from '../common/EmptyState';
 import { describeColumns, reconcileConfig } from '../../chart';
 import { useNotebookStore } from '../../notebook/notebookStore';
 import type { ResultRow } from '../../execution';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
  * Chart tab body (結果: チャート). Owns the per-cell config: reads
@@ -41,6 +43,7 @@ export function ChartPanel({
   rows: ReadonlyArray<ResultRow>;
   rowsVersion?: number;
 }) {
+  const t = useT(notebookMessages);
   // このセルに保存済みのチャート設定を購読する（未設定なら undefined）。
   // 設定はノートブックセルの `chart` フィールドとして保持され、
   // notebook 本体のオートセーブに乗ってサーバーへ永続化される。
@@ -68,8 +71,8 @@ export function ChartPanel({
       <div className="bg-surface-sunken">
         <EmptyState
           icon={BarChart3}
-          title="No rows to chart"
-          description="Run a query that returns rows to plot a chart."
+          title={t('noRowsToChartTitle')}
+          description={t('noRowsToChartDesc')}
           compact
         />
       </div>
@@ -82,8 +85,8 @@ export function ChartPanel({
       <div className="bg-surface-sunken">
         <EmptyState
           icon={BarChart3}
-          title="Nothing to plot"
-          description="A chart needs at least one numeric column. This result has none."
+          title={t('nothingToPlotTitle')}
+          description={t('nothingToPlotDesc')}
           compact
         />
       </div>

@@ -10,6 +10,8 @@ import { Presentation } from 'lucide-react';
 import { useActiveNotebook } from '../../notebook';
 import { toPresentationCards } from '../../notebook/presentation';
 import { useUiStore } from '../../stores/uiStore';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
  * Presentation mode. A read-only, full-bleed view of the
@@ -25,6 +27,7 @@ import { useUiStore } from '../../stores/uiStore';
  * ストアから直接参照する）。
  */
 export function PresentationView() {
+  const t = useT(notebookMessages);
   // 現在アクティブなノートブックのエントリ（ノートブック本体とメタ情報）を取得。
   const entry = useActiveNotebook();
   // 「Exit」ボタン押下時のハンドラー: UIストアのプレゼンテーション表示フラグをトグルして閉じる。
@@ -43,11 +46,11 @@ export function PresentationView() {
         <div className="min-w-0">
           <p className="inline-flex items-center gap-1.5 text-2xs font-semibold tracking-[0.14em] text-accent uppercase">
             <Presentation size={13} strokeWidth={2} />
-            Presentation
+            {t('presentationLabel')}
           </p>
           {/* ノートブック名。存在しない場合は "Untitled notebook" を表示。 */}
           <h1 className="truncate text-xl font-semibold text-ink-strong">
-            {entry?.notebook.name ?? 'Untitled notebook'}
+            {entry?.notebook.name ?? t('untitledNotebook')}
           </h1>
         </div>
         {/* プレゼンテーションモードを終了するボタン。 */}
@@ -57,7 +60,7 @@ export function PresentationView() {
           className="inline-flex items-center gap-1.5 rounded-md border border-border-base bg-surface-raised px-3 py-1.5 text-sm text-ink-muted hover:border-accent/40 hover:text-accent"
         >
           <X size={15} strokeWidth={2} />
-          Exit
+          {t('exitButton')}
         </button>
       </header>
 
@@ -66,8 +69,8 @@ export function PresentationView() {
         {cards.length === 0 ? (
           <EmptyState
             icon={Presentation}
-            title="Nothing to present"
-            description="Add SQL with `-- heading` comments or Markdown cells to build slides."
+            title={t('nothingToPresentTitle')}
+            description={t('nothingToPresentDesc')}
           />
         ) : (
           // カードの一覧を縦に並べてレンダリングする。

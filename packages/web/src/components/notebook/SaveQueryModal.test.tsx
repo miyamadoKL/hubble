@@ -89,8 +89,8 @@ describe('SaveQueryModal', () => {
 
   test('開くと名前/説明/SQLプレビュー/接続先を表示する', () => {
     renderModal();
-    expect(container.querySelector('[aria-label="Saved query name"]')).toBeTruthy();
-    expect(container.querySelector('[aria-label="Saved query description"]')).toBeTruthy();
+    expect(container.querySelector('[name="name"]')).toBeTruthy();
+    expect(container.querySelector('[name="description"]')).toBeTruthy();
     expect(container.textContent).toContain('SELECT 1');
     expect(container.textContent).toContain('Warehouse A');
     expect(container.textContent).toContain('sales.production');
@@ -103,9 +103,7 @@ describe('SaveQueryModal', () => {
     ) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'My query'));
     expect(save.disabled).toBe(false);
   });
@@ -128,9 +126,7 @@ describe('SaveQueryModal', () => {
       onClose,
     });
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'My query'));
 
     const save = [...container.querySelectorAll('button')].find(
@@ -164,13 +160,9 @@ describe('SaveQueryModal', () => {
     });
     renderModal();
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'Context query'));
-    const descInput = container.querySelector(
-      '[aria-label="Saved query description"]',
-    ) as HTMLTextAreaElement;
+    const descInput = container.querySelector('[name="description"]') as HTMLTextAreaElement;
     act(() => setInputValue(descInput, 'desc'));
 
     const save = [...container.querySelectorAll('button')].find(
@@ -195,9 +187,7 @@ describe('SaveQueryModal', () => {
     const onClose = vi.fn();
     renderModal({ onClose });
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'My query'));
 
     const save = [...container.querySelectorAll('button')].find(
@@ -223,13 +213,9 @@ describe('SaveQueryModal', () => {
     });
     renderModal({ context: {} });
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'Boundary query'));
-    const descInput = container.querySelector(
-      '[aria-label="Saved query description"]',
-    ) as HTMLTextAreaElement;
+    const descInput = container.querySelector('[name="description"]') as HTMLTextAreaElement;
     act(() => setInputValue(descInput, 'x'.repeat(MAX_DESCRIPTION_LENGTH)));
 
     const save = [...container.querySelectorAll('button')].find(
@@ -244,13 +230,9 @@ describe('SaveQueryModal', () => {
   test('descriptionが上限を1文字超えると送信されずエラー表示する', async () => {
     renderModal({ context: {} });
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'Too long description'));
-    const descInput = container.querySelector(
-      '[aria-label="Saved query description"]',
-    ) as HTMLTextAreaElement;
+    const descInput = container.querySelector('[name="description"]') as HTMLTextAreaElement;
     // maxLength 属性はユーザー入力(タイプ)にしか効かないため、テストでの直接の
     // value 代入では上限超過を再現できる。safeParse 側のガードを検証する。
     act(() => setInputValue(descInput, 'x'.repeat(MAX_DESCRIPTION_LENGTH + 1)));
@@ -267,9 +249,7 @@ describe('SaveQueryModal', () => {
   test('statement(セルのSQL)が契約上限を超えると送信されずエラー表示する', async () => {
     renderModal({ context: {}, statement: 'x'.repeat(MAX_SQL_LENGTH + 1) });
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'Long statement'));
 
     const save = [...container.querySelectorAll('button')].find(
@@ -286,9 +266,7 @@ describe('SaveQueryModal', () => {
       context: { catalog: 'c'.repeat(MAX_IDENTIFIER_LENGTH + 1) },
     });
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'Long catalog'));
 
     const save = [...container.querySelectorAll('button')].find(
@@ -306,9 +284,7 @@ describe('SaveQueryModal', () => {
     vi.mocked(createSavedQuery).mockReturnValue(new Promise(() => {}));
     renderModal({ context: {} });
 
-    const nameInput = container.querySelector(
-      '[aria-label="Saved query name"]',
-    ) as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     act(() => setInputValue(nameInput, 'Double click query'));
 
     const save = [...container.querySelectorAll('button')].find(

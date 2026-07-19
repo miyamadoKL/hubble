@@ -34,6 +34,8 @@ import {
   resetEditorHeight,
   setEditorHeight,
 } from '../notebook/editorHeight';
+import { useT } from '../i18n/t';
+import { notebookMessages } from '../i18n/messages/notebook';
 import './editor.css';
 
 // 自動伸縮（内容連動）時の行高/最小行数/最大行数/上下パディングは editorHeight.ts の
@@ -51,21 +53,15 @@ export interface SqlEditorProps {
   /** 内容が変わるたびに呼ばれるハンドラ（親側の状態を更新する）。 */
   onChange?: (value: string) => void;
   /**
-   * Ctrl/Cmd+Enter handler. Receives the live editor so the caller can read the
-   * current selection / caret to decide the execution unit.
-   */
-  /**
    * Ctrl/Cmd+Enter が押されたときのハンドラ。実体のエディターを受け取るので、呼び出し側は
    * 現在の選択範囲/カーソル位置から実行対象（選択範囲 or ステートメント単位）を判断できる。
    */
   onExecute?: (editor: monaco.editor.IStandaloneCodeEditor) => void;
-  /** Called once the editor + Monaco namespace are ready (for markers/gutter). */
   /** エディターと Monaco 名前空間の準備ができた時点で 1 度だけ呼ばれる（マーカー/ガター用）。 */
   onReady?: (
     editor: monaco.editor.IStandaloneCodeEditor,
     monaco: typeof import('monaco-editor'),
   ) => void;
-  /** Read-only display (e.g. history preview). */
   /** 読み取り専用表示（例: 履歴プレビュー）。 */
   readOnly?: boolean;
   /** false のとき Monaco 標準 SQL モードを使う（Trino ANTLR 機能を無効化）。 */
@@ -99,6 +95,7 @@ export function SqlEditor({
   notebookId,
   cellId,
 }: SqlEditorProps) {
+  const t = useT(notebookMessages);
   // エディターをマウントする DOM ホスト要素。
   const hostRef = useRef<HTMLDivElement | null>(null);
   // 生成された Monaco エディターインスタンス本体。
@@ -132,9 +129,6 @@ export function SqlEditor({
   const runtime = useEditorRuntime();
   const theme = useUiStore((s) => s.theme);
 
-  // Stable refs for callbacks so the editor-creation effect doesn't depend on
-  // (and re-run for) changing props. Updated in an effect — never during render
-  // (react-hooks/refs).
   // props が変わってもエディター生成用 useEffect を再実行させないよう、コールバックを
   // ref に保持する。ref の更新は必ず useEffect 内で行い、レンダー中には行わない
   // （react-hooks/refs のルールに従う）。
@@ -147,11 +141,21 @@ export function SqlEditor({
   useLayoutEffect(() => {
     valueRef.current = value;
   }, [value]);
+  // エディター生成直後に配線する Ctrl/Cmd+Enter と整形コマンドの、生成時点での
+  // ラベル（下の locale 切替 effect が再登録するまでの初期値として使う）。
+  const commandLabelsRef = useRef({
+    run: t('runSqlActionLabel'),
+    format: t('formatSqlActionLabel'),
+  });
+  // Ctrl/Cmd+Enter と整形コマンドの現在の登録（disposable）。生成 effect と
+  // ロケール切替 effect の双方から参照/更新する共有の保持先。
+  const commandsRef = useRef<monaco.IDisposable | undefined>(undefined);
   useEffect(() => {
     onChangeRef.current = onChange;
     onExecuteRef.current = onExecute;
     onReadyRef.current = onReady;
     themeRef.current = theme;
+    commandLabelsRef.current = { run: t('runSqlActionLabel'), format: t('formatSqlActionLabel') };
   });
 
   // エディター本体の生成と破棄を担う唯一の effect。マウント時に一度だけ実行され、
@@ -161,7 +165,6 @@ export function SqlEditor({
     let editor: monaco.editor.IStandaloneCodeEditor | undefined;
     let changeSub: monaco.IDisposable | undefined;
     let sizeSub: monaco.IDisposable | undefined;
-    let commandsSub: monaco.IDisposable | undefined;
 
     // Monaco を遅延ロードしてからエディターを生成する。ロード完了前にアンマウントされた
     // 場合は disposed フラグで何もしない。
@@ -181,8 +184,8 @@ export function SqlEditor({
         scrollBeyondLastLine: false,
         lineNumbers: 'on',
         lineNumbersMinChars: 3,
-        // Statement status indicators (idle/active/executing/done/failed) render
-        // in the glyph margin via decorations (ガター).
+        // ステートメントの実行状態(idle/active/executing/done/failed)を装飾(decorations)で
+        // グリフマージン(ガター)に表示するため有効化する。
         glyphMargin: true,
         folding: false,
         fontFamily: 'var(--font-mono)',
@@ -197,12 +200,13 @@ export function SqlEditor({
       });
       editorRef.current = editor;
 
-      // Dev-only test affordance: expose live editors so Playwright can set
-      // content via the Monaco model (typing multi-line SQL is unreliable —
-      // auto-indent + suggest acceptance scramble it). Tree-shaken from prod.
-      // The editor is also attached to its host element so tests can resolve the
-      // editor of the *nth visible cell* by DOM order (the global array is
-      // mount-order and goes stale across cell delete/reorder).
+      // 開発時専用のテスト用フック: Playwright が Monaco のモデル経由で直接内容を
+      // 設定できるよう、生きたエディターインスタンスを公開する(複数行 SQL をキー入力で
+      // 打鍵する方式は、自動インデントや補完候補の自動確定によって内容が崩れるため
+      // 信頼できない)。本番ビルドからは tree-shaking で除去される。エディターは
+      // ホスト要素にも紐付けており、テストが「n番目に表示されているセル」の
+      // エディターを DOM 順で解決できるようにする(グローバル配列はマウント順であり、
+      // セルの削除/並べ替えを経ると古い順序のまま不整合になるため)。
       if (import.meta.env.DEV) {
         const w = window as unknown as { __fableEditors?: unknown[] };
         (w.__fableEditors ??= []).push(editor);
@@ -238,9 +242,14 @@ export function SqlEditor({
       // 介入しない設計のため、ユーザーからは押しても何も起きないように見える）。
       // 返り値の disposable はエディター破棄時に必ず dispose する（キーバインド
       // 登録が蓄積しないようにするため）。
-      commandsSub = attachEditorCommands(monacoNs, editor, {
-        onExecute: (ed) => onExecuteRef.current?.(ed as monaco.editor.IStandaloneCodeEditor),
-      });
+      commandsRef.current = attachEditorCommands(
+        monacoNs,
+        editor,
+        {
+          onExecute: (ed) => onExecuteRef.current?.(ed as monaco.editor.IStandaloneCodeEditor),
+        },
+        commandLabelsRef.current,
+      );
 
       // 内容が変わるたびに親へ通知し、高さも再計算する。
       changeSub = editor.onDidChangeModelContent(() => {
@@ -259,17 +268,50 @@ export function SqlEditor({
       disposed = true;
       diagnosticsRef.current?.dispose();
       diagnosticsRef.current = undefined;
-      commandsSub?.dispose();
+      // ロケール切替 effect が再登録している可能性があるため、生成時点で閉じ込めた
+      // ローカル変数ではなく commandsRef（常に最新の登録を指す共有先）を dispose する。
+      commandsRef.current?.dispose();
+      commandsRef.current = undefined;
       changeSub?.dispose();
       sizeSub?.dispose();
       editor?.dispose();
       editorRef.current = null;
     };
-    // Create the editor once; props are read through refs.
+    // エディターの生成は1回だけ行う。props は ref 経由で参照する。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the model in sync when the controlled value changes externally.
+  // ロケールが切り替わったら、Monaco のアクション名(コマンドパレット/右クリック
+  // メニューに表示される Run SQL / Format SQL のラベル)を新しいロケールで再登録する。
+  // addAction は登録済みラベルを差し替える API を持たないため、既存の disposable を
+  // dispose してから同じ id (fable.executeSql / fable.formatSql) で登録し直す
+  // (id が同じなのでキーバインド自体は再登録後も変わらない)。`t` は useT が
+  // ロケールごとに新しい関数参照を返すため、これを依存配列に含めるだけで
+  // ロケール変更を検知できる(`useLocale()` を別途呼ぶ必要がない)。
+  // 初回マウント時にも ready が false→true に変わってこの effect が一度走るが、
+  // その時点では生成 effect が既に最新ラベルで登録済みのため、二重登録を避けるべく
+  // 最初の一回はスキップする。
+  const commandsReattachedOnceRef = useRef(false);
+  useEffect(() => {
+    if (!ready) return;
+    if (!commandsReattachedOnceRef.current) {
+      commandsReattachedOnceRef.current = true;
+      return;
+    }
+    const editor = editorRef.current;
+    const monacoNs = monacoRef.current;
+    if (!editor || !monacoNs) return;
+    commandsRef.current?.dispose();
+    commandsRef.current = attachEditorCommands(
+      monacoNs,
+      editor,
+      {
+        onExecute: (ed) => onExecuteRef.current?.(ed as monaco.editor.IStandaloneCodeEditor),
+      },
+      { run: t('runSqlActionLabel'), format: t('formatSqlActionLabel') },
+    );
+  }, [t, ready]);
+
   // 制御コンポーネントとして、外部から value が変更された場合はモデルへ反映する
   // （エディター自身の入力による変更ではループしないよう、値が違う場合のみ setValue する）。
   useEffect(() => {
@@ -279,7 +321,6 @@ export function SqlEditor({
     }
   }, [value]);
 
-  // Re-derive the Monaco theme when the app theme switches.
   // アプリのテーマ（ライト/ダーク）が切り替わったら、Monaco のテーマを再構築して適用する。
   useEffect(() => {
     if (monacoRef.current) applyFableTheme(monacoRef.current, theme);
@@ -367,7 +408,7 @@ export function SqlEditor({
           自動伸縮への復帰、フォーカス時の上下矢印キー（16px刻み）による調整に対応する。
           ResultGrid の結果表示域ハンドルと同じ見た目/挙動を共有する。 */}
       <VerticalResizeHandle
-        ariaLabel="SQLエディターの高さを調整"
+        ariaLabel={t('sqlEditorHeightAria')}
         valueNow={renderedHeight}
         valueMin={EDITOR_HEIGHT_MIN}
         valueMax={editorHeightMax(typeof window !== 'undefined' ? window.innerHeight : 0)}

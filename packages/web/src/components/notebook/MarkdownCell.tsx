@@ -8,6 +8,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Markdown } from './Markdown';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { notebookMessages } from '../../i18n/messages/notebook';
 
 /**
  * A markdown cell body (P4a §2). Renders the markdown preview;
@@ -41,6 +43,7 @@ export function MarkdownCell({
   onChange: (next: string) => void;
   onCommit: () => void;
 }) {
+  const t = useT(notebookMessages);
   // 編集中は専用のテキストエリアコンポーネントへ切り替える。
   if (editing) {
     return <MarkdownEditor source={source} onChange={onChange} onCommit={onCommit} />;
@@ -50,13 +53,13 @@ export function MarkdownCell({
     <button
       type="button"
       onClick={onStartEdit}
-      aria-label="Edit markdown"
+      aria-label={t('editMarkdownAria')}
       className="block w-full cursor-text bg-surface-raised px-5 py-4 text-left"
     >
       {source.trim() ? (
         <Markdown source={source} />
       ) : (
-        <span className="text-sm text-ink-subtle italic">Empty markdown cell — click to edit</span>
+        <span className="text-sm text-ink-subtle italic">{t('emptyMarkdownPlaceholder')}</span>
       )}
     </button>
   );
@@ -80,6 +83,7 @@ function MarkdownEditor({
   onChange: (next: string) => void;
   onCommit: () => void;
 }) {
+  const t = useT(notebookMessages);
   // draft: 編集中の Markdown ソース（未確定の下書き）。mount 時の source を初期値にする。
   const [draft, setDraft] = useState(source);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -108,7 +112,7 @@ function MarkdownEditor({
       <textarea
         ref={textareaRef}
         value={draft}
-        aria-label="Markdown source"
+        aria-label={t('markdownSourceAria')}
         onChange={(e) => {
           // 入力のたびに draft を更新し、textarea の高さもコンテンツに合わせて再計算する
           // （オートリサイズ: 一旦 auto に戻してから scrollHeight を測ることで縮小にも対応）。
@@ -134,7 +138,7 @@ function MarkdownEditor({
           'w-full resize-none bg-transparent font-mono text-sm leading-relaxed text-ink-base',
           'placeholder:text-ink-subtle focus:outline-none',
         )}
-        placeholder="Write markdown… (Ctrl+Enter to render)"
+        placeholder={t('markdownEditorPlaceholder')}
       />
     </div>
   );
