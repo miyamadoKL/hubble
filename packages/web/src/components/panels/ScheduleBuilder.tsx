@@ -14,23 +14,33 @@ import {
   cronToBuilderState,
   describeCronStateWithTimeZone,
   isCronStateValid,
-  WEEKDAY_LABELS,
+  weekdayLabels,
   type ScheduleCronMode,
   type ScheduleCronState,
 } from './scheduleCron';
 import { useServerTimeZone } from '../../hooks/useConfig';
 import { cn } from '../../utils/cn';
+import { useLocale } from '../../i18n/locale';
+import { useT } from '../../i18n/t';
+import { scheduleBuilderMessages } from '../../i18n/messages/scheduleBuilder';
 
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
 const TEXT_INPUT =
   'w-full rounded-md border border-border-base bg-surface-base px-3 py-2 text-sm text-ink-strong placeholder:text-ink-subtle focus:border-accent focus:outline-none';
 
-const MODE_OPTIONS: { mode: ScheduleCronMode; label: string }[] = [
-  { mode: 'hourly', label: '毎時' },
-  { mode: 'daily', label: '毎日' },
-  { mode: 'weekly', label: '毎週' },
-  { mode: 'monthly', label: '毎月' },
-  { mode: 'custom', label: 'カスタム (cron)' },
+// プリセットモードのラベルキー（プレースホルダーを持たない辞書エントリのみに絞った
+// union）。ここを `keyof typeof scheduleBuilderMessages`（辞書全体）にすると、t() の
+// 呼び出しが「プレースホルダー付きエントリを引く可能性がある」と型推論されてしまい、
+// 補間引数なしの呼び出しが型エラーになる（describeXxx 系エントリの存在のため）。
+type ModeLabelKey = 'modeHourly' | 'modeDaily' | 'modeWeekly' | 'modeMonthly' | 'modeCustom';
+
+/** プリセットモードのキー一覧。表示ラベルは辞書（scheduleBuilderMessages）から引く。 */
+const MODE_KEYS: { mode: ScheduleCronMode; labelKey: ModeLabelKey }[] = [
+  { mode: 'hourly', labelKey: 'modeHourly' },
+  { mode: 'daily', labelKey: 'modeDaily' },
+  { mode: 'weekly', labelKey: 'modeWeekly' },
+  { mode: 'monthly', labelKey: 'modeMonthly' },
+  { mode: 'custom', labelKey: 'modeCustom' },
 ];
 
 interface ScheduleBuilderProps {
@@ -57,6 +67,8 @@ export function ScheduleBuilder({ value, onChange, onValidChange }: ScheduleBuil
   // その基準を明記する。未取得の間は useServerTimeZone が null を返し、
   // describeCronStateWithTimeZone が「サーバー時刻基準」とだけ表示する。
   const serverTimeZone = useServerTimeZone();
+  const { locale } = useLocale();
+  const t = useT(scheduleBuilderMessages);
 
   // 状態が変わるたびに cron 式へ変換して呼び出し元（フォーム側の cron state）へ伝える。
   useEffect(() => {
@@ -76,10 +88,17 @@ export function ScheduleBuilder({ value, onChange, onValidChange }: ScheduleBuil
   };
 
   return (
-    <div className="flex flex-col gap-2.5">
-      {/* モード選択チップ。CRON_PRESETS と同じ見た目のトグルボタン列。 */}
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Schedule frequency">
-        {MODE_OPTIONS.map((opt) => (
+    <div className="flex flex-col gap-2.5" data-testid="schedule-builder">
+      {/* モード選択チップ。CRON_PRESETS と同じ見た目のトグルボタン列。
+          呼び出し元（ScheduleFormModal/AlertFormModal）側に「Schedule」という可視
+          ラベルがあるが、このコンポーネント単体では参照できないため、単独の
+          accessible name として辞書化した aria-label を持たせる。 */}
+      <div
+        className="flex flex-wrap gap-1.5"
+        role="radiogroup"
+        aria-label={t('scheduleFrequencyAria')}
+      >
+        {MODE_KEYS.map((opt) => (
           <button
             key={opt.mode}
             type="button"
@@ -93,22 +112,23 @@ export function ScheduleBuilder({ value, onChange, onValidChange }: ScheduleBuil
                 : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
             )}
           >
-            {opt.label}
+            {t(opt.labelKey)}
           </button>
         ))}
       </div>
 
-      {/* モードごとの入力欄。 */}
+      {/* モードごとの入力欄。可視の <span> と重複する aria-label は持たせず、
+          label 要素の implicit association に委ねる（レビュー指摘）。 */}
       {state.mode === 'hourly' && (
         <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>分（毎時この分に実行）</span>
+          <span className={FIELD_LABEL}>{t('minuteHourlyLabel')}</span>
           <input
             type="number"
             inputMode="numeric"
             min={0}
             max={59}
             value={state.minute}
-            aria-label="Minute"
+            name="minute"
             onChange={(e) =>
               setState((s) => ({ ...s, minute: clamp(Number(e.target.value), 0, 59) }))
             }
@@ -122,9 +142,9 @@ export function ScheduleBuilder({ value, onChange, onValidChange }: ScheduleBuil
       {state.mode === 'weekly' && (
         <div className="flex flex-col gap-2.5">
           <div className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>曜日（複数選択可）</span>
+            <span className={FIELD_LABEL}>{t('weekdayLabel')}</span>
             <div className="flex flex-wrap gap-1.5">
-              {WEEKDAY_LABELS.map((label, day) => (
+              {weekdayLabels(locale).map((label, day) => (
                 <button
                   key={day}
                   type="button"
@@ -143,7 +163,7 @@ export function ScheduleBuilder({ value, onChange, onValidChange }: ScheduleBuil
             </div>
             {state.weekdays.length === 0 && (
               <p role="alert" className="font-mono text-2xs text-error">
-                Select at least one weekday.
+                {t('selectAtLeastOneWeekday')}
               </p>
             )}
           </div>
@@ -154,14 +174,14 @@ export function ScheduleBuilder({ value, onChange, onValidChange }: ScheduleBuil
       {state.mode === 'monthly' && (
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>日（1-31）</span>
+            <span className={FIELD_LABEL}>{t('dayOfMonthLabel')}</span>
             <input
               type="number"
               inputMode="numeric"
               min={1}
               max={31}
               value={state.dayOfMonth}
-              aria-label="Day of month"
+              name="dayOfMonth"
               onChange={(e) =>
                 setState((s) => ({ ...s, dayOfMonth: clamp(Number(e.target.value), 1, 31) }))
               }
@@ -174,13 +194,13 @@ export function ScheduleBuilder({ value, onChange, onValidChange }: ScheduleBuil
 
       {state.mode === 'custom' && (
         <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Cron expression</span>
+          <span className={FIELD_LABEL}>{t('cronExpressionLabel')}</span>
           <input
             value={state.custom}
-            aria-label="Cron expression"
+            name="cron"
             spellCheck={false}
             onChange={(e) => setState((s) => ({ ...s, custom: e.target.value }))}
-            placeholder="minute hour day-of-month month day-of-week"
+            placeholder={t('cronExpressionPlaceholder')}
             className={cn(TEXT_INPUT, 'font-mono')}
           />
         </label>
@@ -189,7 +209,7 @@ export function ScheduleBuilder({ value, onChange, onValidChange }: ScheduleBuil
       {/* 現在の設定の読み下し。常時表示してユーザーが設定内容を確認できるようにする。
           cron を評価する基準タイムゾーン（server local timezone）も常に明記する。 */}
       <p className="font-mono text-2xs text-ink-subtle">
-        {describeCronStateWithTimeZone(state, serverTimeZone)}
+        {describeCronStateWithTimeZone(state, serverTimeZone, locale)}
       </p>
     </div>
   );
@@ -223,30 +243,31 @@ function TimeInputs({
   state: ScheduleCronState;
   setState: (updater: (s: ScheduleCronState) => ScheduleCronState) => void;
 }) {
+  const t = useT(scheduleBuilderMessages);
   return (
     <>
       <label className="flex flex-col gap-1.5">
-        <span className={FIELD_LABEL}>時（0-23）</span>
+        <span className={FIELD_LABEL}>{t('hourLabel')}</span>
         <input
           type="number"
           inputMode="numeric"
           min={0}
           max={23}
           value={state.hour}
-          aria-label="Hour"
+          name="hour"
           onChange={(e) => setState((s) => ({ ...s, hour: clamp(Number(e.target.value), 0, 23) }))}
           className={cn(TEXT_INPUT, 'font-mono')}
         />
       </label>
       <label className="flex flex-col gap-1.5">
-        <span className={FIELD_LABEL}>分（0-59）</span>
+        <span className={FIELD_LABEL}>{t('minuteLabel')}</span>
         <input
           type="number"
           inputMode="numeric"
           min={0}
           max={59}
           value={state.minute}
-          aria-label="Minute"
+          name="minute"
           onChange={(e) =>
             setState((s) => ({ ...s, minute: clamp(Number(e.target.value), 0, 59) }))
           }

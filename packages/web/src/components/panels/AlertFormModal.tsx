@@ -8,6 +8,14 @@ import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { ScheduleBuilder } from './ScheduleBuilder';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
+import { alertMessages } from '../../i18n/messages/alert';
+import { alertSelectorLabel } from './alertFormat';
+
+/** AlertFormModal 内で使う辞書の合成。共通文言 + Alert 固有文言を 1 つの t() で引けるようにする。 */
+const alertFormDict = { ...commonMessages, ...alertMessages } as const;
 
 const FIELD_LABEL = 'text-2xs font-semibold tracking-wide text-ink-muted uppercase';
 const TEXT_INPUT =
@@ -64,6 +72,8 @@ function AlertFormModalBody({
   onCreate,
   onUpdate,
 }: Omit<AlertFormModalProps, 'open'>) {
+  const t = useT(alertFormDict);
+  const { locale } = useLocale();
   const editing = Boolean(alert);
 
   // React Hook Form への置換は見送っている。2026 年 7 月 16 日の PoC で本コンポーネントの
@@ -145,26 +155,26 @@ function AlertFormModalBody({
     <Modal
       open
       onClose={onClose}
-      title={editing ? 'Edit alert' : 'New alert'}
+      title={editing ? t('editAlert') : t('newAlertTitle')}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('cancel')}
           </Button>
           <Button variant="primary" disabled={!canSave} onClick={submit}>
-            {submitting ? 'Saving…' : 'Save'}
+            {submitting ? t('saving') : t('save')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
         <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>Name</span>
+          <span className={FIELD_LABEL}>{t('nameLabel')}</span>
           <input className={TEXT_INPUT} value={name} onChange={(e) => setName(e.target.value)} />
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={FIELD_LABEL}>Saved query</span>
+          <span className={FIELD_LABEL}>{t('savedQueryLabel')}</span>
           <select
             className={TEXT_INPUT}
             value={savedQueryId}
@@ -180,7 +190,7 @@ function AlertFormModalBody({
 
         <div className="grid grid-cols-3 gap-3">
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>Column</span>
+            <span className={FIELD_LABEL}>{t('columnLabel')}</span>
             <input
               className={TEXT_INPUT}
               value={columnName}
@@ -188,7 +198,8 @@ function AlertFormModalBody({
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>Operator</span>
+            {/* op は契約層の演算子記号（>, <, = 等）そのものなので翻訳しない。 */}
+            <span className={FIELD_LABEL}>{t('operatorLabel')}</span>
             <select
               className={TEXT_INPUT}
               value={op}
@@ -202,7 +213,7 @@ function AlertFormModalBody({
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>Threshold</span>
+            <span className={FIELD_LABEL}>{t('thresholdLabel')}</span>
             <input
               className={TEXT_INPUT}
               value={value}
@@ -213,21 +224,23 @@ function AlertFormModalBody({
 
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>Selector</span>
+            <span className={FIELD_LABEL}>{t('selectorLabel')}</span>
             <select
               className={TEXT_INPUT}
               value={selector}
               onChange={(e) => setSelector(e.target.value as typeof selector)}
             >
+              {/* option の value は契約値（first/max/min）をそのまま送信し、
+                  表示ラベルだけ翻訳する（レビュー指摘）。 */}
               {SELECTORS.map((item) => (
                 <option key={item} value={item}>
-                  {item}
+                  {alertSelectorLabel(item, locale)}
                 </option>
               ))}
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className={FIELD_LABEL}>Rearm (seconds)</span>
+            <span className={FIELD_LABEL}>{t('rearmSecondsLabel')}</span>
             <input
               className={TEXT_INPUT}
               type="number"
@@ -240,24 +253,24 @@ function AlertFormModalBody({
 
         {/* Schedule: 毎時/毎日/毎週/毎月のプリセット、または上級者向けの cron 直接入力。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Schedule</span>
+          <span className={FIELD_LABEL}>{t('scheduleLabel')}</span>
           <ScheduleBuilder value={cron} onChange={setCron} onValidChange={setCronValid} />
         </div>
 
         <label className="flex items-center gap-2 text-sm text-ink-strong">
           <input type="checkbox" checked={muted} onChange={(e) => setMuted(e.target.checked)} />
-          Muted (no notifications)
+          {t('mutedCheckbox')}
         </label>
 
         <fieldset className="flex flex-col gap-2 rounded-md border border-border-base p-3">
-          <legend className={cn(FIELD_LABEL, 'px-1')}>Notifications</legend>
+          <legend className={cn(FIELD_LABEL, 'px-1')}>{t('notificationsLegend')}</legend>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={notifySlack}
               onChange={(e) => setNotifySlack(e.target.checked)}
             />
-            Slack (server webhook)
+            {t('slackServerWebhook')}
           </label>
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -265,12 +278,12 @@ function AlertFormModalBody({
               checked={notifyEmail}
               onChange={(e) => setNotifyEmail(e.target.checked)}
             />
-            Email
+            {t('emailLabel')}
           </label>
           {notifyEmail && (
             <input
               className={TEXT_INPUT}
-              placeholder="ops@example.com"
+              placeholder={t('emailPlaceholder')}
               value={notifyEmailTo}
               onChange={(e) => setNotifyEmailTo(e.target.value)}
             />
@@ -281,12 +294,12 @@ function AlertFormModalBody({
               checked={notifyWebhook}
               onChange={(e) => setNotifyWebhook(e.target.checked)}
             />
-            Webhook
+            {t('webhookLabel')}
           </label>
           {notifyWebhook && (
             <input
               className={TEXT_INPUT}
-              placeholder="https://example.com/hook"
+              placeholder={t('webhookPlaceholder')}
               value={webhookUrl}
               onChange={(e) => setWebhookUrl(e.target.value)}
             />

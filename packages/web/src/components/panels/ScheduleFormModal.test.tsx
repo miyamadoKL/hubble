@@ -180,7 +180,7 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         />,
       ),
     );
-    const nameInput = container.querySelector('[aria-label="Schedule name"]') as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     typeInto(nameInput, 'My schedule');
     clickSave('Create schedule');
 
@@ -214,7 +214,7 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
     act(() => radio('Direct SQL').click());
     expect(container.querySelector('[aria-label="SQL statement"]')).not.toBeNull();
 
-    const nameInput = container.querySelector('[aria-label="Schedule name"]') as HTMLInputElement;
+    const nameInput = container.querySelector('[name="name"]') as HTMLInputElement;
     const statementInput = container.querySelector(
       '[aria-label="SQL statement"]',
     ) as HTMLTextAreaElement;
@@ -321,12 +321,8 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
     expect(select).not.toBeNull();
     expect(select.value).toBe('saved-1');
     // 先頭候補の datasourceId/catalog/schema も 3 点セットで prefill されている。
-    expect((container.querySelector('[aria-label="Catalog"]') as HTMLInputElement).value).toBe(
-      'tpch',
-    );
-    expect((container.querySelector('[aria-label="Schema"]') as HTMLInputElement).value).toBe(
-      'tiny',
-    );
+    expect((container.querySelector('[name="catalog"]') as HTMLInputElement).value).toBe('tpch');
+    expect((container.querySelector('[name="schema"]') as HTMLInputElement).value).toBe('tiny');
   });
 
   // 指摘2: saved query を選び直すと、その保存済みクエリの datasourceId/catalog/schema を
@@ -349,9 +345,7 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
       ),
     );
     // 初期選択（先頭の saved-1）の時点では notebook のコンテキストではなく saved query の値。
-    expect((container.querySelector('[aria-label="Catalog"]') as HTMLInputElement).value).toBe(
-      'tpch',
-    );
+    expect((container.querySelector('[name="catalog"]') as HTMLInputElement).value).toBe('tpch');
 
     const select = container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement;
     act(() => {
@@ -363,12 +357,8 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    expect((container.querySelector('[aria-label="Catalog"]') as HTMLInputElement).value).toBe(
-      'sales',
-    );
-    expect((container.querySelector('[aria-label="Schema"]') as HTMLInputElement).value).toBe(
-      'rollup',
-    );
+    expect((container.querySelector('[name="catalog"]') as HTMLInputElement).value).toBe('sales');
+    expect((container.querySelector('[name="schema"]') as HTMLInputElement).value).toBe('rollup');
     const dsTrigger = [...container.querySelectorAll('button')].find(
       (b) => b.textContent === 'MySQL analytics',
     );
@@ -422,9 +412,7 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
     const select = container.querySelector('[aria-label="Saved query"]') as HTMLSelectElement;
     expect(select).not.toBeNull();
     expect(select.value).toBe('saved-1');
-    expect((container.querySelector('[aria-label="Catalog"]') as HTMLInputElement).value).toBe(
-      'tpch',
-    );
+    expect((container.querySelector('[name="catalog"]') as HTMLInputElement).value).toBe('tpch');
   });
 
   // 再レビュー指摘2: datasourceId 未設定の saved query へ選択変更すると、前に選んでいた
@@ -512,7 +500,8 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         />,
       ),
     );
-    expect(container.textContent).toContain('サーバー時刻基準');
+    // ScheduleBuilder は locale 未設定時（LocaleProvider の外側）は英語がデフォルトになる。
+    expect(container.textContent).toContain('server time basis');
 
     vi.mocked(useServerTimeZone).mockReturnValue('Asia/Tokyo');
     act(() =>
@@ -531,6 +520,6 @@ describe('ScheduleFormModal: クエリ入力モードと送信ペイロード', 
         />,
       ),
     );
-    expect(container.textContent).toContain('サーバー時刻: Asia/Tokyo');
+    expect(container.textContent).toContain('server time: Asia/Tokyo');
   });
 });

@@ -34,6 +34,12 @@ import { useUiStore } from '../../stores/uiStore';
 import { useDatasources } from '../../hooks/useDatasources';
 import { DatasourceBadge } from '../common/DatasourceBadge';
 import { cn } from '../../utils/cn';
+import { useT, type TFn } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { scheduleMessages } from '../../i18n/messages/schedule';
+
+/** SchedulesPanel 内で使う辞書の合成。共通文言 + Schedule 固有文言を 1 つの t() で引けるようにする。 */
+const scheduleDict = { ...commonMessages, ...scheduleMessages } as const;
 
 /**
  * Schedules panel (Query Scheduling feature) — the assist-sidebar surface for
@@ -44,26 +50,27 @@ import { cn } from '../../utils/cn';
  * hook) so a `running` run flips to `success` on screen.
  */
 
-/** Relative time, but null/disabled schedules read as a dash. */
 /**
  * 「次回実行予定」を人間可読な文字列に変換するヘルパー。
- * 無効化されているスケジュールは "Disabled"、次回実行時刻が未算出なら "—"、
- * 既に到来していれば "due now"、それ以外は分/時/日単位のおおよその残り時間を返す。
+ * 無効化されているスケジュールは「無効」、次回実行時刻が未算出なら「—」、
+ * 既に到来していれば「まもなく実行」、それ以外は分/時/日単位のおおよその残り時間を返す。
+ *
+ * @param t 呼び出し元コンポーネントの useT で得た翻訳関数（scheduleDict に束縛済み）。
  */
-function nextRunLabel(schedule: Schedule, now: Date): string {
-  if (!schedule.enabled) return 'Disabled';
-  if (!schedule.nextRunAt) return '—';
+function nextRunLabel(schedule: Schedule, now: Date, t: TFn<typeof scheduleDict>): string {
+  if (!schedule.enabled) return t('disabled');
+  if (!schedule.nextRunAt) return t('unknown');
   const then = new Date(schedule.nextRunAt).getTime();
   const diffMs = then - now.getTime();
-  if (Number.isNaN(diffMs)) return '—';
-  if (diffMs <= 0) return 'due now';
+  if (Number.isNaN(diffMs)) return t('unknown');
+  if (diffMs <= 0) return t('dueNow');
   const minutes = Math.round(diffMs / 60000);
-  if (minutes < 1) return 'in <1m';
-  if (minutes < 60) return `in ${minutes}m`;
+  if (minutes < 1) return t('relativeLessThanOneMinute');
+  if (minutes < 60) return t('relativeMinutes', { n: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `in ${hours}h`;
+  if (hours < 24) return t('relativeHours', { n: hours });
   const days = Math.round(hours / 24);
-  return `in ${days}d`;
+  return t('relativeDays', { n: days });
 }
 
 /**
@@ -101,6 +108,7 @@ function ScheduleRow({
   onOpenRuns: () => void;
   running: boolean;
 }) {
+  const t = useT(scheduleDict);
   return (
     <li className="group border-b border-border-subtle px-3 py-2.5">
       <div className="flex items-start gap-2">
@@ -109,7 +117,7 @@ function ScheduleRow({
           type="button"
           role="switch"
           aria-checked={schedule.enabled}
-          aria-label={schedule.enabled ? 'Disable schedule' : 'Enable schedule'}
+          aria-label={schedule.enabled ? t('disableSchedule') : t('enableSchedule')}
           onClick={onToggleEnabled}
           className={cn(
             'mt-0.5 flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors',
@@ -129,37 +137,41 @@ function ScheduleRow({
           type="button"
           onClick={onOpenRuns}
           className="min-w-0 flex-1 text-left"
-          title="View run history"
+          title={t('viewRunHistory')}
         >
           <p className="truncate text-sm font-medium text-ink-strong">{schedule.name}</p>
           <p className="mt-0.5 truncate font-mono text-2xs text-ink-subtle">{schedule.cron}</p>
         </button>
       </div>
 
-      {/* 最終実行の状態バッジ（未実行なら "never run"）と、次回実行予定の相対表示。 */}
+      {/* 最終実行の状態バッジ（未実行なら「未実行」）と、次回実行予定の相対表示。 */}
       <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-9">
         {schedule.lastRun ? (
           <ScheduleStatusBadge status={schedule.lastRun.status} />
         ) : (
-          <span className="font-mono text-2xs text-ink-subtle">never run</span>
+          <span className="font-mono text-2xs text-ink-subtle">{t('neverRun')}</span>
         )}
         <DatasourceBadge datasourceId={schedule.datasourceId} datasources={datasources} />
         <span className="font-mono text-2xs text-ink-subtle">
-          next {nextRunLabel(schedule, now)}
+          {t('nextRunPrefix', { label: nextRunLabel(schedule, now, t) })}
         </span>
       </div>
 
-      {/* 行アクション列。通常は透明で、行ホバーまたはフォーカス時のみ表示される。 */}
-      <div className="mt-2 flex items-center gap-1 pl-9 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+      {/* 行アクション列。通常は透明で、行ホバーまたはフォーカス時のみ表示される。
+          flex-wrap: サイドバーが既定の狭い幅（288px）のとき、日本語ラベル
+          （「今すぐ実行」「実行履歴」「編集」）は英語より幅を取り、1 行に収まらず
+          横スクロールを誘発していた（レビュー指摘の e2e overflow 検査で検出）。
+          折り返しを許容してこれを解消する（本数は変わらないので視覚的な破綻はない）。 */}
+      <div className="mt-2 flex flex-wrap items-center gap-1 pl-9 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         {/* 今すぐ実行。実行中は disabled にしてラベルを "Running…" に切り替える。 */}
         <Button variant="default" size="sm" icon={Play} onClick={onRun} disabled={running}>
-          {running ? 'Running…' : 'Run now'}
+          {running ? t('running') : t('runNow')}
         </Button>
         <Button variant="ghost" size="sm" icon={HistoryIcon} onClick={onOpenRuns}>
-          Runs
+          {t('runs')}
         </Button>
         <Button variant="ghost" size="sm" icon={Pencil} onClick={onEdit}>
-          Edit
+          {t('edit')}
         </Button>
         <Button
           variant="ghost"
@@ -167,7 +179,7 @@ function ScheduleRow({
           icon={Trash2}
           onClick={onDelete}
           className="ml-auto text-ink-subtle hover:text-error"
-          aria-label="Delete schedule"
+          aria-label={t('deleteScheduleAria')}
         />
       </div>
     </li>
@@ -181,6 +193,7 @@ function ScheduleRow({
  *   SQL 文に部分一致するものだけへ一覧を絞り込む。
  */
 export function SchedulesPanel({ search }: { search: string }) {
+  const t = useT(scheduleDict);
   // ノートブックの現在の実行コンテキスト（catalog / schema）。新規作成フォームの初期値に使う。
   const context = useUiStore((s) => s.shellContext);
   const { datasources, selectedId } = useDatasources();
@@ -253,14 +266,14 @@ export function SchedulesPanel({ search }: { search: string }) {
     setRunningId(schedule.id);
     runNow.mutate(schedule.id, {
       onSuccess: () => {
-        toast.info('Run started', `“${schedule.name}” is running.`);
+        toast.info(t('runStartedTitle'), t('runStartedBody', { name: schedule.name }));
         setRunsFor(schedule);
       },
       onError: (error) => {
         if (error instanceof ApiClientError && error.status === 409) {
-          toast.error('Already running', 'This schedule has a run in progress.');
+          toast.error(t('alreadyRunningTitle'), t('alreadyRunningBody'));
         } else {
-          toast.error('Run failed', 'Could not start the run.');
+          toast.error(t('runFailedTitle'), t('runFailedBody'));
         }
       },
       onSettled: () => setRunningId(null),
@@ -271,7 +284,7 @@ export function SchedulesPanel({ search }: { search: string }) {
   const toggleEnabled = (schedule: Schedule) => {
     update.mutate(
       { id: schedule.id, body: { enabled: !schedule.enabled } },
-      { onError: () => toast.error('Update failed', 'Could not reach the server.') },
+      { onError: () => toast.error(t('updateFailed'), t('couldNotReachServer')) },
     );
   };
 
@@ -279,7 +292,7 @@ export function SchedulesPanel({ search }: { search: string }) {
   if (list.isPending) {
     return (
       <div className="flex items-center justify-center gap-2 py-8 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> Loading…
+        <Spinner size={14} /> {t('loading')}
       </div>
     );
   }
@@ -289,8 +302,8 @@ export function SchedulesPanel({ search }: { search: string }) {
     return (
       <EmptyState
         icon={CalendarClock}
-        title="Couldn't load schedules"
-        description="The server didn't respond."
+        title={t('couldntLoadSchedules')}
+        description={t('serverDidntRespond')}
         compact
       />
     );
@@ -307,7 +320,7 @@ export function SchedulesPanel({ search }: { search: string }) {
           onClick={openCreate}
           className="w-full justify-center"
         >
-          New schedule
+          {t('newSchedule')}
         </Button>
       </div>
 
@@ -315,12 +328,8 @@ export function SchedulesPanel({ search }: { search: string }) {
       {filtered.length === 0 ? (
         <EmptyState
           icon={CalendarClock}
-          title={search.trim() ? 'No matches' : 'No schedules'}
-          description={
-            search.trim()
-              ? 'Try a different search term.'
-              : 'Create a schedule to run a query on a cron cadence.'
-          }
+          title={search.trim() ? t('noMatches') : t('noSchedules')}
+          description={search.trim() ? t('tryDifferentSearchTerm') : t('createScheduleHint')}
           compact
         />
       ) : (
@@ -359,7 +368,10 @@ export function SchedulesPanel({ search }: { search: string }) {
           setServerError(null);
           create.mutate(body, {
             onSuccess: (created) => {
-              toast.success('Schedule created', `“${created.name}” is ready.`);
+              toast.success(
+                t('scheduleCreatedTitle'),
+                t('scheduleCreatedBody', { name: created.name }),
+              );
               closeForm();
             },
             onError: (error) => setServerError(formatApiError(error)),
@@ -372,7 +384,10 @@ export function SchedulesPanel({ search }: { search: string }) {
             { id: editing.id, body },
             {
               onSuccess: (updated) => {
-                toast.success('Schedule updated', `“${updated.name}” saved.`);
+                toast.success(
+                  t('scheduleUpdatedTitle'),
+                  t('scheduleUpdatedBody', { name: updated.name }),
+                );
                 closeForm();
               },
               onError: (error) => setServerError(formatApiError(error)),
@@ -389,28 +404,28 @@ export function SchedulesPanel({ search }: { search: string }) {
       <Modal
         open={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
-        title="Delete schedule?"
+        title={t('deleteScheduleTitle')}
         description={
-          pendingDelete ? `“${pendingDelete.name}” will be permanently removed.` : undefined
+          pendingDelete ? t('deleteConfirmDescription', { name: pendingDelete.name }) : undefined
         }
         footer={
           <>
             <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-              Cancel
+              {t('cancel')}
             </Button>
             <Button
               variant="danger"
               onClick={() => {
                 if (pendingDelete) {
                   remove.mutate(pendingDelete.id, {
-                    onSuccess: () => toast.info('Deleted', 'Schedule removed.'),
-                    onError: () => toast.error('Delete failed', 'Could not reach the server.'),
+                    onSuccess: () => toast.info(t('deleted'), t('scheduleRemoved')),
+                    onError: () => toast.error(t('deleteFailed'), t('couldNotReachServer')),
                   });
                 }
                 setPendingDelete(null);
               }}
             >
-              Delete
+              {t('delete')}
             </Button>
           </>
         }

@@ -10,7 +10,7 @@
  * サーバーから VALIDATION_ERROR（Trino のエラーメッセージ + 行/列）が返った場合は
  * serverError として画面下部に表示する。
  */
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import type {
   DatasourceSummary,
   SavedQuery,
@@ -26,6 +26,12 @@ import { checkStatement, clampRetryField, RETRY_BOUNDS, type FormError } from '.
 import { ScheduleBuilder } from './ScheduleBuilder';
 import { cn } from '../../utils/cn';
 import { Dropdown } from '../common/Dropdown';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { scheduleMessages } from '../../i18n/messages/schedule';
+
+/** ScheduleFormModal 内で使う辞書の合成。共通文言 + Schedule 固有文言を 1 つの t() で引けるようにする。 */
+const scheduleFormDict = { ...commonMessages, ...scheduleMessages } as const;
 
 /** クエリの入力方式。saved は既存の保存済みクエリ参照、direct は SQL 直接入力。 */
 type QueryMode = 'saved' | 'direct';
@@ -107,7 +113,14 @@ function ScheduleFormModalBody({
   onCreate,
   onUpdate,
 }: Omit<ScheduleFormModalProps, 'open'>) {
+  const t = useT(scheduleFormDict);
   const editing = Boolean(schedule);
+  // 「Query」見出し（可視ラベル）を Query source radiogroup の accessible name として
+  // 使い回すための id。aria-label に固定の英語文言を複製するのではなく、
+  // aria-labelledby で可視ラベルそのものを参照する（レビュー指摘: aria-label が
+  // 可視ラベルより優先されるため、複製した aria-label だけを翻訳し忘れると
+  // 支援技術利用者だけ英語のままになってしまう）。
+  const queryLabelId = useId();
 
   const [name, setName] = useState(schedule?.name ?? '');
   // クエリの入力方式: saved query 参照が既定（ユーザー指摘 2 の一貫性要件）。
@@ -258,16 +271,16 @@ function ScheduleFormModalBody({
     <Modal
       open
       onClose={onClose}
-      title={editing ? 'Edit schedule' : 'New schedule'}
-      description="Run a SQL statement on a cron schedule. The statement is validated before it runs."
+      title={editing ? t('editSchedule') : t('newScheduleTitle')}
+      description={t('formDescription')}
       className="max-w-2xl"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('cancel')}
           </Button>
           <Button variant="primary" onClick={submit} disabled={!canSave}>
-            {editing ? 'Save changes' : 'Create schedule'}
+            {editing ? t('saveChanges') : t('createSchedule')}
           </Button>
         </>
       }
@@ -275,13 +288,13 @@ function ScheduleFormModalBody({
       <div className="flex max-h-[60vh] flex-col gap-4 overflow-auto pr-1">
         {/* Name */}
         <label className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Name</span>
+          <span className={FIELD_LABEL}>{t('nameLabel')}</span>
           <input
             autoFocus
+            name="name"
             value={name}
-            aria-label="Schedule name"
             onChange={(e) => setName(e.target.value)}
-            placeholder="Nightly nation count"
+            placeholder={t('namePlaceholder')}
             className={TEXT_INPUT}
           />
         </label>
@@ -290,8 +303,13 @@ function ScheduleFormModalBody({
             Notebook で編集して保存したクエリをここから呼び出すのが基本の流れで、
             SQL 直接入力は上級者向けの代替手段として残す。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Query</span>
-          <div className="flex gap-1.5" role="radiogroup" aria-label="Query source">
+          {/* この span の id を radiogroup の aria-labelledby から参照する。
+              aria-label に英語文言を複製すると、翻訳漏れ時に可視ラベルと支援技術向けの
+              名前が食い違う（レビュー指摘）ため、可視ラベル自身を参照させる。 */}
+          <span id={queryLabelId} className={FIELD_LABEL}>
+            {t('queryLabel')}
+          </span>
+          <div className="flex gap-1.5" role="radiogroup" aria-labelledby={queryLabelId}>
             <button
               type="button"
               role="radio"
@@ -309,7 +327,7 @@ function ScheduleFormModalBody({
                   : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
               )}
             >
-              Saved query
+              {t('savedQueryOption')}
             </button>
             <button
               type="button"
@@ -323,15 +341,18 @@ function ScheduleFormModalBody({
                   : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
               )}
             >
-              Direct SQL
+              {t('directSqlOption')}
             </button>
           </div>
 
           {queryMode === 'saved' ? (
             savedQueries.length > 0 ? (
+              // 「Query」見出しは saved/direct 共通の総称であり、この select 専用の
+              // 可視ラベルは無いため、単独の accessible name として aria-label を残す
+              // （辞書化済みの savedQueryOption を再利用: 「保存済みクエリ」/"Saved query"）。
               <select
                 className={TEXT_INPUT}
-                aria-label="Saved query"
+                aria-label={t('savedQueryOption')}
                 value={savedQueryId}
                 onChange={(e) => selectSavedQuery(e.target.value)}
               >
@@ -342,18 +363,17 @@ function ScheduleFormModalBody({
                 ))}
               </select>
             ) : (
-              <p className="font-mono text-2xs text-ink-subtle">
-                No saved queries yet — save one from the notebook, or switch to Direct SQL.
-              </p>
+              <p className="font-mono text-2xs text-ink-subtle">{t('noSavedQueriesYet')}</p>
             )
           ) : (
             <>
+              {/* 同様に専用の可視ラベルが無いため、単独の accessible name を辞書化して使う。 */}
               <textarea
                 value={statement}
-                aria-label="SQL statement"
+                aria-label={t('sqlStatementAria')}
                 spellCheck={false}
                 onChange={(e) => setStatement(e.target.value)}
-                placeholder="SELECT count(*) FROM tpch.tiny.nation"
+                placeholder={t('sqlPlaceholder')}
                 rows={5}
                 className={cn(
                   TEXT_INPUT,
@@ -367,21 +387,22 @@ function ScheduleFormModalBody({
                 <p role="alert" className="flex items-start gap-1.5 font-mono text-2xs text-error">
                   <AlertTriangle size={13} strokeWidth={1.75} className="mt-px shrink-0" />
                   <span>
-                    Syntax error
+                    {t('syntaxError')}
                     {check.line != null && (
                       <span className="text-ink-subtle">
                         {' '}
-                        (line {check.line}
-                        {check.column != null ? `, col ${check.column}` : ''})
+                        (
+                        {check.column != null
+                          ? t('locatedWithColumn', { line: check.line, column: check.column })
+                          : t('locatedLineOnly', { line: check.line })}
+                        )
                       </span>
                     )}
                     : {check.message}
                   </span>
                 </p>
               ) : (
-                <p className="font-mono text-2xs text-ink-subtle">
-                  Checked locally before every run — invalid SQL can't be saved.
-                </p>
+                <p className="font-mono text-2xs text-ink-subtle">{t('checkedLocally')}</p>
               )}
             </>
           )}
@@ -389,8 +410,10 @@ function ScheduleFormModalBody({
 
         {/* Data source */}
         {datasources.length > 0 && (
+          // Dropdown のトリガーはネイティブ <button>（label でラップ可能な要素）なので、
+          // aria-label を複製せず label の可視テキストにアクセシブルネームを委ねる。
           <label className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>Data source</span>
+            <span className={FIELD_LABEL}>{t('dataSourceLabel')}</span>
             <Dropdown
               value={datasourceId}
               options={datasources.map((d) => ({
@@ -398,7 +421,6 @@ function ScheduleFormModalBody({
                 label: d.displayName,
               }))}
               onChange={setDatasourceId}
-              ariaLabel="Schedule data source"
             />
           </label>
         )}
@@ -406,22 +428,22 @@ function ScheduleFormModalBody({
         {/* Catalog / schema */}
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>Catalog</span>
+            <span className={FIELD_LABEL}>{t('catalogLabel')}</span>
             <input
+              name="catalog"
               value={catalog}
-              aria-label="Catalog"
               onChange={(e) => setCatalog(e.target.value)}
-              placeholder="(none)"
+              placeholder={t('noneValuePlaceholder')}
               className={TEXT_INPUT}
             />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className={FIELD_LABEL}>Schema</span>
+            <span className={FIELD_LABEL}>{t('schemaLabel')}</span>
             <input
+              name="schema"
               value={schema}
-              aria-label="Schema"
               onChange={(e) => setSchema(e.target.value)}
-              placeholder="(none)"
+              placeholder={t('noneValuePlaceholder')}
               className={TEXT_INPUT}
             />
           </label>
@@ -430,28 +452,28 @@ function ScheduleFormModalBody({
         {/* Schedule: 毎時/毎日/毎週/毎月のプリセット、または上級者向けの cron 直接入力
             （ユーザー指摘 1: cron 生入力は非エンジニアに使えない）。 */}
         <div className="flex flex-col gap-1.5">
-          <span className={FIELD_LABEL}>Schedule</span>
+          <span className={FIELD_LABEL}>{t('scheduleLabel')}</span>
           <ScheduleBuilder value={cron} onChange={setCron} onValidChange={setCronValid} />
         </div>
 
         {/* Retry */}
         <fieldset className="flex flex-col gap-2">
-          <legend className={FIELD_LABEL}>Retry policy</legend>
+          <legend className={FIELD_LABEL}>{t('retryPolicyLegend')}</legend>
           <div className="grid grid-cols-3 gap-3">
             <RetryNumber
-              label="Max attempts"
+              label={t('maxAttemptsLabel')}
               field="maxAttempts"
               value={retry.maxAttempts}
               onChange={setRetryField}
             />
             <RetryNumber
-              label="Backoff (s)"
+              label={t('backoffSecondsLabel')}
               field="backoffSeconds"
               value={retry.backoffSeconds}
               onChange={setRetryField}
             />
             <RetryNumber
-              label="Multiplier"
+              label={t('multiplierLabel')}
               field="backoffMultiplier"
               value={retry.backoffMultiplier}
               onChange={setRetryField}
@@ -461,16 +483,15 @@ function ScheduleFormModalBody({
 
         {/* Notifications */}
         <fieldset className="flex flex-col gap-2 rounded-md border border-border-subtle px-3 py-2.5">
-          <legend className={FIELD_LABEL}>Failure notifications</legend>
+          <legend className={FIELD_LABEL}>{t('failureNotificationsLegend')}</legend>
           <label className="flex items-center gap-2.5">
             <input
               type="checkbox"
               checked={notifyOnFailure}
-              aria-label="Notify on failure"
               onChange={(e) => setNotifyOnFailure(e.target.checked)}
               className="h-4 w-4 rounded border-border-base text-accent focus:ring-accent"
             />
-            <span className="text-sm text-ink-base">Notify after final failure</span>
+            <span className="text-sm text-ink-base">{t('notifyAfterFinalFailure')}</span>
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="flex items-center gap-2.5 rounded-md bg-surface-sunken px-3 py-2">
@@ -478,37 +499,35 @@ function ScheduleFormModalBody({
                 type="checkbox"
                 checked={notifySlack}
                 disabled={!notifyOnFailure}
-                aria-label="Slack notification"
                 onChange={(e) => setNotifySlack(e.target.checked)}
                 className="h-4 w-4 rounded border-border-base text-accent focus:ring-accent disabled:opacity-50"
               />
-              <span className="text-sm text-ink-base">Slack</span>
+              <span className="text-sm text-ink-base">{t('slackLabel')}</span>
             </label>
             <label className="flex items-center gap-2.5 rounded-md bg-surface-sunken px-3 py-2">
               <input
                 type="checkbox"
                 checked={notifyEmail}
                 disabled={!notifyOnFailure}
-                aria-label="Email notification"
                 onChange={(e) => setNotifyEmail(e.target.checked)}
                 className="h-4 w-4 rounded border-border-base text-accent focus:ring-accent disabled:opacity-50"
               />
-              <span className="text-sm text-ink-base">Email</span>
+              <span className="text-sm text-ink-base">{t('emailLabel')}</span>
             </label>
           </div>
           {notifyOnFailure && notifyEmail && (
             <label className="flex flex-col gap-1.5">
-              <span className={FIELD_LABEL}>Email recipients</span>
+              <span className={FIELD_LABEL}>{t('emailRecipientsLabel')}</span>
               <input
+                name="emailRecipients"
                 value={notifyEmailTo}
-                aria-label="Email recipients"
                 onChange={(e) => setNotifyEmailTo(e.target.value)}
-                placeholder="ops@example.com, data@example.com"
+                placeholder={t('emailRecipientsPlaceholder')}
                 className={cn(TEXT_INPUT, !notificationValid && 'border-error focus:border-error')}
               />
               {!notificationValid && (
                 <p role="alert" className="font-mono text-2xs text-error">
-                  Add at least one email recipient.
+                  {t('addAtLeastOneRecipient')}
                 </p>
               )}
             </label>
@@ -519,16 +538,14 @@ function ScheduleFormModalBody({
         <label className="flex items-center gap-2.5">
           <input
             type="checkbox"
+            name="enabled"
             checked={enabled}
-            aria-label="Enabled"
             onChange={(e) => setEnabled(e.target.checked)}
             className="h-4 w-4 rounded border-border-base text-accent focus:ring-accent"
           />
           <span className="text-sm text-ink-base">
-            Enabled
-            <span className="ml-2 text-2xs text-ink-subtle">
-              (disabled schedules never fire automatically)
-            </span>
+            {t('enabledLabel')}
+            <span className="ml-2 text-2xs text-ink-subtle">{t('disabledScheduleHint')}</span>
           </span>
         </label>
 
@@ -559,6 +576,8 @@ function RetryNumber({
 }) {
   const { min, max } = RETRY_BOUNDS[field];
   return (
+    // 可視の <span>{label}</span> と重複する aria-label は持たせず、label 要素の
+    // implicit association に委ねる（レビュー指摘）。
     <label className="flex flex-col gap-1.5">
       <span className={FIELD_LABEL}>{label}</span>
       <input
@@ -567,7 +586,7 @@ function RetryNumber({
         min={min}
         max={max}
         value={value}
-        aria-label={label}
+        name={field}
         onChange={(e) => onChange(field, e.target.value)}
         className={cn(TEXT_INPUT, 'font-mono')}
       />
@@ -578,11 +597,14 @@ function RetryNumber({
 // サーバーから返った VALIDATION_ERROR を表示するブロック。行/列情報があれば併記し、
 // Trino の生メッセージ（trinoMessage）があれば折り返し可能な pre で追加表示する。
 function ServerErrorBlock({ error }: { error: FormError }) {
-  // line が無ければ位置情報なし。あれば "line X, col Y" 形式の文字列を作る。
+  const t = useT(scheduleFormDict);
+  // line が無ければ位置情報なし。あれば「{line}行目、{column}列目」形式の文字列を作る。
   const located = useMemo(() => {
     if (error.line == null) return null;
-    return `line ${error.line}${error.column != null ? `, col ${error.column}` : ''}`;
-  }, [error.line, error.column]);
+    return error.column != null
+      ? t('locatedWithColumn', { line: error.line, column: error.column })
+      : t('locatedLineOnly', { line: error.line });
+  }, [error.line, error.column, t]);
 
   return (
     <div

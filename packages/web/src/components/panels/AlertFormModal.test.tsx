@@ -112,10 +112,13 @@ describe('AlertFormModal: スケジュールビルダーのモード切替と送
         />,
       ),
     );
-    expect(radio('毎週').getAttribute('aria-checked')).toBe('true');
-    // 月(1)と水(3)が選択済みで表示される。
-    const monday = [...container.querySelectorAll('button')].find((b) => b.textContent === '月');
-    const wednesday = [...container.querySelectorAll('button')].find((b) => b.textContent === '水');
+    // ScheduleBuilder は locale 未設定時（LocaleProvider の外側）は英語がデフォルトになる。
+    expect(radio('Weekly').getAttribute('aria-checked')).toBe('true');
+    // 月(1)と水(3)が選択済みで表示される（英語ロケールでは Mon/Wed 表記）。
+    const monday = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Mon');
+    const wednesday = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Wed',
+    );
     expect(monday!.getAttribute('aria-pressed')).toBe('true');
     expect(wednesday!.getAttribute('aria-pressed')).toBe('true');
   });
@@ -135,8 +138,10 @@ describe('AlertFormModal: スケジュールビルダーのモード切替と送
         />,
       ),
     );
-    act(() => radio('毎時').click());
-    const minuteInput = container.querySelector('[aria-label="Minute"]') as HTMLInputElement;
+    act(() => radio('Hourly').click());
+    // aria-label は可視ラベルとの重複を避けるため削除済み（レビュー指摘）。
+    // input の name 属性で特定する。
+    const minuteInput = container.querySelector('[name="minute"]') as HTMLInputElement;
     typeInto(minuteInput, '20');
 
     const save = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Save');
@@ -160,8 +165,8 @@ describe('AlertFormModal: スケジュールビルダーのモード切替と送
         />,
       ),
     );
-    act(() => radio('カスタム (cron)').click());
-    const cronInput = container.querySelector('[aria-label="Cron expression"]') as HTMLInputElement;
+    act(() => radio('Custom (cron)').click());
+    const cronInput = container.querySelector('[name="cron"]') as HTMLInputElement;
     typeInto(cronInput, '*/15 * * * *');
 
     const save = [...container.querySelectorAll('button')].find((b) => b.textContent === 'Save');

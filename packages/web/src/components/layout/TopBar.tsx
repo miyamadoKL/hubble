@@ -13,6 +13,7 @@ import { ContextSelector } from './ContextSelector';
 import { DatasourceSelector } from './DatasourceSelector';
 import { useDatasources } from '../../hooks/useDatasources';
 import { UserChip } from './UserChip';
+import { LocaleToggle } from './LocaleToggle';
 import { Button } from '../common/Button';
 import { IconButton } from '../common/IconButton';
 import { Kbd } from '../common/Kbd';
@@ -200,6 +201,9 @@ export function TopBar({
               );
             }}
           />
+
+          {/* 日英ロケール切替トグル。 */}
+          <LocaleToggle />
 
           {/* 現在の principal と実効権限を表示する。 */}
           <UserChip />

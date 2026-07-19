@@ -22,20 +22,37 @@ import {
 } from '../../hooks/useAlerts';
 import { listSavedQueries } from '../../api/savedQueries';
 import { cn } from '../../utils/cn';
+import { useT, type TFn } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
+import { alertMessages } from '../../i18n/messages/alert';
+import { alertSelectorLabel, alertStateLabel } from './alertFormat';
 
-function nextEvalLabel(alert: Alert, now: Date): string {
-  if (alert.muted) return 'Muted';
-  if (!alert.nextEvalAt) return '—';
+/** AlertsPanel 内で使う辞書の合成。共通文言 + Alert 固有文言を 1 つの t() で引けるようにする。 */
+const alertDict = { ...commonMessages, ...alertMessages } as const;
+
+/**
+ * 「次回評価予定」を人間可読な文字列に変換するヘルパー。
+ * ミュート中は「ミュート中」、次回評価時刻が未算出なら「—」、既に到来していれば
+ * 「まもなく評価」、それ以外は分/時/日単位のおおよその残り時間を返す。
+ *
+ * @param t 呼び出し元コンポーネントの useT で得た翻訳関数（alertDict に束縛済み）。
+ */
+function nextEvalLabel(alert: Alert, now: Date, t: TFn<typeof alertDict>): string {
+  if (alert.muted) return t('muted');
+  if (!alert.nextEvalAt) return t('unknown');
   const then = new Date(alert.nextEvalAt).getTime();
   const diffMs = then - now.getTime();
-  if (Number.isNaN(diffMs)) return '—';
-  if (diffMs <= 0) return 'due now';
+  if (Number.isNaN(diffMs)) return t('unknown');
+  // common.dueNow は「実行」を指す言い回しなので使わず、Alert の「評価」に合わせた
+  // 専用エントリを使う（レビュー指摘: 意味の異なる訳の使い回しを解消）。
+  if (diffMs <= 0) return t('evalDueNow');
   const minutes = Math.round(diffMs / 60000);
-  if (minutes < 1) return 'in <1m';
-  if (minutes < 60) return `in ${minutes}m`;
+  if (minutes < 1) return t('relativeLessThanOneMinute');
+  if (minutes < 60) return t('relativeMinutes', { n: minutes });
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `in ${hours}h`;
-  return `in ${Math.round(hours / 24)}d`;
+  if (hours < 24) return t('relativeHours', { n: hours });
+  return t('relativeDays', { n: Math.round(hours / 24) });
 }
 
 function AlertRow({
@@ -55,6 +72,8 @@ function AlertRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const t = useT(alertDict);
+  const { locale } = useLocale();
   return (
     <li className="group border-b border-border-subtle px-3 py-2.5">
       <div className="flex items-start gap-2">
@@ -62,7 +81,7 @@ function AlertRow({
           type="button"
           role="switch"
           aria-checked={!alert.muted}
-          aria-label={alert.muted ? 'Unmute alert' : 'Mute alert'}
+          aria-label={alert.muted ? t('unmuteAlert') : t('muteAlert')}
           onClick={onToggleMuted}
           className={cn(
             'mt-0.5 flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors',
@@ -78,8 +97,12 @@ function AlertRow({
         </button>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-ink-strong">{alert.name}</p>
+          {/* columnName / op / value は契約層の値そのもの（列名や演算子記号）であり、
+              翻訳対象の UI 文言ではないためそのまま表示する。selector だけはフォームと
+              同じ表示ラベルに翻訳する（レビュー指摘: 一覧だけ契約値が生表示のままだった）。 */}
           <p className="mt-0.5 truncate font-mono text-2xs text-ink-muted">
-            {alert.columnName} {alert.op} {alert.value} ({alert.selector})
+            {alert.columnName} {alert.op} {alert.value} (
+            {alertSelectorLabel(alert.selector, locale)})
           </p>
         </div>
       </div>
@@ -88,16 +111,20 @@ function AlertRow({
       <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-9">
         <AlertStateBadge state={alert.state} />
         <span className="font-mono text-2xs text-ink-subtle">{alert.cron}</span>
-        <span className="font-mono text-2xs text-ink-subtle">next {nextEvalLabel(alert, now)}</span>
+        <span className="font-mono text-2xs text-ink-subtle">
+          {t('nextEvalPrefix', { label: nextEvalLabel(alert, now, t) })}
+        </span>
       </div>
 
-      {/* 行アクション列。通常は透明で、行ホバーまたはフォーカス時のみ表示される。 */}
-      <div className="mt-2 flex items-center gap-1 pl-9 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+      {/* 行アクション列。通常は透明で、行ホバーまたはフォーカス時のみ表示される。
+          flex-wrap: SchedulesPanel と同じ理由（狭いサイドバー幅での日本語ラベル
+          overflow 対策）で折り返しを許容する。 */}
+      <div className="mt-2 flex flex-wrap items-center gap-1 pl-9 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <Button variant="default" size="sm" icon={Play} onClick={onEval} disabled={evaluating}>
-          {evaluating ? 'Evaluating…' : 'Eval now'}
+          {evaluating ? t('evaluating') : t('evalNow')}
         </Button>
         <Button variant="ghost" size="sm" icon={Pencil} onClick={onEdit}>
-          Edit
+          {t('edit')}
         </Button>
         <Button
           variant="ghost"
@@ -105,7 +132,7 @@ function AlertRow({
           icon={Trash2}
           onClick={onDelete}
           className="ml-auto text-ink-subtle hover:text-error"
-          aria-label="Delete alert"
+          aria-label={t('deleteAlertAria')}
         />
       </div>
     </li>
@@ -114,6 +141,8 @@ function AlertRow({
 
 /** Alert 一覧パネル。 */
 export function AlertsPanel({ search }: { search: string }) {
+  const t = useT(alertDict);
+  const { locale } = useLocale();
   const list = useAlerts(true);
   const savedQueriesQuery = useQuery({
     queryKey: ['saved-queries', 'list'],
@@ -161,7 +190,7 @@ export function AlertsPanel({ search }: { search: string }) {
   const toggleMuted = (alert: Alert) => {
     update.mutate(
       { id: alert.id, body: { ...alertToRequest(alert), muted: !alert.muted } },
-      { onError: () => toast.error('Update failed', 'Could not reach the server.') },
+      { onError: () => toast.error(t('updateFailed'), t('couldNotReachServer')) },
     );
   };
 
@@ -169,18 +198,21 @@ export function AlertsPanel({ search }: { search: string }) {
     setEvaluatingId(alert.id);
     evalNow.mutate(alert.id, {
       onSuccess: (result) => {
+        // result.errorMessage はサーバー由来のエラー本文（スコープ外、翻訳しない）。
+        // result.state（契約値 ok/triggered/unknown）は AlertStateBadge と同じ
+        // alertStateLabel で翻訳する（レビュー指摘: トーストだけ契約値が生表示だった）。
         const msg = result.notified
-          ? 'Notification sent'
+          ? t('notificationSent')
           : result.errorMessage
             ? result.errorMessage
-            : `State: ${result.state}`;
-        toast.info('Evaluation complete', msg);
+            : t('evalStateBody', { state: alertStateLabel(result.state, locale) });
+        toast.info(t('evaluationCompleteTitle'), msg);
       },
       onError: (error) => {
         if (error instanceof ApiClientError && error.status === 409) {
-          toast.error('Already evaluating', 'This alert is being evaluated.');
+          toast.error(t('alreadyEvaluatingTitle'), t('alreadyEvaluatingBody'));
         } else {
-          toast.error('Evaluation failed', 'Could not evaluate the alert.');
+          toast.error(t('evaluationFailedTitle'), t('evaluationFailedBody'));
         }
       },
       onSettled: () => setEvaluatingId(null),
@@ -190,7 +222,7 @@ export function AlertsPanel({ search }: { search: string }) {
   if (list.isPending) {
     return (
       <div className="flex items-center justify-center gap-2 py-8 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> Loading…
+        <Spinner size={14} /> {t('loading')}
       </div>
     );
   }
@@ -199,8 +231,8 @@ export function AlertsPanel({ search }: { search: string }) {
     return (
       <EmptyState
         icon={Bell}
-        title="Couldn't load alerts"
-        description="The server didn't respond."
+        title={t('couldntLoadAlerts')}
+        description={t('serverDidntRespond')}
         compact
       />
     );
@@ -219,20 +251,20 @@ export function AlertsPanel({ search }: { search: string }) {
           className="w-full justify-center"
           disabled={savedQueries.length === 0}
         >
-          New alert
+          {t('newAlert')}
         </Button>
       </div>
 
       {filtered.length === 0 ? (
         <EmptyState
           icon={Bell}
-          title={search.trim() ? 'No matches' : 'No alerts'}
+          title={search.trim() ? t('noMatches') : t('noAlerts')}
           description={
             search.trim()
-              ? 'Try a different search term.'
+              ? t('tryDifferentSearchTerm')
               : savedQueries.length === 0
-                ? 'Save a query first, then create an alert.'
-                : 'Create an alert to monitor query results.'
+                ? t('saveQueryFirstHint')
+                : t('createAlertHint')
           }
           compact
         />
@@ -262,10 +294,10 @@ export function AlertsPanel({ search }: { search: string }) {
         onCreate={(body) => {
           create.mutate(body, {
             onSuccess: (created) => {
-              toast.success('Alert created', `“${created.name}” is ready.`);
+              toast.success(t('alertCreatedTitle'), t('alertCreatedBody', { name: created.name }));
               closeForm();
             },
-            onError: () => toast.error('Create failed', 'Could not reach the server.'),
+            onError: () => toast.error(t('createFailedTitle'), t('couldNotReachServer')),
           });
         }}
         onUpdate={(body) => {
@@ -274,10 +306,13 @@ export function AlertsPanel({ search }: { search: string }) {
             { id: editing.id, body },
             {
               onSuccess: (updated) => {
-                toast.success('Alert updated', `“${updated.name}” saved.`);
+                toast.success(
+                  t('alertUpdatedTitle'),
+                  t('alertUpdatedBody', { name: updated.name }),
+                );
                 closeForm();
               },
-              onError: () => toast.error('Update failed', 'Could not reach the server.'),
+              onError: () => toast.error(t('updateFailed'), t('couldNotReachServer')),
             },
           );
         }}
@@ -286,28 +321,28 @@ export function AlertsPanel({ search }: { search: string }) {
       <Modal
         open={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
-        title="Delete alert?"
+        title={t('deleteAlertTitle')}
         description={
-          pendingDelete ? `“${pendingDelete.name}” will be permanently removed.` : undefined
+          pendingDelete ? t('deleteConfirmDescription', { name: pendingDelete.name }) : undefined
         }
         footer={
           <>
             <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-              Cancel
+              {t('cancel')}
             </Button>
             <Button
               variant="danger"
               onClick={() => {
                 if (pendingDelete) {
                   remove.mutate(pendingDelete.id, {
-                    onSuccess: () => toast.info('Deleted', 'Alert removed.'),
-                    onError: () => toast.error('Delete failed', 'Could not reach the server.'),
+                    onSuccess: () => toast.info(t('deleted'), t('alertRemoved')),
+                    onError: () => toast.error(t('deleteFailed'), t('couldNotReachServer')),
                   });
                 }
                 setPendingDelete(null);
               }}
             >
-              Delete
+              {t('delete')}
             </Button>
           </>
         }

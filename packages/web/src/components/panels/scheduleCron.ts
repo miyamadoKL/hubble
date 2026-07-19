@@ -1,4 +1,7 @@
 import { cronExpression } from '@hubble/contracts';
+import { t } from '../../i18n/t';
+import { scheduleBuilderMessages } from '../../i18n/messages/scheduleBuilder';
+import type { Locale } from '../../i18n/locale';
 
 /**
  * Schedule / Alert 共通のスケジュールビルダー（ScheduleBuilder.tsx）が使う、
@@ -39,8 +42,21 @@ export interface ScheduleCronState {
   custom: string;
 }
 
-/** 曜日ラベル（cron の 0=日曜始まり）。 */
-export const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'] as const;
+/**
+ * 曜日ラベル（cron の 0=日曜始まり）をロケール別に返す。
+ * `describeCronState` の読み下しと `ScheduleBuilder.tsx` の曜日選択ボタンの両方で使う。
+ */
+export function weekdayLabels(locale: Locale): readonly string[] {
+  return [
+    t(scheduleBuilderMessages, 'weekdaySun', locale),
+    t(scheduleBuilderMessages, 'weekdayMon', locale),
+    t(scheduleBuilderMessages, 'weekdayTue', locale),
+    t(scheduleBuilderMessages, 'weekdayWed', locale),
+    t(scheduleBuilderMessages, 'weekdayThu', locale),
+    t(scheduleBuilderMessages, 'weekdayFri', locale),
+    t(scheduleBuilderMessages, 'weekdaySat', locale),
+  ];
+}
 
 /** 新規作成フォームの既定値（毎日 9:00）。 */
 export const DEFAULT_CRON_STATE: ScheduleCronState = {
@@ -170,33 +186,52 @@ export function isCronStateValid(state: ScheduleCronState): boolean {
 }
 
 /**
- * 現在のビルダー状態を日本語の読み下し文にする（モーダル内に常時表示する説明文）。
- * 曜日の並列は japanese-tech-writing 規範に従い、中黒ではなく
- * 2 項は「と」、3 項以上は読点「、」でつなぐ。
+ * 曜日ラベルの配列を自然な文にする。2 項は「と」/"and"、3 項以上は日本語なら読点
+ * 「、」、英語ならカンマ区切り + 最後だけ "and" でつなぐ（japanese-tech-writing 規範:
+ * 日本語の並列で中黒は使わない）。
  */
-export function describeCronState(state: ScheduleCronState): string {
+function joinWeekdayLabels(labels: readonly string[], locale: Locale): string {
+  if (labels.length <= 1) return labels[0] ?? '';
+  if (labels.length === 2) {
+    return t(scheduleBuilderMessages, 'weekdayJoinTwo', locale, { a: labels[0]!, b: labels[1]! });
+  }
+  if (locale === 'ja') return labels.join('、');
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
+
+/**
+ * 現在のビルダー状態を読み下し文にする（モーダル内に常時表示する説明文）。
+ * `locale` 省略時は 'ja'（既存呼び出し元との後方互換用のデフォルト値。UI から呼ぶ場合は
+ * `useLocale()` で得た現在のロケールを明示的に渡す）。
+ */
+export function describeCronState(state: ScheduleCronState, locale: Locale = 'ja'): string {
   switch (state.mode) {
     case 'hourly':
-      return `毎時 ${state.minute} 分に実行`;
+      return t(scheduleBuilderMessages, 'describeHourly', locale, { minute: state.minute });
     case 'daily':
-      return `毎日 ${formatTime(state.hour, state.minute)} に実行`;
+      return t(scheduleBuilderMessages, 'describeDaily', locale, {
+        time: formatTime(state.hour, state.minute),
+      });
     case 'weekly': {
       const days = [...new Set(state.weekdays)].sort((a, b) => a - b);
-      if (days.length === 0) return '曜日が選択されていません';
-      const labels = days.map((d) => WEEKDAY_LABELS[d]);
-      const joined =
-        labels.length === 1
-          ? labels[0]
-          : labels.length === 2
-            ? `${labels[0]}と${labels[1]}`
-            : labels.join('、');
-      return `毎週 ${joined}の ${formatTime(state.hour, state.minute)} に実行`;
+      if (days.length === 0) return t(scheduleBuilderMessages, 'describeWeeklyEmpty', locale);
+      const allLabels = weekdayLabels(locale);
+      const labels = days.map((d) => allLabels[d]!);
+      return t(scheduleBuilderMessages, 'describeWeekly', locale, {
+        days: joinWeekdayLabels(labels, locale),
+        time: formatTime(state.hour, state.minute),
+      });
     }
     case 'monthly':
-      return `毎月 ${state.dayOfMonth} 日の ${formatTime(state.hour, state.minute)} に実行`;
+      return t(scheduleBuilderMessages, 'describeMonthly', locale, {
+        day: state.dayOfMonth,
+        time: formatTime(state.hour, state.minute),
+      });
     case 'custom':
     default:
-      return `カスタム cron 式で実行: ${state.custom || '(未入力)'}`;
+      return t(scheduleBuilderMessages, 'describeCustom', locale, {
+        cron: state.custom || t(scheduleBuilderMessages, 'describeCustomEmpty', locale),
+      });
   }
 }
 
@@ -211,7 +246,10 @@ export function describeCronState(state: ScheduleCronState): string {
 export function describeCronStateWithTimeZone(
   state: ScheduleCronState,
   timeZone: string | null,
+  locale: Locale = 'ja',
 ): string {
-  const suffix = timeZone ? `（サーバー時刻: ${timeZone}）` : '（サーバー時刻基準）';
-  return `${describeCronState(state)}${suffix}`;
+  const suffix = timeZone
+    ? t(scheduleBuilderMessages, 'timeZoneWithName', locale, { tz: timeZone })
+    : t(scheduleBuilderMessages, 'timeZoneUnknown', locale);
+  return `${describeCronState(state, locale)}${suffix}`;
 }
