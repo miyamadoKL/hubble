@@ -5,6 +5,9 @@
 import type { MyPermission } from '@hubble/contracts';
 import { cn } from '../../utils/cn';
 import { isSharedWithMe, sharePermissionLabel } from '../../utils/documentShare';
+import { useT } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { shareMessages } from '../../i18n/messages/share';
 
 /**
  * 共有ドキュメント向けのバッジ（"shared by alice" + view/edit）。
@@ -22,6 +25,8 @@ export function DocumentShareBadge({
   myPermission?: MyPermission;
   className?: string;
 }) {
+  const t = useT(shareMessages);
+  const { locale } = useLocale();
   // permission が欠落した保存済み応答は共有表示を推測せず、そのまま隠す。
   if (myPermission === undefined || !isSharedWithMe(myPermission) || !owner) return null;
   const permission = myPermission === 'edit' ? 'edit' : 'view';
@@ -32,7 +37,7 @@ export function DocumentShareBadge({
         className,
       )}
     >
-      shared by {owner} ({sharePermissionLabel(permission)})
+      {t('sharedByLabel', { owner, permission: sharePermissionLabel(permission, locale) })}
     </span>
   );
 }

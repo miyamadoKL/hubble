@@ -8,6 +8,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { useT, type TFn } from '../../i18n/t';
+import { layoutMessages } from '../../i18n/messages/layout';
 
 /** 1つのノートブックタブが表示に必要とする最小限の情報。 */
 export interface NotebookTab {
@@ -50,6 +52,7 @@ export function NotebookTabs({
   onRename: (id: string, name: string) => void;
   onNew: () => void;
 }) {
+  const t = useT(layoutMessages);
   return (
     <div className="flex items-stretch gap-1">
       {/* 開いているノートブックの数だけタブを描画する。 */}
@@ -66,7 +69,7 @@ export function NotebookTabs({
       {/* 新規ノートブックを作成するための「+」ボタン。 */}
       <button
         type="button"
-        aria-label="New notebook"
+        aria-label={t('newNotebook')}
         onClick={onNew}
         className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-sunken hover:text-ink-strong"
       >
@@ -101,6 +104,7 @@ function TabItem({
   onClose: () => void;
   onRename: (name: string) => void;
 }) {
+  const t = useT(layoutMessages);
   // インライン編集中かどうか。true の間は input を表示する。
   const [editing, setEditing] = useState(false);
   // インライン編集中の入力値（確定するまでは tab.name とは別に保持する）。
@@ -135,14 +139,14 @@ function TabItem({
       {/* 未保存の変更があるノートブックにだけ表示するドットインジケーター。 */}
       {tab.dirty && (
         <span
-          aria-label="Unsaved changes"
+          aria-label={t('unsavedChanges')}
           className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
         />
       )}
       {tab.localPersistenceError && (
         <span
-          aria-label="Browser recovery unavailable"
-          title="This edit could not be stored in browser recovery storage. Save before reloading."
+          aria-label={t('browserRecoveryUnavailable')}
+          title={t('browserRecoveryUnavailableTitle')}
           className="shrink-0 text-xs font-bold text-danger"
         >
           !
@@ -150,8 +154,8 @@ function TabItem({
       )}
       {tab.conflict && (
         <span
-          aria-label="Notebook save conflict"
-          title="The server version changed. Use Save as to preserve this local version, then reload the original notebook."
+          aria-label={t('saveConflict')}
+          title={t('saveConflictTitle')}
           className="shrink-0 text-xs font-bold text-warning"
         >
           !
@@ -162,7 +166,7 @@ function TabItem({
         <input
           ref={inputRef}
           value={draft}
-          aria-label="Rename notebook"
+          aria-label={t('renameNotebookAria')}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -183,7 +187,7 @@ function TabItem({
             setEditing(true);
           }}
           className="max-w-[10rem] truncate text-sm font-medium"
-          title={`${tab.name}${tab.dirty ? ' • unsaved' : ''}${tab.conflict ? ' • save conflict' : ''}${tab.localPersistenceError ? ' • browser recovery unavailable' : ''} (double-click to rename)`}
+          title={tabTitle(tab, t)}
         >
           {tab.name}
         </button>
@@ -191,7 +195,7 @@ function TabItem({
       {/* タブを閉じるボタン。未保存の場合の確認ダイアログ表示は呼び出し元（TopBar）の責務。 */}
       <button
         type="button"
-        aria-label={`Close ${tab.name}`}
+        aria-label={t('closeTabAria', { name: tab.name })}
         onClick={onClose}
         className={cn(
           'rounded-sm p-0.5 text-ink-subtle transition-opacity hover:text-ink-strong',
@@ -204,4 +208,20 @@ function TabItem({
       {active && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent" />}
     </div>
   );
+}
+
+/**
+ * タブのネイティブ title 属性（ホバー時のブラウザーツールチップ）用の文字列を組み立てる。
+ * ノートブック名の後ろに、未保存/保存の競合/ブラウザー復旧不可の各状態を "• " 区切りで
+ * 連結し、最後に「ダブルクリックで名前変更」のヒントを付ける。区切り記号の "•"（U+2022）は
+ * 日本語の並列を表す中黒（U+30FB、使用禁止）とは異なる記号で、装飾的な区切りとして
+ * 日英どちらでもそのまま使う。
+ */
+function tabTitle(tab: NotebookTab, t: TFn<typeof layoutMessages>): string {
+  const suffixes: string[] = [];
+  if (tab.dirty) suffixes.push(t('tabUnsavedSuffix'));
+  if (tab.conflict) suffixes.push(t('tabSaveConflictSuffix'));
+  if (tab.localPersistenceError) suffixes.push(t('tabRecoveryUnavailableSuffix'));
+  const statusPart = suffixes.map((s) => ` • ${s}`).join('');
+  return `${tab.name}${statusPart} ${t('tabRenameHint')}`;
 }

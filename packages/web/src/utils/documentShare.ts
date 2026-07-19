@@ -3,6 +3,9 @@
  * 所有者判定、共有バッジ用ラベル、共有先の重複検出を提供する。
  */
 import type { MyPermission, SharePermission, ShareSubjectType } from '@hubble/contracts';
+import { t } from '../i18n/t';
+import { shareMessages } from '../i18n/messages/share';
+import type { Locale } from '../i18n/locale';
 
 /** 共有一覧編集時の 1 行分（createdAt を除く PUT 用入力）。 */
 export interface ShareDraftRow {
@@ -26,10 +29,15 @@ export function isSharedWithMe(myPermission?: MyPermission): boolean {
 }
 
 /**
- * 共有 permission の UI 表示ラベルを返す。
+ * 共有 permission の UI 表示ラベルを返す（alertFormat.ts の locale 引数パターンに揃える）。
+ * `locale` 省略時は 'en'（既存呼び出し元との後方互換用のデフォルト値）。
  */
-export function sharePermissionLabel(permission: SharePermission): string {
-  return permission === 'edit' ? 'Can edit' : 'Can view';
+export function sharePermissionLabel(permission: SharePermission, locale: Locale = 'en'): string {
+  return t(
+    shareMessages,
+    permission === 'edit' ? 'sharePermissionEdit' : 'sharePermissionView',
+    locale,
+  );
 }
 
 /**

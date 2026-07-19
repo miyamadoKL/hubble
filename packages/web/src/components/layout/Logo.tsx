@@ -4,6 +4,8 @@
  * 見た目専用コンポーネントで、状態やロジックは持たない。
  */
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { layoutMessages } from '../../i18n/messages/layout';
 
 /**
  * "Hubble" のテキストロゴを描画する。
@@ -14,6 +16,7 @@ import { cn } from '../../utils/cn';
  * @param className - ルート要素に追加する Tailwind クラス（配置調整用）。
  */
 export function Logo({ className }: { className?: string }) {
+  const t = useT(layoutMessages);
   return (
     <div className={cn('flex items-baseline gap-2 select-none', className)}>
       {/* ワードマーク本体。2文字目の "b" だけアクセントカラーにして視線を引く。 */}
@@ -24,7 +27,7 @@ export function Logo({ className }: { className?: string }) {
       <span className="h-3.5 w-px bg-border-strong" aria-hidden />
       {/* サブラベル。プロダクトの種類（Workbench）を示す。 */}
       <span className="text-2xs font-medium tracking-[0.18em] text-ink-subtle uppercase">
-        Workbench
+        {t('workbenchLabel')}
       </span>
     </div>
   );

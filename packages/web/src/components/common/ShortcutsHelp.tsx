@@ -5,36 +5,65 @@
  */
 import { Modal } from './Modal';
 import { Kbd } from './Kbd';
-import { SHORTCUTS } from '../../hooks/shortcuts';
+import { SHORTCUTS, type ShortcutId } from '../../hooks/shortcuts';
+import { useT } from '../../i18n/t';
+import { layoutMessages } from '../../i18n/messages/layout';
+
+// ShortcutsHelp が実際に使う辞書キーだけのリテラル union。`keyof typeof
+// layoutMessages`（辞書全体のキー）のままだと、`{name}` 等のプレースホルダーを
+// 持つ他エントリの型が union に混ざり、`t()` の引数要求が不定になって
+// typecheck が通らないため、プレースホルダーを持たないこれらのキーだけに絞る
+// （Sidebar.tsx の SidebarLabelKey と同じ理由）。
+type ShortcutLabelKey =
+  | 'shortcutRunActiveCell'
+  | 'shortcutSaveDocument'
+  | 'shortcutFormatSql'
+  | 'shortcutFormatSqlAlt'
+  | 'shortcutCommandPalette'
+  | 'shortcutToggleTheme'
+  | 'shortcutTogglePresentation';
+
+// SHORTCUTS レジストリ（hooks/shortcuts.ts）の各行は英語の `label` を1つの正として
+// 持つが、翻訳辞書は layout.ts 側に置く方針のため、行の安定 ID（`ShortcutSpec.id`）で
+// 辞書キーへマッピングする。`Record<ShortcutId, ...>` により、SHORTCUTS へ要素を
+// 追加したのに対応キーを追加し忘れる、または削除したのに対応キーが残ったままになる、
+// のどちらも typecheck の時点で検出できる（レビュー指摘: 配列順インデックスでの対応は
+// 並べ替えや追加を検出できなかったため、安定 ID ベースへ変更した）。
+const SHORTCUT_LABEL_KEYS: Record<ShortcutId, ShortcutLabelKey> = {
+  run: 'shortcutRunActiveCell',
+  save: 'shortcutSaveDocument',
+  formatPrimary: 'shortcutFormatSql',
+  formatAlternate: 'shortcutFormatSqlAlt',
+  palette: 'shortcutCommandPalette',
+  theme: 'shortcutToggleTheme',
+  presentation: 'shortcutTogglePresentation',
+};
 
 /**
  * コマンドパレットから開かれる「キーボードショートカット」参照用モーダル。
  * ショートカットの定義（キーとラベル）を `SHORTCUTS` レジストリ一箇所に
  * 集約しているため、ここでの表示、コマンドパレット、実際のキー入力
- * ディスパッチャの間でショートカット情報がずれることがない。
+ * ディスパッチャの間でショートカット情報がずれることがない
+ * （表示文言の翻訳キーだけは `SHORTCUT_LABEL_KEYS` で行の安定 ID に対応付ける）。
  *
  * @param open - モーダルの開閉状態。true のとき表示される。
  * @param onClose - モーダルを閉じる際に呼び出されるコールバック。
  */
 export function ShortcutsHelp({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT(layoutMessages);
   return (
-    <Modal open={open} onClose={onClose} title="Keyboard shortcuts" className="max-w-md">
+    <Modal open={open} onClose={onClose} title={t('keyboardShortcutsTitle')} className="max-w-md">
       {/* SHORTCUTS レジストリの内容をそのまま一覧化し、各行にラベルとキー表示 (Kbd) を並べる */}
       <ul className="divide-y divide-border-subtle">
         {SHORTCUTS.map((s) => (
-          <li
-            key={`${s.action}-${s.keys.join('+')}`}
-            className="flex items-center justify-between gap-4 py-2"
-          >
-            <span className="text-sm text-ink-base">{s.label}</span>
+          <li key={s.id} className="flex items-center justify-between gap-4 py-2">
+            <span className="text-sm text-ink-base">{t(SHORTCUT_LABEL_KEYS[s.id])}</span>
             <Kbd keys={s.keys} />
           </li>
         ))}
       </ul>
       {/* macOS でのキー表記に関する補足説明と、エディタ内でも同じショートカットが使える旨の注記 */}
-      <p className="mt-3 text-2xs text-ink-subtle">
-        On macOS, ⌘ stands in for Ctrl. Run, format and save also work from inside the editor.
-      </p>
+      <p className="mt-3 text-2xs text-ink-subtle">{t('macShortcutNote')}</p>
     </Modal>
   );
 }

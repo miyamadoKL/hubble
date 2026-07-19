@@ -9,6 +9,9 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useMe, isUnauthenticated } from '../../hooks/useMe';
 import { activatePrincipalStorage } from '../../storage/principalStorage';
 import { AuthRequired } from './AuthRequired';
+import { useT } from '../../i18n/t';
+import { authMessages } from '../../i18n/messages/auth';
+import { useHydrateLocaleFromPrincipalStorage } from '../../i18n/locale';
 
 /** identity が同じ page lifetime 内で変わった場合に全 client state を破棄する。 */
 function reloadForIdentityChange(): void {
@@ -41,6 +44,7 @@ interface ReadyIdentity {
  * @param onIdentityChange 同じ page 内で認証主体が変わった場合の再読み込み処理。
  */
 export function AuthGate({ children, onIdentityChange = reloadForIdentityChange }: AuthGateProps) {
+  const t = useT(authMessages);
   const { data, error, refetch } = useMe();
   const [readyIdentity, setReadyIdentity] = useState<ReadyIdentity | null>(null);
   const [failedPrincipal, setFailedPrincipal] = useState<string | null>(null);
@@ -75,6 +79,17 @@ export function AuthGate({ children, onIdentityChange = reloadForIdentityChange 
     };
   }, [activationAttempt, authMode, onIdentityChange, principal, storageScope]);
 
+  // principal storage の有効化が完了したかどうか（子要素を描画する条件と同じ判定）。
+  // LocaleProvider は AuthGate より外側にマウントされるため、その初期化
+  // （detectInitialLocale）は有効化前に走り保存済みロケールを読めない。
+  // 有効化完了のこのタイミングで一度だけ、保存済みロケールを読み直して反映する
+  // （レビュー指摘対応、i18n/locale.tsx 冒頭コメント参照）。
+  const identityReady =
+    Boolean(data) &&
+    readyIdentity?.principal === data?.user &&
+    readyIdentity?.scope === data?.storageScope;
+  useHydrateLocaleFromPrincipalStorage(identityReady);
+
   // エラーが「未認証」を示す場合は、アプリ本体の代わりに認証要求画面を表示する。
   if (isUnauthenticated(error)) return <AuthRequired />;
 
@@ -85,9 +100,7 @@ export function AuthGate({ children, onIdentityChange = reloadForIdentityChange 
   ) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface-base text-sm text-ink-muted">
-        <span>
-          {activationError || error ? 'Unable to verify your identity.' : 'Verifying identity…'}
-        </span>
+        <span>{activationError || error ? t('verifyIdentityFailed') : t('verifyingIdentity')}</span>
         {(activationError || error) && (
           <button
             type="button"
@@ -97,7 +110,7 @@ export function AuthGate({ children, onIdentityChange = reloadForIdentityChange 
               else void refetch();
             }}
           >
-            Retry
+            {t('retryButton')}
           </button>
         )}
       </div>

@@ -42,10 +42,21 @@ export interface KeyChord {
 }
 
 /**
+ * ショートカット一覧の各行を一意に識別する安定 ID。`action`（ディスパッチ判定用）は
+ * 'format' のように複数行で重複しうるため、翻訳キー対応表（ShortcutsHelp.tsx の
+ * `SHORTCUT_LABEL_KEYS`）のキーには使えない。この ID を代わりに使うことで、
+ * `SHORTCUTS` 配列の並べ替えや要素追加があっても対応関係がインデックス位置に
+ * 依存せず、対応漏れが型エラーとして検出される（レビュー指摘対応）。
+ */
+export type ShortcutId = (typeof SHORTCUTS)[number]['id'];
+
+/**
  * ショートカット一覧（ヘルプモーダル）の1行分の情報と、レジストリとしてのエントリを兼ねる型。
- * action はディスパッチ判定に使うキー、label は説明文、keys は画面表示用のキー表記。
+ * id は行の安定識別子、action はディスパッチ判定に使うキー、label は説明文、
+ * keys は画面表示用のキー表記。
  */
 export interface ShortcutSpec {
+  id: string;
   action: ShortcutAction;
   label: string;
   /** 画面に表示するキー表記（OS 非依存の表現。⌘ は Ctrl/Cmd として表示する）。 */
@@ -56,15 +67,33 @@ export interface ShortcutSpec {
  * ショートカットの正規リスト（プレゼンテーションモードの拡張を含む）。
  * ヘルプモーダルの表示内容そのものであり、実装が変わった場合はここも合わせて更新する必要がある。
  */
-export const SHORTCUTS: ShortcutSpec[] = [
-  { action: 'run', label: 'Run the active cell', keys: ['Ctrl', '↵'] },
-  { action: 'save', label: 'Save current document', keys: ['Ctrl', 'S'] },
-  { action: 'format', label: 'Format SQL', keys: ['Ctrl', 'I'] },
-  { action: 'format', label: 'Format SQL (alternate)', keys: ['Ctrl', 'Shift', 'F'] },
-  { action: 'palette', label: 'Command palette', keys: ['Ctrl', 'K'] },
-  { action: 'theme', label: 'Toggle light / dark theme', keys: ['Ctrl', 'Alt', 'T'] },
-  { action: 'presentation', label: 'Toggle presentation mode', keys: ['Ctrl', 'Shift', 'P'] },
-];
+export const SHORTCUTS = [
+  { id: 'run', action: 'run', label: 'Run the active cell', keys: ['Ctrl', '↵'] },
+  { id: 'save', action: 'save', label: 'Save current document', keys: ['Ctrl', 'S'] },
+  { id: 'formatPrimary', action: 'format', label: 'Format SQL', keys: ['Ctrl', 'I'] },
+  {
+    id: 'formatAlternate',
+    action: 'format',
+    label: 'Format SQL (alternate)',
+    keys: ['Ctrl', 'Shift', 'F'],
+  },
+  { id: 'palette', action: 'palette', label: 'Command palette', keys: ['Ctrl', 'K'] },
+  {
+    id: 'theme',
+    action: 'theme',
+    label: 'Toggle light / dark theme',
+    keys: ['Ctrl', 'Alt', 'T'],
+  },
+  {
+    id: 'presentation',
+    action: 'presentation',
+    label: 'Toggle presentation mode',
+    keys: ['Ctrl', 'Shift', 'P'],
+  },
+  // as const で id をリテラル型に保ち、ShortcutId を配列から導出する。これにより
+  // 行の削除もヘルプ側の Record<ShortcutId, ...> の余剰キーとして typecheck で
+  // 検出される (手書き union だと配列から行だけ消しても検出できない)。
+] as const satisfies readonly ShortcutSpec[];
 
 // isMod: Ctrl または Cmd（Mac の metaKey）のどちらかが押されているかを判定するヘルパー。
 // ほとんどのショートカットは Ctrl/Cmd をプラットフォーム非依存の「修飾キー」として扱う。
