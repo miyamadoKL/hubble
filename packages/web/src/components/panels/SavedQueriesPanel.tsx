@@ -33,14 +33,12 @@ import { useDatasources } from '../../hooks/useDatasources';
 import { DatasourceBadge } from '../common/DatasourceBadge';
 import { toastDatasourceMissing, tryApplyExecutionContext } from '../../utils/applyDatasource';
 import { Share2 } from 'lucide-react';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { panelsMessages } from '../../i18n/messages/panels';
 
-/**
- * Saved queries panel (一覧 / 検索 / お気に入りトグル / 削除 /
- * 詳細 / 挿入). Self-contained: fetches its own list (debounced search), and
- * mutates favorites / deletions through the saved-query API, invalidating the
- * list on success. Insert drops the statement at the caret; "New cell" appends a
- * fresh SQL cell.
- */
+/** SavedQueriesPanel 内で使う辞書の合成。共通文言 + パネル固有文言を 1 つの t() で引けるようにする。 */
+const savedQueriesDict = { ...commonMessages, ...panelsMessages } as const;
 
 // React Query のキャッシュキーを生成するヘルパー。検索語ごとに別キャッシュとして扱う。
 const savedQueriesKey = (q: string) => ['saved-queries', 'list', q] as const;
@@ -79,6 +77,7 @@ function SavedRow({
   onDelete: () => void;
   onShare: () => void;
 }) {
+  const t = useT(savedQueriesDict);
   const owner = isDocumentOwner(query.myPermission);
   // SQL 文の改行と連続空白を単一スペースに畳んで、折りたたみ表示用の 1 行要約を作る。
   const oneLine = query.statement.replace(/\s+/g, ' ').trim();
@@ -89,7 +88,7 @@ function SavedRow({
         {owner ? (
           <button
             type="button"
-            aria-label={query.isFavorite ? 'Unfavorite' : 'Favorite'}
+            aria-label={query.isFavorite ? t('unfavorite') : t('favorite')}
             aria-pressed={query.isFavorite}
             onClick={onToggleFavorite}
             className="mt-0.5 shrink-0 rounded-sm p-0.5"
@@ -139,15 +138,15 @@ function SavedRow({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {/* 現在アクティブなセルのカーソル位置に SQL 文を挿入する。 */}
             <Button variant="default" size="sm" icon={TextCursorInput} onClick={onInsert}>
-              Insert
+              {t('insert')}
             </Button>
             {/* 新しい SQL セルとしてこの文を追加する。 */}
             <Button variant="ghost" size="sm" icon={FilePlus2} onClick={onNewCell}>
-              New cell
+              {t('newCellButton')}
             </Button>
             {owner && (
               <Button variant="ghost" size="sm" icon={Share2} onClick={onShare}>
-                Share
+                {t('share')}
               </Button>
             )}
             {owner && (
@@ -158,7 +157,7 @@ function SavedRow({
                 onClick={onDelete}
                 className="ml-auto text-ink-subtle hover:text-error"
               >
-                Delete
+                {t('delete')}
               </Button>
             )}
           </div>
@@ -175,6 +174,7 @@ function SavedRow({
  *   デバウンスしてから一覧取得のクエリキーに反映する。
  */
 export function SavedQueriesPanel({ search }: { search: string }) {
+  const t = useT(savedQueriesDict);
   const queryClient = useQueryClient();
   const { datasources } = useDatasources();
 
@@ -223,7 +223,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
         isFavorite: !q.isFavorite,
       }),
     onSuccess: invalidate,
-    onError: () => toast.error('Update failed', 'Could not reach the server.'),
+    onError: () => toast.error(t('updateFailed'), t('couldNotReachServer')),
   });
 
   // 削除用の mutation。成功時は一覧を無効化して情報トーストを出す。
@@ -231,16 +231,16 @@ export function SavedQueriesPanel({ search }: { search: string }) {
     mutationFn: (id: string) => deleteSavedQuery(id),
     onSuccess: () => {
       invalidate();
-      toast.info('Deleted', 'Saved query removed.');
+      toast.info(t('deleted'), t('savedQueryRemovedBody'));
     },
-    onError: () => toast.error('Delete failed', 'Could not reach the server.'),
+    onError: () => toast.error(t('deleteFailed'), t('couldNotReachServer')),
   });
 
   // 初回取得中はローディング表示のみを返す。
   if (list.isPending) {
     return (
       <div className="flex items-center justify-center gap-2 py-8 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> Loading…
+        <Spinner size={14} /> {t('loading')}
       </div>
     );
   }
@@ -250,8 +250,8 @@ export function SavedQueriesPanel({ search }: { search: string }) {
     return (
       <EmptyState
         icon={BookMarked}
-        title="Couldn't load saved queries"
-        description="The server didn't respond."
+        title={t('couldntLoadSavedQueries')}
+        description={t('serverDidntRespond')}
         compact
       />
     );
@@ -263,16 +263,13 @@ export function SavedQueriesPanel({ search }: { search: string }) {
     return (
       <EmptyState
         icon={BookMarked}
-        title={debounced ? 'No matches' : 'No saved queries'}
-        description={
-          debounced ? 'Try a different search term.' : 'Save a query from a cell to find it here.'
-        }
+        title={debounced ? t('noMatches') : t('noSavedQueries')}
+        description={debounced ? t('tryDifferentSearchTerm') : t('saveQueryFromCellHint')}
         compact
       />
     );
   }
 
-  // Favorites first, then by name.
   // お気に入りを先頭に、その中/外はそれぞれ名前の昇順で並べ替える。
   const sorted = [...queries].sort((a, b) => {
     if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
@@ -298,7 +295,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
             onNewCell={() => {
               if (!applySavedContext(query)) return;
               if (addSqlCellWithSource(query.statement)) {
-                toast.success('New SQL cell', `“${query.name}” added.`);
+                toast.success(t('newSqlCellToast'), t('newSqlCellAddedBody', { name: query.name }));
               }
             }}
             onDelete={() => setPendingDelete(query)}
@@ -312,14 +309,14 @@ export function SavedQueriesPanel({ search }: { search: string }) {
       <Modal
         open={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
-        title="Delete saved query?"
+        title={t('deleteSavedQueryTitle')}
         description={
-          pendingDelete ? `“${pendingDelete.name}” will be permanently removed.` : undefined
+          pendingDelete ? t('deleteConfirmDescription', { name: pendingDelete.name }) : undefined
         }
         footer={
           <>
             <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-              Cancel
+              {t('cancel')}
             </Button>
             <Button
               variant="danger"
@@ -328,7 +325,7 @@ export function SavedQueriesPanel({ search }: { search: string }) {
                 setPendingDelete(null);
               }}
             >
-              Delete
+              {t('delete')}
             </Button>
           </>
         }

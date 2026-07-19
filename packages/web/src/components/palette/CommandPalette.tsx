@@ -33,6 +33,13 @@ import { cn } from '../../utils/cn';
 import { useNotebookStore, runAllCells, saveActiveNotebook } from '../../notebook';
 import { listNotebooks, getNotebook } from '../../api/notebooks';
 import { formatRelativeTime } from '../../utils/format';
+import { useT, type TFn } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
+import { paletteMessages } from '../../i18n/messages/palette';
+
+/** CommandPalette 内で使う辞書の合成。共通文言 + パレット固有文言を 1 つの t() で引けるようにする。 */
+const paletteDict = { ...commonMessages, ...paletteMessages } as const;
 
 /**
  * コマンドパレットは Ctrl+K の完成形 (P4b) である。ナビゲーション
@@ -94,6 +101,7 @@ type PaletteMode = 'commands' | 'open-notebook';
  * @param deps.openShortcutsHelp キーボードショートカットのヘルプを開く処理。
  * @param deps.requestSave 保存 / 名前を付けて保存を要求する処理。
  * @param deps.enterOpenNotebook 「ノートブックを開く」サブモードに遷移する処理。
+ * @param deps.t 現在のロケールに束縛された翻訳関数（paletteDict）。
  * @returns パレットに表示するコマンドの配列。
  */
 function buildCommands(deps: {
@@ -107,6 +115,7 @@ function buildCommands(deps: {
   openShortcutsHelp: () => void;
   requestSave: (mode: 'save' | 'saveAs') => void;
   enterOpenNotebook: () => void;
+  t: TFn<typeof paletteDict>;
 }): Command[] {
   // deps から各依存関数と状態を分割代入で取り出す。
   const {
@@ -120,6 +129,7 @@ function buildCommands(deps: {
     openShortcutsHelp,
     requestSave,
     enterOpenNotebook,
+    t,
   } = deps;
 
   // アクティブなノートブックの末尾に新しいセル（SQL または Markdown）を
@@ -130,11 +140,11 @@ function buildCommands(deps: {
     const id = store.activeId;
     if (!id) {
       // 開いているノートブックがなければ、先に作成するよう促して終了する。
-      toast.info('No notebook open', 'Create a notebook first.');
+      toast.info(t('noNotebookOpenTitle'), t('createNotebookFirstBody'));
       return;
     }
     store.addCell(id, kind, 'end');
-    toast.info(kind === 'sql' ? 'New SQL cell' : 'New Markdown cell');
+    toast.info(kind === 'sql' ? t('newSqlCellCommand') : t('newMarkdownCellCommand'));
   };
 
   // コマンドレジストリ本体。各要素が1つのコマンドパレット項目に対応する。
@@ -142,17 +152,17 @@ function buildCommands(deps: {
     // 「Query」グループ: 現在のノートブックの全セルを実行する。
     {
       id: 'run-all',
-      label: 'Run all cells',
+      label: t('runAllCells'),
       icon: Play,
-      group: 'Query',
+      group: t('groupQuery'),
       run: () => void runAllCells(context, defaultLimit),
     },
     // 「Notebook」グループ: 保存、新規作成、開く、セル追加などノートブック操作系。
     {
       id: 'save',
-      label: 'Save notebook',
+      label: t('saveNotebook'),
       icon: Save,
-      group: 'Notebook',
+      group: t('groupNotebook'),
       shortcut: ['Ctrl', 'S'],
       run: () =>
         void saveActiveNotebook().then((r) => {
@@ -161,92 +171,92 @@ function buildCommands(deps: {
     },
     {
       id: 'save-as',
-      label: 'Save notebook as…',
+      label: t('saveNotebookAs'),
       icon: Save,
-      group: 'Notebook',
+      group: t('groupNotebook'),
       run: () => requestSave('saveAs'),
     },
     {
       id: 'new-notebook',
-      label: 'New notebook',
+      label: t('newNotebook'),
       icon: FilePlus2,
-      group: 'Notebook',
+      group: t('groupNotebook'),
       run: () => useNotebookStore.getState().createBlankNotebook(),
     },
     {
       id: 'open-notebook',
-      label: 'Open notebook…',
+      label: t('openNotebookCommand'),
       icon: NotebookText,
-      group: 'Notebook',
+      group: t('groupNotebook'),
       run: enterOpenNotebook,
     },
     {
       id: 'new-sql',
-      label: 'New SQL cell',
+      label: t('newSqlCellCommand'),
       icon: Code2,
-      group: 'Notebook',
+      group: t('groupNotebook'),
       run: () => addCellToActive('sql'),
     },
     {
       id: 'new-md',
-      label: 'New Markdown cell',
+      label: t('newMarkdownCellCommand'),
       icon: FileText,
-      group: 'Notebook',
+      group: t('groupNotebook'),
       run: () => addCellToActive('markdown'),
     },
     // 「Navigate」グループ: サイドバーの各タブへ切り替えるコマンド群。
     {
       id: 'goto-data',
-      label: 'Go to Data browser',
+      label: t('gotoDataBrowser'),
       icon: Database,
-      group: 'Navigate',
+      group: t('groupNavigate'),
       run: () => gotoSidebar('data'),
     },
     {
       id: 'goto-saved',
-      label: 'Go to Saved queries',
+      label: t('gotoSavedQueries'),
       icon: BookMarked,
-      group: 'Navigate',
+      group: t('groupNavigate'),
       run: () => gotoSidebar('saved'),
     },
     {
       id: 'goto-history',
-      label: 'Go to History',
+      label: t('gotoHistory'),
       icon: History,
-      group: 'Navigate',
+      group: t('groupNavigate'),
       run: () => gotoSidebar('history'),
     },
     {
       id: 'goto-notebooks',
-      label: 'Go to Notebooks',
+      label: t('gotoNotebooks'),
       icon: NotebookText,
-      group: 'Navigate',
+      group: t('groupNavigate'),
       run: () => gotoSidebar('notebooks'),
     },
     // 「Appearance」グループ: テーマ切り替えとプレゼンテーションモード切り替え。
     // ラベルとアイコンは現在の状態 (theme / presentationMode) に応じて動的に切り替える。
     {
       id: 'theme',
-      label: theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme',
+      label: theme === 'dark' ? t('switchToLightTheme') : t('switchToDarkTheme'),
       icon: theme === 'dark' ? Sun : Moon,
-      group: 'Appearance',
+      group: t('groupAppearance'),
       shortcut: ['Ctrl', 'Alt', 'T'],
       run: () => toggleTheme(),
     },
     {
       id: 'presentation',
-      label: presentationMode ? 'Exit presentation mode' : 'Enter presentation mode',
+      label: presentationMode ? t('exitPresentationMode') : t('enterPresentationMode'),
       icon: Presentation,
-      group: 'Appearance',
+      group: t('groupAppearance'),
       shortcut: ['Ctrl', 'Shift', 'P'],
       run: () => togglePresentation(),
     },
     // 「Help」グループ: キーボードショートカット一覧を開く。
     {
       id: 'shortcuts-help',
-      label: 'Keyboard shortcuts',
+      label: t('keyboardShortcuts'),
       icon: Keyboard,
-      group: 'Help',
+      group: t('groupHelp'),
       run: () => openShortcutsHelp(),
     },
   ];
@@ -272,6 +282,8 @@ function PaletteContent({
   context: { catalog: string; schema: string; datasourceId?: string };
   defaultLimit: number;
 }) {
+  const t = useT(paletteDict);
+  const { locale } = useLocale();
   // UI ストアから、コマンド実行に必要な状態と操作関数をそれぞれ購読する。
   const gotoSidebar = useUiStore((s) => s.gotoSidebar);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
@@ -317,6 +329,7 @@ function PaletteContent({
           setQuery('');
           setActiveIndex(0);
         },
+        t,
       }),
     [
       context,
@@ -328,6 +341,7 @@ function PaletteContent({
       togglePresentation,
       setShortcutsHelpOpen,
       requestSave,
+      t,
     ],
   );
 
@@ -359,7 +373,7 @@ function PaletteContent({
         store.openNotebook(nb, { draft: false, activate: true });
       } catch {
         // 取得に失敗した場合はエラートーストを表示する。
-        toast.error('Open failed', 'That notebook could not be loaded.');
+        toast.error(t('openFailedTitle'), t('openFailedBody'));
       }
     }
     // 成否にかかわらず、ノートブックを開こうとした操作の後はパレットを閉じる。
@@ -419,14 +433,15 @@ function PaletteContent({
   }
 
   // 現在のモードに応じた検索欄のプレースホルダー文言。
-  const placeholder = mode === 'open-notebook' ? 'Search notebooks…' : 'Type a command…';
+  const placeholder =
+    mode === 'open-notebook' ? t('searchNotebooksPlaceholder') : t('typeCommandPlaceholder');
 
   return (
     <div className="fixed inset-0 z-[95] flex items-start justify-center px-4 pt-[12vh]">
       {/* 背景を暗くするオーバーレイ。クリックするとパレットを閉じる。 */}
       <button
         type="button"
-        aria-label="Close command palette"
+        aria-label={t('closeCommandPaletteAria')}
         tabIndex={-1}
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-ink-strong/40 animate-[fadeIn_150ms_ease-out]"
@@ -435,7 +450,7 @@ function PaletteContent({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={t('commandPaletteAria')}
         className="relative z-10 w-full max-w-xl overflow-hidden rounded-lg border border-border-strong bg-surface-overlay shadow-lg animate-[slideUp_150ms_ease-out]"
         onKeyDown={onKeyDown}
       >
@@ -450,7 +465,7 @@ function PaletteContent({
           {/* ノートブック検索モード中であることを示す「Open」バッジ。 */}
           {mode === 'open-notebook' && (
             <span className="shrink-0 rounded-sm bg-accent-soft px-1.5 py-0.5 text-2xs font-medium text-accent">
-              Open
+              {t('openBadge')}
             </span>
           )}
           <input
@@ -468,7 +483,9 @@ function PaletteContent({
           <ul className="max-h-80 overflow-auto py-1.5">
             {/* 検索結果が0件の場合の空状態表示。 */}
             {filteredCommands.length === 0 && (
-              <li className="px-4 py-6 text-center text-sm text-ink-muted">No matching commands</li>
+              <li className="px-4 py-6 text-center text-sm text-ink-muted">
+                {t('noMatchingCommands')}
+              </li>
             )}
             {/* 絞り込み後のコマンド一覧をリスト表示する。選択中の項目はハイライトする。 */}
             {filteredCommands.map((cmd, i) => {
@@ -508,16 +525,20 @@ function PaletteContent({
             {/* ノートブック一覧取得中のローディング表示。 */}
             {notebooks.isPending && (
               <li className="flex items-center justify-center gap-2 px-4 py-6 font-mono text-2xs text-ink-subtle">
-                <Spinner size={14} /> Loading…
+                <Spinner size={14} /> {t('loading')}
               </li>
             )}
             {/* 取得に失敗した場合のエラー表示。 */}
             {notebooks.isError && (
-              <li className="px-4 py-6 text-center text-sm text-error">Couldn't load notebooks</li>
+              <li className="px-4 py-6 text-center text-sm text-error">
+                {t('couldntLoadNotebooks')}
+              </li>
             )}
             {/* 取得は成功したが、該当するノートブックが0件だった場合の空状態表示。 */}
             {notebooks.data && notebookItems.length === 0 && (
-              <li className="px-4 py-6 text-center text-sm text-ink-muted">No notebooks</li>
+              <li className="px-4 py-6 text-center text-sm text-ink-muted">
+                {t('noNotebooksInList')}
+              </li>
             )}
             {/* 検索結果のノートブック一覧をリスト表示する。選択中の項目はハイライトする。 */}
             {notebookItems.map((nb, i) => {
@@ -540,7 +561,7 @@ function PaletteContent({
                     />
                     <span className="min-w-0 flex-1 truncate">{nb.name}</span>
                     <span className="shrink-0 font-mono text-2xs text-ink-subtle">
-                      {formatRelativeTime(nb.updatedAt)}
+                      {formatRelativeTime(nb.updatedAt, new Date(), locale)}
                     </span>
                   </button>
                 </li>

@@ -15,7 +15,7 @@ import { FilePlus2, History, Play, Table2, TextCursorInput } from 'lucide-react'
 import { fetchHistory, HISTORY_PAGE_SIZE } from '../../api/history';
 import { insertAtActiveCursor, addSqlCellWithSource, runSqlCell } from '../../notebook';
 import { nextOffset, filterToStateParam, type HistoryFilter } from './historyPaging';
-import { StateBadge } from '../common/StateBadge';
+import { QueryStateBadge } from './QueryStateBadge';
 import { EmptyState } from '../common/EmptyState';
 import { Spinner } from '../common/Spinner';
 import { Button } from '../common/Button';
@@ -27,6 +27,10 @@ import { DatasourceBadge } from '../common/DatasourceBadge';
 import { useDatasourceStore } from '../../stores/datasourceStore';
 import { useUiStore } from '../../stores/uiStore';
 import { executionActions } from '../../execution';
+import { useT } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
+import { panelsMessages } from '../../i18n/messages/panels';
 
 import {
   tryApplyExecutionContext,
@@ -34,22 +38,28 @@ import {
   toastDatasourceMissing,
 } from '../../utils/applyDatasource';
 
-/**
- * History panel (offset ページング 50 件, state フィルタチップ, 各行
- * の詳細 + 新規セルへ). Self-contained: drives an offset-paging reducer over
- * `GET /api/history`, auto-refetches the first page on mount (so executions show
- * up), and exposes a state-filter chip row. Each row expands to the full
- * statement + metadata, with insert / new-cell actions.
- */
+/** HistoryPanel 内で使う辞書の合成。共通文言 + パネル固有文言を 1 つの t() で引けるようにする。 */
+const historyDict = { ...commonMessages, ...panelsMessages } as const;
 
-// フィルタチップとして表示する state 一覧（id は API へ渡す値、label は画面表示用）。
-const FILTERS: { id: HistoryFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'finished', label: 'Finished' },
-  { id: 'failed', label: 'Failed' },
-  { id: 'canceled', label: 'Canceled' },
-  { id: 'running', label: 'Running' },
+// フィルタチップとして表示する state 一覧（id は API へ渡す契約値）。表示ラベルは
+// FILTER_LABEL_KEY 経由で翻訳する（契約値自体は翻訳しない、alertFormat.ts と同じ方針）。
+const FILTERS: { id: HistoryFilter }[] = [
+  { id: 'all' },
+  { id: 'finished' },
+  { id: 'failed' },
+  { id: 'canceled' },
+  { id: 'running' },
 ];
+
+// state フィルタの契約値から、辞書のキーへのマッピング。
+const FILTER_LABEL_KEY = {
+  all: 'filterAll',
+  finished: 'filterFinished',
+  failed: 'filterFailed',
+  canceled: 'filterCanceled',
+  running: 'filterRunning',
+  queued: 'filterQueued',
+} as const satisfies Record<HistoryFilter, keyof typeof panelsMessages>;
 
 /**
  * 履歴一覧の 1 行分を描画するコンポーネント。
@@ -79,8 +89,12 @@ function HistoryRow({
   onRerun: (entry: QueryHistoryEntry) => void;
   onOpenResult: (entry: QueryHistoryEntry) => void;
 }) {
+  const t = useT(historyDict);
+  const { locale } = useLocale();
   // SQL 文の改行と連続空白を単一スペースに畳んで、折りたたみ表示用の 1 行要約を作る。
   const oneLine = entry.statement.replace(/\s+/g, ' ').trim();
+  // catalog / schema が未指定のときのプレースホルダー文字列。common.unknown を再利用する。
+  const unknown = t('unknown');
   return (
     <li className="group border-b border-border-subtle">
       {/* 行全体がクリック可能なボタン。押すたびに展開/折りたたみをトグルする。 */}
@@ -93,10 +107,10 @@ function HistoryRow({
         <div className="min-w-0 flex-1">
           {/* state バッジ（finished/failed/running 等）と実行開始からの相対時刻 */}
           <div className="flex flex-wrap items-center gap-2">
-            <StateBadge state={entry.state} />
+            <QueryStateBadge state={entry.state} />
             <DatasourceBadge datasourceId={entry.datasourceId} datasources={datasources} />
             <span className="font-mono text-2xs text-ink-subtle">
-              {formatRelativeTime(entry.submittedAt, now)}
+              {formatRelativeTime(entry.submittedAt, now, locale)}
             </span>
           </div>
           {/* SQL 文の 1 行要約（折りたたみ表示） */}
@@ -105,10 +119,10 @@ function HistoryRow({
           <div className="mt-1 flex items-center gap-3 font-mono text-2xs text-ink-subtle">
             {(entry.catalog || entry.schema) && (
               <span>
-                {entry.catalog ?? '—'}.{entry.schema ?? '—'}
+                {entry.catalog ?? unknown}.{entry.schema ?? unknown}
               </span>
             )}
-            {entry.state === 'finished' && <span>{formatInt(entry.rowCount)} rows</span>}
+            {entry.state === 'finished' && <span>{t('rowsCount', { n: entry.rowCount })}</span>}
             <span>{formatDuration(entry.elapsedMs)}</span>
           </div>
           {/* 折りたたみ中のみ、エラーメッセージの先頭部分をプレビュー表示する */}
@@ -135,29 +149,29 @@ function HistoryRow({
           <dl className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-2xs text-ink-subtle">
             {entry.trinoQueryId && (
               <div className="col-span-2 flex gap-2">
-                <dt className="text-ink-subtle">query</dt>
+                <dt className="text-ink-subtle">{t('queryIdLabel')}</dt>
                 <dd className="truncate text-ink-muted">{entry.trinoQueryId}</dd>
               </div>
             )}
             <div className="flex gap-2">
-              <dt>rows</dt>
+              <dt>{t('rowsLabel')}</dt>
               <dd className="text-ink-muted">{formatInt(entry.rowCount)}</dd>
             </div>
             <div className="flex gap-2">
-              <dt>elapsed</dt>
+              <dt>{t('elapsedLabel')}</dt>
               <dd className="text-ink-muted">{formatDuration(entry.elapsedMs)}</dd>
             </div>
           </dl>
           {/* この SQL 文をノートブックへ反映するための操作ボタン群 */}
           <div className="mt-2 flex items-center gap-2">
-            {/* 現在アクティブなセルのカーソル位置に SQL 文をそのまま挿入する */}
+            {/* 現在アクティブなセルのカーソル位置に SQL 文をそのまま挿入する。 */}
             <Button
               variant="default"
               size="sm"
               icon={TextCursorInput}
               onClick={() => insertAtActiveCursor(entry.statement)}
             >
-              Insert
+              {t('insert')}
             </Button>
             {/* 新しい SQL セルとしてこの文を追加する。成功時のみトースト通知を出す。 */}
             <Button
@@ -165,17 +179,17 @@ function HistoryRow({
               size="sm"
               icon={FilePlus2}
               onClick={() => {
-                if (addSqlCellWithSource(entry.statement)) toast.success('New SQL cell');
+                if (addSqlCellWithSource(entry.statement)) toast.success(t('newSqlCellToast'));
               }}
             >
-              New cell
+              {t('newCellButton')}
             </Button>
             <Button variant="ghost" size="sm" icon={Play} onClick={() => onRerun(entry)}>
-              Re-run
+              {t('reRun')}
             </Button>
             {entry.resultAvailable && (
               <Button variant="ghost" size="sm" icon={Table2} onClick={() => onOpenResult(entry)}>
-                Open result
+                {t('openResult')}
               </Button>
             )}
           </div>
@@ -192,6 +206,7 @@ function HistoryRow({
  * ページング状態をすべて完結させる自己完結型コンポーネント。
  */
 export function HistoryPanel() {
+  const t = useT(historyDict);
   const { datasources } = useDatasources();
   const defaultLimit = useUiStore((s) => s.shellDefaultLimit);
   // 選択中の state フィルタ（"all" がデフォルト）。
@@ -201,10 +216,10 @@ export function HistoryPanel() {
   // 相対時刻表示の基準となる現在時刻（レンダーごとに固定して行間でずれないようにする）。
   const now = new Date();
 
-  // Offset paging via useInfiniteQuery (offset ページング 50 件,
-  // もっと見る). `getNextPageParam` reuses the same paging math as the reducer.
-  // `refetchOnMount: 'always'` re-pulls the first page whenever the panel shows,
-  // so freshly-executed queries appear (自動 refetch).
+  // useInfiniteQuery による offset ページング(1 ページ 50 件、「もっと見る」で次ページ
+  // 取得)。`getNextPageParam` はページング用 reducer と同じオフセット計算を使う。
+  // `refetchOnMount: 'always'` によって、パネルが表示されるたびに 1 ページ目を
+  // 再取得し、直前に実行したクエリの履歴を自動で反映させる。
   const query = useInfiniteQuery({
     queryKey: ['history', filter],
     queryFn: ({ pageParam }) =>
@@ -221,7 +236,6 @@ export function HistoryPanel() {
     refetchOnMount: 'always',
   });
 
-  // Flatten pages, de-duplicating by id (an overlapping refetch can't double up).
   // 取得済みの各ページを 1 本の配列にフラット化する。id で重複排除しているのは、
   // 1 ページ目の refetch と既存ページが範囲的に重なった場合でも同じ行が二重に
   // 表示されないようにするため。
@@ -255,7 +269,7 @@ export function HistoryPanel() {
       const applied = useDatasourceStore.getState().executionContext;
       const started = runSqlCell(cellId, entry.statement, applied, defaultLimit);
       if (!started) return;
-      toast.success('Re-running query');
+      toast.success(t('reRunningQueryToast'));
     }
   };
 
@@ -271,14 +285,12 @@ export function HistoryPanel() {
       .restoreCell(cellId, entry.id)
       .then((outcome) => {
         if (outcome === 'restored') {
-          toast.success('Opened saved result');
+          toast.success(t('openedSavedResultToast'));
         } else if (outcome === 'unavailable') {
-          toast.error('Saved result unavailable', 'The stored query result could not be loaded.');
+          toast.error(t('savedResultUnavailableTitle'), t('savedResultUnavailableBody'));
         }
       })
-      .catch(() =>
-        toast.error('Saved result unavailable', 'The stored query result could not be loaded.'),
-      );
+      .catch(() => toast.error(t('savedResultUnavailableTitle'), t('savedResultUnavailableBody')));
   };
 
   return (
@@ -298,7 +310,7 @@ export function HistoryPanel() {
                 : 'bg-surface-sunken text-ink-muted hover:text-ink-strong',
             )}
           >
-            {f.label}
+            {t(FILTER_LABEL_KEY[f.id])}
           </button>
         ))}
       </div>
@@ -308,20 +320,16 @@ export function HistoryPanel() {
         // 取得エラーで表示できる行が 1 件もない場合の空状態表示。
         <EmptyState
           icon={History}
-          title="Couldn't load history"
-          description="The server didn't respond."
+          title={t('couldntLoadHistory')}
+          description={t('serverDidntRespond')}
           compact
         />
       ) : items.length === 0 && !query.isPending ? (
         // 取得は成功したが該当履歴が 0 件の場合の空状態表示（フィルタ別にメッセージを変える）。
         <EmptyState
           icon={History}
-          title={filter === 'all' ? 'No history yet' : 'No matching history'}
-          description={
-            filter === 'all'
-              ? 'Executed queries are recorded here automatically.'
-              : 'No queries with this state.'
-          }
+          title={filter === 'all' ? t('noHistoryYet') : t('noMatchingHistory')}
+          description={filter === 'all' ? t('historyRecordedHint') : t('noQueriesWithStateHint')}
           compact
         />
       ) : (
@@ -345,7 +353,7 @@ export function HistoryPanel() {
       {/* 初回ロード中、または次ページ取得中に表示するローディングインジケーター。 */}
       {(query.isPending || query.isFetchingNextPage) && (
         <div className="flex items-center justify-center gap-2 py-3 font-mono text-2xs text-ink-subtle">
-          <Spinner size={13} /> Loading…
+          <Spinner size={13} /> {t('loading')}
         </div>
       )}
 
@@ -359,7 +367,7 @@ export function HistoryPanel() {
             className="w-full justify-center"
             onClick={() => void query.fetchNextPage()}
           >
-            Load more ({items.length} of {total})
+            {t('loadMoreButton', { shown: items.length, total })}
           </Button>
         </div>
       )}
