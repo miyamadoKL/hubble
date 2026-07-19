@@ -28,6 +28,8 @@ import { IconButton } from '../common/IconButton';
 import { toast } from '../common/Toast';
 import { Markdown } from '../notebook/Markdown';
 import { AiDiffApply } from '../editor/AiDiffApply';
+import { useT, type TFn } from '../../i18n/t';
+import { aiMessages } from '../../i18n/messages/ai';
 
 /** 適用先として記憶しておく、リクエスト時点のエディターと対象範囲。 */
 export interface CapturedTarget {
@@ -166,21 +168,48 @@ export function applyCapturedSql(target: CapturedTarget, sql: string): boolean {
   return true;
 }
 
-/** タスクボタンの表示定義。 */
-const TASKS: { task: AiTask; label: string; icon: typeof Sparkles; hint: string }[] = [
-  { task: 'explain', label: 'Explain', icon: BookOpen, hint: '選択 SQL（または全文）を説明する' },
-  { task: 'fix', label: 'Fix error', icon: Wrench, hint: '直近のエラーから修正案を出す' },
-  { task: 'draft', label: 'Draft', icon: PenLine, hint: '指示とテーブル情報から SQL を下書きする' },
-  { task: 'rewrite', label: 'Rewrite', icon: Wand2, hint: '指示に沿って SQL を書き換える' },
+// タスクラベル/ヒントの辞書キー（プレースホルダーを持たないキーのみに限定する）。
+// keyof typeof aiMessages のような広い union にすると、t() の引数型がプレース
+// ホルダーありのキーとの union になり呼び出し側で型エラーになるため、使用する
+// キーだけの union で narrow している。
+type TaskLabelKey = 'taskExplainLabel' | 'taskFixLabel' | 'taskDraftLabel' | 'taskRewriteLabel';
+type TaskHintKey = 'taskExplainHint' | 'taskFixHint' | 'taskDraftHint' | 'taskRewriteHint';
+
+/** タスクボタンの表示定義。ラベルとヒントは辞書キーで持ち、描画時に useT で引く。 */
+const TASK_CONFIG: {
+  task: AiTask;
+  icon: typeof Sparkles;
+  labelKey: TaskLabelKey;
+  hintKey: TaskHintKey;
+}[] = [
+  { task: 'explain', icon: BookOpen, labelKey: 'taskExplainLabel', hintKey: 'taskExplainHint' },
+  { task: 'fix', icon: Wrench, labelKey: 'taskFixLabel', hintKey: 'taskFixHint' },
+  { task: 'draft', icon: PenLine, labelKey: 'taskDraftLabel', hintKey: 'taskDraftHint' },
+  { task: 'rewrite', icon: Wand2, labelKey: 'taskRewriteLabel', hintKey: 'taskRewriteHint' },
 ];
+
+/**
+ * `AiTask`（契約値: explain/fix/draft/rewrite）から表示ラベルの辞書キーを求める。
+ * レビュー指摘: 応答エリアの直前タスク表示（`lastTask`）が契約値をそのまま
+ * 生表示していたため、`TASK_CONFIG` と同じマッピングを単体テスト可能な純粋関数
+ * として切り出した。
+ */
+export function taskLabelKey(task: AiTask): TaskLabelKey {
+  return TASK_CONFIG.find((c) => c.task === task)!.labelKey;
+}
 
 /**
  * `catalog.schema.table` または `schema.table` のカンマ区切り入力をパースする。
  * 2 要素の場合は現在の shell コンテキストの catalog を補う。
+ *
+ * @param input カンマ区切りのテーブル名入力。
+ * @param contextCatalog 2 要素表記を補完するための現在の catalog（未指定なら補完しない）。
+ * @param t エラーメッセージの翻訳に使う関数（AiPanel の useT(aiMessages) を渡す）。
  */
 function parseTableNames(
   input: string,
   contextCatalog: string | undefined,
+  t: TFn<typeof aiMessages>,
 ): { catalog: string; schema: string; table: string }[] {
   return input
     .split(',')
@@ -193,7 +222,7 @@ function parseTableNames(
       if (parts.length === 2 && a && b && contextCatalog) {
         return { catalog: contextCatalog, schema: a, table: b };
       }
-      throw new Error(`Invalid table name: ${name} (expected catalog.schema.table)`);
+      throw new Error(t('invalidTableName', { name }));
     });
 }
 
@@ -202,6 +231,7 @@ function parseTableNames(
  * メインエリアの右側に配置される。
  */
 export function AiPanel() {
+  const t = useT(aiMessages);
   const { data: config } = useConfig();
   const width = useUiStore((s) => s.aiPanelWidth);
   const setWidth = useUiStore((s) => s.setAiPanelWidth);
@@ -291,7 +321,7 @@ export function AiPanel() {
       (task === 'explain' || task === 'fix' || task === 'rewrite') &&
       !inspected?.original.trim()
     ) {
-      toast.error('AI assistant', 'Focus a SQL cell with content first.');
+      toast.error(t('toastTitle'), t('toastFocusSqlCell'));
       return;
     }
     let errorMessage: string | undefined;
@@ -300,13 +330,13 @@ export function AiPanel() {
         ? useExecutionStore.getState().cells[inspected.cellId]?.error
         : undefined;
       if (!cellError) {
-        toast.error('AI assistant', 'The focused cell has no recent error to fix.');
+        toast.error(t('toastTitle'), t('toastNoRecentError'));
         return;
       }
       errorMessage = cellError.message;
     }
     if (task === 'draft' && instruction.trim() === '') {
-      toast.error('AI assistant', 'Write an instruction for the draft first.');
+      toast.error(t('toastTitle'), t('toastWriteInstruction'));
       return;
     }
 
@@ -315,14 +345,14 @@ export function AiPanel() {
     if (tablesInput.trim() !== '') {
       const datasourceId = shellContext.datasourceId;
       if (!datasourceId) {
-        toast.error('AI assistant', 'No datasource selected.');
+        toast.error(t('toastTitle'), t('toastNoDatasource'));
         return;
       }
       try {
-        tableNames = parseTableNames(tablesInput, shellContext.catalog);
+        tableNames = parseTableNames(tablesInput, shellContext.catalog, t);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        toast.error('AI assistant', `Failed to resolve context tables: ${message}`);
+        toast.error(t('toastTitle'), t('toastFailedResolveTables', { message }));
         return;
       }
     }
@@ -390,7 +420,7 @@ export function AiPanel() {
               }
             }
             if (event.type === 'error') {
-              toast.error('AI assistant', event.error.message);
+              toast.error(t('toastTitle'), event.error.message);
             }
           },
         },
@@ -403,11 +433,11 @@ export function AiPanel() {
         // ユーザーによる停止は正常系として扱う。
       } else if (resolvingTables) {
         const message = err instanceof Error ? err.message : String(err);
-        toast.error('AI assistant', `Failed to resolve context tables: ${message}`);
+        toast.error(t('toastTitle'), t('toastFailedResolveTables', { message }));
       } else if (err instanceof ApiClientError) {
-        toast.error('AI assistant', err.detail.message);
+        toast.error(t('toastTitle'), err.detail.message);
       } else {
-        toast.error('AI assistant', err instanceof Error ? err.message : String(err));
+        toast.error(t('toastTitle'), err instanceof Error ? err.message : String(err));
       }
     } finally {
       if (!requestCoordinator.isCurrent(claim)) {
@@ -424,10 +454,10 @@ export function AiPanel() {
   const applySql = (sql: string) => {
     setDiffOpen(false);
     if (target && applyCapturedSql(target, sql)) {
-      toast.success('AI assistant', 'Proposed SQL applied. Undo with Ctrl/Cmd+Z.');
+      toast.success(t('toastTitle'), t('toastSqlApplied'));
       return;
     }
-    toast.error('AI assistant', 'The target changed while waiting. Copy the SQL manually.');
+    toast.error(t('toastTitle'), t('toastTargetChanged'));
   };
 
   /** requestを中断し、世代と表示中の適用先を同期的に解放する。 */
@@ -450,13 +480,13 @@ export function AiPanel() {
     <aside
       className="relative flex h-full shrink-0 flex-col border-l border-border-base bg-surface-base"
       style={{ width: `${width}px` }}
-      aria-label="AI assistant panel"
+      aria-label={t('panelAriaLabel')}
     >
       {/* Resize handle（パネル左端）。 */}
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize AI panel"
+        aria-label={t('resizeHandleLabel')}
         aria-valuenow={width}
         aria-valuemin={AI_PANEL_MIN_WIDTH}
         aria-valuemax={AI_PANEL_MAX_WIDTH}
@@ -475,7 +505,7 @@ export function AiPanel() {
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <h2 className="flex items-center gap-1.5 text-2xs font-semibold tracking-[0.14em] text-ink-muted uppercase">
           <Sparkles size={13} strokeWidth={1.75} className="text-accent" />
-          AI assistant
+          {t('panelHeading')}
         </h2>
         <div className="flex items-center gap-1">
           {config?.ai.model && (
@@ -483,23 +513,23 @@ export function AiPanel() {
               {config.ai.model}
             </span>
           )}
-          <IconButton icon={X} label="Close AI panel" size="sm" onClick={toggle} />
+          <IconButton icon={X} label={t('closePanel')} size="sm" onClick={toggle} />
         </div>
       </div>
 
       {/* タスクボタン列。 */}
       <div className="grid grid-cols-2 gap-1.5 px-3 pb-2">
-        {TASKS.map(({ task, label, icon: Icon, hint }) => (
+        {TASK_CONFIG.map(({ task, icon: Icon, labelKey, hintKey }) => (
           <button
             key={task}
             type="button"
-            title={hint}
+            title={t(hintKey)}
             disabled={streaming}
             onClick={() => void run(task)}
             className="flex items-center gap-1.5 rounded-md border border-border-base px-2 py-1.5 text-xs text-ink-base transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Icon size={14} strokeWidth={1.75} />
-            {label}
+            {t(labelKey)}
           </button>
         ))}
       </div>
@@ -509,14 +539,14 @@ export function AiPanel() {
         <textarea
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
-          placeholder="Instruction (required for Draft, optional for Rewrite)…"
+          placeholder={t('instructionPlaceholder')}
           rows={2}
           className="w-full resize-y rounded-md border border-border-base bg-surface-raised px-2 py-1.5 text-xs text-ink-base placeholder:text-ink-subtle focus:border-accent focus:outline-none"
         />
         <input
           value={tablesInput}
           onChange={(e) => setTablesInput(e.target.value)}
-          placeholder="Context tables: catalog.schema.table, …"
+          placeholder={t('tablesPlaceholder')}
           className="w-full rounded-md border border-border-base bg-surface-raised px-2 py-1.5 font-mono text-xs text-ink-base placeholder:text-ink-subtle focus:border-accent focus:outline-none"
         />
       </div>
@@ -524,21 +554,20 @@ export function AiPanel() {
       {/* 応答表示エリア。 */}
       <div className="min-h-0 flex-1 overflow-auto border-t border-border-subtle px-3 py-2">
         {text === '' && !streaming && (
-          <p className="text-xs leading-relaxed text-ink-subtle">
-            Focus a SQL cell, then pick a task. The assistant only proposes SQL; execution always
-            goes through the normal editor flow.
-          </p>
+          <p className="text-xs leading-relaxed text-ink-subtle">{t('emptyStateText')}</p>
         )}
         {streaming && text === '' && (
           <p className="flex items-center gap-1.5 text-xs text-ink-muted">
-            <Loader2 size={13} className="animate-spin" /> Waiting for the model…
+            <Loader2 size={13} className="animate-spin" /> {t('waitingForModel')}
           </p>
         )}
         {text !== '' && (
           <div data-testid="ai-response">
             {lastTask && (
               <p className="mb-1 text-2xs font-semibold tracking-[0.14em] text-ink-subtle uppercase">
-                {lastTask}
+                {/* lastTask は契約値 (explain/fix/draft/rewrite) なので、そのまま表示せず
+                    taskLabelKey() 経由で翻訳済みラベルへ変換する。 */}
+                {t(taskLabelKey(lastTask))}
               </p>
             )}
             <Markdown source={text} className="text-xs" />
@@ -550,12 +579,12 @@ export function AiPanel() {
       <div className="flex items-center justify-end gap-2 border-t border-border-subtle px-3 py-2">
         {streaming && (
           <Button variant="ghost" size="sm" icon={Square} onClick={stopRequest}>
-            Stop
+            {t('stopButton')}
           </Button>
         )}
         {proposedSql !== null && !streaming && (
           <Button variant="primary" size="sm" icon={Wand2} onClick={() => setDiffOpen(true)}>
-            Review &amp; apply
+            {t('reviewAndApplyButton')}
           </Button>
         )}
       </div>

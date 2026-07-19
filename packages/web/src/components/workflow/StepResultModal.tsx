@@ -12,6 +12,13 @@ import { Spinner } from '../common/Spinner';
 import { EmptyState } from '../common/EmptyState';
 import { getWorkflowStepResult } from '../../api/workflows';
 import { ApiClientError } from '../../api/client';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { workflowMessages } from '../../i18n/messages/workflow';
+import { formatInt } from '../../utils/format';
+
+/** StepResultModal 内で使う辞書の合成。共通文言 + workflow 固有文言を 1 つの t() で引けるようにする。 */
+const stepResultDict = { ...commonMessages, ...workflowMessages } as const;
 
 // 1 ページあたりの取得行数。
 const PAGE_SIZE = 100;
@@ -37,6 +44,7 @@ export function StepResultModal({
   stepName: string;
   onClose: () => void;
 }) {
+  const t = useT(stepResultDict);
   const [page, setPage] = useState(0);
 
   const result = useQuery({
@@ -62,14 +70,14 @@ export function StepResultModal({
         setPage(0);
         onClose();
       }}
-      title={`Result: ${stepName}`}
-      description={data ? `${data.totalRows.toLocaleString()} rows persisted` : undefined}
+      title={t('resultModalTitle', { name: stepName })}
+      description={data ? t('rowsPersisted', { n: formatInt(data.totalRows) }) : undefined}
       className="max-w-4xl"
       footer={
         data && data.totalRows > PAGE_SIZE ? (
           <>
             <span className="mr-auto font-mono text-2xs text-ink-subtle">
-              page {page + 1} / {totalPages}
+              {t('pageOf', { page: page + 1, total: totalPages })}
             </span>
             <Button
               variant="ghost"
@@ -78,7 +86,7 @@ export function StepResultModal({
               disabled={page === 0}
               onClick={() => setPage((p) => Math.max(0, p - 1))}
             >
-              Prev
+              {t('prevButton')}
             </Button>
             <Button
               variant="ghost"
@@ -88,7 +96,7 @@ export function StepResultModal({
               disabled={page + 1 >= totalPages}
               onClick={() => setPage((p) => p + 1)}
             >
-              Next
+              {t('nextButton')}
             </Button>
           </>
         ) : undefined
@@ -96,17 +104,13 @@ export function StepResultModal({
     >
       {result.isPending ? (
         <div className="flex items-center justify-center gap-2 py-10 font-mono text-2xs text-ink-subtle">
-          <Spinner size={14} /> Loading result…
+          <Spinner size={14} /> {t('loadingResult')}
         </div>
       ) : result.isError ? (
         <EmptyState
           icon={Table2}
-          title={notPersisted ? 'Result not available' : "Couldn't load the result"}
-          description={
-            notPersisted
-              ? 'The result was not persisted or has expired.'
-              : "The server didn't respond."
-          }
+          title={notPersisted ? t('resultNotAvailableTitle') : t('couldntLoadResultTitle')}
+          description={notPersisted ? t('resultExpiredDescription') : t('serverDidntRespond')}
           compact
         />
       ) : (
@@ -148,7 +152,7 @@ export function StepResultModal({
                     colSpan={Math.max(1, data!.columns.length)}
                     className="px-2.5 py-6 text-center font-mono text-2xs text-ink-subtle"
                   >
-                    No rows.
+                    {t('noRows')}
                   </td>
                 </tr>
               )}

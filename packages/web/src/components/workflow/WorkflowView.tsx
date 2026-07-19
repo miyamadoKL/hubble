@@ -80,6 +80,14 @@ import {
   continueDocumentNavigation,
   saveActiveDocument,
 } from '../../navigation/documentNavigation';
+import { useT, type TFn } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
+import { workflowMessages } from '../../i18n/messages/workflow';
+import { formatInt } from '../../utils/format';
+
+/** WorkflowView 内で使う辞書の合成。共通文言 + workflow 固有文言を 1 つの t() で引けるようにする。 */
+const workflowViewDict = { ...commonMessages, ...workflowMessages } as const;
 
 // ステップカードの左ボーダーの色 (トーン別)。
 const cardToneBorder: Record<WorkflowTone, string> = {
@@ -135,6 +143,7 @@ function StepStatusIcon({ stepRun }: { stepRun: WorkflowStepRun | undefined }) {
  * @param invalid サーバー保存時にこのステップがバリデーションエラーになったかどうか。
  * @param onEdit カードクリックで編集モーダルを開くコールバック。
  * @param onShowResult 結果閲覧ボタン押下時のコールバック。
+ * @param t 呼び出し元 (WorkflowEditor) から渡す翻訳関数。
  */
 function StepCard({
   step,
@@ -142,12 +151,14 @@ function StepCard({
   invalid,
   onEdit,
   onShowResult,
+  t,
 }: {
   step: WorkflowStep;
   stepRun: WorkflowStepRun | undefined;
   invalid: boolean;
   onEdit: () => void;
   onShowResult: () => void;
+  t: TFn<typeof workflowViewDict>;
 }) {
   const tone: WorkflowTone = stepRun ? stepStatusTone(stepRun.status) : 'neutral';
   // SQL の改行を畳んだ 1 行要約。
@@ -164,7 +175,7 @@ function StepCard({
       <button type="button" onClick={onEdit} className="w-full px-3 pt-2.5 pb-1.5 text-left">
         <span className="flex items-center gap-1.5">
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-strong">
-            {step.name || <span className="text-ink-subtle italic">untitled step</span>}
+            {step.name || <span className="text-ink-subtle italic">{t('untitledStep')}</span>}
           </span>
           <StepStatusIcon stepRun={stepRun} />
         </span>
@@ -177,20 +188,18 @@ function StepCard({
       <div className="flex items-center gap-2 px-3 pb-2">
         <span
           className="inline-flex items-center gap-1 font-mono text-2xs text-ink-subtle"
-          title={
-            step.onFailure === 'stop' ? 'On failure: stop the workflow' : 'On failure: continue'
-          }
+          title={step.onFailure === 'stop' ? t('onFailureStopTitle') : t('onFailureContinueTitle')}
         >
           {step.onFailure === 'stop' ? (
             <OctagonX size={11} strokeWidth={2} />
           ) : (
             <ArrowRight size={11} strokeWidth={2} />
           )}
-          {step.onFailure}
+          {step.onFailure === 'stop' ? t('onFailureStopShort') : t('onFailureContinueShort')}
         </span>
         {stepRun?.rowCount !== null && stepRun?.rowCount !== undefined && (
           <span className="font-mono text-2xs text-ink-subtle">
-            {stepRun.rowCount.toLocaleString()} rows
+            {t('stepRowsCount', { n: formatInt(stepRun.rowCount) })}
           </span>
         )}
         {stepRun?.elapsedMs !== null && stepRun?.elapsedMs !== undefined && (
@@ -205,8 +214,8 @@ function StepCard({
           <button
             type="button"
             onClick={onShowResult}
-            title="View persisted result"
-            aria-label={`View result of ${step.name}`}
+            title={t('viewResultTitle')}
+            aria-label={t('viewResultAria', { name: step.name })}
             className="ml-auto rounded-sm p-0.5 text-ink-subtle hover:text-accent"
           >
             <Table2 size={13} strokeWidth={2} />
@@ -233,6 +242,7 @@ function StepCard({
  * workflowId をキーに WorkflowEditor を再マウントする。
  */
 export function WorkflowView() {
+  const t = useT(workflowViewDict);
   const view = useUiStore((s) => s.workflowView);
   const closeWorkflow = useUiStore((s) => s.closeWorkflow);
   const { datasources, selectedId: shellDatasourceId } = useDatasources();
@@ -247,7 +257,7 @@ export function WorkflowView() {
   if (!isNew && workflowQuery.isPending) {
     return (
       <div className="flex h-full items-center justify-center gap-2 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> Loading workflow…
+        <Spinner size={14} /> {t('loadingWorkflow')}
       </div>
     );
   }
@@ -256,11 +266,11 @@ export function WorkflowView() {
       <div className="flex h-full items-center justify-center">
         <EmptyState
           icon={WorkflowIcon}
-          title="Couldn't load the workflow"
-          description="It may have been deleted."
+          title={t('couldntLoadWorkflowTitle')}
+          description={t('mayHaveBeenDeleted')}
           action={
             <Button variant="default" size="sm" icon={ArrowLeft} onClick={closeWorkflow}>
-              Back to notebooks
+              {t('backToNotebooks')}
             </Button>
           }
         />
@@ -304,6 +314,8 @@ function WorkflowEditor({
   datasources: DatasourceSummary[];
   fallbackDatasourceId: string;
 }) {
+  const t = useT(workflowViewDict);
+  const { locale } = useLocale();
   const openWorkflow = useUiStore((s) => s.openWorkflow);
   const closeWorkflow = useUiStore((s) => s.closeWorkflow);
   const isNew = workflowId === null;
@@ -358,7 +370,7 @@ function WorkflowEditor({
   }, [runQuery.data, workflowId]);
 
   const runInFlight = runQuery.data?.status === 'running';
-  const problem = draftProblem(draft);
+  const problem = draftProblem(draft, locale);
   const saving = create.isPending || update.isPending;
   // 一括エクスポートは、選択中 run が完了済みで、永続化済み結果を持つ成功ステップが
   // 1 つでもあるときだけ出す (RESULT_STORE 無効環境では出ない)。
@@ -417,9 +429,9 @@ function WorkflowEditor({
         stepId: typeof details?.stepId === 'string' ? details.stepId : null,
         message: details?.message ?? error.detail.message,
       });
-      toast.error('Save failed', details?.message ?? error.detail.message);
+      toast.error(t('saveFailedToast'), details?.message ?? error.detail.message);
     } else {
-      toast.error('Save failed', 'Could not reach the server.');
+      toast.error(t('saveFailedToast'), t('couldNotReachServer'));
     }
   };
 
@@ -430,7 +442,7 @@ function WorkflowEditor({
     try {
       if (isNew) {
         const created = await create.mutateAsync(draftToCreateRequest(draft));
-        toast.success('Workflow created', `“${created.name}” is ready to run.`);
+        toast.success(t('workflowCreatedToast'), t('workflowReadyToRun', { name: created.name }));
         // 保存済み id で開き直す (key が変わり、サーバー確定値で再マウントされる)。
         continueDocumentNavigation(navigationOwner, () => openWorkflow(created.id));
         return;
@@ -442,7 +454,7 @@ function WorkflowEditor({
       const next = draftFromWorkflow(updated);
       setDraft(next);
       setBaseline(next);
-      toast.success('Workflow saved', `“${updated.name}” saved.`);
+      toast.success(t('workflowSavedToast'), t('workflowSavedDescription', { name: updated.name }));
     } catch (error) {
       captureServerError(error);
     }
@@ -450,7 +462,7 @@ function WorkflowEditor({
 
   useDocumentNavigationGuard(
     {
-      label: draft.name.trim() || 'Untitled workflow',
+      label: draft.name.trim() || t('untitledWorkflow'),
       dirty,
       save,
     },
@@ -463,13 +475,13 @@ function WorkflowEditor({
     runNow.mutate(workflowId, {
       onSuccess: (runId) => {
         setSelectedRunId(runId);
-        toast.info('Run started', `“${draft.name}” is running.`);
+        toast.info(t('runStartedToast'), t('workflowIsRunning', { name: draft.name }));
       },
       onError: (error) => {
         if (error instanceof ApiClientError && error.status === 409) {
-          toast.error('Already running', 'This workflow has a run in progress.');
+          toast.error(t('alreadyRunningToast'), t('alreadyRunningDescription'));
         } else {
-          toast.error('Run failed', 'Could not start the run.');
+          toast.error(t('runFailedToast'), t('couldNotStartRun'));
         }
       },
     });
@@ -486,13 +498,13 @@ function WorkflowEditor({
           size="sm"
           icon={ArrowLeft}
           onClick={closeWorkflow}
-          aria-label="Back to notebooks"
+          aria-label={t('backToNotebooks')}
         />
         <input
           value={draft.name}
           onChange={(e) => patchDraft({ name: e.target.value })}
-          placeholder="Untitled workflow"
-          aria-label="Workflow name"
+          placeholder={t('untitledWorkflow')}
+          aria-label={t('workflowNameAria')}
           className="w-56 min-w-0 bg-transparent text-base font-semibold text-ink-strong placeholder:text-ink-subtle focus:outline-none"
         />
         {runQuery.data && <WorkflowStatusBadge status={runQuery.data.status} />}
@@ -502,7 +514,7 @@ function WorkflowEditor({
         <div className="ml-auto flex items-center gap-1.5">
           {/* dirty のときは Run より Save を促す (実行は保存済み定義に対して行われるため)。 */}
           {(dirty || isNew) && (
-            <span className="mr-1 font-mono text-2xs text-warning">unsaved changes</span>
+            <span className="mr-1 font-mono text-2xs text-warning">{t('unsavedChanges')}</span>
           )}
           {/* 選択中 run の結果一括エクスポート (CSV zip / xlsx / Google Sheets)。 */}
           {exportableRun && <RunExportMenu runId={exportableRun} disabled={false} />}
@@ -513,14 +525,14 @@ function WorkflowEditor({
             onClick={() => setRunsOpen(true)}
             disabled={isNew}
           >
-            Runs
+            {t('runsButton')}
           </Button>
           <Button
             variant="ghost"
             size="sm"
             icon={Settings2}
             onClick={() => setSettingsOpen(true)}
-            aria-label="Workflow settings"
+            aria-label={t('workflowSettingsTitle')}
           />
           <Button
             variant="ghost"
@@ -528,7 +540,7 @@ function WorkflowEditor({
             icon={Trash2}
             onClick={() => setConfirmDelete(true)}
             disabled={isNew}
-            aria-label="Delete workflow"
+            aria-label={t('deleteWorkflowAria')}
             className="text-ink-subtle hover:text-error"
           />
           <Button
@@ -539,7 +551,7 @@ function WorkflowEditor({
             disabled={saving || (!dirty && !isNew)}
             title={problem ?? undefined}
           >
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t('savingButton') : t('saveButton')}
           </Button>
           <Button
             variant="primary"
@@ -547,9 +559,9 @@ function WorkflowEditor({
             icon={Play}
             onClick={run}
             disabled={isNew || dirty || runInFlight || runNow.isPending}
-            title={isNew || dirty ? 'Save the workflow before running' : 'Run all stages in order'}
+            title={isNew || dirty ? t('saveBeforeRunningTitle') : t('runAllStagesTitle')}
           >
-            {runInFlight ? 'Running…' : 'Run'}
+            {runInFlight ? t('runningButton') : t('runButton')}
           </Button>
         </div>
       </header>
@@ -557,8 +569,7 @@ function WorkflowEditor({
       {/* ガバナンス強制中の未承認ワークフローへの注意。cron ブロックと永続化制限を伝える。 */}
       {governanceBlocked && (
         <p className="border-b border-warning/30 bg-warning-soft/40 px-4 py-1.5 text-xs text-warning">
-          Governance is on: scheduled (cron) runs are blocked and results are not persisted until
-          this workflow is approved on GitHub. Push it and get the pull request merged.
+          {t('governanceBlockedNotice')}
         </p>
       )}
 
@@ -585,10 +596,10 @@ function WorkflowEditor({
               <section className="w-64 shrink-0 rounded-lg border border-border-subtle bg-surface-sunken/40 p-2">
                 <header className="flex items-center justify-between px-1 pb-2">
                   <h3 className="font-mono text-2xs font-semibold tracking-wide text-ink-muted uppercase">
-                    Stage {stageIndex + 1}
+                    {t('stageHeading', { n: stageIndex + 1 })}
                   </h3>
                   <span className="font-mono text-2xs text-ink-subtle">
-                    {stage.steps.length > 1 ? `${stage.steps.length} parallel` : ''}
+                    {stage.steps.length > 1 ? t('parallelCount', { n: stage.steps.length }) : ''}
                   </span>
                 </header>
                 <div className="flex flex-col gap-2">
@@ -603,6 +614,7 @@ function WorkflowEditor({
                         const stepRun = stepRunById.get(step.id);
                         if (stepRun) setResultFor({ stepRunId: stepRun.id, name: step.name });
                       }}
+                      t={t}
                     />
                   ))}
                   {/* ステップ追加。空ステージにはステージ削除も出す。 */}
@@ -615,7 +627,7 @@ function WorkflowEditor({
                     }
                     className="justify-center border border-dashed border-border-base"
                   >
-                    Add step
+                    {t('addStepTitle')}
                   </Button>
                   {stage.steps.length === 0 && draft.stages.length > 1 && (
                     <button
@@ -623,7 +635,7 @@ function WorkflowEditor({
                       onClick={() => removeEmptyStage(stageIndex)}
                       className="font-mono text-2xs text-ink-subtle hover:text-error"
                     >
-                      Remove empty stage
+                      {t('removeEmptyStage')}
                     </button>
                   )}
                 </div>
@@ -641,17 +653,14 @@ function WorkflowEditor({
               }
               className="flex w-40 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border-base px-3 py-6 font-mono text-2xs text-ink-subtle transition-colors hover:border-accent hover:text-accent"
             >
-              <Plus size={13} strokeWidth={2} /> Add stage
+              <Plus size={13} strokeWidth={2} /> {t('addStageButton')}
             </button>
           </div>
         </div>
 
         {/* 初回 (ステップゼロ) 向けのガイド。 */}
         {totalSteps(draft) === 0 && (
-          <p className="mt-6 max-w-md text-sm text-ink-muted">
-            Add steps to Stage 1. Steps in the same stage run in parallel; stages run left to right.
-            Each step can stop the workflow or let it continue when it fails.
-          </p>
+          <p className="mt-6 max-w-md text-sm text-ink-muted">{t('emptyCanvasGuide')}</p>
         )}
       </div>
 
@@ -697,16 +706,14 @@ function WorkflowEditor({
       <Modal
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
-        title="Delete workflow?"
+        title={t('deleteWorkflowConfirmTitle')}
         description={
-          workflow
-            ? `“${workflow.name}” and its run history will be permanently removed.`
-            : undefined
+          workflow ? t('deleteWorkflowConfirmDescription', { name: workflow.name }) : undefined
         }
         footer={
           <>
             <Button variant="ghost" onClick={() => setConfirmDelete(false)}>
-              Cancel
+              {t('cancel')}
             </Button>
             <Button
               variant="danger"
@@ -715,14 +722,14 @@ function WorkflowEditor({
                 if (isNew) return;
                 remove.mutate(workflowId, {
                   onSuccess: () => {
-                    toast.info('Deleted', 'Workflow removed.');
+                    toast.info(t('deleted'), t('workflowRemovedDescription'));
                     continueDocumentNavigation(navigationOwner, closeWorkflow);
                   },
-                  onError: () => toast.error('Delete failed', 'Could not reach the server.'),
+                  onError: () => toast.error(t('deleteFailed'), t('couldNotReachServer')),
                 });
               }}
             >
-              Delete
+              {t('delete')}
             </Button>
           </>
         }

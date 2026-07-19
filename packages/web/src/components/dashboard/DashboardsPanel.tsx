@@ -16,6 +16,12 @@ import { DocumentShareBadge } from '../common/DocumentShareBadge';
 import { useDashboards } from '../../hooks/useDashboards';
 import { useUiStore } from '../../stores/uiStore';
 import { cn } from '../../utils/cn';
+import { useT, type TFn } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { dashboardMessages } from '../../i18n/messages/dashboard';
+
+/** DashboardsPanel 内で使う辞書の合成。共通文言 + Dashboard 固有文言。 */
+const dashboardsPanelDict = { ...commonMessages, ...dashboardMessages } as const;
 
 /**
  * ダッシュボード一覧の 1 行分。名前、widget 数、共有バッジを表示する。
@@ -27,10 +33,12 @@ function DashboardRow({
   item,
   active,
   onOpen,
+  t,
 }: {
   item: DashboardListItem;
   active: boolean;
   onOpen: () => void;
+  t: TFn<typeof dashboardsPanelDict>;
 }) {
   return (
     <li className="border-b border-border-subtle">
@@ -60,7 +68,9 @@ function DashboardRow({
         </span>
         <span className="flex flex-wrap items-center gap-2 pl-6">
           <span className="font-mono text-2xs text-ink-subtle">
-            {item.widgetCount} widget{item.widgetCount === 1 ? '' : 's'}
+            {item.widgetCount === 1
+              ? t('widgetCountOne', { n: item.widgetCount })
+              : t('widgetCountOther', { n: item.widgetCount })}
           </span>
           <DocumentShareBadge owner={item.owner} myPermission={item.myPermission} />
         </span>
@@ -75,6 +85,7 @@ function DashboardRow({
  *   部分一致 (大文字小文字無視) でクライアント側絞り込みを行う。
  */
 export function DashboardsPanel({ search }: { search: string }) {
+  const t = useT(dashboardsPanelDict);
   const list = useDashboards();
   const dashboardView = useUiStore((s) => s.dashboardView);
   const openDashboard = useUiStore((s) => s.openDashboard);
@@ -95,7 +106,7 @@ export function DashboardsPanel({ search }: { search: string }) {
   if (list.isPending) {
     return (
       <div className="flex items-center justify-center gap-2 py-8 font-mono text-2xs text-ink-subtle">
-        <Spinner size={14} /> Loading…
+        <Spinner size={14} /> {t('loading')}
       </div>
     );
   }
@@ -104,8 +115,8 @@ export function DashboardsPanel({ search }: { search: string }) {
     return (
       <EmptyState
         icon={LayoutDashboard}
-        title="Couldn't load dashboards"
-        description="The server didn't respond."
+        title={t('couldntLoadDashboardsTitle')}
+        description={t('serverDidntRespond')}
         compact
       />
     );
@@ -122,19 +133,15 @@ export function DashboardsPanel({ search }: { search: string }) {
           onClick={openNewDashboard}
           className="w-full justify-center"
         >
-          New dashboard
+          {t('newDashboardButton')}
         </Button>
       </div>
 
       {filtered.length === 0 ? (
         <EmptyState
           icon={LayoutDashboard}
-          title={search.trim() ? 'No matches' : 'No dashboards'}
-          description={
-            search.trim()
-              ? 'Try a different search term.'
-              : 'Arrange saved query results and charts on a grid.'
-          }
+          title={search.trim() ? t('noMatches') : t('noDashboardsTitle')}
+          description={search.trim() ? t('tryDifferentSearchTerm') : t('noDashboardsDescription')}
           compact
         />
       ) : (
@@ -145,6 +152,7 @@ export function DashboardsPanel({ search }: { search: string }) {
               item={item}
               active={dashboardView?.kind === 'dashboard' && dashboardView.id === item.id}
               onOpen={() => openDashboard(item.id)}
+              t={t}
             />
           ))}
         </ul>

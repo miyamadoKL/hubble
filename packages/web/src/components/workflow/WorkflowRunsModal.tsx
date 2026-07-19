@@ -10,10 +10,18 @@ import { Spinner } from '../common/Spinner';
 import { EmptyState } from '../common/EmptyState';
 import { useWorkflowRuns } from '../../hooks/useWorkflows';
 import { WorkflowStatusBadge } from './WorkflowStatusBadge';
+import { triggerLabel } from './workflowFormat';
 import { formatRelativeTime } from '../../utils/format';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { useLocale } from '../../i18n/locale';
+import { commonMessages } from '../../i18n/messages/common';
+import { workflowMessages } from '../../i18n/messages/workflow';
 
-// 所要時間を人間可読な文字列に変換する。
+/** WorkflowRunsModal 内で使う辞書の合成。共通文言 + workflow 固有文言を 1 つの t() で引けるようにする。 */
+const workflowRunsDict = { ...commonMessages, ...workflowMessages } as const;
+
+// 所要時間を人間可読な文字列に変換する。単位表記 (ms/s/m) は言語非依存のため翻訳しない。
 function elapsedLabel(run: WorkflowRunSummary): string {
   if (run.elapsedMs === null) return '—';
   if (run.elapsedMs < 1000) return `${run.elapsedMs}ms`;
@@ -43,29 +51,31 @@ export function WorkflowRunsModal({
   onSelect: (runId: string) => void;
   onClose: () => void;
 }) {
+  const t = useT(workflowRunsDict);
+  const { locale } = useLocale();
   const runs = useWorkflowRuns(open ? workflowId : null);
   if (!open) return null;
 
   const now = new Date();
 
   return (
-    <Modal open onClose={onClose} title="Run history" className="max-w-2xl">
+    <Modal open onClose={onClose} title={t('runHistoryTitle')} className="max-w-2xl">
       {runs.isPending ? (
         <div className="flex items-center justify-center gap-2 py-8 font-mono text-2xs text-ink-subtle">
-          <Spinner size={14} /> Loading…
+          <Spinner size={14} /> {t('loading')}
         </div>
       ) : runs.isError ? (
         <EmptyState
           icon={HistoryIcon}
-          title="Couldn't load runs"
-          description="The server didn't respond."
+          title={t('couldntLoadRunsTitle')}
+          description={t('serverDidntRespond')}
           compact
         />
       ) : runs.data.length === 0 ? (
         <EmptyState
           icon={HistoryIcon}
-          title="No runs yet"
-          description="Run the workflow to see its history here."
+          title={t('noRunsYetTitle')}
+          description={t('noRunsYetDescription')}
           compact
         />
       ) : (
@@ -85,17 +95,28 @@ export function WorkflowRunsModal({
                 )}
               >
                 <WorkflowStatusBadge status={run.status} />
-                <span className="font-mono text-2xs text-ink-muted uppercase">{run.trigger}</span>
+                {/* trigger (manual/cron) は契約値なので、そのまま表示せず
+                    triggerLabel() 経由で翻訳済みラベルへ変換する。 */}
+                <span className="font-mono text-2xs text-ink-muted uppercase">
+                  {triggerLabel(run.trigger, locale)}
+                </span>
                 <span className="font-mono text-2xs text-ink-subtle">
-                  {formatRelativeTime(run.startedAt, now)}
+                  {formatRelativeTime(run.startedAt, now, locale)}
                 </span>
                 <span className="font-mono text-2xs text-ink-subtle">{elapsedLabel(run)}</span>
-                {/* ステップ内訳 (成功/失敗/blocked/スキップ)。 */}
+                {/* ステップ内訳 (成功/失敗/blocked/スキップ)。区切りは runBreakdownSeparator
+                    （日本語は読点、英語は既存の " · " 慣習）を辞書から引く。 */}
                 <span className="ml-auto font-mono text-2xs text-ink-subtle">
-                  {run.stepCounts.success}/{run.stepCounts.total} ok
-                  {run.stepCounts.failed > 0 && ` · ${run.stepCounts.failed} failed`}
-                  {run.stepCounts.blocked > 0 && ` · ${run.stepCounts.blocked} blocked`}
-                  {run.stepCounts.skipped > 0 && ` · ${run.stepCounts.skipped} skipped`}
+                  {t('stepCountsOk', {
+                    success: run.stepCounts.success,
+                    total: run.stepCounts.total,
+                  })}
+                  {run.stepCounts.failed > 0 &&
+                    `${t('runBreakdownSeparator')}${t('stepCountsFailed', { n: run.stepCounts.failed })}`}
+                  {run.stepCounts.blocked > 0 &&
+                    `${t('runBreakdownSeparator')}${t('stepCountsBlocked', { n: run.stepCounts.blocked })}`}
+                  {run.stepCounts.skipped > 0 &&
+                    `${t('runBreakdownSeparator')}${t('stepCountsSkipped', { n: run.stepCounts.skipped })}`}
                 </span>
               </button>
             </li>

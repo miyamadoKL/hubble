@@ -14,6 +14,12 @@ import { IconButton } from '../common/IconButton';
 import { Button } from '../common/Button';
 import { toast } from '../common/Toast';
 import { cn } from '../../utils/cn';
+import { useT } from '../../i18n/t';
+import { commonMessages } from '../../i18n/messages/common';
+import { dataMessages } from '../../i18n/messages/data';
+
+/** TableDetailPopover 内で使う辞書の合成。共通文言 + データブラウザ固有文言を 1 つの t() で引けるようにする。 */
+const tableDetailDict = { ...commonMessages, ...dataMessages } as const;
 
 /*
  * このファイルの責務:
@@ -56,6 +62,7 @@ export function TableDetailPopover({
   datasourceId: string;
   onClose: () => void;
 }) {
+  const t = useT(tableDetailDict);
   // 表示対象テーブルの識別情報を分解しておく（クエリキーの組み立てなどで繰り返し使う）。
   const { catalog, schema, name } = target;
 
@@ -94,7 +101,7 @@ export function TableDetailPopover({
     const sql = selectTemplate({ catalog, schema, name }, columns, context);
     const cellId = addSqlCellWithSource(sql);
     if (cellId) {
-      toast.success('New SQL cell', `SELECT template for ${name} added.`);
+      toast.success(t('newSqlCellToastTitle'), t('newSqlCellToastDescription', { name }));
       onClose();
     }
   };
@@ -108,13 +115,13 @@ export function TableDetailPopover({
       className="fixed inset-0 z-[88] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-label={`${name} details`}
+      aria-label={t('tableDetailsDialogLabel', { name })}
     >
       {/* 背景スクリム: クリックすると onClose が呼ばれてポップオーバーを閉じる。
           tabIndex={-1} でキーボードフォーカスの対象からは外している。 */}
       <button
         type="button"
-        aria-label="Close details"
+        aria-label={t('closeDetailsLabel')}
         tabIndex={-1}
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-ink-strong/40 animate-[fadeIn_150ms_ease-out]"
@@ -130,12 +137,12 @@ export function TableDetailPopover({
             {catalog}.{schema}.{name}
           </span>
           <span className="rounded-xs bg-surface-inset px-1.5 py-0.5 text-2xs tracking-wide text-ink-muted uppercase">
-            {target.type === 'VIEW' ? 'view' : 'table'}
+            {target.type === 'VIEW' ? t('viewBadge') : t('tableBadge')}
           </span>
           <Button variant="default" size="sm" icon={FilePlus2} onClick={onSelectTemplate}>
-            SELECT template
+            {t('selectTemplateButton')}
           </Button>
-          <IconButton icon={X} label="Close" size="sm" onClick={onClose} tooltip={false} />
+          <IconButton icon={X} label={t('close')} size="sm" onClick={onClose} tooltip={false} />
         </header>
 
         {/* テーブル自体のコメント（メタデータにコメントがある場合のみ表示）。 */}
@@ -150,16 +157,16 @@ export function TableDetailPopover({
               各カラムの名前、コメント、型を一覧表示する。 */}
           <section>
             <h3 className="sticky top-0 z-10 bg-surface-overlay px-4 pt-3 pb-1 text-2xs font-semibold tracking-[0.14em] text-ink-muted uppercase">
-              Columns
+              {t('columnsHeading')}
             </h3>
             {detail.isPending && (
               <p className="flex items-center gap-2 px-4 py-3 font-mono text-2xs text-ink-subtle">
-                <Spinner size={12} /> Loading columns…
+                <Spinner size={12} /> {t('loadingColumns')}
               </p>
             )}
             {detail.isError && (
               <p className="flex items-center gap-1.5 px-4 py-3 font-mono text-2xs text-error">
-                <AlertCircle size={12} /> Failed to load columns.
+                <AlertCircle size={12} /> {t('failedToLoadColumns')}
               </p>
             )}
             <ul className="px-2 pb-2">
@@ -187,20 +194,20 @@ export function TableDetailPopover({
               データがある場合のみ、カラム一覧をヘッダーに使ったテーブルを描画する。 */}
           <section className="border-t border-border-subtle">
             <h3 className="sticky top-0 z-10 bg-surface-overlay px-4 pt-3 pb-1 text-2xs font-semibold tracking-[0.14em] text-ink-muted uppercase">
-              Sample · 10 rows
+              {t('sampleHeading')}
             </h3>
             {sample.isPending && (
               <p className="flex items-center gap-2 px-4 py-3 font-mono text-2xs text-ink-subtle">
-                <Spinner size={12} /> Loading sample…
+                <Spinner size={12} /> {t('loadingSample')}
               </p>
             )}
             {sample.isError && (
               <p className="flex items-center gap-1.5 px-4 py-3 font-mono text-2xs text-error">
-                <AlertCircle size={12} /> Failed to load sample rows.
+                <AlertCircle size={12} /> {t('failedToLoadSample')}
               </p>
             )}
             {sample.data && sample.data.rows.length === 0 && (
-              <p className="px-4 py-3 font-mono text-2xs text-ink-subtle italic">No rows.</p>
+              <p className="px-4 py-3 font-mono text-2xs text-ink-subtle italic">{t('noRows')}</p>
             )}
             {sample.data && sample.data.rows.length > 0 && (
               <div className="overflow-auto px-2 pb-3">
